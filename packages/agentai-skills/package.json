@@ -1,0 +1,24 @@
+{
+  "name": "@agentai/skills",
+  "version": "0.1.0-alpha.1",
+  "description": "AgentAI Skills — 37 个 Python 多模态技能 (从 ZhiY.AI 迁移)",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "pytest tests/",
+    "lint": "ruff check .",
+    "list": "node scripts/list.js",
+    "run": "python scripts/run_skill.py"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.2",
+    "pyyaml": "^6.0.1",
+    "axios": "^1.7.4"
+  },
+  "devDependencies": {
+    "pytest": "^8.3.0",
+    "ruff": "^0.5.0"
+  },
+  "author": "AgentAI Builder",
+  "license": "MIT"
+}

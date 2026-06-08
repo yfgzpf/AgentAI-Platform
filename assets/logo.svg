@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#6366F1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角矩形背景 -->
+  <rect width="1024" height="1024" rx="160" fill="url(#bg)"/>
+
+  <!-- A 字主体 (大三角) -->
+  <path d="M 512 200 L 800 800 L 650 800 L 600 700 L 424 700 L 374 800 L 224 800 Z"
+        fill="white" opacity="0.95"/>
+
+  <!-- A 字横杠 (中横) -->
+  <rect x="450" y="580" width="124" height="40" fill="#4F46E5"/>
+
+  <!-- 内部节点 (神经网络) -->
+  <circle cx="512" cy="350" r="20" fill="#F472B6"/>
+  <circle cx="430" cy="500" r="16" fill="#F472B6"/>
+  <circle cx="594" cy="500" r="16" fill="#F472B6"/>
+  <circle cx="512" cy="500" r="22" fill="#F472B6"/>
+
+  <!-- 节点连线 -->
+  <line x1="512" y1="350" x2="430" y2="500" stroke="#F472B6" stroke-width="3" opacity="0.6"/>
+  <line x1="512" y1="350" x2="594" y2="500" stroke="#F472B6" stroke-width="3" opacity="0.6"/>
+  <line x1="430" y1="500" x2="512" y2="500" stroke="#F472B6" stroke-width="3" opacity="0.6"/>
+  <line x1="594" y1="500" x2="512" y2="500" stroke="#F472B6" stroke-width="3" opacity="0.6"/>
+</svg>

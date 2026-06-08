@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- 单色黑版 (浅色背景用) -->
+  <path d="M 512 200 L 800 800 L 650 800 L 600 700 L 424 700 L 374 800 L 224 800 Z"
+        fill="black"/>
+  <rect x="450" y="580" width="124" height="40" fill="white"/>
+  <circle cx="512" cy="350" r="20" fill="black"/>
+  <circle cx="430" cy="500" r="16" fill="black"/>
+  <circle cx="594" cy="500" r="16" fill="black"/>
+  <circle cx="512" cy="500" r="22" fill="black"/>
+</svg>

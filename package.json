@@ -1,0 +1,66 @@
+{
+  "name": "agentai-platform",
+  "version": "0.1.0-alpha.1",
+  "description": "AgentAI Platform — 完全免费的智能体框架平台，内置生图生视频多模态能力 (Tauri 桌面壳 + Node.js Gateway + Python 技能)",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0",
+    "rust": ">=1.75.0",
+    "python": ">=3.13.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter @agentai/gateway dev",
+    "dev:web": "pnpm --filter @agentai/gui dev",
+    "dev:desktop": "pnpm --filter @agentai/desktop tauri dev",
+    "dev:gateway": "pnpm --filter @agentai/gateway dev",
+    "build": "pnpm -r build",
+    "build:desktop": "pnpm --filter @agentai/desktop tauri build",
+    "test": "pnpm -r test",
+    "test:integration": "pnpm -r test:integration",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml,css,scss}\"",
+    "typecheck": "tsc --noEmit",
+    "clean": "pnpm -r clean && rm -rf node_modules",
+    "init": "node scripts/init-wizard.mjs",
+    "keys": "node scripts/keys-cli.mjs",
+    "commitlint": "commitlint --edit",
+    "release": "standard-version",
+    "prepare": "husky install || true"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-react": "^7.35.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.3.0",
+    "standard-version": "^9.5.0",
+    "typescript": "^5.5.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "author": "AgentAI Builder",
+  "keywords": [
+    "agent",
+    "ai",
+    "tauri",
+    "nodejs",
+    "python",
+    "multimodal",
+    "image-generation",
+    "video-generation",
+    "llm"
+  ]
+}

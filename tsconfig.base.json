@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "incremental": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@agentai/core": ["./packages/agentai-core/src"],
+      "@agentai/core/*": ["./packages/agentai-core/src/*"],
+      "@agentai/gateway": ["./packages/agentai-gateway/src"],
+      "@agentai/gateway/*": ["./packages/agentai-gateway/src/*"],
+      "@agentai/gui": ["./packages/agentai-gui/src"],
+      "@agentai/gui/*": ["./packages/agentai-gui/src/*"],
+      "@agentai/skills": ["./packages/agentai-skills"],
+      "@agentai/skills/*": ["./packages/agentai-skills/*"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*",
+    "apps/*/src/**/*",
+    "scripts/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ]
+}

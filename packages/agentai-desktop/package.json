@@ -1,0 +1,22 @@
+{
+  "name": "@agentai/desktop",
+  "version": "0.1.0-alpha.1",
+  "description": "AgentAI Desktop — Tauri 2.0 (Rust) 极小桌面壳 (5-10MB)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:debug": "tauri build --debug"
+  },
+  "dependencies": {
+    "@agentai/gui": "workspace:*",
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  },
+  "author": "AgentAI Builder",
+  "license": "MIT"
+}
