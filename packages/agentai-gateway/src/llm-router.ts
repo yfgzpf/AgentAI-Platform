@@ -502,7 +502,7 @@ export class AgentAIRouter extends EventEmitter {
     // deepseek: api.deepseek.com /v1/chat/completions
     // openai: api.openai.com /v1/chat/completions
     const envKeyMap: Record<ProviderId, { keyEnv: string; baseEnv: string; defaultBase: string; modelName: string }> = {
-      agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelName: 'agnes-chat' },
+      agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelName: 'agnes-2.0-flash' },
       deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat' },
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelName: 'gpt-4o-mini' },
     };

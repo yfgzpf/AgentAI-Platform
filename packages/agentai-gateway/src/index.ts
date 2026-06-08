@@ -21,6 +21,33 @@ import { AgentAIRouter } from './llm-router.js';
 import { ToolRegistry } from './tool-registry.js';
 import { AgentAILoop } from './agentai-loop.js';
 import { readMemory, writeMemory } from './memory.js';
+import path from 'path';
+import fs from 'fs';
+
+// ===== 启动时自动读 .env (从 F:\agentai-platform\.env 或 cwd/../../.env) =====
+function loadEnv() {
+  const candidates: string[] = [
+    process.env.AGENTAI_ENV_PATH || '',
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), '../../.env'),
+    'F:/agentai-platform/.env',
+  ].filter((p): p is string => !!p);
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      const text = fs.readFileSync(p, 'utf-8');
+      for (const line of text.split('\n')) {
+        const m = line.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+        if (m && m[1] && !process.env[m[1]] && m[2] !== undefined) {
+          process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+        }
+      }
+      console.log(`[env] loaded from ${p}`);
+      return;
+    }
+  }
+  console.warn('[env] no .env found in', candidates);
+}
+loadEnv();
 
 const PORT = parseInt(process.env.AGENTAI_PORT || '18789', 10);
 const HOST = process.env.AGENTAI_HOST || '127.0.0.1';
@@ -244,7 +271,6 @@ app.get('/v1/memory', async (req, res) => {
 
 // ===== Image / Video 生成 (真接 Agnes Python 脚本, 通过 skills_bridge.py 走 stdin JSON) =====
 import { spawn } from 'child_process';
-import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -335,7 +361,6 @@ app.get('/v1/video/:id', async (req, res) => {
 });
 
 // ===== 密钥管理 (Settings 面板用) =====
-import fs from 'fs';
 const ENV_PATH = process.env.AGENTAI_ENV_PATH || path.resolve(process.cwd(), '../../.env');
 
 function readEnv(): Record<string, string> {
