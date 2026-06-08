@@ -56,6 +56,9 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// 静态资源: 生成的图片/视频 暴露给前端 (页面直接显示)
+app.use('/media', express.static(path.resolve(process.cwd(), '../../packages/agentai-skills/out')));
+
 const server = http.createServer(app);
 const io = new SocketServer(server, { cors: { origin: '*' } });
 
@@ -322,7 +325,13 @@ app.post('/v1/image', async (req, res) => {
     if (r.code !== 0 || !data.ok) {
       return res.status(500).json({ error: data.error || r.stderr || 'unknown', code: r.code });
     }
-    res.json(data);
+    // 把本地 outputPath 转成 /media/... URL 给前端直接 <img>
+    let url: string | null = null;
+    if (data.outputPath) {
+      const filename = path.basename(data.outputPath);
+      url = `/media/${filename}`;
+    }
+    res.json({ ok: true, url, outputPath: data.outputPath, id: `${Date.now()}` });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -330,17 +339,17 @@ app.post('/v1/image', async (req, res) => {
 
 app.post('/v1/video', async (req, res) => {
   try {
-    const { prompt, image } = req.body || {};
+    const { prompt, image, num_frames, frame_rate } = req.body || {};
     if (!prompt && !image) return res.status(400).json({ error: 'prompt or image required' });
     if (!process.env.AGNES_API_KEY) return res.status(400).json({ error: 'AGNES_API_KEY not set in .env' });
 
-    const r = await callBridge({ action: 'video', prompt, image });
+    const r = await callBridge({ action: 'video', prompt, image, num_frames, frame_rate });
     let data: any = {};
     try { data = JSON.parse(r.stdout.split('\n').filter(Boolean).pop() || '{}'); } catch {}
     if (r.code !== 0 || !data.ok) {
       return res.status(500).json({ error: data.error || r.stderr || 'unknown', code: r.code });
     }
-    res.json(data);
+    res.json({ ok: true, taskId: data.taskId, task_id: data.taskId, status: 'submitted' });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -412,6 +421,110 @@ app.post('/v1/settings/keys', (req, res) => {
     writeEnv(env);
     process.env[KEY_MAP[provider]!] = apiKey;
     res.json({ ok: true, envVar: KEY_MAP[provider] });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// ===== 文件上传 (multipart/form-data) =====
+import multer from 'multer';
+const UPLOAD_DIR = path.resolve(process.cwd(), '../../packages/agentai-skills/uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+});
+
+app.post('/v1/upload', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'no file' });
+  const filename = req.file.filename;
+  res.json({
+    ok: true,
+    filename,
+    originalName: req.file.originalname,
+    size: req.file.size,
+    url: `/media/uploads/${filename}`,
+    mimetype: req.file.mimetype,
+  });
+});
+
+// ===== 文件树 (VSCode 编辑器用) =====
+app.get('/v1/files', (req, res) => {
+  try {
+    const workspace = (req.query.workspace as string) || 'F:\\agentai-platform';
+    const resolved = path.resolve(workspace);
+    if (!fs.existsSync(resolved)) {
+      return res.json({ tree: [], root: resolved, error: 'workspace not found' });
+    }
+    const tree = buildTree(resolved, '', 5); // 最深 5 层
+    res.json({ tree, root: resolved });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+function buildTree(dir: string, prefix: string = '', depth: number = 5): any[] {
+  if (depth <= 0) return [];
+  try {
+    const items = fs.readdirSync(dir, { withFileTypes: true })
+      .filter(it => !it.name.startsWith('.') && it.name !== 'node_modules' && it.name !== 'dist' && it.name !== 'out' && it.name !== '__pycache__')
+      .sort((a, b) => {
+        if (a.isDirectory() && !b.isDirectory()) return -1;
+        if (!a.isDirectory() && b.isDirectory()) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    return items.map(it => {
+      const full = path.join(dir, it.name);
+      const isDir = it.isDirectory();
+      let children: any[] = [];
+      if (isDir) {
+        children = buildTree(full, prefix + '/' + it.name, depth - 1);
+      }
+      let size = 0;
+      if (!isDir) {
+        try { size = fs.statSync(full).size; } catch {}
+      }
+      return {
+        name: it.name,
+        path: full,
+        type: isDir ? 'directory' : 'file',
+        size,
+        children: isDir ? children : undefined,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+// 读文件
+app.get('/v1/files/read', (req, res) => {
+  try {
+    const filePath = req.query.path as string;
+    if (!filePath) return res.status(400).json({ error: 'path required' });
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'file not found' });
+    const stat = fs.statSync(filePath);
+    if (stat.isDirectory()) return res.status(400).json({ error: 'is a directory' });
+    if (stat.size > 5 * 1024 * 1024) return res.status(413).json({ error: 'file too large (>5MB)' });
+    const content = fs.readFileSync(filePath, 'utf-8');
+    res.json({ path: filePath, content, size: stat.size, mtime: stat.mtimeMs });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// 写文件
+app.put('/v1/files/write', (req, res) => {
+  try {
+    const { path: filePath, content } = req.body || {};
+    if (!filePath) return res.status(400).json({ error: 'path required' });
+    if (typeof content !== 'string') return res.status(400).json({ error: 'content (string) required' });
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf-8');
+    res.json({ ok: true, path: filePath, size: content.length });
   } catch (e: any) {
     res.status(500).json({ error: String(e) });
   }

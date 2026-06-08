@@ -93,7 +93,7 @@ test.describe('AgentAI Platform - 网页端 E2E', () => {
     );
     await page.goto('/');
     await waitApp(page);
-    const input = page.locator('textarea[placeholder*="输入消息"]');
+    const input = page.locator('textarea[placeholder*="富哥"]');
     await input.fill('富哥测试');
     await input.press('Enter');
     await expect(page.locator('text=富哥测试').first()).toBeVisible();

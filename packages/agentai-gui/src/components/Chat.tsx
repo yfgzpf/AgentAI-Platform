@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Input, Tag, Space, Avatar, Badge } from 'antd';
-import { SendOutlined, ThunderboltOutlined, RobotOutlined, UserOutlined } from '@ant-design/icons';
+import { SendOutlined, ThunderboltOutlined, RobotOutlined, UserOutlined, BulbOutlined, ClearOutlined } from '@ant-design/icons';
 import { useFrameworkStore, useChatStore } from '../store';
 import { Markdown } from './Markdown';
+import { FileUpload, type UploadedFile } from './FileUpload';
 
 interface ChatMessage {
   id: string;
@@ -19,6 +20,7 @@ export const Chat: React.FC = () => {
   const { messages, appendMessage, updateMessage, clearMessages } = useChatStore();
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
@@ -76,8 +78,15 @@ export const Chat: React.FC = () => {
     setSending(true);
     setInput('');
 
+    // 富哥, 用 prompt + 附件 (图片) 拼成富文本
+    const fileDesc = attachedFiles.length > 0
+      ? '\n\n[附件: ' + attachedFiles.map(f => `${f.originalName}(${f.mimetype}, ${(f.size/1024).toFixed(1)}KB) ${f.url}`).join('; ') + ']'
+      : '';
+    const fullText = text + fileDesc;
+    setAttachedFiles([]);
+
     const userId = 'msg-' + (++idRef.current);
-    appendMessage({ id: userId, role: 'user', content: text, ts: Date.now() });
+    appendMessage({ id: userId, role: 'user', content: text + (attachedFiles.length > 0 ? ` 📎×${attachedFiles.length}` : ''), ts: Date.now() });
 
     const botId = 'msg-' + (++idRef.current);
     appendMessage({ id: botId, role: 'assistant', content: '', ts: Date.now(), framework: active, streaming: true });
@@ -96,7 +105,7 @@ export const Chat: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: text,
+          message: fullText,
           userId: '富哥',
           workspace: 'F:\\agentai-platform',
         }),
@@ -155,16 +164,21 @@ export const Chat: React.FC = () => {
       </div>
 
       {/* 输入框 */}
-      <div style={{ padding: 12, borderTop: '1px solid #303030', display: 'flex', gap: 8 }}>
-        <Input.TextArea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder="输入消息, Enter 发送, Shift+Enter 换行"
-          autoSize={{ minRows: 1, maxRows: 4 }}
-          disabled={sending}
-        />
-        <Button type="primary" icon={<SendOutlined />} onClick={send} loading={sending} disabled={!input.trim()}>发送</Button>
+      <div style={{ padding: 12, borderTop: '1px solid #303030' }}>
+        <div style={{ marginBottom: 8 }}>
+          <FileUpload files={attachedFiles} onChange={setAttachedFiles} />
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Input.TextArea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); send(); } }}
+            placeholder="富哥, 问点啥? Enter 发送, Shift+Enter 换行"
+            autoSize={{ minRows: 1, maxRows: 4 }}
+            disabled={sending}
+          />
+          <Button type="primary" icon={<SendOutlined />} onClick={send} loading={sending} disabled={!input.trim() && attachedFiles.length === 0}>发送</Button>
+        </div>
       </div>
     </div>
   );
