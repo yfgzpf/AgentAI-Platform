@@ -101,25 +101,62 @@ export const Chat: React.FC = () => {
         framework: active,
       }));
     } else {
-      // HTTP fallback
+      // HTTP fallback (走 SSE 流式, 边接收边追加)
       const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
       fetch(httpUrl + '/v1/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
         body: JSON.stringify({
           message: fullText,
           userId: userName,
           workspace: 'F:\\agentai-platform',
+          stream: true,
         }),
       })
-        .then((r) => r.json())
-        .then((data) => {
-          updateMessage(botId, (m: ChatMessage) => ({
-            ...m,
-            streaming: false,
-            content: data.content || data.error || '(空响应)',
-            tokens: data.usage,
-          }));
+        .then(async (r) => {
+          if (!r.ok || !r.body) {
+            // 退到非流式
+            const fallback = await fetch(httpUrl + '/v1/chat', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: fullText, userId: userName, workspace: 'F:\\agentai-platform' }),
+            });
+            const data = await fallback.json();
+            updateMessage(botId, (m: ChatMessage) => ({
+              ...m, streaming: false,
+              content: data.content || data.error || '(空响应)',
+              tokens: data.usage,
+            }));
+            return;
+          }
+          // 解析 SSE
+          const reader = (r.body as any).getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          let usage: any = null;
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop() || '';
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith('data:')) continue;
+              const json = trimmed.slice(5).trim();
+              if (!json) continue;
+              try {
+                const ev = JSON.parse(json);
+                if (ev.delta) {
+                  updateMessage(botId, (m: ChatMessage) => ({ ...m, content: m.content + ev.delta, streaming: true }));
+                } else if (ev.usage) {
+                  usage = ev.usage;
+                } else if (ev.error) {
+                  updateMessage(botId, (m: ChatMessage) => ({ ...m, streaming: false, content: m.content + '\n\n[错误] ' + ev.error }));
+                }
+              } catch {}
+            }
+          }
+          updateMessage(botId, (m: ChatMessage) => ({ ...m, streaming: false, tokens: usage }));
         })
         .catch((err) => {
           updateMessage(botId, (m: ChatMessage) => ({

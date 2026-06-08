@@ -215,13 +215,59 @@ app.get('/v1/tools', (_req, res) => {
 
 app.post('/v1/chat', async (req, res) => {
   try {
-    const { message, userId = 'default', workspace = process.cwd(), framework } = req.body;
+    const { message, userId = 'default', workspace = process.cwd(), framework, stream = false } = req.body;
     if (!message) {
       return res.status(400).json({ error: 'message required' });
     }
 
     // 写 user 消息到记忆
     await writeMemory({ userId, workspace, role: 'user', content: message, source: 'session' });
+
+    // ====== SSE 流式响应 (SSE: text/event-stream) ======
+    if (stream === true) {
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      const sendEvent = (event: string, data: any) => {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      try {
+        const sessionKey = `${userId}:${workspace}`;
+        let loop = sessions.get(sessionKey);
+        if (!loop) {
+          loop = new AgentAILoop(router, registry, [], { maxIterations: 30, userId, workspace });
+          sessions.set(sessionKey, loop);
+        }
+
+        // 真接 router 的流式 (LLM API → router → 这里)
+        const resp = await router.chat({
+          model: 'agentai',
+          messages: [{ role: 'user', content: message }],
+          stream: true,
+          userId,
+          workspace,
+          onDelta: (delta: string) => {
+            sendEvent('delta', { delta });
+          },
+        });
+
+        sendEvent('done', { provider: resp.provider, usage: resp.usage, content: resp.content });
+        await writeMemory({
+          userId, workspace, role: 'assistant', content: resp.content,
+          metadata: { provider: resp.provider, durationMs: resp.durationMs }, source: 'session',
+        });
+        res.end();
+      } catch (e: any) {
+        sendEvent('error', { error: String(e?.message || e) });
+        res.end();
+      }
+      return;
+    }
 
     // 如果指定 framework, 真接框架 adapter (OpenClaw / Hermes)
     if (framework === 'openclaw' || framework === 'hermes') {

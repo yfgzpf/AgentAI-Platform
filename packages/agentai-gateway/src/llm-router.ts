@@ -46,6 +46,8 @@ export interface ChatRequest {
   workspace?: string;
   /** 流式响应 */
   stream?: boolean;
+  /** 流式 delta 回调 (可选, 仅当 stream=true 时触发) */
+  onDelta?: (delta: string) => void;
 }
 
 export interface ChatResponse {
@@ -518,14 +520,15 @@ export class AgentAIRouter extends EventEmitter {
     // agentai: 走 apihub.agnes-ai.com 的 /v1/chat/completions
     // deepseek: api.deepseek.com /v1/chat/completions
     // openai: api.openai.com /v1/chat/completions
-    const envKeyMap: Record<ProviderId, { keyEnv: string; baseEnv: string; defaultBase: string; modelName: string }> = {
-      agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelName: 'agnes-2.0-flash' },
-      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat' },
-      openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelName: 'gpt-4o-mini' },
+    const envKeyMap: Record<ProviderId, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
+      agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-2.0-flash' },
+      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-chat' },
+      openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
     };
     const cfg = envKeyMap[id];
     const apiKey = process.env[cfg.keyEnv];
     const baseUrl = (process.env[cfg.baseEnv] || cfg.defaultBase).replace(/\/+$/, '');
+    const modelName = process.env[cfg.modelEnv] || cfg.defaultModel;
 
     // 没 key: 退到 stub, 但不静默, 标 [no-key]
     if (!apiKey) {
@@ -557,22 +560,68 @@ export class AgentAIRouter extends EventEmitter {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: cfg.modelName,
+          model: modelName,
           messages: req.messages.map(m => ({ role: m.role, content: m.content })),
           temperature: req.temperature ?? 0.7,
           max_tokens: req.maxTokens ?? 2048,
-          stream: false,
+          stream: req.stream === true,
         }),
-        // 30s timeout (学 3 框架超时)
-        signal: AbortSignal.timeout(30_000),
+        // 60s timeout (学 3 框架超时)
+        signal: AbortSignal.timeout(60_000),
       });
       if (!r.ok) {
         const errText = await r.text().catch(() => '');
         throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
       }
+
+      // ====== 流式响应 (SSE) ======
+      if (req.stream === true && r.body) {
+        // Node 18+ 自带 ReadableStream in undici, 但 TS 类型不一定有
+        const reader = (r.body as any).getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        let fullContent = '';
+        let usage: any = { prompt_tokens: 0, completion_tokens: 0 };
+        let streamModel = modelName;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          // 按双换行切 SSE event
+          const lines = buf.split('\n');
+          buf = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data:')) continue;
+            const data = trimmed.slice(5).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const chunk = JSON.parse(data);
+              const delta = chunk.choices?.[0]?.delta?.content || '';
+              if (delta) fullContent += delta;
+              if (chunk.model) streamModel = chunk.model;
+              if (chunk.usage) usage = chunk.usage;
+              // 回调给上层 (如果有)
+              if (req.onDelta && delta) (req.onDelta as any)(delta);
+            } catch {}
+          }
+        }
+        completionTokens = usage.completion_tokens ?? Math.ceil(fullContent.length * 0.5);
+        promptTokens = usage.prompt_tokens ?? promptTokens;
+        return {
+          content: fullContent,
+          model: streamModel,
+          finishReason: 'stop',
+          usage: { promptTokens, completionTokens },
+        };
+      }
+
+      // ====== 非流式 ======
       const data = await r.json() as any;
       const choice = data.choices?.[0];
       const content = choice?.message?.content || '';
@@ -580,7 +629,7 @@ export class AgentAIRouter extends EventEmitter {
       promptTokens = data.usage?.prompt_tokens ?? promptTokens;
       return {
         content,
-        model: data.model || cfg.modelName,
+        model: data.model || modelName,
         finishReason: choice?.finish_reason || 'stop',
         usage: { promptTokens, completionTokens }, // 给上层算 cost
       };
