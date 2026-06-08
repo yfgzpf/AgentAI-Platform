@@ -497,16 +497,86 @@ export class AgentAIRouter extends EventEmitter {
 
   // ===== Provider 执行 (具体 HTTP/SSE 调用) =====
   private async executeProvider(id: ProviderId, req: ChatRequest): Promise<any> {
-    // Stage 2: 真实 LLM 还没接, 用 deterministic stub
-    // 3 个 provider 都返回相同 stub, 但 provider 字段标真实 id
-    // 阶段 2.5 会用派生类替换: AgentAIProvider / DeepSeekProvider / OpenAIProvider
-    const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
-    const userText = (lastMsg?.content || '').slice(0, 200);
-    return {
-      content: `[${id} stub] 富哥收到: "${userText}"\n\n这是 Stage 2 占位响应, 真 LLM Provider 在阶段 2.5 接入。\n\n如需立即接真 LLM, 请在 .env 填 AGENTAI_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY, 然后实现 AgentAIProvider.executeProvider()。`,
-      model: id,
-      finishReason: 'stop',
+    // 真接 3 个 provider (OpenAI 兼容协议)
+    // agentai: 走 apihub.agnes-ai.com 的 /v1/chat/completions
+    // deepseek: api.deepseek.com /v1/chat/completions
+    // openai: api.openai.com /v1/chat/completions
+    const envKeyMap: Record<ProviderId, { keyEnv: string; baseEnv: string; defaultBase: string; modelName: string }> = {
+      agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelName: 'agnes-chat' },
+      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat' },
+      openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelName: 'gpt-4o-mini' },
     };
+    const cfg = envKeyMap[id];
+    const apiKey = process.env[cfg.keyEnv];
+    const baseUrl = (process.env[cfg.baseEnv] || cfg.defaultBase).replace(/\/+$/, '');
+
+    // 没 key: 退到 stub, 但不静默, 标 [no-key]
+    if (!apiKey) {
+      const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
+      const userText = (lastMsg?.content || '').slice(0, 200);
+      return {
+        content: `[${id} no-key] 富哥收到: "${userText}"\n\n请在 .env 填 ${cfg.keyEnv} 即可真接 (无 key 时回退到 stub)。`,
+        model: id,
+        finishReason: 'stop',
+        noKey: true,
+      };
+    }
+
+    // 实时算 usage (不靠 stub 1000+500)
+    let promptTokens = 0;
+    let completionTokens = 0;
+    for (const m of req.messages) {
+      if (typeof m.content === 'string') {
+        // 粗算: 中文 1 字 ≈ 1.5 token, 英文 1 词 ≈ 1.3 token
+        const cn = (m.content.match(/[\u4e00-\u9fff]/g) || []).length;
+        const en = m.content.length - cn;
+        promptTokens += Math.ceil(cn * 1.5 + en * 0.4);
+      }
+    }
+
+    try {
+      const r = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: cfg.modelName,
+          messages: req.messages.map(m => ({ role: m.role, content: m.content })),
+          temperature: req.temperature ?? 0.7,
+          max_tokens: req.maxTokens ?? 2048,
+          stream: false,
+        }),
+        // 30s timeout (学 3 框架超时)
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!r.ok) {
+        const errText = await r.text().catch(() => '');
+        throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
+      }
+      const data = await r.json() as any;
+      const choice = data.choices?.[0];
+      const content = choice?.message?.content || '';
+      completionTokens = data.usage?.completion_tokens ?? Math.ceil(content.length * 0.5);
+      promptTokens = data.usage?.prompt_tokens ?? promptTokens;
+      return {
+        content,
+        model: data.model || cfg.modelName,
+        finishReason: choice?.finish_reason || 'stop',
+        usage: { promptTokens, completionTokens }, // 给上层算 cost
+      };
+    } catch (err: any) {
+      // 真接失败: 返回错误信息, 但不抛 (让 router 走降级路径)
+      const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
+      const userText = (lastMsg?.content || '').slice(0, 200);
+      return {
+        content: `[${id} 调用失败] ${err.message}\n\n用户消息: "${userText}"\n\n(router 会自动降级到下一个 provider)`,
+        model: id,
+        finishReason: 'error',
+        error: err.message,
+      };
+    }
   }
 
   // ===== 辅助方法 =====

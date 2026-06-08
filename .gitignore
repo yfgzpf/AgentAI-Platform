@@ -1,56 +1,9 @@
+# 工作记忆 (运行时生成)
+.agentai/
+*.agentai/memory.jsonl
+packages/*/qq-*
+packages/*/out/
+packages/*/dist/
 node_modules/
-dist/
-build/
-.next/
-.turbo/
-.tauri/
-.sandbox/
-
-# Env / Secrets (NEVER commit)
-.env
-.env.local
-.env.*.local
-keys.enc
-.salt
-*.key
-*.pem
-*.p12
-
-# IDE / OS
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-
-# Logs
 *.log
-logs/
-.pnpm-debug.log*
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-
-# Docker
-*.tar
-*.tar.gz
-
-# Test / Coverage
-coverage/
-.nyc_output/
-
-# Tauri
-src-tauri/target/
-
-# OS temp
-$TEMP/
-$RECYCLE.BIN/
-System Volume Information/
-
-# User workspace (绝对不提交)
-~/.agentai/
+.env

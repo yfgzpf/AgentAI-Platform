@@ -1,0 +1,208 @@
+/**
+ * 真设置页 - 密钥管理 / 框架选择 / 模型选择 / 启动 wizard 入口
+ */
+import React, { useState, useEffect } from 'react';
+import { Card, Input, Button, Space, Tag, Alert, Form, message, Tabs, Descriptions } from 'antd';
+import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { ModelSelector } from './ModelSelector';
+import { useSettingsStore, useFrameworkStore } from '../store';
+
+export const Settings: React.FC = () => {
+  const { provider, hasKey, setProvider, setHasKey } = useSettingsStore();
+  const { active, setActive, abRatio, setAbRatio } = useFrameworkStore();
+  const [apiKey, setApiKey] = useState('');
+  const [keyStatus, setKeyStatus] = useState<{ ok: boolean; masked: string; envVar: string } | null>(null);
+
+  // 从 gateway 拉取 key 状态 (避免前端存真实 key)
+  const loadKeyStatus = async () => {
+    try {
+      const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+      const r = await fetch(httpUrl + '/v1/settings/keys');
+      if (r.ok) {
+        const data = await r.json();
+        setKeyStatus(data);
+        setHasKey(data.ok);
+      }
+    } catch {
+      setKeyStatus({ ok: false, masked: 'gateway 离线', envVar: provider === 'agentai' ? 'AGENTAI_API_KEY' : `${provider.toUpperCase()}_API_KEY` });
+    }
+  };
+
+  useEffect(() => {
+    loadKeyStatus();
+    const t = setInterval(loadKeyStatus, 10000);
+    return () => clearInterval(t);
+  }, [provider]);
+
+  const saveKey = async () => {
+    if (!apiKey.trim()) {
+      message.warning('请输入 API key');
+      return;
+    }
+    // 真保存走 gateway (写到 .env)
+    try {
+      const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+      const r = await fetch(httpUrl + '/v1/settings/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, apiKey }),
+      });
+      if (r.ok) {
+        message.success('✅ Key 已保存到 .env (AES-256-GCM 加密)');
+        setApiKey('');
+        loadKeyStatus();
+      } else {
+        const err = await r.json();
+        message.error('保存失败: ' + (err.error || r.status));
+      }
+    } catch (e: any) {
+      message.error('保存失败: ' + e.message);
+    }
+  };
+
+  return (
+    <div style={{ padding: 24, color: '#fff', maxWidth: 900, margin: '0 auto' }}>
+      <h2><SettingOutlined /> AgentAI Platform 设置</h2>
+
+      <Tabs
+        defaultActiveKey="llm"
+        items={[
+          {
+            key: 'llm',
+            label: <span><ApiOutlined /> LLM 模型</span>,
+            children: (
+              <Card>
+                <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                  <ModelSelector />
+                  <Alert
+                    type="info"
+                    message="模型路由规则"
+                    description={
+                      <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
+                        <li>默认走 <b>agentai</b> (Agnes), 真接 apihub.agnes-ai.com</li>
+                        <li>失败 30% 自动熔断, 降级到 <b>deepseek</b></li>
+                        <li>再失败降级到 <b>openai</b> (gpt-4o-mini)</li>
+                        <li>每日成本上限 $5, 超出后强制走最便宜的</li>
+                      </ul>
+                    }
+                  />
+                </Space>
+              </Card>
+            ),
+          },
+          {
+            key: 'keys',
+            label: <span><KeyOutlined /> 密钥管理</span>,
+            children: (
+              <Card>
+                <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                  <Alert
+                    type="warning"
+                    message="密钥安全"
+                    description="密钥保存到项目根目录 .env, 用 AES-256-GCM 加密, 不上传任何服务器"
+                  />
+                  {keyStatus && (
+                    <Descriptions size="small" column={1} bordered>
+                      <Descriptions.Item label="当前 provider">{provider}</Descriptions.Item>
+                      <Descriptions.Item label="Key 状态">
+                        {keyStatus.ok ? <Tag color="success">✓ 已配置</Tag> : <Tag color="error">✗ 未配置</Tag>}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Key 预览">{keyStatus.masked}</Descriptions.Item>
+                      <Descriptions.Item label="环境变量名">
+                        <code>{keyStatus.envVar}</code>
+                      </Descriptions.Item>
+                    </Descriptions>
+                  )}
+                  <Form layout="vertical">
+                    <Form.Item label={`新 ${provider.toUpperCase()}_API_KEY`}>
+                      <Input.Password
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="sk-..."
+                        prefix={<KeyOutlined />}
+                      />
+                    </Form.Item>
+                    <Form.Item>
+                      <Button type="primary" icon={<SaveOutlined />} onClick={saveKey}>
+                        保存到 .env
+                      </Button>
+                    </Form.Item>
+                  </Form>
+                </Space>
+              </Card>
+            ),
+          },
+          {
+            key: 'framework',
+            label: <span><ThunderboltOutlined /> 框架切换</span>,
+            children: (
+              <Card>
+                <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                  <div>
+                    <div style={{ color: '#888', marginBottom: 8 }}>当前框架</div>
+                    <Space>
+                      <Button
+                        type={active === 'openclaw' ? 'primary' : 'default'}
+                        onClick={() => setActive('openclaw')}
+                      >
+                        OpenClaw (学自 ZhiY.AI)
+                      </Button>
+                      <Button
+                        type={active === 'hermes' ? 'primary' : 'default'}
+                        onClick={() => setActive('hermes')}
+                        style={active === 'hermes' ? { background: '#9333EA', borderColor: '#9333EA' } : undefined}
+                      >
+                        Hermes (学自 30+ 平台)
+                      </Button>
+                    </Space>
+                  </div>
+                  <div>
+                    <div style={{ color: '#888' }}>A/B 灰度: {(abRatio * 100).toFixed(0)}% → {active}</div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={abRatio}
+                      onChange={(e) => setAbRatio(parseFloat(e.target.value))}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <Alert
+                    type="info"
+                    message="自创整合说明"
+                    description={
+                      <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
+                        <li>不是照搬 OpenClaw, 是学它系统提示含工具描述的写法</li>
+                        <li>不是照搬 Hermes, 是学它 30+ 平台的网关 + 工具注册模式</li>
+                        <li>融合 Reasonix 的 Cache-First + 4 步修复</li>
+                        <li>4 大自创: 中文注入扫描 / 风险门 / 反思门 / 智能路由</li>
+                      </ul>
+                    }
+                  />
+                </Space>
+              </Card>
+            ),
+          },
+          {
+            key: 'about',
+            label: <span>关于</span>,
+            children: (
+              <Card>
+                <Descriptions column={1} bordered>
+                  <Descriptions.Item label="项目">AgentAI Platform v0.1.0-alpha.1</Descriptions.Item>
+                  <Descriptions.Item label="桌面壳">Tauri 2.0 (5-10MB)</Descriptions.Item>
+                  <Descriptions.Item label="Gateway">Node.js + Socket.io (18789)</Descriptions.Item>
+                  <Descriptions.Item label="VSCode 扩展">.vsix 18.9 KB</Descriptions.Item>
+                  <Descriptions.Item label="QQ 机器人">独立 agentai-qqbot 包</Descriptions.Item>
+                  <Descriptions.Item label="多模态">Agnes Image 2.1 + Video v2.0</Descriptions.Item>
+                  <Descriptions.Item label="3 框架参照">ZhiY.AI + Hermes + Reasonix</Descriptions.Item>
+                </Descriptions>
+              </Card>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+};

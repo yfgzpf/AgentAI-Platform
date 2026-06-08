@@ -93,6 +93,44 @@ class GatewayClient {
             }, 5000);
         });
     }
+    /**
+     * HTTP POST (新增, webview 和文件命令用)
+     * ws://127.0.0.1:18789 -> http://127.0.0.1:18789
+     */
+    async httpPost(path, body) {
+        const httpUrl = this.url.replace(/^ws/, 'http');
+        const https = await import('https');
+        const http = await import('http');
+        const { URL } = await import('url');
+        const u = new URL(httpUrl + path);
+        const lib = u.protocol === 'https:' ? https : http;
+        const data = JSON.stringify(body);
+        return new Promise((resolve, reject) => {
+            const req = lib.request({
+                hostname: u.hostname,
+                port: u.port,
+                path: u.pathname + u.search,
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+                timeout: 60_000,
+            }, (res) => {
+                let chunks = '';
+                res.on('data', (c) => chunks += c.toString());
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(chunks));
+                    }
+                    catch {
+                        resolve({ raw: chunks });
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.on('timeout', () => { req.destroy(new Error('HTTP request timeout 60s')); });
+            req.write(data);
+            req.end();
+        });
+    }
     dispose() {
         if (this.reconnectTimer)
             clearTimeout(this.reconnectTimer);

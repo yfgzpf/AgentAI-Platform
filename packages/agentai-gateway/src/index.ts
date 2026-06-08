@@ -242,6 +242,174 @@ app.get('/v1/memory', async (req, res) => {
   }
 });
 
+// ===== Image / Video 生成 (真接 Agnes Python 脚本, 通过 skills_bridge.py 走 stdin JSON) =====
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SKILL_BRIDGE = path.resolve(__dirname, '../../agentai-skills/scripts/skills_bridge.py');
+
+function callBridge(payload: Record<string, any>): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve) => {
+    const pyCandidates: string[] = process.platform === 'win32'
+      ? [
+          'C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe',
+          'C:/Python314/python.exe',
+          'python',
+          'python3',
+          'py',
+        ]
+      : ['python3', 'python'];
+    const py: string = process.env.AGNES_PYTHON || pyCandidates[0]!;
+
+    // 不用 shell + 传 stdin JSON (解决 Windows 中文 arg 编码)
+    const child = spawn(py, [SKILL_BRIDGE], {
+      env: { ...process.env, AGNES_API_KEY: process.env.AGNES_API_KEY || '' },
+      shell: false,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }) as any; // 避免 TS 联合类型把 stdin/stdout 推成 never
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.on('close', (code: number | null) => resolve({ stdout, stderr, code: code ?? 0 }));
+    child.on('error', (err: Error) => resolve({ stdout: '', stderr: String(err), code: 127 }));
+    // 关键: 写 stdin 然后关
+    child.stdin.write(JSON.stringify(payload));
+    child.stdin.end();
+    setTimeout(() => child.kill(), 360_000); // 6 min
+  });
+}
+
+app.post('/v1/image', async (req, res) => {
+  try {
+    const { prompt, size = '1024x1024', image } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: 'prompt required' });
+    if (!process.env.AGNES_API_KEY) return res.status(400).json({ error: 'AGNES_API_KEY not set in .env' });
+
+    const r = await callBridge({ action: 'image', prompt, size, image });
+    let data: any = {};
+    try { data = JSON.parse(r.stdout.split('\n').filter(Boolean).pop() || '{}'); } catch {}
+    if (r.code !== 0 || !data.ok) {
+      return res.status(500).json({ error: data.error || r.stderr || 'unknown', code: r.code });
+    }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post('/v1/video', async (req, res) => {
+  try {
+    const { prompt, image } = req.body || {};
+    if (!prompt && !image) return res.status(400).json({ error: 'prompt or image required' });
+    if (!process.env.AGNES_API_KEY) return res.status(400).json({ error: 'AGNES_API_KEY not set in .env' });
+
+    const r = await callBridge({ action: 'video', prompt, image });
+    let data: any = {};
+    try { data = JSON.parse(r.stdout.split('\n').filter(Boolean).pop() || '{}'); } catch {}
+    if (r.code !== 0 || !data.ok) {
+      return res.status(500).json({ error: data.error || r.stderr || 'unknown', code: r.code });
+    }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.get('/v1/video/:id', async (req, res) => {
+  try {
+    const r = await callBridge({ action: 'video_status', id: req.params.id });
+    let data: any = {};
+    try { data = JSON.parse(r.stdout.split('\n').filter(Boolean).pop() || '{}'); } catch {}
+    if (r.code !== 0 || !data.ok) {
+      return res.status(500).json({ error: data.error || r.stderr || 'unknown' });
+    }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// ===== 密钥管理 (Settings 面板用) =====
+import fs from 'fs';
+const ENV_PATH = process.env.AGENTAI_ENV_PATH || path.resolve(process.cwd(), '../../.env');
+
+function readEnv(): Record<string, string> {
+  if (!fs.existsSync(ENV_PATH)) return {};
+  const text = fs.readFileSync(ENV_PATH, 'utf-8');
+  const out: Record<string, string> = {};
+  for (const line of text.split('\n')) {
+    const m = line.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (m && m[1] && m[2] !== undefined) out[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+  }
+  return out;
+}
+
+function writeEnv(env: Record<string, string>): void {
+  const text = Object.entries(env).map(([k, v]) => `${k}=${v ?? ''}`).join('\n') + '\n';
+  fs.mkdirSync(path.dirname(ENV_PATH), { recursive: true });
+  fs.writeFileSync(ENV_PATH, text, { mode: 0o600 });
+}
+
+const KEY_MAP: Record<string, string> = {
+  agentai: 'AGENTAI_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  openai: 'OPENAI_API_KEY',
+};
+
+app.get('/v1/settings/keys', (_req, res) => {
+  const env = readEnv();
+  const providers = ['agentai', 'deepseek', 'openai'] as const;
+  const result: Record<string, { ok: boolean; masked: string; envVar: string }> = {};
+  for (const p of providers) {
+    const envVar = KEY_MAP[p]!;
+    const v: string | undefined = env[envVar] ?? process.env[envVar];
+    result[p] = {
+      ok: !!v,
+      masked: v ? `${v.slice(0, 4)}...${v.slice(-4)} (${v.length} chars)` : '未配置',
+      envVar,
+    };
+  }
+  res.json(result);
+});
+
+app.post('/v1/settings/keys', (req, res) => {
+  try {
+    const { provider, apiKey } = req.body || {};
+    if (!provider || !KEY_MAP[provider]) return res.status(400).json({ error: 'invalid provider' });
+    if (!apiKey || apiKey.length < 8) return res.status(400).json({ error: 'apiKey too short' });
+    const env = readEnv();
+    env[KEY_MAP[provider]!] = apiKey;
+    writeEnv(env);
+    process.env[KEY_MAP[provider]!] = apiKey;
+    res.json({ ok: true, envVar: KEY_MAP[provider] });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// ===== QQ Bot webhook (给独立 agentai-qqbot 包调用) =====
+app.post('/v1/qq/message', async (req, res) => {
+  try {
+    const { userId, groupId, message } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'message required' });
+    const sessionKey = `qq:${groupId || 'private'}:${userId || 'anonymous'}`;
+    let loop = sessions.get(sessionKey);
+    if (!loop) {
+      loop = new AgentAILoop(router, registry, [], { maxIterations: 10, userId: `qq-${userId}`, workspace: `qq-group-${groupId}` });
+      sessions.set(sessionKey, loop);
+    }
+    const response = await loop.run(message);
+    res.json({ reply: response.content, provider: response.provider, usage: response.usage });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // ===== WebSocket (给 Tauri 桌面壳用) =====
 io.on('connection', (socket) => {
   console.log(`[ws] connected: ${socket.id}`);

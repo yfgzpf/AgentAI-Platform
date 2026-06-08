@@ -1,17 +1,33 @@
 import React, { useState } from 'react';
 import { Layout, ConfigProvider, theme, Button, Space, Avatar, Typography } from 'antd';
-import { RobotOutlined, MessageOutlined, AppstoreOutlined, SettingOutlined, GithubOutlined } from '@ant-design/icons';
+import {
+  RobotOutlined, MessageOutlined, AppstoreOutlined, SettingOutlined,
+  PictureOutlined, VideoCameraOutlined, GithubOutlined, MessageOutlined as QQOutlined,
+} from '@ant-design/icons';
 import { Chat } from './components/Chat';
 import { FrameworkSwitch } from './components/FrameworkSwitch';
 import { SkillLibrary } from './components/SkillLibrary';
+import { Settings } from './components/Settings';
+import { ImageGen } from './components/ImageGen';
+import { VideoGen } from './components/VideoGen';
+import { QQBotPanel } from './components/QQBotPanel';
 
 const { Sider, Content, Header } = Layout;
 const { Title, Text } = Typography;
 
-type View = 'chat' | 'skills' | 'settings';
+type View = 'chat' | 'image' | 'video' | 'qq' | 'skills' | 'settings';
 
 export const App: React.FC = () => {
   const [view, setView] = useState<View>('chat');
+
+  const navItems: { key: View; icon: React.ReactNode; label: string }[] = [
+    { key: 'chat', icon: <MessageOutlined />, label: '对话' },
+    { key: 'image', icon: <PictureOutlined />, label: '生图' },
+    { key: 'video', icon: <VideoCameraOutlined />, label: '生视频' },
+    { key: 'qq', icon: <QQOutlined />, label: 'QQ机器人' },
+    { key: 'skills', icon: <AppstoreOutlined />, label: '技能库' },
+    { key: 'settings', icon: <SettingOutlined />, label: '设置' },
+  ];
 
   return (
     <ConfigProvider
@@ -42,30 +58,39 @@ export const App: React.FC = () => {
           {/* 左侧主导航 */}
           <Sider width={56} style={{ background: '#0a0a0a', borderRight: '1px solid #1f1f1f' }}>
             <Space direction="vertical" style={{ width: '100%', padding: '8px 0' }} size={4}>
-              <Button type={view === 'chat' ? 'primary' : 'text'} icon={<MessageOutlined />} block style={{ height: 40 }} onClick={() => setView('chat')} />
-              <Button type={view === 'skills' ? 'primary' : 'text'} icon={<AppstoreOutlined />} block style={{ height: 40 }} onClick={() => setView('skills')} />
-              <Button type={view === 'settings' ? 'primary' : 'text'} icon={<SettingOutlined />} block style={{ height: 40 }} onClick={() => setView('settings')} />
+              {navItems.map(item => (
+                <Button
+                  key={item.key}
+                  type={view === item.key ? 'primary' : 'text'}
+                  icon={item.icon}
+                  block
+                  style={{ height: 40 }}
+                  onClick={() => setView(item.key)}
+                  title={item.label}
+                />
+              ))}
             </Space>
           </Sider>
 
           {/* 框架切换侧栏 */}
-          <Sider width={260} style={{ background: '#141414', borderRight: '1px solid #1f1f1f' }}>
-            <FrameworkSwitch />
-            <div style={{ padding: 16, color: '#888', fontSize: 12 }}>
-              <p style={{ margin: 0 }}>💡 学自 OpenClaw + Hermes + Reasonix 3 框架, 自创 4 大新概念</p>
-            </div>
-          </Sider>
+          {view === 'chat' && (
+            <Sider width={260} style={{ background: '#141414', borderRight: '1px solid #1f1f1f' }}>
+              <FrameworkSwitch />
+              <div style={{ padding: 16, color: '#888', fontSize: 12 }}>
+                <p style={{ margin: 0 }}>💡 学自 OpenClaw + Hermes + Reasonix 3 框架, 自创 4 大新概念</p>
+                <p style={{ margin: '8px 0 0' }}>🎯 主模型: Agnes AI (备: DeepSeek / OpenAI)</p>
+              </div>
+            </Sider>
+          )}
 
           {/* 主内容区 */}
-          <Content style={{ background: '#0f0f0f' }}>
+          <Content style={{ background: '#0f0f0f', overflowY: 'auto' }}>
             {view === 'chat' && <Chat />}
+            {view === 'image' && <ImageGen />}
+            {view === 'video' && <VideoGen />}
+            {view === 'qq' && <QQBotPanel />}
             {view === 'skills' && <SkillLibrary />}
-            {view === 'settings' && (
-              <div style={{ padding: 24, color: '#fff' }}>
-                <Title level={3}>设置 (阶段 2 落地)</Title>
-                <Text type="secondary">首启动 wizard + 密钥管理 + LLM 切换 即将上线 (Week 3)</Text>
-              </div>
-            )}
+            {view === 'settings' && <Settings />}
           </Content>
         </Layout>
       </Layout>

@@ -143,10 +143,10 @@ export const Chat: React.FC = () => {
           </div>
         )}
         {messages.map((m) => (
-          <div key={m.id} style={{ display: 'flex', marginBottom: 16, flexDirection: m.role === 'user' ? 'row-reverse' : 'row' }}>
+          <div key={m.id} className={`msg ${m.role === 'user' ? 'msg-user' : 'msg-bot'}`} style={{ display: 'flex', marginBottom: 16, flexDirection: m.role === 'user' ? 'row-reverse' : 'row' }}>
             <Avatar icon={m.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
                     style={{ background: m.role === 'user' ? '#4F46E5' : (m.framework === 'hermes' ? '#9333EA' : '#3B82F6'), margin: '0 8px' }} />
-            <div style={{ maxWidth: '70%', padding: '8px 12px', borderRadius: 8, background: m.role === 'user' ? '#4F46E5' : '#262626' }}>
+            <div className={`msg-bubble ${m.role === 'user' ? 'msg-bubble-user' : 'msg-bubble-bot'}`} style={{ maxWidth: '70%', padding: '8px 12px', borderRadius: 8, background: m.role === 'user' ? '#4F46E5' : '#262626' }}>
               {m.role === 'assistant' ? <Markdown content={m.content} streaming={m.streaming} /> : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>}
               {m.tokens && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>{m.tokens.prompt}+{m.tokens.completion} tokens</div>}
             </div>

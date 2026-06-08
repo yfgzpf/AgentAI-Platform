@@ -75,25 +75,32 @@ test.describe('AgentAI Platform - 网页端 E2E', () => {
     await expect(page.locator('text=qq-bot')).toBeVisible();
   });
 
-  test('7. 切到设置视图, 显示 "设置" 标题', async ({ page }) => {
+  test('7. 切到设置视图, 显示 Tabs 标签', async ({ page }) => {
     await page.goto('/');
     await waitApp(page);
     await page.locator('button').filter({ has: page.locator('.anticon-setting') }).first().click();
-    await expect(page.locator('text=设置 (阶段 2 落地)')).toBeVisible();
+    // 新设置页是 Tabs 布局, 看 4 个 tab 标签
+    await expect(page.locator('text=LLM 模型').first()).toBeVisible();
+    await expect(page.locator('text=密钥管理').first()).toBeVisible();
+    await expect(page.locator('text=框架切换').first()).toBeVisible();
   });
 
   test('8. Chat 输入框可输入, 按 Enter 不报错', async ({ page }) => {
+    page.on('pageerror', (e) => console.log('[pageerror]', e.message));
+    const chatResponse = page.waitForResponse(
+      (r) => r.url().includes('/v1/chat') && r.request().method() === 'POST',
+      { timeout: 30_000 },
+    );
     await page.goto('/');
     await waitApp(page);
-    // 找到输入框
     const input = page.locator('textarea[placeholder*="输入消息"]');
     await input.fill('富哥测试');
-    // 按 Enter (不发送, 因 Gateway 离线, 应走 stub 降级)
     await input.press('Enter');
-    // 等响应消息出现
     await expect(page.locator('text=富哥测试').first()).toBeVisible();
-    // 看到 stub 降级消息
-    await expect(page.locator('text=Gateway 离线').first()).toBeVisible({ timeout: 5000 });
+    // 等 /v1/chat 响应回来
+    await chatResponse;
+    // 助手消息渲染 (可能走 stub 也可能 no-key, 任何内容都算通过)
+    await expect(page.locator('.msg-bot').first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('9. 主题是暗色 (background 接近 #0a0a0a)', async ({ page }) => {
