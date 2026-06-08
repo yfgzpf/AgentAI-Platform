@@ -531,8 +531,9 @@ export class AgentAIRouter extends EventEmitter {
     if (!apiKey) {
       const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
       const userText = (lastMsg?.content || '').slice(0, 200);
+      const userId = (req as any).userId || '你';
       return {
-        content: `[${id} no-key] 富哥收到: "${userText}"\n\n请在 .env 填 ${cfg.keyEnv} 即可真接 (无 key 时回退到 stub)。`,
+        content: `[${id} no-key] ${userId}, 收到你的消息: "${userText}"\n\n请在 .env 填 ${cfg.keyEnv} 即可真接 (无 key 时回退到 stub)。也可以在 GUI 设置页一键填。`,
         model: id,
         finishReason: 'stop',
         noKey: true,

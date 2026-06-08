@@ -1,6 +1,34 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+// 0. 用户档案 (首次启动收集, 持久化)
+export interface UserProfile {
+  name: string;
+  onboardedAt: number;
+  workspace?: string;
+  language: 'zh' | 'en';
+}
+interface ProfileState {
+  profile: UserProfile | null;
+  setProfile: (p: UserProfile) => void;
+  clearProfile: () => void;
+}
+export const useProfileStore = create<ProfileState>()(
+  persist(
+    (set) => ({
+      profile: null,
+      setProfile: (p) => set({ profile: p }),
+      clearProfile: () => set({ profile: null }),
+    }),
+    { name: 'agentai-user-profile' },
+  ),
+);
+
+/** 工具: 拿当前用户名 (给 Chat / Editor / ImageGen / VideoGen 用) */
+export const useUserName = (): string => {
+  return useProfileStore.getState().profile?.name || '你';
+};
+
 // 1. Framework 状态 (openclaw / hermes + A/B 灰度)
 interface FrameworkState {
   active: 'openclaw' | 'hermes';

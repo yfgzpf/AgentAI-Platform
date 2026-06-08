@@ -478,7 +478,59 @@ app.post('/v1/upload', upload.single('file'), (req, res) => {
   });
 });
 
-// ===== 文件树 (VSCode 编辑器用) =====
+// ===== 文件树 (VSCode 编辑器用, Trae 风格) =====
+
+// 列盘符 (Windows) — 给前端 Open Folder 用, 浏览器没权限弹原生选择框
+app.get('/v1/fs/drives', (_req, res) => {
+  if (process.platform === 'win32') {
+    const drives: string[] = [];
+    for (let c = 65; c <= 90; c++) {
+      const letter = String.fromCharCode(c) + ':\\';
+      if (fs.existsSync(letter)) drives.push(letter);
+    }
+    return res.json({ platform: 'win32', drives, common: [
+      `${process.env.USERPROFILE || 'C:\\Users\\Administrator'}\\Desktop`,
+      `${process.env.USERPROFILE || 'C:\\Users\\Administrator'}\\Documents`,
+      'F:\\agentai-platform',
+    ]});
+  }
+  res.json({ platform: process.platform, drives: ['/'], common: [
+    process.env.HOME || '/',
+    '/tmp',
+    process.cwd(),
+  ]});
+});
+
+// 列子目录 — 懒加载 (AntD Tree onLoadData 调)
+app.get('/v1/fs/list', (req, res) => {
+  try {
+    const dir = (req.query.dir as string) || '';
+    if (!dir) return res.status(400).json({ error: 'dir required' });
+    const resolved = path.resolve(dir);
+    if (!fs.existsSync(resolved)) return res.status(404).json({ error: 'dir not found' });
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) return res.status(400).json({ error: 'not a directory' });
+    const items = fs.readdirSync(resolved, { withFileTypes: true })
+      .filter(it => !it.name.startsWith('.') && it.name !== 'node_modules' && it.name !== 'dist' && it.name !== 'out' && it.name !== '__pycache__' && it.name !== 'target' && it.name !== '.git')
+      .sort((a, b) => {
+        if (a.isDirectory() && !b.isDirectory()) return -1;
+        if (!a.isDirectory() && b.isDirectory()) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    const entries = items.map(it => {
+      const full = path.join(resolved, it.name);
+      const isDir = it.isDirectory();
+      let size = 0;
+      if (!isDir) { try { size = fs.statSync(full).size; } catch {} }
+      return { name: it.name, path: full, type: isDir ? 'directory' : 'file', size };
+    });
+    res.json({ dir: resolved, entries });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// 全树构建 (兼容旧版, 限 5 层)
 app.get('/v1/files', (req, res) => {
   try {
     const workspace = (req.query.workspace as string) || 'F:\\agentai-platform';
@@ -486,7 +538,7 @@ app.get('/v1/files', (req, res) => {
     if (!fs.existsSync(resolved)) {
       return res.json({ tree: [], root: resolved, error: 'workspace not found' });
     }
-    const tree = buildTree(resolved, '', 5); // 最深 5 层
+    const tree = buildTree(resolved, '', 5);
     res.json({ tree, root: resolved });
   } catch (e: any) {
     res.status(500).json({ error: String(e) });
@@ -526,6 +578,48 @@ function buildTree(dir: string, prefix: string = '', depth: number = 5): any[] {
     return [];
   }
 }
+
+// 新建文件 / 目录
+app.post('/v1/files/mkdir', (req, res) => {
+  try {
+    const { path: p } = req.body || {};
+    if (!p) return res.status(400).json({ error: 'path required' });
+    fs.mkdirSync(p, { recursive: true });
+    res.json({ ok: true, path: p });
+  } catch (e: any) { res.status(500).json({ error: String(e) }); }
+});
+
+app.post('/v1/files/touch', (req, res) => {
+  try {
+    const { path: p, content = '' } = req.body || {};
+    if (!p) return res.status(400).json({ error: 'path required' });
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    if (!fs.existsSync(p)) fs.writeFileSync(p, content, 'utf-8');
+    res.json({ ok: true, path: p });
+  } catch (e: any) { res.status(500).json({ error: String(e) }); }
+});
+
+app.post('/v1/files/rename', (req, res) => {
+  try {
+    const { from, to } = req.body || {};
+    if (!from || !to) return res.status(400).json({ error: 'from & to required' });
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(from, to);
+    res.json({ ok: true, from, to });
+  } catch (e: any) { res.status(500).json({ error: String(e) }); }
+});
+
+app.delete('/v1/files', (req, res) => {
+  try {
+    const p = (req.query.path as string) || '';
+    if (!p) return res.status(400).json({ error: 'path required' });
+    if (!fs.existsSync(p)) return res.status(404).json({ error: 'not found' });
+    const stat = fs.statSync(p);
+    if (stat.isDirectory()) fs.rmSync(p, { recursive: true, force: true });
+    else fs.unlinkSync(p);
+    res.json({ ok: true, path: p });
+  } catch (e: any) { res.status(500).json({ error: String(e) }); }
+});
 
 // 读文件
 app.get('/v1/files/read', (req, res) => {

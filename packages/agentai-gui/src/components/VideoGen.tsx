@@ -92,7 +92,7 @@ export const VideoGen: React.FC = () => {
 
   const submit = async (imageUrl?: string) => {
     if (!prompt.trim()) {
-      message.warning('富哥, 写个视频描述吧~');
+      message.warning('写个视频描述吧~');
       return;
     }
     setBusy(true);

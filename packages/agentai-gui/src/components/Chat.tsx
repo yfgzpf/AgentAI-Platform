@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Input, Tag, Space, Avatar, Badge } from 'antd';
 import { SendOutlined, ThunderboltOutlined, RobotOutlined, UserOutlined, BulbOutlined, ClearOutlined } from '@ant-design/icons';
-import { useFrameworkStore, useChatStore } from '../store';
+import { useFrameworkStore, useChatStore, useProfileStore } from '../store';
 import { Markdown } from './Markdown';
 import { FileUpload, type UploadedFile } from './FileUpload';
 
@@ -18,6 +18,8 @@ interface ChatMessage {
 export const Chat: React.FC = () => {
   const { active, abRatio } = useFrameworkStore();
   const { messages, appendMessage, updateMessage, clearMessages } = useChatStore();
+  const { profile } = useProfileStore();
+  const userName = profile?.name || '你';
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([]);
@@ -78,7 +80,7 @@ export const Chat: React.FC = () => {
     setSending(true);
     setInput('');
 
-    // 富哥, 用 prompt + 附件 (图片) 拼成富文本
+    // 用 prompt + 附件 (图片) 拼成富文本
     const fileDesc = attachedFiles.length > 0
       ? '\n\n[附件: ' + attachedFiles.map(f => `${f.originalName}(${f.mimetype}, ${(f.size/1024).toFixed(1)}KB) ${f.url}`).join('; ') + ']'
       : '';
@@ -106,7 +108,7 @@ export const Chat: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: fullText,
-          userId: '富哥',
+          userId: userName,
           workspace: 'F:\\agentai-platform',
         }),
       })
@@ -148,7 +150,7 @@ export const Chat: React.FC = () => {
         {messages.length === 0 && (
           <div style={{ textAlign: 'center', color: '#888', marginTop: 80 }}>
             <RobotOutlined style={{ fontSize: 48, marginBottom: 16 }} />
-            <p>富哥, 发个消息开始干</p>
+            <p>{userName}, 发个消息开始干</p>
           </div>
         )}
         {messages.map((m) => (
@@ -173,7 +175,7 @@ export const Chat: React.FC = () => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder="富哥, 问点啥? Enter 发送, Shift+Enter 换行"
+            placeholder={`${userName}, 问点啥? Enter 发送, Shift+Enter 换行`}
             autoSize={{ minRows: 1, maxRows: 4 }}
             disabled={sending}
           />

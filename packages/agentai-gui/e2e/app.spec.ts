@@ -1,10 +1,20 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-// 工具: 等待 App 完全挂载
+// 工具: 等待 App 完全挂载 (跳过首次启动引导)
 async function waitApp(page: Page) {
   await page.waitForSelector('text=AgentAI Platform', { timeout: 10000 });
-  await page.waitForSelector('text=富哥', { timeout: 5000 });
+  // 如果还在引导页, 先完成它
+  const nameInput = page.locator('input[placeholder*="名字"]');
+  if (await nameInput.isVisible().catch(() => false)) {
+    await nameInput.fill('测试用户');
+    await page.locator('button:has-text("下一步")').click();
+    await page.waitForTimeout(300);
+    await page.locator('button:has-text("下一步")').click();
+    await page.waitForTimeout(300);
+    await page.locator('button:has-text("跳过并完成")').click();
+    await page.waitForTimeout(2000); // 等 location.reload
+  }
 }
 
 test.describe('AgentAI Platform - 网页端 E2E', () => {

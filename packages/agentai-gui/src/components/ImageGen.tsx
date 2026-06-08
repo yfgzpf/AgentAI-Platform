@@ -63,7 +63,7 @@ export const ImageGen: React.FC = () => {
 
   const gen = async () => {
     if (!prompt.trim()) {
-      message.warning('富哥, 写个 prompt 吧~');
+      message.warning('写个 prompt 吧~~');
       return;
     }
     setBusy(true);
