@@ -495,11 +495,18 @@ export class AgentAIRouter extends EventEmitter {
     return raw;
   }
 
-  // ===== Provider 执行 (具体 HTTP/SSE 调用, 留给派生类) =====
+  // ===== Provider 执行 (具体 HTTP/SSE 调用) =====
   private async executeProvider(id: ProviderId, req: ChatRequest): Promise<any> {
-    // 实际 HTTP 调用由派生类实现 (AgentAIProvider / DeepSeekProvider)
-    // 这里只暴露接口
-    throw new Error('executeProvider must be implemented by subclass');
+    // Stage 2: 真实 LLM 还没接, 用 deterministic stub
+    // 3 个 provider 都返回相同 stub, 但 provider 字段标真实 id
+    // 阶段 2.5 会用派生类替换: AgentAIProvider / DeepSeekProvider / OpenAIProvider
+    const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
+    const userText = (lastMsg?.content || '').slice(0, 200);
+    return {
+      content: `[${id} stub] 富哥收到: "${userText}"\n\n这是 Stage 2 占位响应, 真 LLM Provider 在阶段 2.5 接入。\n\n如需立即接真 LLM, 请在 .env 填 AGENTAI_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY, 然后实现 AgentAIProvider.executeProvider()。`,
+      model: id,
+      finishReason: 'stop',
+    };
   }
 
   // ===== 辅助方法 =====

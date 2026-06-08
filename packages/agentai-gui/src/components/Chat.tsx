@@ -23,18 +23,25 @@ export const Chat: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
 
-  // 1. WebSocket 接入 Gateway
+  // 1. 优先 WS, 失败 fallback HTTP POST
   useEffect(() => {
-    const url = (window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789';
+    const wsUrl = (window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789';
+    const httpUrl = wsUrl.replace(/^ws/, 'http');
     let ws: WebSocket;
     let retryTimer: any;
     const connect = () => {
-      ws = new WebSocket(url);
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch {
+        // WS 构造失败, 用 HTTP fallback
+        (window as any).__AGENTAI_USE_HTTP__ = true;
+        return;
+      }
       wsRef.current = ws;
-      ws.onopen = () => console.log('[Chat] Gateway connected');
+      ws.onopen = () => console.log('[Chat] Gateway connected via WS');
       ws.onclose = () => {
-        console.log('[Chat] Gateway disconnected, retry in 3s');
-        retryTimer = setTimeout(connect, 3000);
+        console.log('[Chat] Gateway WS disconnected, falling back to HTTP');
+        (window as any).__AGENTAI_USE_HTTP__ = true;
       };
       ws.onerror = () => {};
       ws.onmessage = (e) => {
@@ -83,14 +90,33 @@ export const Chat: React.FC = () => {
         framework: active,
       }));
     } else {
-      // Gateway 离线降级：本地 stub
-      setTimeout(() => {
-        updateMessage(botId, (m: ChatMessage) => ({
-          ...m,
-          streaming: false,
-          content: '[' + active + ' stub] Gateway 离线, 收到: "' + text.slice(0, 50) + '"。\n\n请启动 pnpm dev:gateway。',
-        }));
-      }, 500);
+      // HTTP fallback
+      const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+      fetch(httpUrl + '/v1/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          userId: '富哥',
+          workspace: 'F:\\agentai-platform',
+        }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          updateMessage(botId, (m: ChatMessage) => ({
+            ...m,
+            streaming: false,
+            content: data.content || data.error || '(空响应)',
+            tokens: data.usage,
+          }));
+        })
+        .catch((err) => {
+          updateMessage(botId, (m: ChatMessage) => ({
+            ...m,
+            streaming: false,
+            content: '[' + active + ' error] HTTP 调用失败: ' + err.message + '\n\n请确认 Gateway 在 18789 端口运行。',
+          }));
+        });
     }
     setSending(false);
   };
