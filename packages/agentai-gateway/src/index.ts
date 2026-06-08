@@ -23,6 +23,7 @@ import { AgentAILoop } from './agentai-loop.js';
 import { readMemory, writeMemory } from './memory.js';
 import path from 'path';
 import fs from 'fs';
+import { frameworkSwitcher } from './frameworks/switcher.js';
 
 // ===== 启动时自动读 .env (从 F:\agentai-platform\.env 或 cwd/../../.env) =====
 function loadEnv() {
@@ -214,13 +215,39 @@ app.get('/v1/tools', (_req, res) => {
 
 app.post('/v1/chat', async (req, res) => {
   try {
-    const { message, userId = 'default', workspace = process.cwd() } = req.body;
+    const { message, userId = 'default', workspace = process.cwd(), framework } = req.body;
     if (!message) {
       return res.status(400).json({ error: 'message required' });
     }
 
     // 写 user 消息到记忆
     await writeMemory({ userId, workspace, role: 'user', content: message, source: 'session' });
+
+    // 如果指定 framework, 真接框架 adapter (OpenClaw / Hermes)
+    if (framework === 'openclaw' || framework === 'hermes') {
+      try {
+        const res2 = await frameworkSwitcher.chat(
+          [{ role: 'user', content: message }],
+          { userId, workspace, tools: [] },
+        );
+        await writeMemory({
+          userId, workspace, role: 'assistant',
+          content: res2.content,
+          metadata: { framework, provider: res2.provider, durationMs: res2.durationMs },
+          source: 'session',
+        });
+        return res.json({
+          content: res2.content,
+          toolCalls: res2.toolCalls,
+          provider: res2.provider,
+          framework,
+          usage: res2.usage,
+          sessionId: `framework-${Date.now()}`,
+        });
+      } catch (e: any) {
+        return res.status(500).json({ error: String(e) });
+      }
+    }
 
     // 创建或获取 session
     const sessionKey = `${userId}:${workspace}`;
@@ -530,6 +557,42 @@ app.put('/v1/files/write', (req, res) => {
   }
 });
 
+// ===== 框架管理 (framework switcher) =====
+app.get('/v1/framework/list', (_req, res) => {
+  res.json({ frameworks: frameworkSwitcher.list(), status: frameworkSwitcher.status() });
+});
+
+app.post('/v1/framework/switch', async (req, res) => {
+  try {
+    const { to, abRatio = 1, drain = true } = req.body || {};
+    if (to !== 'openclaw' && to !== 'hermes') {
+      return res.status(400).json({ error: 'invalid framework (openclaw|hermes)' });
+    }
+    const result = await frameworkSwitcher.switch({ to, abRatio, drain });
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+app.get('/v1/framework/status', (_req, res) => {
+  res.json(frameworkSwitcher.status());
+});
+
+// OpenClaw 多智能体 dispatch (学 ZhiY multi-agent-orchestrator)
+app.post('/v1/openclaw/dispatch', async (req, res) => {
+  try {
+    const { agentRole, task } = req.body || {};
+    if (!task) return res.status(400).json({ error: 'task required' });
+    const adapter = frameworkSwitcher['adapters']?.get('openclaw') as any;
+    if (!adapter) return res.status(500).json({ error: 'openclaw not registered' });
+    const r = await adapter.dispatchToAgent(agentRole || 'general', task);
+    res.json({ content: r.content, provider: r.provider, usage: r.usage });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
 // ===== QQ Bot webhook (给独立 agentai-qqbot 包调用) =====
 app.post('/v1/qq/message', async (req, res) => {
   try {
@@ -582,6 +645,15 @@ server.listen(PORT, HOST, () => {
   // 启动 skills 监听 (学 Hermes)
   registry.startWatcher().catch(err => {
     console.warn('[agentai-gateway] skills watcher failed:', err);
+  });
+
+  // 初始化 framework switcher (注册 OpenClaw / Hermes 真适配器)
+  frameworkSwitcher.initActive({
+    userId: 'gateway-bootstrap',
+    workspace: process.cwd(),
+    tools: registry.toLLMTools(),
+  }).catch(err => {
+    console.warn('[agentai-gateway] framework init failed:', err.message);
   });
 });
 

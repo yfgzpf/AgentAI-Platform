@@ -15,8 +15,12 @@
 
 import { EventEmitter } from 'events';
 import type { ChatMessage, ChatResponse } from '../llm-router.js';
+import { AgentAIRouter } from '../llm-router.js';
 import { scanPromptInjection, computeUsage } from './openclaw-helpers.js';
 import type { FrameworkAdapter, FrameworkContext, FrameworkCapabilities } from './types.js';
+
+/** 共享 router (单例) */
+const router = new AgentAIRouter();
 
 export class OpenClawAdapter extends EventEmitter implements FrameworkAdapter {
   readonly id = 'openclaw' as const;
@@ -63,10 +67,16 @@ export class OpenClawAdapter extends EventEmitter implements FrameworkAdapter {
     // === 3. 构造 OpenClaw 风格的 system + tools 注入 (学 zhiy-agent-core.ts BUILTIN_TOOLS) ===
     const systemWithTools = this.injectOpenClawTools(acc);
 
-    // === 4. 调真实 LLM (走 LLM Router) ===
-    // 这里只是 stub, 实际由 router.chat() 调度
-    // 派生类 OpenClawRealAdapter 会注入真 provider
-    return this.executeStub(systemWithTools, ctx);
+    // === 4. 调真 LLM Router (学 ZhiY gateway.ts: 中间件链式注入) ===
+    const startedAt = Date.now();
+    const res = await router.chat({
+      messages: systemWithTools,
+      model: this.capabilities.defaultProvider,
+      maxTokens: 2048,
+      temperature: 0.7,
+    });
+    res.durationMs = Date.now() - startedAt;
+    return res;
   }
 
   /**
@@ -90,16 +100,6 @@ export class OpenClawAdapter extends EventEmitter implements FrameworkAdapter {
     return [...systemMsgs, ...messages.filter(m => m.role !== 'system')];
   }
 
-  private async executeStub(messages: ChatMessage[], _ctx: FrameworkContext): Promise<ChatResponse> {
-    // stub, 真实 provider 由 OpenClawRealAdapter 注入
-    return {
-      content: `[OpenClaw stub] received ${messages.length} messages`,
-      usage: { promptTokens: 0, completionTokens: 0, cost: 0, cacheHit: false },
-      provider: 'agentai',
-      durationMs: 0,
-    };
-  }
-
   async shutdown(): Promise<void> {
     this.sessionMessages = [];
     this.sessions.clear();
@@ -115,12 +115,25 @@ export class OpenClawAdapter extends EventEmitter implements FrameworkAdapter {
    * 学 ZhiY multi-agent-orchestrator.ts
    */
   async dispatchToAgent(agentRole: 'general' | 'copywriter' | 'designer' | 'marketing', task: string): Promise<ChatResponse> {
+    // 真接: 给不同角色注入不同 system 提示, 走统一 router
+    const roleSystem = `# [ROLE - OpenClaw 多智能体]
+你扮演 "${agentRole}" 角色。
+
+可用角色:
+- general: 全能助手, 默认
+- copywriter: 文案撰写, 创意发散
+- designer: 设计思路, UI/UX 建议
+- marketing: 营销策略, 用户增长
+
+请用 "${agentRole}" 视角完成任务: ${task}`;
+
     this.emit('openclaw:dispatch', { agentRole, task });
-    return {
-      content: `[OpenClaw ${agentRole}] ${task}`,
-      usage: { promptTokens: 0, completionTokens: 0, cost: 0, cacheHit: false },
-      provider: 'agentai',
-      durationMs: 0,
-    };
+    const res = await router.chat({
+      messages: [{ role: 'system', content: roleSystem }, { role: 'user', content: task }],
+      model: this.capabilities.defaultProvider,
+      maxTokens: 1024,
+      temperature: 0.8,
+    });
+    return res;
   }
 }

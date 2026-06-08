@@ -228,7 +228,8 @@ export class AgentAIRouter extends EventEmitter {
       successCount: 0,
       failureCount: 0,
       recentLatencyMs: [],
-      tripped: false,
+      tripped: true,           // 余额耗尽, 默认熔断, 用户在 settings 解熔
+      trippedAt: Date.now(),
     });
     this.providers.set('openai', {
       id: 'openai',
@@ -256,6 +257,24 @@ export class AgentAIRouter extends EventEmitter {
     // === Step 1: cost guard (学 Reasonix Pillar 3) ===
     this.checkCostGuard();
 
+    // === Step 1.5: 如果调用方指定 model, 锁定到该 provider (不跑 rank) ===
+    if (req.model) {
+      const target = this.providers.get(req.model);
+      if (target) {
+        if (this.isCircuitOpen(target)) {
+          this.tryRecoverCircuit(target);
+          if (this.isCircuitOpen(target)) {
+            // 指定的 provider 熔断, 走全 rank 降级
+            console.warn(`[router] requested provider ${req.model} is tripped, falling back to ranking`);
+          } else {
+            return await this.tryOne(target, req);
+          }
+        } else {
+          return await this.tryOne(target, req);
+        }
+      }
+    }
+
     // === Step 2: 提示注入扫描 (学 Hermes + 自创) ===
     const scan = this.scanMessages(req.messages);
     if (!scan.safe) {
@@ -273,7 +292,6 @@ export class AgentAIRouter extends EventEmitter {
 
     // === Step 4: 智能路由选 provider ===
     const ranked = this.rankProviders();
-    let lastError: Error | null = null;
 
     for (const provider of ranked) {
       if (this.isCircuitOpen(provider)) {
@@ -281,59 +299,58 @@ export class AgentAIRouter extends EventEmitter {
         if (this.isCircuitOpen(provider)) continue;
       }
 
-      try {
-        const t0 = Date.now();
-        const raw = await this.executeProvider(provider.id, req);
-        const durationMs = Date.now() - t0;
-
-        // 4 步修复管道 (学 Reasonix Pillar 2)
-        const repaired = await this.repairPipeline(raw);
-
-        // 计算 usage + 成本
-        const usage = this.computeUsage(provider, repaired, req);
-        this.checkCostGuardPost(usage.cost);
-
-        const res: ChatResponse = {
-          content: repaired.content,
-          toolCalls: repaired.toolCalls,
-          usage,
-          provider: provider.id,
-          durationMs,
-        };
-
-        // 写 append-only log (学 Reasonix Pillar 1)
-        this.appendOnlyLog.push({ ts: Date.now(), req, res });
-
-        // 写三层记忆 (学 WorkBuddy)
-        if (req.userId && req.workspace) {
-          await writeMemory({
-            userId: req.userId,
-            workspace: req.workspace,
-            role: 'assistant',
-            content: res.content,
-            source: 'auto_reflect',
-            metadata: { provider: res.provider, model: req.model },
-          });
-        }
-
-        // 写缓存
-        if (this.isCacheable(req)) {
-          this.cache.set(prefixHash, res);
-        }
-
-        // 更新 provider stats
-        this.recordSuccess(provider, durationMs);
-
-        return res;
-      } catch (err) {
-        lastError = err as Error;
-        this.recordFailure(provider, err as Error);
-        this.emit('provider:failed', { provider: provider.id, err });
-        // 失败 -> 降级到下一 provider
-      }
+      return await this.tryOne(provider, req);
     }
 
-    throw new Error(`All providers failed. Last error: ${lastError?.message}`);
+    throw new Error('All providers failed (circuit open)');
+  }
+
+  /**
+   * 拆出来的单 provider 执行 (锁定用)
+   */
+  private async tryOne(provider: ProviderStats, req: ChatRequest): Promise<ChatResponse> {
+    const t0 = Date.now();
+    try {
+      const raw = await this.executeProvider(provider.id, req);
+      const durationMs = Date.now() - t0;
+
+      const repaired = await this.repairPipeline(raw);
+      const usage = this.computeUsage(provider, repaired, req);
+      this.checkCostGuardPost(usage.cost);
+
+      const res: ChatResponse = {
+        content: repaired.content,
+        toolCalls: repaired.toolCalls,
+        usage,
+        provider: provider.id,
+        durationMs,
+      };
+
+      this.appendOnlyLog.push({ ts: Date.now(), req, res });
+
+      if (req.userId && req.workspace) {
+        await writeMemory({
+          userId: req.userId,
+          workspace: req.workspace,
+          role: 'assistant',
+          content: res.content,
+          source: 'auto_reflect',
+          metadata: { provider: res.provider, model: req.model },
+        });
+      }
+
+      if (this.isCacheable(req)) {
+        const cacheKey = `${provider.id}:${this.hashPrefix(req)}`;
+        this.cache.set(cacheKey, res);
+      }
+
+      this.recordSuccess(provider, durationMs);
+      return res;
+    } catch (err) {
+      this.recordFailure(provider, err as Error);
+      this.emit('provider:failed', { provider: provider.id, err });
+      throw err;
+    }
   }
 
   // ===== Provider 评分/熔断 =====
