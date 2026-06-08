@@ -1,0 +1,53 @@
+{
+  "name": "agentai-vscode",
+  "displayName": "AgentAI Platform",
+  "description": "AgentAI Platform VSCode 扩展 - 接入智能体 Gateway (Tauri 桌面 + Node 后端)",
+  "version": "0.1.0-alpha.1",
+  "publisher": "agentai-local",
+  "engines": { "vscode": "^1.105.0" },
+  "categories": ["AI", "Chat", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentai.openChat",
+        "title": "AgentAI: 打开对话",
+        "category": "AgentAI",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "agentai.switchFramework",
+        "title": "AgentAI: 切换框架 (OpenClaw/Hermes)",
+        "category": "AgentAI"
+      }
+    ],
+    "configuration": {
+      "title": "AgentAI Platform",
+      "properties": {
+        "agentai.gatewayUrl": {
+          "type": "string",
+          "default": "ws://127.0.0.1:18789",
+          "description": "AgentAI Gateway WebSocket 地址"
+        },
+        "agentai.framework": {
+          "type": "string",
+          "enum": ["openclaw", "hermes"],
+          "default": "openclaw",
+          "description": "默认智能体框架 (运行时可热切)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p ./",
+    "package": "vsce package --no-dependencies",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.105.0",
+    "@vscode/vsce": "^2.32.0",
+    "typescript": "^5.5.0"
+  }
+}
