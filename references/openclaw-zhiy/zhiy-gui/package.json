@@ -1,0 +1,43 @@
+{
+  "name": "@zhiy/zhiy-gui",
+  "version": "2.0.0",
+  "description": "智 Y.Ai 前端界面 - React + Vite + Ant Design + TailwindCSS",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "test": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.20.0",
+    "antd": "^5.12.0",
+    "zustand": "^4.4.7",
+    "framer-motion": "^10.16.16",
+    "socket.io-client": "^4.6.0",
+    "axios": "^1.6.2",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@types/uuid": "^9.0.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "eslint": "^8.55.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.3.6",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.8",
+    "vitest": "^1.2.0"
+  },
+  "keywords": ["frontend", "react", "vite", "antd", "zhiy"],
+  "author": "智 Y.Ai 核心团队",
+  "license": "MIT"
+}

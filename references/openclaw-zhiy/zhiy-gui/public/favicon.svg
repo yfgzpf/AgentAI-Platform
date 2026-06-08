@@ -1,0 +1,23 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="iconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5A67D8"/>
+      <stop offset="100%" stop-color="#F687B3"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- 羽毛Y形图标 -->
+  <g transform="translate(32, 32)">
+    <!-- 左羽毛 -->
+    <path d="M-10 -15 Q-15 -8 -12 5 Q-10 12 -5 18 Q-3 10 -4 2 Q-5 -5 -10 -15 Z" 
+          fill="url(#iconGradient)"/>
+    
+    <!-- 右羽毛 -->
+    <path d="M10 -15 Q15 -8 12 5 Q10 12 5 18 Q3 10 4 2 Q5 -5 10 -15 Z" 
+          fill="url(#iconGradient)"/>
+    
+    <!-- 中间羽毛 -->
+    <path d="M-3 8 Q0 12 0 20 Q0 12 3 8 Q0 10 -3 8 Z" 
+          fill="url(#iconGradient)"/>
+  </g>
+</svg>

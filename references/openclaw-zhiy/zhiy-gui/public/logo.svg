@@ -1,0 +1,41 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="featherGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5A67D8"/>
+      <stop offset="100%" stop-color="#F687B3"/>
+    </linearGradient>
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#5A67D8"/>
+      <stop offset="100%" stop-color="#F687B3"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- 背景圆形 -->
+  <circle cx="256" cy="256" r="240" fill="url(#featherGradient)" opacity="0.1"/>
+  
+  <!-- 羽毛形状构成字母Y -->
+  <g transform="translate(256, 256)">
+    <!-- 左边羽毛 -->
+    <path d="M-80 -120 Q-120 -60 -100 40 Q-80 100 -40 140 Q-20 80 -30 20 Q-40 -40 -80 -120 Z" 
+          fill="url(#featherGradient)" opacity="0.9"/>
+    
+    <!-- 右边羽毛 -->
+    <path d="M80 -120 Q120 -60 100 40 Q80 100 40 140 Q20 80 30 20 Q40 -40 80 -120 Z" 
+          fill="url(#featherGradient)" opacity="0.9"/>
+    
+    <!-- 中间羽毛（Y的下半部分） -->
+    <path d="M-20 60 Q0 100 0 160 Q0 100 20 60 Q0 80 -20 60 Z" 
+          fill="url(#featherGradient)" opacity="0.9"/>
+    
+    <!-- 羽毛纹理线条 -->
+    <path d="M-60 -80 Q-40 -20 -30 40" stroke="white" stroke-width="2" opacity="0.3" fill="none"/>
+    <path d="M60 -80 Q40 -20 30 40" stroke="white" stroke-width="2" opacity="0.3" fill="none"/>
+    <path d="M-40 -40 Q-20 20 -10 80" stroke="white" stroke-width="1.5" opacity="0.2" fill="none"/>
+    <path d="M40 -40 Q20 20 10 80" stroke="white" stroke-width="1.5" opacity="0.2" fill="none"/>
+  </g>
+  
+  <!-- 装饰点 -->
+  <circle cx="256" cy="100" r="8" fill="#F687B3" opacity="0.8"/>
+  <circle cx="180" cy="140" r="4" fill="#5A67D8" opacity="0.6"/>
+  <circle cx="332" cy="140" r="4" fill="#5A67D8" opacity="0.6"/>
+</svg>

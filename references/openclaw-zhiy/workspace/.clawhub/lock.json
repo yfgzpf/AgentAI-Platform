@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "skills": {
+    "ai-web-automation": {
+      "version": "1.0.0",
+      "installedAt": 1772990383869
+    },
+    "ai-documentation-generator": {
+      "version": "1.0.0",
+      "installedAt": 1772990442500
+    }
+  }
+}
