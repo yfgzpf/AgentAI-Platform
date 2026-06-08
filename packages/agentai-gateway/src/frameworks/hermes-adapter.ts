@@ -121,7 +121,7 @@ export class HermesAdapter implements FrameworkAdapter {
         return {
           content: `⚠️ 检测到潜在的提示注入, 已拦截 (Hermes 防御模式)。\n原因: ${scan.reason}`,
           usage: { promptTokens: 0, completionTokens: 0, cost: 0, cacheHit: false },
-          provider: 'hermes-guard',
+          provider: 'agentai', // fallback to enum value (Hermes-guard 内部已拦截, 不会再走 LLM)
           durationMs: 5,
         };
       }

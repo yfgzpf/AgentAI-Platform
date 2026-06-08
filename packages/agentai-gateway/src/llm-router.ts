@@ -311,6 +311,7 @@ export class AgentAIRouter extends EventEmitter {
             workspace: req.workspace,
             role: 'assistant',
             content: res.content,
+            source: 'auto_reflect',
             metadata: { provider: res.provider, model: req.model },
           });
         }

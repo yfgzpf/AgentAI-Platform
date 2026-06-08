@@ -27,7 +27,7 @@ export class OpenClawAdapter extends EventEmitter implements FrameworkAdapter {
     hotReloadSkills: true,       // skills-system.ts 用 chokidar
     multiAgent: true,            // multi-agent-orchestrator.ts
     fts5Session: true,           // 后续阶段集成
-    chineseInjectionScan: true,  // 我们增强的中文扫描
+    chineseInjectionScan: false, // OpenClaw 不做深度中文扫描, 委托给 Hermes
     defaultProvider: 'agentai',  // Agnes API 主选
   };
 
@@ -43,7 +43,8 @@ export class OpenClawAdapter extends EventEmitter implements FrameworkAdapter {
 
   async chat(messages: ChatMessage[], ctx: FrameworkContext): Promise<ChatResponse> {
     // === 1. 中文注入扫描 (学 Hermes + 自创) ===
-    const scan = scanPromptInjection(messages);
+    const joined = messages.map(m => m.content).join('\n');
+    const scan = scanPromptInjection(joined);
     if (!scan.safe) {
       this.emit('security:threat', scan.threats);
       throw new Error(`OpenClaw 拦截: 检测到 ${scan.threats.length} 个提示注入`);

@@ -137,14 +137,11 @@ export class ToolRegistry extends EventEmitter {
    * 转换为 OpenAI/Anthropic 格式 tools 数组
    * 学自: Hermes LLM 工具描述格式
    */
-  toLLMTools(): Array<{ type: 'function'; function: { name: string; description: string; parameters: any } }> {
+  toLLMTools() {
     return this.list().map(t => ({
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      },
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
     }));
   }
 
@@ -218,7 +215,7 @@ export class ToolRegistry extends EventEmitter {
     for (const chunk of chunks) {
       if (chunk.length === 1) {
         // 串行
-        const call = chunk[0];
+        const call = chunk[0]!;
         const r = await this.executeOne(call, ctx);
         results.push({ id: call.id, result: r });
       } else {
@@ -227,12 +224,12 @@ export class ToolRegistry extends EventEmitter {
           chunk.map(c => this.executeOne(c, ctx)),
         );
         chunk.forEach((c, i) => {
-          const r = chunkResults[i];
+          const r = chunkResults[i]!;
           results.push({
             id: c.id,
             result: r.status === 'fulfilled'
               ? r.value
-              : { success: false, output: '', error: String(r.reason) },
+              : { success: false, output: '', error: String((r as PromiseRejectedResult).reason) },
           });
         });
       }
@@ -352,10 +349,12 @@ export class ToolRegistry extends EventEmitter {
     const yaml = content.slice(3, end);
     const body = content.slice(end + 4).trim();
     // 简化: 用正则解析
-    const meta: any = {};
+    const meta: Record<string, string> = {};
     for (const line of yaml.split('\n')) {
       const m = line.match(/^(\w+):\s*(.+)$/);
-      if (m) meta[m[1]] = m[2].replace(/^["']|["']$/g, '');
+      if (m && m[1] !== undefined && m[2] !== undefined) {
+        meta[m[1]] = m[2].replace(/^["']|["']$/g, '');
+      }
     }
     return { meta, body };
   }

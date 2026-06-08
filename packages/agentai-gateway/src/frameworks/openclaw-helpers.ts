@@ -5,7 +5,7 @@
  */
 
 import type { ChatMessage } from '../llm-router.js';
-import { scanPromptInjection, type ScanResult } from '../security/prompt-injection.js';
+import { scanPromptInjection, type ScanResult } from '../llm-router.js';
 
 export { scanPromptInjection };
 export type { ScanResult };

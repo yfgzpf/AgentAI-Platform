@@ -80,7 +80,17 @@ export class FrameworkSwitcher {
       return { ok: false, detail: `Framework not registered: ${opts.to}` };
     }
 
-    // 1. 健康检查 (Reasonix 8 步第 1 步)
+    // 1. 先 init 再 health (框架没初始化 health 会 false)
+    try {
+      await target.init({
+        userId: 'switch-bootstrap',
+        workspace: 'switch-bootstrap',
+      });
+    } catch (e: any) {
+      return { ok: false, detail: `Init failed: ${e.message}` };
+    }
+
+    // 2. 健康检查 (Reasonix 8 步第 1 步)
     const health = await target.health();
     if (!health.ok) {
       return { ok: false, detail: `Target framework unhealthy: ${health.detail}` };
@@ -89,7 +99,7 @@ export class FrameworkSwitcher {
     const timeout = opts.timeoutMs ?? 5000;
     const drain = opts.drain ?? true;
 
-    // 2. 准备双写 (Reasonix 8 步第 2 步)
+    // 3. 准备双写 (Reasonix 8 步第 2 步)
     const startedAt = Date.now();
     const oldActive = this.active;
     this.abRatio = opts.abRatio ?? 1;
@@ -97,18 +107,7 @@ export class FrameworkSwitcher {
     this.lastSwitchAt = startedAt;
     this.switches++;
 
-    // 3. 初始化新框架 (轻量, 几百 ms)
-    try {
-      await target.init({
-        userId: 'switch-bootstrap',
-        workspace: 'switch-bootstrap',
-      });
-    } catch (e: any) {
-      // 初始化失败 → 回滚
-      this.active = oldActive;
-      this.abRatio = 0;
-      return { ok: false, detail: `Init failed, rolled back: ${e.message}` };
-    }
+    // 4. 不再重复 init (已在步骤 1 做过)
 
     // 4. 关闭旧框架 (如果 drain=true, 等 in-flight 完结)
     if (drain) {
@@ -150,13 +149,33 @@ export class FrameworkSwitcher {
 
   /**
    * 按能力查询最佳框架
-   * 不指定框架名, 让调用方只描述"我要的能力"
+   * 找第一个声明该能力的框架 (注册顺序决定优先级: openclaw > hermes)
    */
   pickByCapability(need: keyof FrameworkCapabilities): FrameworkId | null {
     for (const [id, a] of this.adapters) {
       if (a.capabilities[need]) return id;
     }
     return null;
+  }
+
+  /**
+   * 按能力查询所有支持的框架 (用于 A/B 灰度对比)
+   */
+  pickAllByCapability(need: keyof FrameworkCapabilities): FrameworkId[] {
+    const out: FrameworkId[] = [];
+    for (const [id, a] of this.adapters) {
+      if (a.capabilities[need]) out.push(id);
+    }
+    return out;
+  }
+
+  /**
+   * 找"唯一最强"框架: 只有 1 个框架声明该能力时返回它
+   * (用于"只有 Hermes 才有"的硬需求)
+   */
+  pickExclusive(need: keyof FrameworkCapabilities): FrameworkId | null {
+    const all = this.pickAllByCapability(need);
+    return all.length === 1 ? all[0]! : null;
   }
 
   /**
