@@ -141,4 +141,28 @@ test.describe('AgentAI Platform - 网页端 E2E', () => {
     await expect(page.locator('text=富哥, 发个消息开始干')).toBeVisible();
   });
 
+  test('11. 清理器面板可访问 (Settings → Cleaner tab)', async ({ page }) => {
+    await page.goto('/');
+    await waitApp(page);
+    // 进入设置
+    await page.locator('text=设置').first().click();
+    // 切到清理器 tab
+    await page.locator('div[role="tab"]:has-text("清理器")').click();
+    // 验证面板核心元素: 状态卡 / 一键扫描 / 心跳 按钮
+    await expect(page.locator('text=智能清理器 (仿 360 风格)')).toBeVisible();
+    await expect(page.locator('button:has-text("心跳")')).toBeVisible();
+    await expect(page.locator('button:has-text("一键扫描")')).toBeVisible();
+    // "风险计划 (0)" 标题存在 (无计划时显示 0)
+    await expect(page.locator('text=/风险计划 \\(0\\)/')).toBeVisible();
+
+    // ─── 新增: 调度状态 Card 可见 (Task 8 改动) ───
+    // 标题: "调度状态"
+    await expect(page.locator('text=调度状态')).toBeVisible();
+    // 两个字段标签
+    await expect(page.locator('text=下次磁盘检查')).toBeVisible();
+    await expect(page.locator('text=下次全量清理')).toBeVisible();
+    // 时钟图标
+    await expect(page.locator('.anticon-clock-circle').first()).toBeVisible();
+  });
+
 });
