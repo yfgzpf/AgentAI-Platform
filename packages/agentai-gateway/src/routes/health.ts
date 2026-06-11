@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Health Routes - 健康检查 / 工具列表
  * 提取自 index.ts

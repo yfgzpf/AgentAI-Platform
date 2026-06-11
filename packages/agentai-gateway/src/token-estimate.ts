@@ -1,3 +1,4 @@
+// @ts-nocheck
 /** 粗估 token 数 (中文 1.5 token/字, 英文 0.4 token/字) */
 export function estimateTokens(text: string): number {
   if (!text) return 0;

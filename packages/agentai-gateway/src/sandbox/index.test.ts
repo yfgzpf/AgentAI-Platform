@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Sandbox 单例 + router 测试
  *

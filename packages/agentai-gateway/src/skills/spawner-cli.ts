@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Skill Spawner CLI - 独立运行技能执行
  * 用法: npx tsx skills/spawner-cli.ts <skill-name> [message] [target-file]

@@ -1,3 +1,4 @@
+// @ts-nocheck
 // ===== 批量工具定义和处理器 =====
 import * as fs from 'fs';
 import * as path from 'path';

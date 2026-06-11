@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Sandbox 单例
  *

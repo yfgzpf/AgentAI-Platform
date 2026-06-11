@@ -10,7 +10,7 @@ import { Server as IOServer } from 'socket.io';
 
 import { createChatRouter, ChatRouterDeps } from './routes/chat.js';
 import { filesRouter } from './routes/files.js';
-import { createQQRouter, QQRouterDeps } from './routes/qq.js';
+import { createQQRouter } from './routes/qq.js';
 import { createHealthRouter, HealthRouterDeps } from './routes/health.js';
 import { getGlobalSandbox, type Sandbox } from './sandbox/index.js';
 import { createSkillsRouter } from './skills/router.js';
@@ -45,7 +45,7 @@ export function createApp(deps: AppDeps) {
   }
   app.use(createSkillsRouter());
   app.use(createChatRouter(deps as ChatRouterDeps));
-  app.use(createQQRouter(deps as QQRouterDeps));
+  app.use(createQQRouter());
   app.use(createHealthRouter(deps as HealthRouterDeps));
   app.use(filesRouter);
 
