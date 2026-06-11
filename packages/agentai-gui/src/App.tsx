@@ -10,7 +10,7 @@ import { Layout, ConfigProvider, Button, Space, Avatar, Typography, Dropdown, Ta
 import {
   RobotOutlined, MessageOutlined, AppstoreOutlined, SettingOutlined,
   PictureOutlined, VideoCameraOutlined, GithubOutlined, EditOutlined,
-  UserOutlined, LogoutOutlined, BulbOutlined,
+  UserOutlined, LogoutOutlined, BulbOutlined, SafetyOutlined,
 } from '@ant-design/icons';
 import { ChatView } from './components/ChatView';
 import { FrameworkSwitch } from './components/FrameworkSwitch';
@@ -23,12 +23,13 @@ import { Onboarding } from './components/Onboarding';
 import { RightPanel } from './components/RightPanel';
 import { SessionSidebar } from './components/SessionSidebar';
 import { QQBotPanel } from './components/QQBotPanel';
+import { CleanerPanel } from './components/CleanerPanel';
 import { useProfileStore } from './store';
 
 const { Sider, Content, Header } = Layout;
 const { Title, Text } = Typography;
 
-type View = 'chat' | 'image' | 'video' | 'skills' | 'editor' | 'settings' | 'qq';
+type View = 'chat' | 'image' | 'video' | 'skills' | 'editor' | 'settings' | 'qq' | 'cleaner';
 
 export const App: React.FC = () => {
   const [view, setView] = useState<View>('chat');
@@ -42,6 +43,7 @@ export const App: React.FC = () => {
     { key: 'skills', icon: <AppstoreOutlined />, label: '技能库' },
     { key: 'settings', icon: <SettingOutlined />, label: '设置' },
     { key: 'qq', icon: <RobotOutlined />, label: 'QQ Bot' },
+    { key: 'cleaner', icon: <SafetyOutlined />, label: '智能清理' },
   ];
 
   return (
@@ -122,6 +124,7 @@ export const App: React.FC = () => {
             {view === 'skills' && <SkillLibrary />}
             {view === 'settings' && <Settings />}
             {view === 'qq' && <QQBotPanel />}
+            {view === 'cleaner' && <CleanerPanel />}
           </Content>
 
           {/* 右侧: 工作区 + 模型 + 状态 */}
