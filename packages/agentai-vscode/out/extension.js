@@ -1,22 +1,13 @@
 "use strict";
 /**
- * AgentAI Platform - VSCode 扩展 (真接入, 不再瞎搞)
- * ----------------------------------------------------------------
- * 真参考:
- *   - /f/cursor/resources/app/extensions/cursor-mcp/dist/main.js (3.4MB 真实代码)
- *   - Cursor 3.2.21 基于 vscodeVersion 1.105.1
- *   - 真用了 WebSocket + vscode.window API + vscode.workspace
- *
- * 学自 Cursor cursor-mcp:
- *   - activationEvents: onStartupFinished (注册后台生命周期)
- *   - vscode.commands.registerCommand (命令注册)
- *   - vscode.workspace.getConfiguration (读配置)
- *
- * 自创:
- *   - 接入 AgentAI Gateway WebSocket (localhost:18789)
- *   - 提供 "切换框架" + "切换模型" + 4 个文件命令
- *   - 富文本 Webview 聊天 (markdown 渲染)
- *   - 不抢焦点: 走状态栏 + 通知, 不弹窗
+ * AgentAI Platform - VSCode 扩展 v3
+ * ----------------------------------------------------
+ * 功能:
+ *   - SSE 流式对话 + markdown 渲染
+ *   - 文件树浏览 (打开/切换/刷新)
+ *   - 工具调用可视化
+ *   - 解释/修复/审查选中代码
+ *   - Gateway 状态栏实时监测
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -34,335 +25,257 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
-const path = __importStar(require("path"));
 const gateway_client_1 = require("./gateway-client");
 let gateway = null;
 let statusBarItem = null;
-let modelBarItem = null;
-let activeFramework = 'openclaw';
-let activeModel = 'agentai';
-const MODELS = [
-    { id: 'agentai', label: 'Agnes AI (主)' },
-    { id: 'deepseek', label: 'DeepSeek (备)' },
-    { id: 'openai', label: 'OpenAI (备)' },
-];
 function activate(context) {
-    console.log('[AgentAI] extension activated');
-    // 1. 状态栏: 框架
+    // 状态栏
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBarItem.text = `$(comment-discussion) AgentAI: ${activeFramework}`;
-    statusBarItem.tooltip = '点击切换智能体框架 (OpenClaw ↔ Hermes)';
-    statusBarItem.command = 'agentai.switchFramework';
+    statusBarItem.text = `$(hubot) AgentAI`;
+    statusBarItem.tooltip = '点击打开 AI 对话';
+    statusBarItem.command = 'agentai.openChat';
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
-    // 2. 状态栏: 模型 (新增)
-    modelBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
-    modelBarItem.text = `$(hubot) ${MODELS.find(m => m.id === activeModel)?.label || activeModel}`;
-    modelBarItem.tooltip = '点击切换 LLM 模型 (agentai / deepseek / openai)';
-    modelBarItem.command = 'agentai.switchModel';
-    modelBarItem.show();
-    context.subscriptions.push(modelBarItem);
-    // 3. 读配置
+    // Gateway 客户端
     const config = vscode.workspace.getConfiguration('agentai');
     const gatewayUrl = config.get('gatewayUrl', 'ws://127.0.0.1:18789');
-    activeFramework = config.get('framework', 'openclaw');
-    activeModel = config.get('model', 'agentai');
-    // 4. Gateway 客户端
-    gateway = new gateway_client_1.GatewayClient(gatewayUrl, context);
-    gateway.connect().catch((e) => {
-        vscode.window.showWarningMessage(`[AgentAI] Gateway 未启动: ${e.message}。请先启动 pnpm dev:gateway`);
-    });
+    gateway = new gateway_client_1.GatewayClient(gatewayUrl);
     context.subscriptions.push(gateway);
-    // 5. 命令: 打开对话面板
+    gateway.connect().catch(() => { });
+    // 健康监测
+    const healthTimer = setInterval(() => {
+        if (statusBarItem) {
+            const ok = gateway?.isConnected;
+            statusBarItem.text = ok ? `$(hubot) AgentAI` : `$(warning) AgentAI Offline`;
+            statusBarItem.tooltip = ok ? '点击打开 AI 对话' : 'Gateway 离线，检查 pnpm start';
+        }
+    }, 5000);
+    context.subscriptions.push({ dispose: () => clearInterval(healthTimer) });
+    // 命令注册
     context.subscriptions.push(vscode.commands.registerCommand('agentai.openChat', () => {
         GatewayPanel.createOrShow(context.extensionUri, gateway);
     }));
-    // 6. 命令: 切换框架
-    context.subscriptions.push(vscode.commands.registerCommand('agentai.switchFramework', async () => {
-        const next = activeFramework === 'openclaw' ? 'hermes' : 'openclaw';
-        const ok = await gateway?.switchFramework(next);
-        if (ok) {
-            activeFramework = next;
-            statusBarItem.text = `$(comment-discussion) AgentAI: ${next}`;
-            await vscode.workspace.getConfiguration('agentai').update('framework', next, true);
-            vscode.window.showInformationMessage(`✅ 已切换到 ${next}`);
-        }
-        else {
-            vscode.window.showErrorMessage(`❌ 切换失败, Gateway 离线?`);
-        }
-    }));
-    // 7. 命令: 切换模型 (新增, 富哥要求)
-    context.subscriptions.push(vscode.commands.registerCommand('agentai.switchModel', async () => {
-        const pick = await vscode.window.showQuickPick(MODELS.map(m => ({ label: m.label, id: m.id, description: m.id === activeModel ? '(当前)' : '' })), { placeHolder: '选择 LLM 模型' });
-        if (pick) {
-            activeModel = pick.id;
-            modelBarItem.text = `$(hubot) ${pick.label}`;
-            await vscode.workspace.getConfiguration('agentai').update('model', pick.id, true);
-            vscode.window.showInformationMessage(`✅ 模型已切换到 ${pick.label}`);
-        }
-    }));
-    // 8. 命令: 把当前文件读进对话 (新增, 富哥要求"文件功能")
-    context.subscriptions.push(vscode.commands.registerCommand('agentai.attachActiveFile', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showWarningMessage('没有打开的文件');
-            return;
-        }
-        const doc = editor.document;
-        const text = doc.getText();
-        const fileName = path.basename(doc.fileName);
-        // 直接调 chat 端点, 把文件内容塞到 prompt
-        try {
-            const res = await gateway?.httpPost('/v1/chat', {
-                message: `请阅读并总结这个文件 [${fileName}]:\n\n\`\`\`\n${text.slice(0, 8000)}\n\`\`\``,
-                userId: 'vscode-user',
-                workspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
-            });
-            GatewayPanel.createOrShow(context.extensionUri, gateway);
-            GatewayPanel.currentPanel?.webview.postMessage({
-                type: 'reply',
-                text: `📄 ${fileName} 总结:\n\n${res?.content || res?.error || '(空)'}`,
-            });
-        }
-        catch (e) {
-            vscode.window.showErrorMessage(`文件读取失败: ${e.message}`);
-        }
-    }));
-    // 9. 命令: 让 AI 解释选中代码 (新增)
     context.subscriptions.push(vscode.commands.registerCommand('agentai.explainSelection', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor)
             return;
-        const sel = editor.selection;
-        const text = editor.document.getText(sel);
-        if (!text) {
-            vscode.window.showWarningMessage('请先选中代码');
-            return;
-        }
-        const fileName = path.basename(editor.document.fileName);
-        try {
-            const res = await gateway?.httpPost('/v1/chat', {
-                message: `请解释这段 ${fileName} 代码 (${sel.start.line + 1}-${sel.end.line + 1} 行):\n\n\`\`\`\n${text}\n\`\`\``,
-                userId: 'vscode-user',
-                workspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
-            });
-            GatewayPanel.createOrShow(context.extensionUri, gateway);
-            GatewayPanel.currentPanel?.webview.postMessage({
-                type: 'reply',
-                text: `💡 解释:\n\n${res?.content || res?.error || '(空)'}`,
-            });
-        }
-        catch (e) {
-            vscode.window.showErrorMessage(`解释失败: ${e.message}`);
-        }
+        const text = editor.document.getText(editor.selection);
+        if (!text)
+            return vscode.window.showWarningMessage('请先选中代码');
+        if (!gateway?.isConnected)
+            return vscode.window.showWarningMessage('Gateway 离线');
+        GatewayPanel.createOrShow(context.extensionUri, gateway);
+        sendWithContext(`请解释这段代码:\n\`\`\`\n${text.slice(0, 8000)}\n\`\`\``);
     }));
-    // 10. 命令: 在当前文件新建一个标签页写入 AI 生成内容 (新增)
-    context.subscriptions.push(vscode.commands.registerCommand('agentai.insertFromPrompt', async () => {
-        const editor = vscode.window.activeTextEditor;
-        const prompt = await vscode.window.showInputBox({
-            placeHolder: '描述要插入的代码 (例如: "写一个 debounce 函数")',
-            prompt: 'AgentAI 代码生成',
-        });
-        if (!prompt)
-            return;
-        try {
-            const res = await gateway?.httpPost('/v1/chat', {
-                message: `请只输出代码, 不要解释, 不要 markdown 围栏。需求: ${prompt}`,
-                userId: 'vscode-user',
-                workspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
-            });
-            const code = (res?.content || '').replace(/^```[\w]*\n/, '').replace(/\n```$/, '');
-            if (editor) {
-                editor.edit(b => b.insert(editor.selection.start, code));
-            }
-            else {
-                // 没打开文件, 新建一个 untitled 标签
-                const doc = await vscode.workspace.openTextDocument({ content: '' });
-                const e = await vscode.window.showTextDocument(doc);
-                await e.edit(b => b.insert(e.selection.start, code));
-            }
-            vscode.window.showInformationMessage('✅ 代码已插入');
-        }
-        catch (e) {
-            vscode.window.showErrorMessage(`生成失败: ${e.message}`);
-        }
-    }));
-    // 11. 命令: 让 AI 编辑选中代码 (新增, 真 edit_file 工具封装)
-    context.subscriptions.push(vscode.commands.registerCommand('agentai.editSelection', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('agentai.fixSelection', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor)
             return;
-        const sel = editor.selection;
-        const oldText = editor.document.getText(sel);
-        if (!oldText) {
-            vscode.window.showWarningMessage('请先选中要改的代码');
-            return;
-        }
-        const instruction = await vscode.window.showInputBox({
-            placeHolder: '怎么改? (例如: "加错误处理", "改成 async/await")',
-            prompt: 'AgentAI 代码编辑',
-        });
-        if (!instruction)
-            return;
-        try {
-            const res = await gateway?.httpPost('/v1/chat', {
-                message: `请改写这段代码, 需求: ${instruction}\n\n原代码:\n\`\`\`\n${oldText}\n\`\`\`\n\n只输出改写后的完整代码, 不要解释, 不要 markdown 围栏。`,
-                userId: 'vscode-user',
-                workspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
-            });
-            const newCode = (res?.content || '').replace(/^```[\w]*\n/, '').replace(/\n```$/, '');
-            await editor.edit(b => b.replace(sel, newCode));
-            vscode.window.showInformationMessage('✅ 代码已替换');
-        }
-        catch (e) {
-            vscode.window.showErrorMessage(`编辑失败: ${e.message}`);
-        }
+        const text = editor.document.getText(editor.selection);
+        if (!text)
+            return vscode.window.showWarningMessage('请先选中代码');
+        if (!gateway?.isConnected)
+            return vscode.window.showWarningMessage('Gateway 离线');
+        GatewayPanel.createOrShow(context.extensionUri, gateway);
+        sendWithContext(`请帮我把这段代码修好:\n\`\`\`\n${text}\n\`\`\``);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('agentai.reviewProject', async () => {
+        if (!gateway?.isConnected)
+            return vscode.window.showWarningMessage('Gateway 离线');
+        GatewayPanel.createOrShow(context.extensionUri, gateway);
+        sendWithContext('请审查当前项目的代码结构，指出潜在问题和改进建议');
     }));
 }
+function sendWithContext(text) {
+    GatewayPanel.currentPanel?.sendMessage(text);
+}
 function deactivate() {
-    console.log('[AgentAI] extension deactivated');
     gateway?.dispose();
     statusBarItem?.dispose();
-    modelBarItem?.dispose();
 }
-/**
- * Webview 面板: 富文本对话窗口
- * - markdown 渲染 (用 CDN marked.js)
- * - 显示当前框架 + 模型
- * - 历史记录 (localStorage 持久)
- */
 class GatewayPanel {
     static currentPanel = null;
-    static createOrShow(extensionUri, gw) {
+    panel;
+    gw;
+    msgId = 0;
+    static createOrShow(uri, gw) {
         if (GatewayPanel.currentPanel) {
-            GatewayPanel.currentPanel.reveal();
+            GatewayPanel.currentPanel.panel.reveal();
             return;
         }
-        const panel = vscode.window.createWebviewPanel('agentaiChat', 'AgentAI Chat', vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
-        panel.webview.html = GatewayPanel.getHtml(activeFramework, activeModel);
-        panel.webview.onDidReceiveMessage(async (msg) => {
-            if (msg.type === 'chat') {
-                try {
-                    const res = await gw.httpPost('/v1/chat', {
-                        message: msg.text,
-                        userId: 'vscode-user',
-                        workspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
-                    });
-                    panel.webview.postMessage({ type: 'reply', text: res?.content || res?.error || '(空)' });
-                }
-                catch (e) {
-                    panel.webview.postMessage({ type: 'reply', text: '❌ ' + e.message });
-                }
-            }
-            else if (msg.type === 'switch') {
-                // webview 主动切框架
-                if (msg.framework) {
-                    await gw.switchFramework(msg.framework);
-                    activeFramework = msg.framework;
-                    if (statusBarItem)
-                        statusBarItem.text = `$(comment-discussion) AgentAI: ${msg.framework}`;
-                }
-            }
-        }, undefined);
-        panel.onDidDispose(() => (GatewayPanel.currentPanel = null));
-        GatewayPanel.currentPanel = panel;
+        GatewayPanel.currentPanel = new GatewayPanel(uri, gw);
     }
-    static getHtml(framework, model) {
+    constructor(uri, gw) {
+        this.gw = gw;
+        this.panel = vscode.window.createWebviewPanel('agentaiChat', 'AgentAI', vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
+        this.panel.webview.html = this.getHtml();
+        this.panel.webview.onDidReceiveMessage((m) => this.handleMsg(m));
+        this.panel.onDidDispose(() => { GatewayPanel.currentPanel = null; });
+    }
+    sendMessage(text) {
+        this.panel.webview.postMessage({ type: 'userMsg', text });
+        this.doChat(text);
+    }
+    async handleMsg(msg) {
+        if (msg.type === 'chat')
+            this.doChat(msg.text);
+        if (msg.type === 'openFile')
+            vscode.window.showTextDocument(vscode.Uri.file(msg.path));
+        if (msg.type === 'listFiles')
+            this.listFiles(msg.dir);
+    }
+    async listFiles(dir = '.') {
+        try {
+            const httpUrl = 'http://127.0.0.1:18789';
+            const res = await fetch(`${httpUrl}/v1/files?dir=${encodeURIComponent(dir)}`);
+            const data = await res.json();
+            this.panel.webview.postMessage({ type: 'fileList', files: data.files || [], dir });
+        }
+        catch { /* offline */ }
+    }
+    async doChat(text) {
+        const id = ++this.msgId;
+        this.panel.webview.postMessage({ type: 'botStart', id });
+        await this.gw.streamChat(text, (d) => this.panel.webview.postMessage({ type: 'botDelta', id, text: d }), (f) => this.panel.webview.postMessage({ type: 'botDone', id, text: f }), (e) => this.panel.webview.postMessage({ type: 'botError', id, error: e }));
+    }
+    getHtml() {
         return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <style>
-    body {
-      font-family: var(--vscode-font-family);
-      padding: 12px;
-      margin: 0;
-      background: var(--vscode-editor-background);
-      color: var(--vscode-foreground);
-    }
-    .header { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-    .badge { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); padding: 2px 8px; border-radius: 10px; font-size: 11px; }
-    #log { height: 75vh; overflow-y: auto; border: 1px solid var(--vscode-input-border); border-radius: 4px; padding: 8px; background: var(--vscode-input-background); }
-    .msg { margin-bottom: 12px; line-height: 1.5; }
-    .msg-user { color: #4FC3F7; border-left: 3px solid #4FC3F7; padding-left: 8px; }
-    .msg-bot { color: #A5D6A7; border-left: 3px solid #A5D6A7; padding-left: 8px; }
-    .msg-bot pre { background: #1e1e1e; padding: 8px; border-radius: 4px; overflow-x: auto; }
-    .msg-bot code { font-family: 'Consolas', monospace; }
-    .input-row { display: flex; gap: 4px; margin-top: 8px; }
-    #in { flex: 1; padding: 6px 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; }
-    button { padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer; }
-    button:hover { background: var(--vscode-button-hoverBackground); }
-    .empty { color: var(--vscode-descriptionForeground); text-align: center; padding: 40px 0; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <span class="badge">🤖 ${framework}</span>
-    <span class="badge">📦 ${model}</span>
-    <span style="flex:1"></span>
-    <button onclick="clearLog()" style="font-size:11px">清空</button>
-  </div>
-  <div id="log">
-    <div class="empty">富哥, 开始干 (Shift+Enter 换行)</div>
-  </div>
-  <div class="input-row">
-    <input id="in" placeholder="输入消息, Enter 发送..." />
-    <button onclick="send()">发送</button>
-  </div>
-  <script>
-    const vscode = acquireVsCodeApi();
+<html><head><meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); display: flex; flex-direction: column; height: 100vh; }
+  .toolbar { display: flex; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0; }
+  .toolbar button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+  #fileTree { max-height: 150px; overflow: auto; padding: 4px 8px; font-size: 11px; border-bottom: 1px solid var(--vscode-panel-border); display: none; }
+  #fileTree .file { cursor: pointer; padding: 1px 4px; }
+  #fileTree .file:hover { background: var(--vscode-list-hoverBackground); }
+  #log { flex: 1; overflow-y: auto; padding: 8px; }
+  .msg { margin-bottom: 10px; line-height: 1.5; }
+  .msg-user { color: var(--vscode-textLink-foreground); border-left: 3px solid var(--vscode-textLink-foreground); padding-left: 8px; white-space: pre-wrap; }
+  .msg-bot { border-left: 3px solid var(--vscode-textPreformat-foreground); padding-left: 8px; }
+  .msg-bot pre { background: var(--vscode-textBlockQuote-background); padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 11px; }
+  .msg-bot code { font-family: var(--vscode-editor-font-family); }
+  .cursor { display: inline-block; width: 2px; height: 16px; background: var(--vscode-cursor-foreground); animation: blink 1s infinite; vertical-align: text-bottom; margin-left: 2px; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .input-area { display: flex; gap: 4px; padding: 6px 8px; border-top: 1px solid var(--vscode-panel-border); flex-shrink: 0; }
+  #in { flex: 1; padding: 4px 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; }
+  #in:focus { outline: none; border-color: var(--vscode-focusBorder); }
+</style>
+</head><body>
+<div class="toolbar">
+  <button onclick="toggleFiles()">📁 文件</button>
+  <button onclick="sendMsg('/review')">🔍 审查</button>
+  <button onclick="clearLog()">🗑 清空</button>
+  <span style="flex:1"></span>
+  <span id="status" style="font-size:10px;opacity:0.6">就绪</span>
+</div>
+<div id="fileTree"></div>
+<div id="log"><div style="color:var(--vscode-descriptionForeground);text-align:center;padding:20px">输入消息开始对话</div></div>
+<div class="input-area">
+  <input id="in" placeholder="输入消息..." />
+  <button onclick="sendMsg(document.getElementById('in').value)">发送</button>
+</div>
+<script>
+  const vscode = acquireVsCodeApi();
+  let fileOpen = false;
+  function addMsg(cls, html) {
     const log = document.getElementById('log');
-    const input = document.getElementById('in');
+    const empty = log.querySelector('.empty');
+    if (empty) empty.remove();
+    const d = document.createElement('div');
+    d.className = 'msg ' + cls;
+    if (typeof html === 'string') d.innerHTML = html;
+    else d.appendChild(html);
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+  function sendMsg(text) {
+    if (!text) return;
+    document.getElementById('in').value = '';
+    addMsg('msg-user', escapeHtml(text));
+    vscode.postMessage({ type: 'chat', text });
+    document.getElementById('status').textContent = '🤖 思考中...';
+  }
+  function clearLog() { document.getElementById('log').innerHTML = '<div style="color:var(--vscode-descriptionForeground);text-align:center;padding:20px">已清空</div>'; }
+  function toggleFiles() {
+    fileOpen = !fileOpen;
+    document.getElementById('fileTree').style.display = fileOpen ? 'block' : 'none';
+    if (fileOpen) vscode.postMessage({ type: 'listFiles', dir: '.' });
+  }
+  function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-    function append(role, text) {
-      const div = document.createElement('div');
-      div.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-bot');
-      if (role === 'user') {
-        div.textContent = '> ' + text;
-      } else {
-        div.innerHTML = '< ' + marked.parse(text);
-      }
-      // 第一次 append 清空 empty
-      const empty = log.querySelector('.empty');
-      if (empty) empty.remove();
-      log.appendChild(div);
-      log.scrollTop = log.scrollHeight;
+  window.addEventListener('message', e => {
+    const d = e.data;
+    if (d.type === 'userMsg') { addMsg('msg-user', escapeHtml(d.text)); return; }
+    if (d.type === 'botStart') {
+      const c = document.createElement('span');
+      c.id = 'c' + d.id;
+      c.innerHTML = '🤖 <span id="ct' + d.id + '"></span><span class="cursor"></span>';
+      addMsg('msg-bot', c);
+      return;
     }
-
-    function clearLog() { log.innerHTML = '<div class="empty">已清空</div>'; }
-
-    function send() {
-      const text = input.value.trim();
-      if (!text) return;
-      append('user', text);
-      vscode.postMessage({ type: 'chat', text });
-      input.value = '';
+    if (d.type === 'botDelta') {
+      const el = document.getElementById('ct' + d.id);
+      if (el) el.textContent += d.text;
+      document.getElementById('log').scrollTop = document.getElementById('log').scrollHeight;
+      return;
     }
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-    });
-    window.addEventListener('message', (e) => {
-      if (e.data.type === 'reply') {
-        append('bot', e.data.text);
+    if (d.type === 'botDone') {
+      const el = document.getElementById('c' + d.id);
+      if (el) {
+        const txt = document.getElementById('ct' + d.id).textContent;
+        el.innerHTML = '🤖 ' + marked.parse(txt);
       }
-    });
-  </script>
-</body>
-</html>`;
+      document.getElementById('status').textContent = '✅ 完成';
+      return;
+    }
+    if (d.type === 'botError') {
+      const el = document.getElementById('c' + d.id);
+      if (el) el.innerHTML += '<span style="color:var(--vscode-errorForeground)"> ❌ ' + d.error + '</span>';
+      document.getElementById('status').textContent = '❌ 错误';
+      return;
+    }
+    if (d.type === 'fileList') {
+      const ft = document.getElementById('fileTree');
+      ft.innerHTML = '<b>' + d.dir + '</b><br>';
+      d.files.forEach(f => {
+        const div = document.createElement('div');
+        div.className = 'file';
+        div.textContent = (f.type === 'directory' ? '📁 ' : '📄 ') + f.name;
+        div.onclick = () => vscode.postMessage({ type: 'openFile', path: d.dir + '/' + f.name.replace(/\/$/,'') });
+        ft.appendChild(div);
+      });
+      return;
+    }
+  });
+
+  document.getElementById('in').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(e.target.value); }
+  });
+</script>
+</body></html>`;
     }
 }
 //# sourceMappingURL=extension.js.map

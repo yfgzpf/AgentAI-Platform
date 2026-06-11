@@ -24,6 +24,12 @@ import { readMemory, writeMemory } from './memory.js';
 import path from 'path';
 import fs from 'fs';
 import { frameworkSwitcher } from './frameworks/switcher.js';
+import { EXTRA_TOOLS, EXTRA_HANDLERS } from './tools.js';
+import { discoverSkills, callPython } from './python-bridge.js';
+import { MCP_SERVERS } from './mcp/config.js';
+import { MCPHost } from './mcp/host.js';
+import { initGlobalSandbox, getGlobalSandbox, type Sandbox } from './sandbox/index.js';
+import { createSandboxRouter } from './sandbox/router.js';
 
 // ===== 启动时自动读 .env (从 F:\agentai-platform\.env 或 cwd/../../.env) =====
 function loadEnv() {
@@ -59,6 +65,12 @@ app.use(express.json({ limit: '10mb' }));
 
 // 静态资源: 生成的图片/视频 暴露给前端 (页面直接显示)
 app.use('/media', express.static(path.resolve(process.cwd(), '../../packages/agentai-skills/out')));
+
+// ===== Sandbox 路由 (挂载, 实例化在 server.listen 回调里) =====
+let sandboxInstance: Sandbox | null = null;
+function mountSandbox(sandbox: Sandbox): void {
+  app.use('/v1/sandbox', createSandboxRouter(sandbox));
+}
 
 const server = http.createServer(app);
 const io = new SocketServer(server, { cors: { origin: '*' } });
@@ -174,22 +186,46 @@ const BUILTIN_TOOLS = [
 ];
 
 // 占位 handler (阶段 3 真接 Python 沙箱)
+// 合并 BUILTIN + EXTRA 工具
+const ALL_TOOLS = [...BUILTIN_TOOLS, ...EXTRA_TOOLS];
+const builtinStubs: Record<string, (args: any, ctx?: any) => any> = {};
 for (const t of BUILTIN_TOOLS) {
+  builtinStubs[t.name] = async (args: any) => ({ success: true, output: `[stub ${t.name}] ${JSON.stringify(args)}` });
+}
+const ALL_HANDLERS = { ...builtinStubs, ...EXTRA_HANDLERS };
+
+for (const t of ALL_TOOLS) {
   registry.register({
     name: t.name,
     description: t.description,
     parameters: t.parameters,
     parallelSafe: t.parallelSafe,
     riskLevel: t.riskLevel,
-    handler: async (args) => ({
-      success: true,
-      output: `[stub ${t.name}] ${JSON.stringify(args)}`,
-    }),
+    handler: async (args, ctx) => {
+      const h = ALL_HANDLERS[t.name];
+      if (h) return h(args, ctx);
+      return { success: true, output: `[stub ${t.name}] ${JSON.stringify(args)}` };
+    },
   });
+}
+// Python 技能自动发现
+try {
+  for (const sk of discoverSkills()) {
+    const safeName = sk.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    registry.register({ name: safeName, description: `Python skill: ${safeName}`, parameters: { type: 'object', properties: {}, additionalProperties: true }, parallelSafe: false, riskLevel: 'medium', handler: async (a: any) => callPython(sk.mainPy, a) });
+  }
+} catch {}
+// 内置 list_directory 直接实现 (不依赖 EXTRA_HANDLERS)
+const listDirHandler = ALL_HANDLERS['list_directory'];
+if (!listDirHandler) {
+  registry.register({ name: 'list_directory', description: '列出目录内容', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, parallelSafe: true, riskLevel: 'low', handler: async (args: any) => { try { const p = args.path || process.cwd(); const entries = fs.readdirSync(p, { withFileTypes: true as any }); return { success: true, output: entries.map((e: any) => e.isDirectory() ? e.name + '/' : e.name).join('\n') }; } catch (e: any) { return { success: false, output: e.message }; } } });
 }
 
 // ===== 路由 =====
 
+app.get('/v1/health', (_req, res) => {
+  res.json({ status: 'ok', version: '0.1.0-alpha.1', tools: registry.list().length });
+});
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -295,20 +331,41 @@ app.post('/v1/chat', async (req, res) => {
       }
     }
 
-    // 创建或获取 session
+    // 创建或获取 session (模型路由)
     const sessionKey = `${userId}:${workspace}`;
     let loop = sessions.get(sessionKey);
     if (!loop) {
-      loop = new AgentAILoop(router, registry, [], {
-        maxIterations: 30,
-        userId,
-        workspace,
-      });
+      const mode = req.body?.mode || 'auto';
+      const userModel = req.body?.model;
+      if (userModel && userModel !== 'agentai' && ['agentai','deepseek','openai'].includes(userModel)) {
+        loop = new AgentAILoop(router, registry, [], { maxIterations: 10, userId, workspace, mode, model: userModel });
+      } else {
+        const msg = (message || '').toLowerCase();
+        const isSimple = msg.length < 15 && !/代码|审查|分析|重构|改|修|建|查|找|debug|review|refactor|implement|analyze|create|fix/.test(msg);
+        const isDeepReason = /架构|设计模式|性能优化|并发|安全|漏洞|内存泄漏|重构|复杂|体系|设计|security|vulnerability|memory leak|race|deadlock/i.test(msg);
+        const usePro = (mode === 'auto' || mode === 'planning') && isDeepReason;
+        const useFlash = (mode === 'auto' || mode === 'planning') && !isSimple && !isDeepReason;
+        let chatModel = 'agentai';
+        let modelName = '';
+        if (usePro) { chatModel = 'deepseek'; modelName = 'deepseek-v4-pro'; }
+        else if (useFlash) { chatModel = 'deepseek'; modelName = 'deepseek-v4-flash'; }
+        loop = new AgentAILoop(router, registry, [], { maxIterations: 10, userId, workspace, mode, model: chatModel, modelName });
+      }
       sessions.set(sessionKey, loop);
     }
 
+    // 收集工具事件
+    const toolEvents: any[] = [];
+    const onToolStart = (info: any) => toolEvents.push({ type: 'tool_start', callId: info.callId, name: info.name, args: info.args });
+    const onToolResult = (info: any) => toolEvents.push({ type: 'tool_result', callId: info.callId, name: info.name, result: info.result, ok: info.ok, durationMs: info.durationMs });
+    loop.on('tool:start' as any, onToolStart);
+    loop.on('tool:result' as any, onToolResult);
+
     // 跑主循环
     const response = await loop.run(message);
+
+    loop.off('tool:start' as any, onToolStart);
+    loop.off('tool:result' as any, onToolResult);
 
     // 写 assistant 消息
     await writeMemory({
@@ -325,6 +382,7 @@ app.post('/v1/chat', async (req, res) => {
       toolCalls: response.toolCalls,
       provider: response.provider,
       usage: response.usage,
+      toolEvents,
       sessionId: loop.getContext().sessionId,
     });
   } catch (err) {
@@ -782,6 +840,12 @@ server.listen(PORT, HOST, () => {
   console.log(`[agentai-gateway] ${registry.list().length} tools registered`);
   console.log(`[agentai-gateway] visit http://${HOST}:${PORT}/health`);
 
+  // MCP: 连接外部服务器
+  const mcpHost = new MCPHost(registry);
+  for (const cfg of MCP_SERVERS) {
+    if (cfg.enabled !== false) mcpHost.connect(cfg).catch((e: any) => console.warn(`[mcp] ${cfg.name}: ${e.message}`));
+  }
+
   // 启动 skills 监听 (学 Hermes)
   registry.startWatcher().catch(err => {
     console.warn('[agentai-gateway] skills watcher failed:', err);
@@ -795,11 +859,23 @@ server.listen(PORT, HOST, () => {
   }).catch(err => {
     console.warn('[agentai-gateway] framework init failed:', err.message);
   });
+
+  // 初始化 Sandbox (应用层文件操作保护, 详见 docs/superpowers/specs/2026-06-12-sandbox-rules.md)
+  initGlobalSandbox({
+    audit: (e) => console.log(`[sandbox] ${e.type} ${e.verdict || ''} ${e.path || ''} ${e.reason || ''}`),
+  }).then((sb) => {
+    sandboxInstance = sb;
+    mountSandbox(sb);
+    console.log(`[sandbox] ready (rules: ${sb.getRulesPath()})`);
+  }).catch((err) => {
+    console.warn('[sandbox] init failed:', err.message);
+  });
 });
 
 // ===== 优雅关闭 =====
 process.on('SIGTERM', async () => {
   console.log('[agentai-gateway] shutting down...');
+  sandboxInstance?.stop();
   await registry.stop();
   server.close();
   process.exit(0);

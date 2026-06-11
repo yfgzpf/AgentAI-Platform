@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 160" fill="none">
+  <!-- Logo 图标 -->
+  <circle cx="80" cy="80" r="70" fill="url(#bgGrad)" />
+  <path d="M50 35 C35 15, 15 5, 8 15 C1 25, 15 40, 35 50" fill="url(#hornGrad)" />
+  <path d="M110 35 C125 15, 145 5, 152 15 C159 25, 145 40, 125 50" fill="url(#hornGrad)" />
+  <path d="M80 40 L125 60 L125 100 L80 115 L35 100 L35 60 Z" fill="#1E1B4B" />
+  <circle cx="62" cy="78" r="5" fill="#818CF8" />
+  <circle cx="98" cy="78" r="5" fill="#818CF8" />
+  
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#7C3AED" />
+    </linearGradient>
+    <linearGradient id="hornGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818CF8" />
+      <stop offset="100%" stop-color="#C7D2FE" />
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌名 -->
+  <text x="170" y="78" font-family="Inter, -apple-system, sans-serif" font-size="44" font-weight="800" 
+        fill="#f5f5f5" letter-spacing="-1">AgentAI</text>
+  <text x="170" y="108" font-family="Inter, -apple-system, sans-serif" font-size="16" font-weight="500" 
+        fill="#818CF8" letter-spacing="3">免费 · 智能 · 自主</text>
+  
+  <!-- 免费标签 -->
+  <rect x="362" y="62" width="50" height="22" rx="11" fill="#10B981" />
+  <text x="387" y="78" font-family="Inter, sans-serif" font-size="12" font-weight="700" 
+        fill="white" text-anchor="middle">免费</text>
+</svg>

@@ -98,7 +98,7 @@ export const CleanerPanel: React.FC = () => {
   const loadState = useCallback(async () => {
     setLoading(true);
     try {
-      const s = await apiGet<CleanerState>('/v1/cleaner/status');
+      const s = await apiGet<any>('/v1/cleaner/status');
       setState(s);
     } catch (e: any) {
       message.error('加载状态失败: ' + (e?.message || '未知错误'));
@@ -110,7 +110,7 @@ export const CleanerPanel: React.FC = () => {
   /** 加载规则 */
   const loadRules = useCallback(async () => {
     try {
-      const r = await apiGet<{ rules: CleanerRule[] }>('/v1/cleaner/rules');
+      const r = await apiGet<any>('/v1/cleaner/rules');
       setRules(r?.rules || []);
     } catch {
       // 静默: 规则可能未配置

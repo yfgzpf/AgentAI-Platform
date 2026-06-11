@@ -1,11 +1,84 @@
-# 工作记忆 (运行时生成)
-.agentai/
-*.agentai/memory.jsonl
-packages/*/qq-*
-packages/*/out/
-packages/*/dist/
+# ===== Dependencies =====
 node_modules/
-*.log
+.pnpm-store/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# ===== Build Output =====
+dist/
+build/
+out/
+*.tsbuildinfo
+*.tsbuildinfo.*
+target/          # Rust build
+
+# ===== Runtime =====
 .env
+.env.local
+.env.*.local
+*.log
+config.json
+.agentai/
+*.agentai/
+memory.jsonl
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-*
+
+# ===== Runtime State =====
+.cleaner-state/
+*.agentai/*.jsonl
+state.json
+
+# ===== Test =====
 test-results/
-test-results/
+coverage/
+.nyc_output/
+packages/agentai-gui/test-results/
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# ===== Rust =====
+packages/agentai-desktop/src-tauri/target/
+
+# ===== VS Code Extension =====
+packages/agentai-vscode/*.vsix
+packages/agentai-vscode/out/
+packages/agentai-vscode/node_modules/
+
+# ===== QQ Bot =====
+packages/agentai-qqbot/bin/
+packages/agentai-qqbot/config.json
+packages/*/qq-*/
+
+# ===== Generated =====
+*.png
+*.ico
+*.icns
+!assets/**/*.png
+!packages/agentai-desktop/src-tauri/icons/*.png
+!packages/agentai-desktop/src-tauri/icons/*.ico
+!packages/agentai-desktop/src-tauri/icons/*.icns
+
+# ===== Finance data (should not be committed) =====
+packages/agentai-skills/finance/**/data/*.db
+packages/agentai-skills/finance/**/data/*.json
+packages/agentai-skills/finance/**/data/*.sqlite
+
+# ===== Trash =====
+.reasonix/
+.trae/

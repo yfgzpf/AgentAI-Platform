@@ -15,6 +15,7 @@ import * as zlib from 'zlib';
 import { pipeline } from 'stream/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import type { FileAction, AuditWriter } from './types.js';
+import { getGlobalSandbox } from '../sandbox/index.js';
 
 export interface ExecuteResult {
     bytesFreed: number;
@@ -82,13 +83,47 @@ async function archiveMemoryMd(src: string, dstDir: string): Promise<void> {
 
 /**
  * 执行一批 SAFE 动作
+ *
+ * Sandbox 集成 (2026-06-12):
+ *   - 每个写/删动作前, 调 sandbox.check
+ *   - verdict=deny → 跳过, 计入 failures
+ *   - verdict=prompt → 跳过 + reason (留给用户确认, 不自动执行)
+ *   - verdict=allow → 执行
  */
 export async function executeSafe(actions: FileAction[], audit: AuditWriter): Promise<ExecuteResult> {
     const result: ExecuteResult = { bytesFreed: 0, failures: [] };
+    const sandbox = getGlobalSandbox();
 
     for (const a of actions) {
         try {
             const size = a.file.size;
+            const p = a.file.path;
+
+            // ===== Sandbox 前置检查 (2026-06-12) =====
+            if (sandbox) {
+                const op = (a.action === 'delete') ? 'delete' : 'write';
+                const v = await sandbox.check({ path: p, op, size });
+                if (v.verdict === 'deny') {
+                    result.failures.push({ planId: a.planId, path: p, error: `sandbox denied: ${v.reason}` });
+                    await audit.log({
+                        action: 'cleaner_execute',
+                        result: 'error',
+                        payload: { planId: a.planId, file: p, error: `sandbox denied: ${v.reason}` },
+                    });
+                    continue;
+                }
+                if (v.verdict === 'prompt') {
+                    // 不自动执行, 让用户走 confirm 流程
+                    result.failures.push({ planId: a.planId, path: p, error: `sandbox prompt (needs user confirm): ${v.reason}` });
+                    await audit.log({
+                        action: 'cleaner_execute',
+                        result: 'error',
+                        payload: { planId: a.planId, file: p, error: `sandbox prompt: ${v.reason}` },
+                    });
+                    continue;
+                }
+            }
+
             switch (a.action) {
                 case 'delete':
                     // ENOENT (文件不存在) 视为永久错误,直接抛 → 外层计入 failures

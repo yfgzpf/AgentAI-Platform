@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <!-- 背景圆角方形 -->
+  <rect x="10" y="10" width="380" height="380" rx="60" ry="60" fill="#4F46E5"/>
+
+  <!-- 龙角 (左右对称) -->
+  <path d="M150 120 L120 60 L160 100 L140 50 L180 95" fill="none" stroke="#C7D2FE" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M250 120 L280 60 L240 100 L260 50 L220 95" fill="none" stroke="#C7D2FE" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 龙首主体 -->
+  <path d="M130 180 Q130 120 200 110 Q270 120 270 180 L270 250 Q270 300 200 320 Q130 300 130 250 Z" fill="#EEF2FF" stroke="#E0E7FF" stroke-width="2"/>
+
+  <!-- 龙眼 -->
+  <ellipse cx="165" cy="195" rx="14" ry="16" fill="#1E1B4B"/>
+  <ellipse cx="235" cy="195" rx="14" ry="16" fill="#1E1B4B"/>
+  <ellipse cx="168" cy="192" rx="5" ry="6" fill="#FFFFFF"/>
+  <ellipse cx="238" cy="192" rx="5" ry="6" fill="#FFFFFF"/>
+
+  <!-- 龙眉 -->
+  <path d="M145 170 Q160 158 180 165" fill="none" stroke="#3730A3" stroke-width="5" stroke-linecap="round"/>
+  <path d="M255 170 Q240 158 220 165" fill="none" stroke="#3730A3" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- 龙鼻 -->
+  <ellipse cx="185" cy="240" rx="8" ry="5" fill="#A5B4FC"/>
+  <ellipse cx="215" cy="240" rx="8" ry="5" fill="#A5B4FC"/>
+
+  <!-- 龙嘴 -->
+  <path d="M170 270 Q200 295 230 270" fill="none" stroke="#3730A3" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- 龙牙 -->
+  <path d="M175 270 L178 285 L182 270" fill="#FFFFFF" stroke="#3730A3" stroke-width="1.5"/>
+  <path d="M218 270 L222 285 L225 270" fill="#FFFFFF" stroke="#3730A3" stroke-width="1.5"/>
+
+  <!-- 龙须 -->
+  <path d="M140 260 Q100 280 90 310" fill="none" stroke="#A5B4FC" stroke-width="4" stroke-linecap="round"/>
+  <path d="M145 270 Q110 300 105 330" fill="none" stroke="#A5B4FC" stroke-width="3" stroke-linecap="round"/>
+  <path d="M260 260 Q300 280 310 310" fill="none" stroke="#A5B4FC" stroke-width="4" stroke-linecap="round"/>
+  <path d="M255 270 Q290 300 295 330" fill="none" stroke="#A5B4FC" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- 鳞片纹理 -->
+  <path d="M185 150 Q200 140 215 150" fill="none" stroke="#C7D2FE" stroke-width="2"/>
+  <path d="M178 165 Q200 153 222 165" fill="none" stroke="#C7D2FE" stroke-width="2"/>
+
+  <!-- 底部标牌 "免费" -->
+  <rect x="310" y="340" width="70" height="28" rx="14" fill="#10B981"/>
+  <text x="345" y="359" font-family="sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle">免费</text>
+</svg>

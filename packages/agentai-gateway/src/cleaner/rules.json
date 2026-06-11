@@ -1,0 +1,68 @@
+[
+  {
+    "id": "tmp-cache",
+    "match": { "path": "**/tmp/**", "mtimeDaysAgo": ">1" },
+    "action": "delete",
+    "enabled": true
+  },
+  {
+    "id": "cache-dirs",
+    "match": { "path": "**/cache/**", "mtimeDaysAgo": ">7" },
+    "action": "gzip-archive",
+    "enabled": true
+  },
+  {
+    "id": "logs",
+    "match": { "path": "**/*.log", "mtimeDaysAgo": ">30" },
+    "action": "gzip-archive",
+    "enabled": true
+  },
+  {
+    "id": "audit-logs",
+    "match": { "path": ".agentai/audit/**", "mtimeDaysAgo": ">14" },
+    "action": "move-archive",
+    "enabled": true
+  },
+  {
+    "id": "memory-jsonl",
+    "match": { "path": ".agentai/**/*.jsonl", "mtimeDaysAgo": ">90" },
+    "action": "gzip-archive",
+    "enabled": false
+  },
+  {
+    "id": "digests",
+    "match": { "path": ".agentai/digests/**", "mtimeDaysAgo": ">30" },
+    "action": "gzip-archive",
+    "enabled": true
+  },
+  {
+    "id": "node-modules-cache",
+    "match": { "path": "node_modules/.cache/**", "mtimeDaysAgo": ">1" },
+    "action": "delete",
+    "enabled": true
+  },
+  {
+    "id": "dist-builds",
+    "match": { "path": "**/dist/**", "mtimeDaysAgo": ">90", "sizeBytes": ">1073741824" },
+    "action": "delete",
+    "enabled": false
+  },
+  {
+    "id": "pycache",
+    "match": { "path": "**/__pycache__/**", "mtimeDaysAgo": ">1" },
+    "action": "delete",
+    "enabled": true
+  },
+  {
+    "id": "npm-cache",
+    "match": { "path": "**/.npm/**", "mtimeDaysAgo": ">14" },
+    "action": "delete",
+    "enabled": true
+  },
+  {
+    "id": "test-reports",
+    "match": { "path": "**/test-results/**", "mtimeDaysAgo": ">3" },
+    "action": "delete",
+    "enabled": true
+  }
+]

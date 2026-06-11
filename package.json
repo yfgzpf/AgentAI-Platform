@@ -16,6 +16,9 @@
     "apps/*"
   ],
   "scripts": {
+    "start": "concurrently -n gw,gui \"pnpm dev:gateway\" \"pnpm dev:web\"",
+    "start:desktop": "pnpm --filter @agentai/desktop tauri dev",
+    "start:all": "concurrently -n gw,gui,desktop \"pnpm dev:gateway\" \"pnpm dev:web\" \"pnpm dev:desktop\"",
     "dev": "pnpm --filter @agentai/gateway dev",
     "dev:web": "pnpm --filter @agentai/gui dev",
     "dev:desktop": "pnpm --filter @agentai/desktop tauri dev",
@@ -47,6 +50,7 @@
     "husky": "^9.0.0",
     "lint-staged": "^15.0.0",
     "prettier": "^3.3.0",
+    "sharp": "^0.34.5",
     "standard-version": "^9.5.0",
     "typescript": "^5.5.0"
   },

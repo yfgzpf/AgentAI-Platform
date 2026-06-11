@@ -2,58 +2,126 @@ name: Release Desktop
 
 on:
   push:
-    tags: ['v*.*.*']
+    tags:
+      - 'v*'
 
 jobs:
-  build-desktop:
-    name: Build Tauri Desktop (${{ matrix.os }})
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          # 从 git log 生成 changelog
+          git log $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD --oneline > release-notes.txt
+          echo "CHANGELOG<<EOF" >> $GITHUB_ENV
+          cat release-notes.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AgentAI Platform ${{ github.ref_name }}
+          body: ${{ env.CHANGELOG }}
+          draft: false
+          prerelease: false
+
+  build:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: msi
+            asset_name: AgentAI-Platform-${{ github.ref_name }}-x64.msi
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            ext: dmg
+            asset_name: AgentAI-Platform-${{ github.ref_name }}-x64.dmg
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            ext: AppImage
+            asset_name: AgentAI-Platform-${{ github.ref_name }}-x64.AppImage
+
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 22
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
+          run_install: false
 
-      - name: Install Linux deps
-        if: matrix.os == 'ubuntu-latest'
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Cache Rust cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            packages/agentai-desktop/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ./packages/agentai-desktop/src-tauri -> target
+          targets: ${{ matrix.target }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
-      - name: Build Tauri
+      - name: Build Tauri Desktop
         run: pnpm --filter @agentai/desktop tauri build
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
         with:
-          name: agentai-desktop-${{ matrix.os }}
-          path: |
-            packages/agentai-desktop/src-tauri/target/release/bundle/**/*.exe
-            packages/agentai-desktop/src-tauri/target/release/bundle/**/*.dmg
-            packages/agentai-desktop/src-tauri/target/release/bundle/**/*.AppImage
-            packages/agentai-desktop/src-tauri/target/release/bundle/**/*.deb
-            packages/agentai-desktop/src-tauri/target/release/bundle/**/*.msi
-          if-no-files-found: warn
+          files: |
+            packages/agentai-desktop/src-tauri/target/release/**/AgentAI*.${{ matrix.ext }}

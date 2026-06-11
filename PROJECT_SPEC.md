@@ -110,6 +110,32 @@
 - **切换方式**: 环境变量 `LLM_PROVIDER=agentai|deepseek` + API Key
 - **智能路由**: Reasonix 8 步对冲 → 选 Provider → 记录成本 → 失败熔断
 
+### 3.7 GUI 导航 / 路由基线 (v1.3)
+- 路由框架: `react-router-dom` v6, 7 个一级路由: `/studio` (默认) / `/image` / `/video` / `/editor` / `/skills` / `/settings` / `/qq`
+- 侧栏: 200px 可折叠 (折叠态 56px), antd `Menu` 渲染 7 项, 高亮跟随 `useLocation()`
+- 顶栏: 折叠按钮 + 当前页名 + Gateway 健康条 (`/health` 15s 探活) + 当前模型徽标 + 版本号
+- 入口: 无 profile → `/onboarding` (受控 Modal, 不再 `window.location.reload`); 有 profile → `/studio`
+- `<PageHeader>` 统一页头: 面包屑 `Studio / 子页` + 主标题 + 副标题 + 右侧 `<Space>` 操作区
+- 持久化: `agentai-sidebar-collapsed` localStorage 键
+
+### 3.8 多模型配置 (v1.3)
+- Store: `useModelStore` (zustand + persist), 字段 `models: ModelConfig[]` / `activeModelId: string` / `addModel` / `removeModel` / `toggleModel` / `setDefault` / `setActive`
+- 预置 3 个内置模型: agentai (默认) / deepseek / openai
+- 运行时切换: `<ModelSwitcher>` 紧贴输入框左上方, 彩色小圆点 + 标签 + 下拉
+- 设置页: Settings → LLM 模型 Tab = `<ModelManager>`, 提供 列表 / 启停 / 测活 / 默认 / + 添加
+- Gateway: `POST /v1/chat` / `/v1/editor/chat` / `/v1/editor/chat/stream` / `/v1/qq/message` 接受 `model` 字段, 缺省 `agentai`
+- 模型清单: `GET /v1/models` 返回已配模型元信息 (含 `keyPreview` 掩码)
+- 兼容 shim: 旧的 `useSettingsStore().provider` 仍可用, 但 setProvider 会自动同步到 `useModelStore().setActive` 并标 `@deprecated`
+
+### 3.9 Gateway 安全基线 (v1.3)
+- CORS 白名单: `AGENTAI_CORS_ORIGINS` 环境变量, 默认 `http://localhost:5173,http://localhost:1420,tauri://localhost`
+- WebSocket CORS: 与 HTTP 同步白名单
+- 静态 `/media` 仅暴露 `packages/agentai-skills/out`, 不允许 `..` 逃逸 (express.static 默认行为)
+- 文件路径解析统一走 `path.resolve()`, 避免相对路径注入
+- QQ Bot 默认对所有用户开放; 管理员白名单仅在请求方显式传 `enforceAdmins=true` 时才生效
+- SSE 客户端断开: `req.on('close')` 触发 `AbortController.abort()`, 中断 `AgentAILoop`
+- bash 工具跨平台: Windows 走 `powershell.exe -NoProfile -NonInteractive`, 通过 `AGENTAI_BASH=cmd` 可回退到 `cmd.exe`
+
 ---
 
 ## 四、系统架构（Tauri 壳方案）

@@ -126,6 +126,30 @@ export class AgentAILoop extends EventEmitter {
       this.iteration++;
       this.emit('loop:iteration', { n: this.iteration });
 
+      // 3.0 规则前置: 仅对 Agnes (无工具能力)生效, DeepSeek 原生调工具不干预
+      if (this.iteration === 1 && this.opts.model !== 'deepseek') {
+        const lastMsg = this.context.appendOnlyLog[this.context.appendOnlyLog.length - 1];
+        const userText = lastMsg?.role === 'user' ? (typeof lastMsg.content === 'string' ? lastMsg.content : '') : '';
+        const ctx: any = { userId: this.opts.userId, workspace: this.opts.workspace, abortSignal: this.opts.abortSignal };
+        if (/^(审查|分析|检查|探索|review|analyze|explore)/i.test(userText) && userText.length < 50) {
+          try {
+            const r = await this.registry.executeOne({ id: 'pre_list', name: 'list_directory', args: { path: this.opts.workspace || '.' } }, ctx);
+            if (r?.success) {
+              this.context.appendOnlyLog.splice(-1, 0, { role: 'tool', name: 'list_directory', content: `📁 目录结构:\n${r.output}` });
+            }
+          } catch {}
+        }
+        const readMatch = userText.match(/^(读|查看|读取|cat|read)\s+(.+)/i);
+        if (readMatch) {
+          try {
+            const r = await this.registry.executeOne({ id: 'pre_read', name: 'read_file', args: { file_path: readMatch[2].trim() } }, ctx);
+            if (r?.success) {
+              this.context.appendOnlyLog.splice(-1, 0, { role: 'tool', name: 'read_file', content: `📄 文件内容:\n${r.output}` });
+            }
+          } catch {}
+        }
+      }
+
       // 3.1 构造 LLM 请求 (immutable prefix + append-only log)
       const messages: ChatMessage[] = [
         ...this.context.immutablePrefix,
@@ -165,8 +189,26 @@ export class AgentAILoop extends EventEmitter {
         continue;
       }
 
+      // 3.7 无 tool call: 检测空谈模式 (说要做什么但不做)
+      const text = (res.content || '').trim();
+      const isTalk = /^(Let me|I will|I'll|I'm going|让我|我来|我先|现在|接下来)/i.test(text) && text.length < 100;
+      if (isTalk && this.iteration < this.opts.maxIterations - 1) {
+        this.context.appendOnlyLog.push({ role: 'user', content: 'CALL A TOOL NOW. Use list_directory, read_file, or web_search directly. Do NOT explain. Just call the tool.' });
+        continue;
+      }
       // 3.7 无 tool call, 结束
       break;
+    }
+
+    // 上下文折叠 (学 Reasonix ContextManager)
+    if (this.opts.workspace && this.iteration >= 3) {
+      import('./context-manager.js').then(({ maybeFold }) => maybeFold(
+        this.context.appendOnlyLog,
+        this.context.immutablePrefix.map(m => m.content).join('\n'),
+        this.router,
+        this.opts.workspace,
+        this.opts.userId,
+      ).catch((e: any) => console.warn('[fold] failed:', e?.message)));
     }
 
     if (!lastResponse) {
@@ -183,13 +225,22 @@ export class AgentAILoop extends EventEmitter {
   private async dispatchToolCalls(
     calls: Array<{ id: string; name: string; args: Record<string, any> }>,
   ): Promise<Array<{ id: string; name: string; output: string }>> {
-    const ctx: ToolContext = {
+    const ctx: any = {
       userId: this.opts.userId,
       workspace: this.opts.workspace,
       abortSignal: this.opts.abortSignal,
       priorMessages: this.context.appendOnlyLog,
+      _router: this.router,
+      _registry: this.registry,
     };
+    // 发射 tool:start 事件
+    for (const c of calls) this.emit('tool:start', { callId: c.id, name: c.name, args: c.args });
     const results = await this.registry.dispatch(calls, ctx);
+    // 发射 tool:result 事件
+    for (const c of calls) {
+      const r = results.find(x => x.id === c.id);
+      this.emit('tool:result', { callId: c.id, name: c.name, result: r?.result?.output || '', ok: r?.result?.success !== false, durationMs: r?.result?.durationMs || 0 });
+    }
     return calls.map(c => {
       const r = results.find(x => x.id === c.id);
       return {

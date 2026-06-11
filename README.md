@@ -1,104 +1,138 @@
 <p align="center">
-  <img src="./assets/logo-256.png" alt="AgentAI Platform" width="200">
+  <img src="./assets/icon-zodiac.svg" alt="AgentAI Platform" width="120">
 </p>
 
 <h1 align="center">AgentAI Platform</h1>
 
 <p align="center">
-  <strong>完全免费的智能体框架平台 · 内置生图生视频多模态能力</strong>
-</p>
-
-<p align="center">
-  <a href="#功能特性">功能特性</a> ·
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#架构">架构</a> ·
-  <a href="#文档">文档</a> ·
-  <a href="#贡献">贡献</a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/agentai-platform/agentai-platform/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
-  </a>
-  <a href="https://nodejs.org/">
-    <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node">
-  </a>
-  <a href="https://tauri.app/">
-    <img src="https://img.shields.io/badge/tauri-2.0-blue" alt="Tauri">
-  </a>
-  <a href="https://www.python.org/">
-    <img src="https://img.shields.io/badge/python-3.13+-blue" alt="Python">
-  </a>
+  <strong>完全免费 · 41 工具 · 5 技能 · 自进化记忆 · 多模态 · 多智能体</strong><br>
+  <em>v0.2.0-alpha — 2026-06-10</em>
 </p>
 
 ---
 
-## ✨ 功能特性
+## 🎯 项目简介
 
-- 🖥️ **极小桌面端** — Tauri 2.0 (Rust) 打包，安装包 **5-10MB** (vs Electron 150MB+)
-- 🤖 **多模态内置** — Agnes Image 2.1 / Video / 字节 Seedance 2.0 / 即梦
-- 💬 **4 渠道接入** — Web 桌面 / QQ 机器人 / VSCode 扩展 / Telegram
-- 🧠 **智能 LLM 路由** — AgentAI ↔ DeepSeek 智能切换 + 熔断 + 成本控制
-- 🛠️ **37 个开箱技能** — 办公/网页/视频/图像/代码/元技能 (从 ZhiY.AI 迁移)
-- 🔒 **零硬编码** — 所有 API Key 由用户填入，AES-256-GCM 加密存储
-- 📚 **三段式教程** — 5 分钟跑通 / 15 分钟接多模态 / 30 分钟接 QQ+VSCode
-- 🎨 **完整品牌** — Logo 3 套方案 + 智能蓝 #4F46E5 主色
+AgentAI Platform 是一个**完全免费**、**本地优先**的智能体平台。融合 Reasonix、Hermes、ZhiY.AI、Cursor-MCP 四大框架精华，提供 41 个内置工具 + Python Bridge 无限技能扩展 + 3层自进化记忆系统。
+
+### 核心差异化
+
+| 对比 | ChatGPT | Copilot | Cursor | **AgentAI** |
+|------|---------|---------|--------|-------------|
+| 模型 | 付费 | 付费 | 付费 | **免费 (agentai + deepseek 择优)** |
+| 工具数 | ~10 | ~5 | ~10 | **41 + 无限 Python 技能** |
+| 记忆 | 手动 | 无 | 会话内 | **3 层自进化记忆** |
+| 多模态 | ✅ | ❌ | ❌ | **图片/视频/文档/微信** |
+| 跨渠道 | Web | IDE | IDE | **Web/QQ/VSCode/桌面/微信** |
+| 自学习 | ❌ | ❌ | ❌ | **✅ evolution.jsonl** |
+| 安全 | 云端 | 云端 | 云端 | **本地沙箱 + bash 白名单** |
+
+---
+
+## 📊 系统状态 (2026-06-10)
+
+| 指标 | 数值 |
+|------|------|
+| **内置工具** | 36 |
+| **Python 自动发现** | 5 (image-gen, doc-generator, browser-auto, wechat-bot, lottery-ai) |
+| **总计** | **41** |
+| **测试** | 67/67 ✅ |
+| **API 端点** | 全通 ✅ |
+| **安全加固** | bash 白名单 + 路径沙箱 + SSRF + 命令注入防 |
+
+---
 
 ## 🚀 快速开始
 
 ```bash
-# 1. 克隆
-git clone https://github.com/agentai-platform/agentai-platform.git
+git clone <repo-url>
 cd agentai-platform
-
-# 2. 安装依赖
 pnpm install
-
-# 3. 首次启动 (启动 GUI 向导)
-pnpm dev
-
-# 4. 跟着 5 步向导填入 API Key, 完成
+pnpm start
 ```
 
-完整教程见 [docs/TUTORIAL.md](./docs/TUTORIAL.md)。
+打开 `http://localhost:5173`
 
-## 🏗️ 架构
+## 🛠️ 工具清单 (41)
+
+### 文件操作 (10)
+`read_file` `write_file` `edit_file` `list_directory` `search_files` `search_content` `glob` `directory_tree` `get_file_info` `delete_file`
+
+### 编辑 (3)
+`multi_edit` `create_directory`
+
+### 复制移动 (2)
+`copy_file` `move_file`
+
+### 进程管理 (6)
+`bash` `run_background` `job_output` `wait_for_job` `stop_job` `list_jobs`
+
+### 网络 (2)
+`web_search` `web_fetch`
+
+### 代码智能 (2)
+`get_symbols` `find_in_code`
+
+### 媒体生成 (3)
+`generate_image` `generate_video` `query_video`
+
+### 记忆 (3)
+`remember` `recall_memory` `forget`
+
+### 规划与交互 (4)
+`submit_plan` `todo_write` `ask_choice` `ask_user`
+
+### 技能管理 (1)
+`discover_or_create_skill`
+
+### Python 自动发现 (5)
+`image-gen` `doc-generator` `browser-auto` `wechat-bot` `lottery-ai`
+
+---
+
+## 🧠 自进化记忆系统
 
 ```
-Tauri Desktop (Rust) ── 5-10MB
-        │
-        ▼ localhost:18789
-Node.js Gateway (80MB 进程) ── 智能体调度 + 4 渠道
-        │
-        ▼
-Python 技能 (Docker 沙箱) ── 37 个多模态
+第 1 层: volatileScratch (当前轮)
+第 2 层: JSONL 文件 (跨会话)
+第 3 层: evolution.jsonl (跨项目, 自动学习)
 ```
 
-详细架构见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)（阶段 2 落地）。
+每次对话结束后自动记录成功策略和失败教训，下次启动时系统提示自动注入进化数据。
 
-## 📚 文档
+## 🔒 安全架构
 
-| 文档 | 说明 |
+| 防护 | 实现 |
 |------|------|
-| [PROJECT_SPEC.md](./PROJECT_SPEC.md) | 13 章节项目规范 v1.2 |
-| [docs/TUTORIAL.md](./docs/TUTORIAL.md) | 5/15/30 分钟教程 |
-| [docs/KEYS_MANAGEMENT.md](./docs/KEYS_MANAGEMENT.md) | 密钥管理与加密 |
-| [docs/GIT_GUIDELINES.md](./docs/GIT_GUIDELINES.md) | Git 工作流规范 |
-| [docs/BRAND_GUIDELINES.md](./docs/BRAND_GUIDELINES.md) | 品牌设计规范 |
+| bash 白名单 | 15 个安全命令 + 危险模式拦截 |
+| 路径沙箱 | read/write/edit file 全部限制在 workspace 内 |
+| SSRF 防护 | web_fetch 禁止内网/localhost |
+| 命令注入 | search_content/glob 用 fs API 替代 shell |
+| API Key | .env + .gitignore, 不提交 |
 
-## 🎯 开发计划 (21 天 / 5 阶段)
+## 📁 项目结构
 
-1. **基础脚手架** (3 天) — Tauri + Node Gateway 跑通
-2. **智能体核心** (4 天) — LLM 路由 + 技能 + 记忆
-3. **多模态技能** (5 天) — 37 skill 迁移 + Agnes 多模态
-4. **桌面端 + QQ** (4 天) — Tauri 完整 + oicq
-5. **VSCode 集成** (3 天) — vsce 扩展
-6. **测试 + 文档** (2 天) — 全渠道验收
+```
+agentai-platform/
+├── packages/
+│   ├── agentai-gateway/     # 后端 (41 工具 + Python Bridge)
+│   ├── agentai-gui/         # 前端 (Vite + React)
+│   ├── agentai-core/        # 核心库
+│   ├── agentai-skills/      # Python 技能 (5)
+│   │   ├── image-gen/
+│   │   ├── office/doc-generator/
+│   │   ├── web/browser-auto/
+│   │   ├── wechat-bot/
+│   │   └── finance/lottery-ai/
+│   ├── agentai-qqbot/       # QQ 机器人
+│   └── agentai-desktop/     # Tauri 桌面
+├── assets/                  # 图标
+├── docs/                    # 文档
+└── references/              # 参考源码
+```
 
-## 🤝 贡献
+---
 
-PR / Issue 欢迎，详见 [docs/GIT_GUIDELINES.md](./docs/GIT_GUIDELINES.md)。
-
-## 📄 License
-
-MIT © 2026 AgentAI Builder
+<p align="center">
+  <sub>Built with ❤️ | AgentAI Platform v0.2.0-alpha</sub>
+</p>

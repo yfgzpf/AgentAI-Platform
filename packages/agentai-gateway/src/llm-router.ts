@@ -21,7 +21,7 @@
 
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
-import { LRUCache } from 'lru-cache';
+import { createRequire } from 'module';const _require = createRequire(import.meta.url);const { LRUCache } = _require('lru-cache');
 import { writeMemory } from './memory.js';
 
 // ===== 类型定义 =====

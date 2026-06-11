@@ -1,4 +1,5 @@
-# AgentAI Platform — Changelog
+# Changelog
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
@@ -6,21 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
-- Stage 1: Foundation (Tauri shell + Node Gateway)
-- Stage 2: Agent Core (LLM routing + skill loader + memory)
-- Stage 3: Multimodal Skills (37 skills + Agnes API)
-- Stage 4: Desktop + QQ
-- Stage 5: VSCode Extension
-- Stage 6: Test + Documentation
-
-## [0.1.0-alpha.1] - 2026-06-08
-
 ### Added
-- Project specification v1.2 (13 sections, 5 stages plan)
-- `docs/KEYS_MANAGEMENT.md` - AES-256-GCM encryption, GUI wizard, 17 keys manifest
-- `docs/TUTORIAL.md` - 5/15/30-minute three-stage tutorial
-- `docs/GIT_GUIDELINES.md` - Git Flow + Conventional Commits + CI/CD
-- `docs/BRAND_GUIDELINES.md` - Logo designs + color tokens + typography
-- Monorepo skeleton (pnpm workspace)
-- `.gitignore` + `.gitattributes` + ESLint + Prettier + TypeScript config
+- Welcome page with 6 core competitive advantages display
+- Web search tools: `web_search` + `web_fetch`
+- Cross-conversation memory: auto-summarize & carry context
+- AI super-awareness: auto-discover & create skills
+- AES-256-GCM encrypted config storage
+- Gateway auto-start with Vite dev server
+- 12 built-in tools (image/video/search/skill creation)
+- Chinese zodiac Dragon SVG icon & desktop icons
+- VSCode extension with SSE streaming
+- QQ Bot with official SDK support
+- Onboarding 5-step wizard
+- Plan request form
+
+### Fixed
+- Input lag: input state isolated with useMemo
+- AI reply hidden by tool summaries
+- Duplicate command execution with sendingRef lock
+- Path traversal vulnerability with safeResolve sandbox
+- CSS dark theme for antd Modal/Message/Dropdown
+- CORS blocked for 127.0.0.1
+- Gateway spawn ENOENT on Windows
