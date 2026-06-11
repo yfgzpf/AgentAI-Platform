@@ -24,12 +24,13 @@ import { RightPanel } from './components/RightPanel';
 import { SessionSidebar } from './components/SessionSidebar';
 import { QQBotPanel } from './components/QQBotPanel';
 import { CleanerPanel } from './components/CleanerPanel';
+import { WritePage } from './components/WritePage';
 import { useProfileStore } from './store';
 
 const { Sider, Content, Header } = Layout;
 const { Title, Text } = Typography;
 
-type View = 'chat' | 'image' | 'video' | 'skills' | 'editor' | 'settings' | 'qq' | 'cleaner';
+type View = 'chat' | 'write' | 'image' | 'video' | 'skills' | 'editor' | 'settings' | 'qq' | 'cleaner';
 
 export const App: React.FC = () => {
   const [view, setView] = useState<View>('chat');
@@ -37,6 +38,7 @@ export const App: React.FC = () => {
 
   const navItems: { key: View; icon: React.ReactNode; label: string }[] = [
     { key: 'chat', icon: <MessageOutlined />, label: '对话' },
+    { key: 'write', icon: <EditOutlined />, label: '写作' },
     { key: 'image', icon: <PictureOutlined />, label: '生图' },
     { key: 'video', icon: <VideoCameraOutlined />, label: '生视频' },
     { key: 'editor', icon: <EditOutlined />, label: '代码编辑器' },
@@ -118,6 +120,7 @@ export const App: React.FC = () => {
           {/* 中间: 内容区 */}
           <Content style={{ background: '#0f0f0f', overflowY: 'auto', boxShadow: '0 0 60px rgba(79,70,229,0.04), 0 0 20px rgba(79,70,229,0.02)' }}>
             {view === 'chat' && <ChatView />}
+            {view === 'write' && <WritePage />}
             {view === 'image' && <ImageGen />}
             {view === 'video' && <VideoGen />}
             {view === 'editor' && <Editor />}
