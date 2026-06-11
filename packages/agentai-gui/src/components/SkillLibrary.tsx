@@ -1,50 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Input, List, Tag, Tabs, Badge, Empty } from 'antd';
+import { Input, List, Tag, Tabs, Badge, Empty, Spin, Alert } from 'antd';
 import { SearchOutlined, ApiOutlined, MessageOutlined, PictureOutlined, VideoCameraOutlined, SoundOutlined, CodeOutlined, GlobalOutlined } from '@ant-design/icons';
 
 interface Skill {
   name: string;
   category: string;
   description: string;
+  tools: string[];
+  triggers: string[];
   icon: React.ReactNode;
 }
-
-const SKILLS: Skill[] = [
-  // 通信
-  { name: 'qq-bot', category: 'communication', description: 'QQ 群机器人', icon: <MessageOutlined /> },
-  { name: 'wecom-bot', category: 'communication', description: '企业微信机器人', icon: <MessageOutlined /> },
-  { name: 'dingtalk-bot', category: 'communication', description: '钉钉机器人', icon: <MessageOutlined /> },
-  { name: 'feishu-bot', category: 'communication', description: '飞书机器人', icon: <MessageOutlined /> },
-  { name: 'telegram-bot', category: 'communication', description: 'Telegram 机器人', icon: <MessageOutlined /> },
-  { name: 'discord-bot', category: 'communication', description: 'Discord 机器人', icon: <MessageOutlined /> },
-  { name: 'slack-bot', category: 'communication', description: 'Slack 机器人', icon: <MessageOutlined /> },
-  // 图像
-  { name: 'agentai-image-gen', category: 'image', description: 'Agnes AI 图像生成 (Image 2.1)', icon: <PictureOutlined /> },
-  { name: 'nano-banana-pro', category: 'image', description: 'Gemini 3 Pro 图像生成', icon: <PictureOutlined /> },
-  { name: 'qwen-image', category: 'image', description: '通义千问图像', icon: <PictureOutlined /> },
-  { name: 'sd-local', category: 'image', description: 'Stable Diffusion 本地', icon: <PictureOutlined /> },
-  // 视频
-  { name: 'agentai-video-gen', category: 'video', description: 'Agnes AI 视频生成', icon: <VideoCameraOutlined /> },
-  { name: 'seedance', category: 'video', description: '豆包 Seedance 视频', icon: <VideoCameraOutlined /> },
-  { name: 'jimeng', category: 'video', description: '即梦 AI 视频', icon: <VideoCameraOutlined /> },
-  // 语音
-  { name: 'tts-edge', category: 'voice', description: 'Edge TTS 文本转语音', icon: <SoundOutlined /> },
-  { name: 'asr-whisper', category: 'voice', description: 'Whisper 语音转文字', icon: <SoundOutlined /> },
-  { name: 'elevenlabs', category: 'voice', description: 'ElevenLabs 高质量 TTS', icon: <SoundOutlined /> },
-  // 办公
-  { name: 'docx-gen', category: 'office', description: 'Word 文档生成', icon: <ApiOutlined /> },
-  { name: 'xlsx-gen', category: 'office', description: 'Excel 表格生成', icon: <ApiOutlined /> },
-  { name: 'pptx-gen', category: 'office', description: 'PPT 演示文稿', icon: <ApiOutlined /> },
-  { name: 'pdf-gen', category: 'office', description: 'PDF 生成', icon: <ApiOutlined /> },
-  // 代码
-  { name: 'code-executor', category: 'code', description: 'Python 沙箱执行', icon: <CodeOutlined /> },
-  { name: 'code-reviewer', category: 'code', description: '代码审查', icon: <CodeOutlined /> },
-  { name: 'github-pr', category: 'code', description: 'GitHub PR 操作', icon: <CodeOutlined /> },
-  // 浏览器
-  { name: 'browser-automation', category: 'web', description: 'Playwright 浏览器自动化', icon: <GlobalOutlined /> },
-  { name: 'web-scraper', category: 'web', description: 'Firecrawl 网页抓取', icon: <GlobalOutlined /> },
-  { name: 'mcp-client', category: 'web', description: 'MCP 协议客户端', icon: <GlobalOutlined /> },
-];
 
 const CATEGORIES = [
   { key: 'all', label: '全部', color: 'default' },
@@ -55,20 +20,67 @@ const CATEGORIES = [
   { key: 'office', label: '办公', color: 'orange' },
   { key: 'code', label: '代码', color: 'green' },
   { key: 'web', label: '网页', color: 'gold' },
+  { key: 'general', label: '通用', color: 'default' },
+  { key: 'deployment', label: '部署', color: 'volcano' },
+  { key: 'security', label: '安全', color: 'red' },
+  { key: 'git', label: 'Git', color: 'geekblue' },
+  { key: 'data', label: '数据', color: 'lime' },
+  { key: 'documentation', label: '文档', color: 'cyan' },
+  { key: 'code-quality', label: '代码质量', color: 'green' },
+  { key: 'testing', label: '测试', color: 'purple' },
 ];
+
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  communication: <MessageOutlined />,
+  image: <PictureOutlined />,
+  video: <VideoCameraOutlined />,
+  voice: <SoundOutlined />,
+  office: <ApiOutlined />,
+  code: <CodeOutlined />,
+  web: <GlobalOutlined />,
+  default: <ApiOutlined />,
+};
+
+const httpUrl = () => ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
 
 export const SkillLibrary: React.FC = () => {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('all');
-  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [apiOffline, setApiOffline] = useState(false);
+
+  // 从网关动态获取技能
+  const loadSkills = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(httpUrl() + '/v1/skills');
+      if (r.ok) {
+        const data = await r.json();
+        if (data.skills && data.skills.length > 0) {
+          setSkills(data.skills.map((s: any) => ({
+            ...s,
+            icon: CATEGORY_ICONS[s.category] || CATEGORY_ICONS.default,
+          })));
+          setApiOffline(false);
+          setLoading(false);
+          return;
+        }
+      }
+    } catch {
+      // API 离线, 用默认数据
+    }
+    // 静态备用
+    setSkills(DEFAULT_SKILLS);
+    setApiOffline(true);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const c: Record<string, number> = { all: SKILLS.length };
-    SKILLS.forEach((s) => { c[s.category] = (c[s.category] || 0) + 1; });
-    setCounts(c);
+    loadSkills();
   }, []);
 
-  const filtered = SKILLS.filter((s) => {
+  const filtered = skills.filter((s) => {
     if (category !== 'all' && s.category !== category) return false;
     if (search && !s.name.includes(search.toLowerCase()) && !s.description.includes(search)) return false;
     return true;
@@ -89,14 +101,19 @@ export const SkillLibrary: React.FC = () => {
           onChange={setCategory}
           size="small"
           tabBarStyle={{ marginBottom: 0, marginTop: 8 }}
-          items={CATEGORIES.map((c) => ({
+          items={CATEGORIES.filter(c => c.key === 'all' || skills.some(s => s.category === c.key)).map((c) => ({
             key: c.key,
-            label: <Badge count={counts[c.key] || 0} size="small" offset={[6, -2]}><span style={{ paddingRight: 8 }}>{c.label}</span></Badge>,
+            label: <Badge count={c.key === 'all' ? skills.length : skills.filter(s => s.category === c.key).length} size="small" offset={[6, -2]}><span style={{ paddingRight: 8 }}>{c.label}</span></Badge>,
           }))}
         />
       </div>
+      {apiOffline && skills.length > 0 && (
+        <Alert type="info" message="网关离线, 显示内置技能列表" banner style={{ fontSize: 11 }} closable />
+      )}
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}><Spin tip="加载技能..." /></div>
+        ) : filtered.length === 0 ? (
           <Empty description="没找到技能" />
         ) : (
           <List
@@ -117,3 +134,35 @@ export const SkillLibrary: React.FC = () => {
     </div>
   );
 };
+
+// 静态备用数据 (API 离线时使用)
+const DEFAULT_SKILLS: Skill[] = [
+  // 通讯
+  { name: 'qq-bot', category: 'communication', description: 'QQ 群机器人', tools: [], triggers: [], icon: <MessageOutlined /> },
+  { name: 'wecom-bot', category: 'communication', description: '企业微信机器人', tools: [], triggers: [], icon: <MessageOutlined /> },
+  { name: 'feishu-bot', category: 'communication', description: '飞书机器人', tools: [], triggers: [], icon: <MessageOutlined /> },
+  { name: 'telegram-bot', category: 'communication', description: 'Telegram 机器人', tools: [], triggers: [], icon: <MessageOutlined /> },
+  { name: 'dingtalk-bot', category: 'communication', description: '钉钉机器人', tools: [], triggers: [], icon: <MessageOutlined /> },
+  { name: 'discord-bot', category: 'communication', description: 'Discord 机器人', tools: [], triggers: [], icon: <MessageOutlined /> },
+  { name: 'slack-bot', category: 'communication', description: 'Slack 机器人', tools: [], triggers: [], icon: <MessageOutlined /> },
+  // 图像
+  { name: 'agentai-image-gen', category: 'image', description: 'Agnes AI 图像生成 (Image 2.1)', tools: [], triggers: [], icon: <PictureOutlined /> },
+  { name: 'qwen-image', category: 'image', description: '通义千问图像', tools: [], triggers: [], icon: <PictureOutlined /> },
+  // 视频
+  { name: 'agentai-video-gen', category: 'video', description: 'Agnes AI 视频生成', tools: [], triggers: [], icon: <VideoCameraOutlined /> },
+  // 语音
+  { name: 'tts-edge', category: 'voice', description: 'Edge TTS 文本转语音', tools: [], triggers: [], icon: <SoundOutlined /> },
+  { name: 'asr-whisper', category: 'voice', description: 'Whisper 语音转文字', tools: [], triggers: [], icon: <SoundOutlined /> },
+  // 办公
+  { name: 'docx-gen', category: 'office', description: 'Word 文档生成', tools: [], triggers: [], icon: <ApiOutlined /> },
+  { name: 'xlsx-gen', category: 'office', description: 'Excel 表格生成', tools: [], triggers: [], icon: <ApiOutlined /> },
+  { name: 'pptx-gen', category: 'office', description: 'PPT 演示文稿', tools: [], triggers: [], icon: <ApiOutlined /> },
+  { name: 'pdf-gen', category: 'office', description: 'PDF 生成', tools: [], triggers: [], icon: <ApiOutlined /> },
+  // 代码
+  { name: 'code-executor', category: 'code', description: 'Python 沙箱执行', tools: [], triggers: [], icon: <CodeOutlined /> },
+  { name: 'code-reviewer', category: 'code', description: '代码审查', tools: [], triggers: [], icon: <CodeOutlined /> },
+  // Web
+  { name: 'web-scraper', category: 'web', description: '网页抓取', tools: [], triggers: [], icon: <GlobalOutlined /> },
+  { name: 'browser-automation', category: 'web', description: '浏览器自动化', tools: [], triggers: [], icon: <GlobalOutlined /> },
+  { name: 'mcp-client', category: 'web', description: 'MCP 协议客户端', tools: [], triggers: [], icon: <GlobalOutlined /> },
+];

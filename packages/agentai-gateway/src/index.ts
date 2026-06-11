@@ -10,7 +10,13 @@
  *   - WS      /v1/chat/stream        流式对话
  *   - HTTP GET /v1/tools             列出工具
  *
+ * 架构:
+ *   - 大路由已抽离到 routes/ 目录 (chat/files/qq/health)
+ *   - 这里仅保留旧版路由的兼容层 + WebSocket + 启动初始化
+ *   - 推荐: 新代码使用 app.ts (createApp) 替代
+ *
  * @see docs/INTEGRATION_ARCHITECTURE.md
+ * @see src/app.ts 新版模块化入口
  */
 
 import express from 'express';
@@ -31,6 +37,8 @@ import { MCP_SERVERS } from './mcp/config.js';
 import { MCPHost } from './mcp/host.js';
 import { initGlobalSandbox, getGlobalSandbox, type Sandbox } from './sandbox/index.js';
 import { createSandboxRouter } from './sandbox/router.js';
+import { createSkillsRouter } from './skills/router.js';
+import { scanProjectSkills, scanUserSkills } from './skills/loader.js';
 
 // ===== 启动时自动读 .env (从 F:\agentai-platform\.env 或 cwd/../../.env) =====
 function loadEnv() {
@@ -80,6 +88,38 @@ const io = new SocketServer(server, { cors: { origin: '*' } });
 const router = new AgentAIRouter();
 const registry = new ToolRegistry();
 const sessions = new Map<string, AgentAILoop>();
+
+// ===== 技能自动发现 (启动时扫描) =====
+try {
+  const projectSkills = scanProjectSkills();
+  const userSkills = scanUserSkills();
+  const totalSkills = projectSkills.length + userSkills.length;
+  if (totalSkills > 0) {
+    console.log(`[skills] discovered ${totalSkills} skills (${projectSkills.length} project, ${userSkills.length} user)`);
+  }
+
+  // 启动技能热加载 watcher (新增)
+  const { startSkillWatcher } = await import('./skills/watcher.js');
+  const skillsPaths = [
+    path.join(process.cwd(), 'packages', 'agentai-skills'),
+    path.join(process.cwd(), 'packages', 'agentai-gateway', 'src', 'skills', 'built-in'),
+    path.join(require('os').homedir(), '.agentai', 'skills'),
+  ].filter(p => fs.existsSync(p));
+  startSkillWatcher(skillsPaths);
+} catch (e: any) {
+  console.warn('[skills] scan failed:', e?.message || e);
+}
+
+// 启动 evolution 清理循环 (新增)
+try {
+  const { startEvolutionCleanupLoop } = await import('./evolution.js');
+  startEvolutionCleanupLoop();
+} catch (e: any) {
+  console.warn('[evolution] cleanup loop failed to start:', e?.message || e);
+}
+
+// ===== 技能 API 路由 =====
+app.use('/v1/skills', createSkillsRouter());
 
 // ===== 注册内置工具 (学 Hermes _HERMES_CORE_TOOLS, 我们只 7 个) =====
 const BUILTIN_TOOLS = [
@@ -255,6 +295,12 @@ const BUILTIN_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
   bash: async (args: any, ctx?: any) => {
     try {
       const { command, timeout = 30000 } = args;
+      // 安全检查: 检查危险命令
+      const { isDangerousCommand } = await import('./sanitize.js');
+      const cmdCheck = isDangerousCommand(command);
+      if (cmdCheck.dangerous) {
+        return { success: false, output: `Command blocked: ${cmdCheck.reason}` };
+      }
       const isWin = process.platform === 'win32';
       const shell = isWin ? 'powershell.exe' : (process.env.SHELL || '/bin/bash');
       const shellArgs = isWin ? ['-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command];
@@ -276,8 +322,8 @@ const BUILTIN_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
     try {
       const pattern = args.pattern;
       const basePath = resolveToolPath(args.path || '.', (ctx as any)?.workspace);
-      const g = await import('glob');
-      const results = g.globSync(pattern, {
+      const { globSync } = await import('glob');
+      const results = globSync(pattern, {
         cwd: basePath,
         ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
         dot: false,

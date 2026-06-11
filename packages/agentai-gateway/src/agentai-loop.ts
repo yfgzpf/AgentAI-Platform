@@ -239,7 +239,53 @@ These are NOT suggestions. You MUST follow them. If you are about to rationalize
     }
 
     this.emit('loop:done', { iterations: this.iteration, response: lastResponse });
-    return lastResponse;
+
+    // ============== 反思门 (Reflector) 闭环 ==============
+    // 异步触发, 不阻塞返回
+    if (this.opts.reflectEvery && this.opts.reflectEvery > 0) {
+      this.runReflector(lastResponse, userText).catch((e) => {
+        console.warn('[reflector] failed:', (e as Error).message);
+      });
+    }
+
+    return { ...lastResponse, iterations: this.iteration };
+  }
+
+  /**
+   * 收集本轮所有 tool calls + 调 Reflector 反思
+   */
+  private async runReflector(lastResponse: any, userText: string): Promise<void> {
+    // 收集本轮 tool calls (从 appendOnlyLog 中提取)
+    const toolCalls: Array<{ name: string; args: any; result: any; success: boolean; durationMs: number }> = [];
+    for (const msg of this.context.appendOnlyLog) {
+      if (msg.role === 'tool' && msg.name && (msg as any).tool_call_id) {
+        const tc = lastResponse.toolCalls?.find((c: any) => c.id === (msg as any).tool_call_id);
+        toolCalls.push({
+          name: msg.name,
+          args: tc?.args,
+          result: typeof msg.content === 'string' ? msg.content.slice(0, 200) : '',
+          success: true, // 已写入 log 视为成功
+          durationMs: 0,
+        });
+      }
+    }
+
+    try {
+      const { reflect } = await import('./reflector.js');
+      await reflect(this.router, {
+        userMessage: userText,
+        finalResponse: lastResponse.content || '',
+        toolCalls,
+        iterations: this.iteration,
+        success: !!lastResponse.content,
+      }, {
+        reflectEvery: this.opts.reflectEvery,
+        userId: this.opts.userId,
+        workspace: this.opts.workspace,
+      });
+    } catch (e) {
+      console.warn('[reflector] import/exec failed:', (e as Error).message);
+    }
   }
 
   /**

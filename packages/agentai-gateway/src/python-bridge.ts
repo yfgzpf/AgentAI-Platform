@@ -1,6 +1,8 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import * as crypto from 'crypto';
 
 function findPython(): string {
   const candidates = ['python3', 'python', 'py'];
@@ -51,9 +53,13 @@ export function discoverSkills(): SkillInfo[] {
 }
 
 export async function callPython(mainPy: string, args: Record<string, any>): Promise<{ success: boolean; output: string; data?: any }> {
-  const tmpFile = path.join(process.cwd(), `.py_args_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.json`);
+  // 安全临时文件: 使用 crypto 随机名 + 存放系统临时目录，防止竞态读取
+  const tmpDir = path.join(os.tmpdir(), 'agentai-py');
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const randName = crypto.randomBytes(8).toString('hex');
+  const tmpFile = path.join(tmpDir, `args_${randName}.json`);
   try {
-    fs.writeFileSync(tmpFile, JSON.stringify(args), 'utf-8');
+    fs.writeFileSync(tmpFile, JSON.stringify(args), { encoding: 'utf-8', flag: 'wx' });
     const result = execSync(`${PYTHON} "${mainPy}" --args-file "${tmpFile}"`, {
       encoding: 'utf-8',
       timeout: 30000,

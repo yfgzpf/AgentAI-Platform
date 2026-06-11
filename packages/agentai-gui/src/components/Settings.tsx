@@ -92,13 +92,15 @@ export const Settings: React.FC = () => {
                   <ModelSelector />
                   <Alert
                     type="info"
-                    message="模型路由规则"
+                    message="模型路由规则 (5 维评分)"
                     description={
                       <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
-                        <li>默认走 <b>agentai</b> (Agnes), 真接 apihub.agnes-ai.com</li>
-                        <li>失败 30% 自动熔断, 降级到 <b>deepseek</b></li>
-                        <li>再失败降级到 <b>openai</b> (gpt-4o-mini)</li>
-                        <li>每日成本上限 $5, 超出后强制走最便宜的</li>
+                        <li>【免费】Cline: DS Flash (速度快, 通用对话)</li>
+                        <li>【免费】Cline: MiniMax M3 (社交闲聊, 无工具)</li>
+                        <li>【免费】Cline: 小米 MiMo (1M 上下文, 多模态)</li>
+                        <li>【免费】Agnes AI (主模型, 工具+多模态)</li>
+                        <li>【付费】DeepSeek Pro (强力推理, 架构/安全场景)</li>
+                        <li>【付费】GPT-4o mini (兜底)</li>
                       </ul>
                     }
                   />

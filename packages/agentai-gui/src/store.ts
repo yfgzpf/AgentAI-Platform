@@ -75,15 +75,17 @@ export const useChatStore = create<ChatState>((set) => ({
 
 // 3. Settings 状态 (LLM provider / API key 状态)
 interface SettingsState {
-  provider: 'agentai' | 'deepseek' | 'openai';
+  provider: string; // "cline:deepseek-v4-flash" | "agentai:agnes-v4" | "deepseek:v4-pro" | "openai:gpt-4o-mini" | ...
   hasKey: boolean;
-  setProvider: (p: 'agentai' | 'deepseek' | 'openai') => void;
+  setProvider: (p: string) => void;
   setHasKey: (b: boolean) => void;
 }
+
+const DEFAULT_PROVIDER = 'agentai:agnes-v4';
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      provider: 'agentai',
+      provider: DEFAULT_PROVIDER,
       hasKey: false,
       setProvider: (p) => set({ provider: p }),
       setHasKey: (b) => set({ hasKey: b }),

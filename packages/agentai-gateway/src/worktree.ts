@@ -36,10 +36,21 @@ export function worktreeCreate(basePath: string, branchPrefix = 'task-'): { work
         throw new Error('Not a git repository: ' + basePath);
     }
 
-    // 生成唯一分支名
+    // 安全地生成分支名
     const ts = Date.now();
     const rand = Math.random().toString(36).slice(2, 6);
-    const branch = `${branchPrefix}${ts}-${rand}`;
+    const rawBranch = `${branchPrefix}${ts}-${rand}`;
+    // 验证分支名安全性
+    const { validateBranchName } = await import('./sanitize.js');
+    const branchCheck = validateBranchName(rawBranch);
+    if (!branchCheck.valid) {
+      // 使用备用名称
+      const safeBranch = rawBranch.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 200);
+      const branch = validateBranchName(safeBranch).valid ? safeBranch : `task-${ts}-${rand}`;
+      execSync(`git worktree add "${wdir}" -b "${branch}"`, { cwd, encoding: 'utf-8', timeout: 30000 });
+      return { worktreePath: wdir, branch };
+    }
+    const branch = rawBranch;
 
     // 工作树目录: ~/.agentai/worktrees/<branch>
     const wdir = path.join(os.homedir(), '.agentai', 'worktrees', branch);

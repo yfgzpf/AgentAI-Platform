@@ -1,11 +1,18 @@
-/* AgentAI Platform 全局样式 */
+/* AgentAI Platform 全局样式 — 暗色主题 */
 :root {
   --color-primary: #4F46E5;
   --color-accent: #F472B6;
-  --color-bg: #F9FAFB;
-  --color-text: #111827;
-  --color-text-secondary: #6B7280;
-  --color-border: #E5E7EB;
+  --color-success: #10B981;
+  --color-error: #EF4444;
+  --color-info: #6366F1;
+  --color-warning: #F59E0B;
+  --color-bg: #0a0a0a;
+  --color-bg-elevated: #1a1a1a;
+  --color-bg-soft: #262626;
+  --color-text: #e0e0e0;
+  --color-text-secondary: #888;
+  --color-text-muted: #666;
+  --color-border: #1f1f1f;
   --font-sans: Inter, 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
@@ -26,12 +33,13 @@ body {
 
 #root {
   min-height: 100vh;
+  background: var(--color-bg);
 }
 
 /* 自定义滚动条 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -39,10 +47,42 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 4px;
+  background: #333;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-secondary);
+  background: #555;
+}
+
+/* Ant Design 暗色主题覆盖 */
+.ant-card {
+  background: #141414 !important;
+}
+
+.ant-card-head {
+  border-bottom-color: #262626 !important;
+}
+
+.ant-divider {
+  border-color: #262626 !important;
+}
+
+/* 闪烁光标动画 */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+/* 消息渲染中闪光 */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.streaming-shimmer {
+  background: linear-gradient(90deg, var(--color-bg-elevated) 25%, #2a2a2a 50%, var(--color-bg-elevated) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+  border-radius: 8px;
 }

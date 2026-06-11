@@ -8,7 +8,7 @@
  *   - WorkBuddy 三层记忆              (写入工作空间记忆)
  *
  * 不照搬的:
- *   - 不抄 Hermes 30+ provider 配置 (我们只 3 个)
+ *   - 不抄 Hermes 30+ provider 配置 (我们只 4 个: agentai, deepseek, openai, cline)
  *   - 不抄 Reasonix `<<<NEEDS_PRO>>>` (我们有自动降级)
  *
  * 核心创新:
@@ -23,9 +23,10 @@ import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
 import { createRequire } from 'module';const _require = createRequire(import.meta.url);const { LRUCache } = _require('lru-cache');
 import { writeMemory } from './memory.js';
+import { routeByScore, getSubModel } from './model-classifier.js';
 
 // ===== 类型定义 =====
-export type ProviderId = 'agentai' | 'deepseek' | 'openai';
+export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'cline';
 
 /** OpenAI 图片内容块 */
 export interface ImageContentBlock {
@@ -71,6 +72,7 @@ export interface ChatRequest {
 export interface ChatResponse {
   content: string;
   toolCalls?: ToolCall[];
+  iterations?: number;
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -282,6 +284,16 @@ export class AgentAIRouter extends EventEmitter {
       recentLatencyMs: [],
       tripped: false,
     });
+    this.providers.set('cline', {
+      id: 'cline',
+      costPer1kInput: 0.0,      // 免费模型
+      costPer1kOutput: 0.0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: false,
+    });
   }
 
   /**
@@ -331,15 +343,37 @@ export class AgentAIRouter extends EventEmitter {
       return { ...cached, usage: { ...cached.usage, cacheHit: true } };
     }
 
-    // === Step 4: 智能路由选 provider ===
-    const ranked = this.rankProviders();
+    // === Step 4: 5 维评分选模型 (替换旧的 rankProviders) ===
+    const input: import('./model-classifier.js').RoutingInput = {
+      messages: req.messages,
+      message: req.messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : '').join(' '),
+      providerStats: new Map(
+        [...this.providers.entries()].map(([id, s]) => [id, {
+          totalCalls: s.totalCalls,
+          successCount: s.successCount,
+          failureCount: s.failureCount,
+          recentLatencyMs: s.recentLatencyMs,
+          tripped: s.tripped,
+        }]),
+      ),
+      dailyCostUsed: this.costGuard.dailySpend,
+      dailyCostLimit: this.costGuard.maxCostPerDay,
+      forceProvider: req.model,
+    };
+    const ranked = routeByScore(input);
 
-    for (const provider of ranked) {
+    for (const model of ranked) {
+      const provider = this.providers.get(model.provider as ProviderId);
+      if (!provider) continue;
       if (this.isCircuitOpen(provider)) {
         this.tryRecoverCircuit(provider);
         if (this.isCircuitOpen(provider)) continue;
       }
 
+      // 传递子模型名到请求
+      if (model.subModel) {
+        return await this.tryOne(provider, req, model.subModel);
+      }
       return await this.tryOne(provider, req);
     }
 
@@ -349,10 +383,10 @@ export class AgentAIRouter extends EventEmitter {
   /**
    * 拆出来的单 provider 执行 (锁定用)
    */
-  private async tryOne(provider: ProviderStats, req: ChatRequest): Promise<ChatResponse> {
+  private async tryOne(provider: ProviderStats, req: ChatRequest, subModel?: string): Promise<ChatResponse> {
     const t0 = Date.now();
     try {
-      const raw = await this.executeProvider(provider.id, req);
+      const raw = await this.executeProvider(provider.id, req, subModel);
       const durationMs = Date.now() - t0;
 
       const repaired = await this.repairPipeline(raw);
@@ -554,20 +588,22 @@ export class AgentAIRouter extends EventEmitter {
   }
 
   // ===== Provider 执行 (具体 HTTP/SSE 调用) =====
-  private async executeProvider(id: ProviderId, req: ChatRequest): Promise<any> {
-    // 真接 3 个 provider (OpenAI 兼容协议)
+  private async executeProvider(id: ProviderId, req: ChatRequest, subModel?: string): Promise<any> {
+    // 真接 4 个 provider (OpenAI 兼容协议)
     // agentai: apihub.agnes-ai.com/v1/chat/completions (支持 tools / thinking / image_url)
     // deepseek: api.deepseek.com/v1/chat/completions
     // openai: api.openai.com/v1/chat/completions
+    // cline: api.cline.bot/api/v1/chat/completions (免费, 1M 上下文, 支持 reasoning)
     const envKeyMap: Record<ProviderId, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
       agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-2.0-flash' },
       deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-chat' },
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
+      cline:   { keyEnv: 'CLINE_API_KEY',   baseEnv: 'CLINE_BASE_URL',   defaultBase: 'https://api.cline.bot/api/v1',  modelEnv: 'CLINE_MODEL', defaultModel: 'deepseek/deepseek-v4-flash' },
     };
     const cfg = envKeyMap[id];
     const apiKey = process.env[cfg.keyEnv];
     const baseUrl = (process.env[cfg.baseEnv] || cfg.defaultBase).replace(/\/+$/, '');
-    const modelName = process.env[cfg.modelEnv] || cfg.defaultModel;
+    const modelName = subModel || process.env[cfg.modelEnv] || cfg.defaultModel;
 
     if (!apiKey) {
       const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
@@ -595,8 +631,8 @@ export class AgentAIRouter extends EventEmitter {
       bodyObj.tools = toolSpecsToOpenAI(req.tools);
     }
 
-    // Thinking 模式 (Agnes 2.0 Flash, 对代码/推理任务显著提升质量)
-    if (req.thinking) {
+    // Thinking 模式 (仅对 agentai provider 发送 chat_template_kwargs)
+    if (req.thinking && id === 'agentai') {
       bodyObj.chat_template_kwargs = { enable_thinking: true };
       if (req.thinkingBudget && req.thinkingBudget > 0) {
         (bodyObj.chat_template_kwargs as any).thinking_budget = req.thinkingBudget;
@@ -626,6 +662,7 @@ export class AgentAIRouter extends EventEmitter {
         let buf = '';
         let fullContent = '';
         const toolCallsAcc: Map<number, { id: string; name: string; args: string }> = new Map();
+        const MAX_TOOL_CALLS = 10; // 资源上限: 防止内存溢出
         let usage: any = { prompt_tokens: 0, completion_tokens: 0 };
         let streamModel = modelName;
 
@@ -641,20 +678,27 @@ export class AgentAIRouter extends EventEmitter {
             const data = trimmed.slice(5).trim();
             if (data === '[DONE]') continue;
             try {
-              const chunk = JSON.parse(data);
+              const rawChunk = JSON.parse(data);
+              // Cline.bot 流式: chunk 也可能嵌套在 data 字段中
+              const chunk = rawChunk.data || rawChunk;
               const delta = chunk.choices?.[0]?.delta;
               if (!delta) continue;
               // 文本内容
               if (delta.content) fullContent += delta.content;
               // tool_calls delta (Agnes 支持)
               if (delta.tool_calls) {
+                // 资源上限检查: 超过 MAX_TOOL_CALLS 后丢弃后续 delta
+                if (toolCallsAcc.size >= MAX_TOOL_CALLS) continue;
                 for (const tc of delta.tool_calls) {
                   const idx = tc.index ?? 0;
-                  const acc = toolCallsAcc.get(idx) || { id: '', name: '', args: '' };
-                  if (tc.id) acc.id = tc.id;
-                  if (tc.function?.name) acc.name += tc.function.name;
-                  if (tc.function?.arguments) acc.args += tc.function.arguments;
-                  toolCallsAcc.set(idx, acc);
+                  // 检查索引是否已超限
+                  if (!toolCallsAcc.has(idx)) {
+                    const acc = toolCallsAcc.get(idx) || { id: '', name: '', args: '' };
+                    if (tc.id) acc.id = tc.id;
+                    if (tc.function?.name) acc.name += tc.function.name;
+                    if (tc.function?.arguments) acc.args += tc.function.arguments;
+                    toolCallsAcc.set(idx, acc);
+                  }
                 }
               }
               if (chunk.model) streamModel = chunk.model;
@@ -685,7 +729,9 @@ export class AgentAIRouter extends EventEmitter {
       }
 
       // ====== 非流式 (支持 tool_calls) ======
-      const data = await r.json() as any;
+      const rawData = await r.json() as any;
+      // Cline.bot 响应格式: 数据嵌套在 data 字段中
+      const data = rawData.data || rawData;
       const choice = data.choices?.[0];
       const content = choice?.message?.content || '';
       const rawToolCalls = choice?.message?.tool_calls;

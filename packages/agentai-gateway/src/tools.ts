@@ -152,13 +152,10 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       if (!url) return { success: false, output: 'url required' };
       try {
         const parsed = new URL(url);
-        const host = parsed.hostname.toLowerCase();
-        const isPrivate = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]'
-          || /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
-          || /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)
-          || /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)
-          || /^169\.254\.\d{1,3}\.\d{1,3}$/.test(host);
-        if (isPrivate) return { success: false, output: `Blocked: internal URL (SSRF): ${host}` };
+        // 使用 sanitize.ts 的安全检查
+        const { isDangerousUrl } = await import('./sanitize.js');
+        const check = isDangerousUrl(url);
+        if (check.dangerous) return { success: false, output: `Blocked: ${check.reason} (SSRF): ${parsed.hostname}` };
       } catch { return { success: false, output: 'Invalid URL' }; }
       const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } });
       if (!resp.ok) return { success: false, output: `Fetch failed: ${resp.status}` };
@@ -190,7 +187,7 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
   copy_file: async (args) => { try { const g1 = await sandboxGuard(args.source, 'read'); if (g1) return g1; const g2 = await sandboxGuard(args.destination, 'write'); if (g2) return g2; fs.cpSync(args.source, args.destination, { recursive: true }); return { success: true, output: 'Copied' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   move_file: async (args) => { try { const g1 = await sandboxGuard(args.source, 'read'); if (g1) return g1; const g2 = await sandboxGuard(args.destination, 'write'); if (g2) return g2; fs.renameSync(args.source, args.destination); return { success: true, output: 'Moved' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   get_file_info: async (args) => { try { const s = fs.statSync(args.path); return { success: true, output: `size: ${s.size}, mtime: ${s.mtime.toISOString()}, dir: ${s.isDirectory()}` }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
-  glob: async (args) => { try { const { pattern, path: p = '.', limit = 200 } = args; const { globSync } = require('glob'); const r = globSync(pattern, { cwd: p, ignore: ['**/node_modules/**','**/.git/**','**/dist/**','**/build/**'], dot: false }); return { success: true, output: r.slice(0, limit).join('\n') || '(empty)' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
+  glob: async (args) => { try { const { pattern, path: p = '.', limit = 200 } = args; const { globSync } = await import('glob'); const r = globSync(pattern, { cwd: p, ignore: ['**/node_modules/**','**/.git/**','**/dist/**','**/build/**'], dot: false }); return { success: true, output: r.slice(0, limit).join('\n') || '(empty)' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   directory_tree: async (args) => {
     try {
       const { path: p = '.', maxDepth = 2 } = args;
@@ -206,15 +203,19 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
   search_content: async (args) => {
     try {
       const { pattern, path: p = '.', glob: g = '', context: ctx = 0 } = args;
-      const { execSync } = require('child_process');
-      const cmd = `grep -rn${ctx > 0 ? ` -C ${ctx}` : ''} --include="*.ts" --include="*.tsx" --include="*.js" --include="*.json" --include="*.md" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build "${pattern}" "${p}"`;
-      try { const out = execSync(cmd, { encoding: 'utf-8', maxBuffer: 1024 * 1024, timeout: 10000 }); return { success: true, output: out.slice(0, 50000) || 'No matches' }; } catch { return { success: false, output: 'No matches' }; }
+      const { searchFileContent } = await import('./platform.js');
+      const output = searchFileContent(pattern, p || process.cwd(), {
+        glob: g || undefined,
+        context: ctx > 0 ? ctx : undefined,
+        maxResults: 200,
+      });
+      return { success: true, output: output.slice(0, 50000) || '(no matches)' };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
   get_symbols: async (args) => { try { const c = fs.readFileSync(args.path, 'utf-8'); const syms: any[] = []; const re = /^(export\s+)?(async\s+)?(function|class|interface|type|enum|const)\s+(\w+)/gm; let m; while ((m = re.exec(c)) !== null) syms.push({ name: m[4], kind: m[3], line: c.slice(0, m.index).split('\n').length }); return { success: true, output: JSON.stringify(syms) }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   run_background: async (args) => {
     try {
-      const { spawn } = require('child_process');
+      const { spawn } = await import('child_process');
       const id = ++jobIdCounter;
       const child = spawn(args.command, [], { cwd: args.cwd, shell: true, stdio: ['pipe','pipe','pipe'] });
       let output = '';
@@ -387,11 +388,31 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       const focus = args.focus ? `\nFocus area: ${args.focus}` : '';
 
       // 3 个并行审查角色 (学自 Addy Osmani agent-skills /ship)
+      // 每个角色带超时控制, 防止单个子代理卡住阻塞整个 review
       const { default: subagentMod } = await import('./subagent.js');
+      const REVIEW_TIMEOUT_MS = 90_000; // 单个角色 90s 超时
+      const wrapWithTimeout = (promise: Promise<any>, label: string) => {
+        return Promise.race([
+          promise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`${label} timeout (${REVIEW_TIMEOUT_MS}ms)`)), REVIEW_TIMEOUT_MS)
+          ),
+        ]);
+      };
+
       const [securityR, qualityR, testR] = await Promise.allSettled([
-        subagentMod.runSubagent('security-review', `Review for security vulnerabilities: SQL injection, XSS, hardcoded secrets, unsafe eval, path traversal, missing auth checks.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
-        subagentMod.runSubagent('review', `Review for code quality: readability, naming, duplication, error handling, architecture.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
-        subagentMod.runSubagent('review', `Review for testing: test coverage gaps, missing edge cases, testability issues.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
+        wrapWithTimeout(
+          subagentMod.runSubagent('security-review', `Review for security vulnerabilities: SQL injection, XSS, hardcoded secrets, unsafe eval, path traversal, missing auth checks.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
+          'security-review'
+        ),
+        wrapWithTimeout(
+          subagentMod.runSubagent('review', `Review for code quality: readability, naming, duplication, error handling, architecture.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
+          'quality-review'
+        ),
+        wrapWithTimeout(
+          subagentMod.runSubagent('review', `Review for testing: test coverage gaps, missing edge cases, testability issues.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
+          'test-review'
+        ),
       ]);
 
       const security = securityR.status === 'fulfilled' ? (securityR.value || '(no findings)') : `(error: ${(securityR as any).reason?.message || 'timeout'})`;

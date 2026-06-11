@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" fill="none">
+  <!-- 背景圆 -->
+  <circle cx="200" cy="200" r="190" fill="url(#bgGrad)" />
+  
+  <!-- 渐变 -->
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#7C3AED" />
+    </linearGradient>
+    <linearGradient id="hornGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818CF8" />
+      <stop offset="100%" stop-color="#C7D2FE" />
+    </linearGradient>
+  </defs>
+
+  <!-- 牛角 (左) -->
+  <path d="M140 95 C120 60, 85 35, 70 50 C55 65, 80 90, 110 105" 
+        fill="url(#hornGrad)" stroke="none" />
+  
+  <!-- 牛角 (右) -->
+  <path d="M260 95 C280 60, 315 35, 330 50 C345 65, 320 90, 290 105" 
+        fill="url(#hornGrad)" stroke="none" />
+
+  <!-- 牛头 (六边形轮廓) -->
+  <path d="M200 115 L280 150 L280 250 L200 285 L120 250 L120 150 Z" 
+        fill="#1E1B4B" stroke="none" />
+
+  <!-- 眼睛 (左) -->
+  <circle cx="160" cy="195" r="12" fill="#818CF8" />
+  <circle cx="160" cy="195" r="5" fill="#E0E7FF" />
+
+  <!-- 眼睛 (右) -->
+  <circle cx="240" cy="195" r="12" fill="#818CF8" />
+  <circle cx="240" cy="195" r="5" fill="#E0E7FF" />
+
+  <!-- 鼻子 -->
+  <ellipse cx="200" cy="240" rx="20" ry="10" fill="#4338CA" />
+  <circle cx="192" cy="240" r="3" fill="#818CF8" />
+  <circle cx="208" cy="240" r="3" fill="#818CF8" />
+
+  <!-- 耳朵 (左) -->
+  <path d="M130 155 L105 130 L125 145 Z" fill="#4F46E5" stroke="#818CF8" stroke-width="1" />
+  
+  <!-- 耳朵 (右) -->
+  <path d="M270 155 L295 130 L275 145 Z" fill="#4F46E5" stroke="#818CF8" stroke-width="1" />
+
+  <!-- 免费标记 — 右下角 -->
+  <rect x="310" y="310" width="70" height="32" rx="16" fill="#10B981" opacity="0.95" />
+  <text x="345" y="332" font-family="Inter, sans-serif" font-size="16" font-weight="700" 
+        fill="white" text-anchor="middle" letter-spacing="1">免费</text>
+</svg>
