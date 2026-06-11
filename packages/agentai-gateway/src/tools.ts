@@ -65,6 +65,11 @@ export const EXTRA_TOOLS = [
   { name: 'chain_advance', description: 'Advance chain to next stage', parameters: { type: 'object', properties: { chainId: { type: 'string' }, stage: { type: 'string' }, output: { type: 'string' } }, required: ['chainId','stage'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'chain_mark', description: 'Mark current stage success/fail', parameters: { type: 'object', properties: { chainId: { type: 'string' }, status: { type: 'string', enum: ['success','failed'] }, error: { type: 'string' } }, required: ['chainId','status'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'chain_create', description: 'Create a new task chain', parameters: { type: 'object', properties: { goal: { type: 'string' }, chain_type: { type: 'string', enum: ['linear','graph'], default: 'linear' } }, required: ['goal'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'search_codebase', description: 'Semantic code search — find functions, classes, or patterns by describing what they do in natural language (Chinese or English)', parameters: { type: 'object', properties: { question: { type: 'string', description: 'Natural language question about the codebase, e.g. "Where is the LLM router implemented?"' } }, required: ['question'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'analyze_code', description: 'Analyze a TypeScript file — list exported symbols, dependencies, and cyclomatic complexity', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Absolute path to the .ts/.tsx file to analyze' }, detail: { type: 'string', enum: ['symbols','deps','complexity','all'], default: 'all' } }, required: ['file_path'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'worktree_create', description: 'Create an isolated git worktree for parallel task execution (symlinks node_modules)', parameters: { type: 'object', properties: { branch_prefix: { type: 'string', default: 'task-' } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'worktree_list', description: 'List all git worktrees in the current repository', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'worktree_remove', description: 'Remove a git worktree and its branch (safety: blocks main/master removal)', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the worktree to remove' } }, required: ['path'] }, parallelSafe: false, riskLevel: 'high' },
 ];
 
 export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
@@ -312,5 +317,53 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       if (typeof (chain as any).report === 'function') await (chain as any).report(args.report);
       return { success: true, output: 'Report submitted' };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+  search_codebase: async (args: any, ctx?: any) => {
+    try {
+      const { searchCodebase, formatSearchResults } = await import('./code-intel/search.js');
+      const workspace = (ctx as any)?.workspace || process.cwd();
+      const hits = searchCodebase(args.question, workspace);
+      const formatted = formatSearchResults(hits);
+      return { success: true, output: formatted, data: { hits: hits.length, results: hits.map(h => h.file) } };
+    } catch (e: any) { return { success: false, output: `search_codebase error: ${e.message}` }; }
+  },
+  analyze_code: async (args: any, ctx?: any) => {
+    try {
+      const { parseSymbols, parseDependencies, computeComplexity, formatAnalyzeResult } = await import('./code-intel/analyze.js');
+      const p = args.file_path;
+      const detail = args.detail || 'all';
+      const symbols = detail === 'deps' || detail === 'complexity' ? [] : parseSymbols(p);
+      const deps = detail === 'symbols' || detail === 'complexity' ? [] : parseDependencies(p);
+      const complexity = detail === 'symbols' || detail === 'deps' ? { file: p, lines: 0, cyclomatic: 0, functions: 0, topFunctions: [] } : computeComplexity(p);
+      const output = formatAnalyzeResult(symbols, deps, complexity);
+      return { success: true, output, data: { symbols: symbols.length, deps: deps.length, cyclomatic: complexity.cyclomatic } };
+    } catch (e: any) { return { success: false, output: `analyze_code error: ${e.message}` }; }
+  },
+  worktree_create: async (args: any, ctx?: any) => {
+    try {
+      const { worktreeCreate } = await import('./worktree.js');
+      const workspace = (ctx as any)?.workspace || process.cwd();
+      const { worktreePath, branch } = worktreeCreate(workspace, args.branch_prefix || 'task-');
+      return { success: true, output: `Worktree created: ${worktreePath}\nBranch: ${branch}`, data: { path: worktreePath, branch } };
+    } catch (e: any) { return { success: false, output: `worktree_create error: ${e.message}` }; }
+  },
+  worktree_list: async (args: any, ctx?: any) => {
+    try {
+      const { worktreeList } = await import('./worktree.js');
+      const workspace = (ctx as any)?.workspace || process.cwd();
+      const trees = worktreeList(workspace);
+      if (trees.length === 0) return { success: true, output: '(no worktrees)' };
+      const out = trees.map(t => `${t.path} [${t.branch}] ${t.head}${t.current ? ' (current)' : ''}`).join('\n');
+      return { success: true, output: out, data: { count: trees.length } };
+    } catch (e: any) { return { success: false, output: `worktree_list error: ${e.message}` }; }
+  },
+  worktree_remove: async (args: any, ctx?: any) => {
+    try {
+      const { worktreeRemove } = await import('./worktree.js');
+      const workspace = (ctx as any)?.workspace || process.cwd();
+      const r = worktreeRemove(workspace, args.path);
+      if (!r.ok) return { success: false, output: r.error || 'Failed to remove worktree' };
+      return { success: true, output: `Worktree removed: ${args.path}` };
+    } catch (e: any) { return { success: false, output: `worktree_remove error: ${e.message}` }; }
   },
 };
