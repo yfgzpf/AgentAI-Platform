@@ -12,6 +12,9 @@ const { Title, Paragraph, Text } = Typography;
 
 interface OnboardProps {
   open: boolean;
+  onClose?: () => void;
+  /** 完成引导时回调, 父组件决定后续动作 (写 store / reload / 关闭 modal) */
+  onFinish?: (name: string) => void;
 }
 
 type Step = 'welcome' | 'name' | 'useCase' | 'key' | 'done';
@@ -25,7 +28,7 @@ const USE_CASES = [
 
 const SUGGEST_NAMES = ['小明', 'Alex', 'Lisa', '张工', 'Sarah', '老王', '游客'];
 
-export const Onboarding: React.FC<OnboardProps> = ({ open }) => {
+export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) => {
   const { setProfile } = useProfileStore();
   const [step, setStep] = useState<Step>('welcome');
   const [name, setName] = useState('');
@@ -45,10 +48,14 @@ export const Onboarding: React.FC<OnboardProps> = ({ open }) => {
     });
     message.success(`欢迎, ${name.trim()}!`);
     setStep('done');
-    setTimeout(() => {
-      // 关闭靠 location.reload, 让 App 重新挂载
-      window.location.reload();
-    }, 1200);
+    if (onFinish) {
+      // 父组件接管后续动作 (默认走 reload)
+      onFinish(name.trim());
+    } else {
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
+    }
   };
 
   const saveKey = async () => {

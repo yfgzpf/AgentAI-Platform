@@ -1,88 +1,22 @@
-/* AgentAI Platform 全局样式 — 暗色主题 */
-:root {
-  --color-primary: #4F46E5;
-  --color-accent: #F472B6;
-  --color-success: #10B981;
-  --color-error: #EF4444;
-  --color-info: #6366F1;
-  --color-warning: #F59E0B;
-  --color-bg: #0a0a0a;
-  --color-bg-elevated: #1a1a1a;
-  --color-bg-soft: #262626;
-  --color-text: #e0e0e0;
-  --color-text-secondary: #888;
-  --color-text-muted: #666;
-  --color-border: #1f1f1f;
-  --font-sans: Inter, 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+/* global.css — 现在仅作 reasonix-theme.css 的补充层
+ * 主主题变量在 ./reasonix-theme.css, 本文件不重复定义
+ * 这里只放一些全局微调 + 旧组件兼容
+ */
+@import './reasonix-theme.css';
+
+.fade-in { animation: fadeIn 0.2s ease-out; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  margin: 0;
-  padding: 0;
-  font-family: var(--font-sans);
-  background: var(--color-bg);
-  color: var(--color-text);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-#root {
-  min-height: 100vh;
-  background: var(--color-bg);
-}
-
-/* 自定义滚动条 */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #333;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #555;
-}
-
-/* Ant Design 暗色主题覆盖 */
-.ant-card {
-  background: #141414 !important;
-}
-
-.ant-card-head {
-  border-bottom-color: #262626 !important;
-}
-
-.ant-divider {
-  border-color: #262626 !important;
-}
-
-/* 闪烁光标动画 */
-@keyframes blink {
+.pulse { animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
+  50% { opacity: 0.4; }
 }
 
-/* 消息渲染中闪光 */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-.streaming-shimmer {
-  background: linear-gradient(90deg, var(--color-bg-elevated) 25%, #2a2a2a 50%, var(--color-bg-elevated) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 2s infinite;
-  border-radius: 8px;
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
