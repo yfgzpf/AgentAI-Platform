@@ -2,14 +2,14 @@
  * QQ 官方机器人 SDK (照抄 Reasonix src/qq/bot.ts)
  * ----------------------------------------------------
  * 使用 QQ 官方机器人 API (非 go-cqhttp)
- * 
+ *
  * 协议: WebSocket Gateway (wss://api.sgroup.qq.com)
  * 鉴权: appId + appSecret → access_token
  * 事件: C2C_MESSAGE_CREATE (私聊) / GROUP_AT_MESSAGE_CREATE (群@)
- * 
+ *
  * 参照:
- *   - Reasonix src/qq/bot.ts (完整 QQBot 类)
- *   - Reasonix src/desktop/qq-remote-commands.ts (远程命令)
+ *   - Reasonix src/qq/bot.ts (完整 QQBot 类 + 鉴权/心跳/重连)
+ *   - Reasonix src/qq/channel.ts (消息去重/分片/PID 锁)
  *   - QQ 开放平台文档: https://bot.q.qq.com/wiki/
  */
 
@@ -23,6 +23,8 @@ const INTENT_C2C_GROUP = 1 << 25;
 const MIN_HEARTBEAT_INTERVAL_MS = 5_000;
 const MAX_HEARTBEAT_INTERVAL_MS = 60_000;
 const ALLOWED_GATEWAY_HOSTS = ['api.sgroup.qq.com', 'sandbox.api.sgroup.qq.com', 'qq.com'];
+const QQ_MAX_CHUNK_BYTES = 1500;
+const DEDUP_QUEUE_MAX = 200;
 
 export interface QQBotConfig {
   appid: string;
@@ -113,9 +115,40 @@ export function qqHelpText(): string {
     '/plan <review|auto|yolo> - 计划模式',
     '/btw <问题> - 顺便问 (不中断当前)',
     '',
-    '直接发消息 = AI 对话 (支持桌面自动化)',
+    '直接发消息 = AI 对话',
     '群内需要 @机器人 触发',
   ].join('\n');
+}
+
+/** 消息分片 — QQ 单条消息限制约 1500 字节 */
+export function splitQQMessage(text: string, maxBytes = QQ_MAX_CHUNK_BYTES): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (Buffer.byteLength(remaining, 'utf8') <= maxBytes) {
+      chunks.push(remaining);
+      break;
+    }
+    let end = 0;
+    let bytes = 0;
+    for (const char of remaining) {
+      const nextBytes = Buffer.byteLength(char, 'utf8');
+      if (bytes > 0 && bytes + nextBytes > maxBytes) break;
+      end += char.length;
+      bytes += nextBytes;
+    }
+    const candidate = end > 0 ? remaining.slice(0, end) : remaining.slice(0, 1);
+    const minSplit = Math.floor(candidate.length * 0.6);
+    const splitters = ['\n\n', '\n', ' '];
+    let splitAt = candidate.length;
+    for (const splitter of splitters) {
+      const at = candidate.lastIndexOf(splitter);
+      if (at >= minSplit) { splitAt = at + splitter.length; break; }
+    }
+    chunks.push(candidate.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+  return chunks;
 }
 
 export class QQOfficialBot extends EventEmitter {
@@ -133,6 +166,9 @@ export class QQOfficialBot extends EventEmitter {
   private gatewayHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   /** 消息计数 (上报给 Gateway) */
   private messageCount = 0;
+  /** 消息去重 (照抄 Reasonix channel.ts) */
+  private processedMsgIds = new Set<string>();
+  private processedMsgIdQueue: string[] = [];
 
   constructor(config: QQBotConfig) {
     super();
@@ -142,6 +178,17 @@ export class QQOfficialBot extends EventEmitter {
 
   private get baseUrl(): string {
     return this.config.sandbox ? SANDBOX_URL : BASE_URL;
+  }
+
+  private rememberMessage(id: string): boolean {
+    if (this.processedMsgIds.has(id)) return false;
+    this.processedMsgIds.add(id);
+    this.processedMsgIdQueue.push(id);
+    if (this.processedMsgIdQueue.length > DEDUP_QUEUE_MAX) {
+      const oldest = this.processedMsgIdQueue.shift();
+      if (oldest) this.processedMsgIds.delete(oldest);
+    }
+    return true;
   }
 
   private sanitizeHeartbeatInterval(interval: unknown): number | null {
@@ -324,7 +371,7 @@ export class QQOfficialBot extends EventEmitter {
       await this.handleGroupMessage(msg);
     });
 
-    // 上线后注册到 Gateway
+    // 上线后注册到 Gateway + 启心跳
     this.on('online', () => {
       this.registerToGateway();
       this.startGatewayHeartbeat();
@@ -342,15 +389,13 @@ export class QQOfficialBot extends EventEmitter {
 
   // ===== Gateway 注册 / 心跳 / 离线通知 =====
 
-  /** 向本地服务注册自己 */
   private async registerToGateway(): Promise<void> {
     try {
-      const res = await fetch(`${this.gatewayUrl}/agent/health`);
-      if (res.ok) console.log('[QQ] Agent server available');
-    } catch {} // OK if GUI not running
+      const res = await fetch(`${this.gatewayUrl}/health`);
+      if (res.ok) console.log('[QQ] Gateway available');
+    } catch { /* OK if not running */ }
   }
 
-  /** 每 30s 向 Gateway 发心跳 */
   private startGatewayHeartbeat(): void {
     this.stopGatewayHeartbeat();
     this.gatewayHeartbeatTimer = setInterval(async () => {
@@ -363,9 +408,7 @@ export class QQOfficialBot extends EventEmitter {
             sessionId: this.sessionId,
           }),
         });
-      } catch {
-        // Gateway 离线, 不影响 QQ Bot 本身
-      }
+      } catch { /* Gateway 离线, 不影响 QQ Bot */ }
     }, 30_000);
   }
 
@@ -376,7 +419,6 @@ export class QQOfficialBot extends EventEmitter {
     }
   }
 
-  /** 通知 Gateway 自己离线 */
   private async notifyGatewayOffline(): Promise<void> {
     try {
       await fetch(`${this.gatewayUrl}/v1/qq/offline`, {
@@ -384,63 +426,40 @@ export class QQOfficialBot extends EventEmitter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ error: 'Bot stopped' }),
       });
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }
 
-  // ===== 调 Gateway (只通过 HTTP, 不 import agentai-core) =====
-  // 遵循 CODING_GUIDELINES.md 规则 5: 跨包通信必须经过 Gateway
-
-  private async callLocalAgent(message: string): Promise<string> {
-    try {
-      const res = await fetch(`${this.gatewayUrl}/v1/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message,
-          userId: `qq-${this.config.appid}`,
-          workspace: process.cwd(),
-          stream: false,
-        }),
-        signal: AbortSignal.timeout(120_000),
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        return `❌ Gateway ${res.status}: ${errText.slice(0, 200)}`;
-      }
-      const data = await res.json() as any;
-      return (data.content || data.reply || '(无回复)').slice(0, 2000);
-    } catch (err: any) {
-      return `❌ AI 服务不可用: ${err.message}。请先启动 agentai-gateway (pnpm dev:gateway)`;
-    }
-  }
-
-  // ===== 消息处理 =====
+  // ===== 消息处理 (统一走 Gateway /v1/qq/message) =====
 
   private async handlePrivateMessage(msg: C2CMessage): Promise<void> {
     const text = msg.content?.trim();
     if (!text) return;
+    if (!this.rememberMessage(msg.id)) return; // 去重
+
     const openid = msg.author.user_openid;
     this.messageCount++;
 
     console.log(`[QQ] 私聊 ${openid}: ${text.slice(0, 80)}`);
 
-    // 远程命令
     const cmd = parseQQRemoteCommand(text);
     if (cmd) {
       await this.handleRemoteCommand(cmd, openid, 'private', undefined, msg.id);
       return;
     }
 
-    // AI 对话 (调本地 Agent, 无网关)
-    const reply = await this.callLocalAgent(text);
-    await this.sendPrivateMessage(openid, reply, msg.id);
+    try {
+      const reply = await this.callGateway(text, `qq-${openid}`, 'private');
+      await this.sendPrivateMessage(openid, reply, msg.id);
+    } catch (err: any) {
+      await this.sendPrivateMessage(openid, `❌ AI 服务不可用: ${err.message}`, msg.id);
+    }
   }
 
   private async handleGroupMessage(msg: GroupMessage): Promise<void> {
     const text = msg.content?.trim();
     if (!text) return;
+    if (!this.rememberMessage(msg.id)) return; // 去重
+
     const groupOpenid = msg.group_openid;
     const memberOpenid = msg.author.member_openid;
     this.messageCount++;
@@ -451,21 +470,21 @@ export class QQOfficialBot extends EventEmitter {
 
     console.log(`[QQ] 群 ${groupOpenid} ${memberOpenid}: ${text.slice(0, 80)}`);
 
-    // 远程命令
     const cmd = parseQQRemoteCommand(text);
     if (cmd) {
       await this.handleRemoteCommand(cmd, memberOpenid, 'group', groupOpenid, msg.id);
       return;
     }
 
-    // AI 对话 (调本地 Agent, 无网关)
-    const reply = await this.callLocalAgent(text);
-    await this.sendGroupMessage(groupOpenid, reply, msg.id);
+    try {
+      const reply = await this.callGateway(text, `qq-${memberOpenid}`, 'group', groupOpenid);
+      await this.sendGroupMessage(groupOpenid, reply, msg.id);
+    } catch (err: any) {
+      await this.sendGroupMessage(groupOpenid, `❌ ${err.message}`, msg.id);
+    }
   }
 
-  /** 远程命令处理 (照抄 Reasonix qq-remote-commands) */
   private async handleRemoteCommand(cmd: QQRemoteCommand, openid: string, scope: string, groupOpenid?: string, msgId?: string): Promise<void> {
-    // 大部分命令直接调 Gateway /v1/qq/command
     const sendFn = scope === 'private'
       ? (text: string) => this.sendPrivateMessage(openid, text, msgId)
       : (text: string) => this.sendGroupMessage(groupOpenid!, text, msgId);
@@ -476,56 +495,63 @@ export class QQOfficialBot extends EventEmitter {
       case 'abort': { await sendFn('⏹ 已请求中断'); break; }
       case 'compact': { await sendFn('🗜️ 上下文已压缩'); break; }
       case 'retry': { await sendFn('🔄 重试上次回复...'); break; }
-      case 'model': {
-        await sendFn(cmd.value ? `🔄 切换模型到: ${cmd.value}` : '📋 当前: agentai (Agnes AI)');
+      case 'model':
+        await sendFn(cmd.value ? `🔄 切换模型到: ${cmd.value}` : '📋 当前: agentai');
         break;
-      }
-      case 'effort': {
+      case 'effort':
         await sendFn(`🎯 AI 努力程度: ${cmd.value || '默认'}`);
         break;
-      }
       case 'plan': {
         const labels = { review: '📋 审批模式', auto: '🤖 自动模式', yolo: '🚀 直接执行' };
         await sendFn(`📋 计划模式: ${labels[cmd.value || 'auto'] || 'auto'}`);
         break;
       }
       case 'btw': {
-        const reply = await this.callLocalAgent(cmd.text);
+        const reply = await this.callGateway(cmd.text, `qq-${openid}`, scope, groupOpenid);
         await sendFn(`💡 ${reply}`);
         break;
       }
       case 'skill': {
-        const reply = await this.callLocalAgent(`请执行技能 ${cmd.name}，参数: ${cmd.args || '无'}`);
+        const reply = await this.callGateway(`请执行技能 ${cmd.name}，参数: ${cmd.args || '无'}`, `qq-${openid}`, scope, groupOpenid);
         await sendFn(`🔧 ${reply}`);
         break;
       }
     }
   }
 
-  // ===== 调 AgentAI Gateway =====
+  // ===== 调 AgentAI Gateway (统一走 /v1/qq/message) =====
 
   private async callGateway(message: string, userId: string, scope: string, groupId?: string): Promise<string> {
-    const url = `${this.gatewayUrl}/v1/qq/message`;
-    const res = await fetch(url, {
+    const res = await fetch(`${this.gatewayUrl}/v1/qq/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        userId,
-        groupId: groupId || scope,
-      }),
+      body: JSON.stringify({ message, userId, groupId: groupId || scope }),
+      signal: AbortSignal.timeout(120_000),
     });
     if (!res.ok) {
-      throw new Error(`Gateway HTTP ${res.status}`);
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Gateway ${res.status}: ${errText.slice(0, 200)}`);
     }
     const data = await res.json() as { reply?: string; content?: string; error?: string };
     if (data.error) throw new Error(data.error);
-    return data.reply || data.content || '(空响应)';
+    return data.reply || data.content || '(无回复)';
   }
 
-  // ===== 发消息 =====
+  // ===== 发消息 (分片) =====
 
   async sendPrivateMessage(openid: string, content: string, msgId?: string, msgSeq?: number): Promise<void> {
+    const chunks = splitQQMessage(content);
+    for (const chunk of chunks) {
+      try {
+        await this._sendPrivateMessageRaw(openid, chunk, msgId, msgSeq);
+      } catch (err) {
+        console.error(`[QQ] sendPrivateMessage chunk failed: ${(err as Error).message}`);
+        break;
+      }
+    }
+  }
+
+  private async _sendPrivateMessageRaw(openid: string, content: string, msgId?: string, msgSeq?: number): Promise<void> {
     const token = await this.ensureToken();
     const body: Record<string, unknown> = { content, msg_type: 0 };
     if (msgId) body.msg_id = msgId;
@@ -541,11 +567,23 @@ export class QQOfficialBot extends EventEmitter {
     });
     if (!res.ok) {
       const text = await res.text();
-      console.error(`[QQ] sendPrivateMessage failed (${res.status}): ${text}`);
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
     }
   }
 
   async sendGroupMessage(groupOpenid: string, content: string, msgId?: string, msgSeq?: number): Promise<void> {
+    const chunks = splitQQMessage(content);
+    for (const chunk of chunks) {
+      try {
+        await this._sendGroupMessageRaw(groupOpenid, chunk, msgId, msgSeq);
+      } catch (err) {
+        console.error(`[QQ] sendGroupMessage chunk failed: ${(err as Error).message}`);
+        break;
+      }
+    }
+  }
+
+  private async _sendGroupMessageRaw(groupOpenid: string, content: string, msgId?: string, msgSeq?: number): Promise<void> {
     const token = await this.ensureToken();
     const body: Record<string, unknown> = { content, msg_type: 0 };
     if (msgId) body.msg_id = msgId;
@@ -561,7 +599,7 @@ export class QQOfficialBot extends EventEmitter {
     });
     if (!res.ok) {
       const text = await res.text();
-      console.error(`[QQ] sendGroupMessage failed (${res.status}): ${text}`);
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
     }
   }
 }

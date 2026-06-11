@@ -3,9 +3,11 @@
  */
 import React, { useState, useEffect } from 'react';
 import { Card, Input, Button, Space, Tag, Alert, Form, message, Tabs, Descriptions } from 'antd';
-import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined } from '@ant-design/icons';
 import { ModelSelector } from './ModelSelector';
 import { useSettingsStore, useFrameworkStore } from '../store';
+
+const httpUrl = () => ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
 
 export const Settings: React.FC = () => {
   const { provider, hasKey, setProvider, setHasKey } = useSettingsStore();
@@ -13,11 +15,15 @@ export const Settings: React.FC = () => {
   const [apiKey, setApiKey] = useState('');
   const [keyStatus, setKeyStatus] = useState<{ ok: boolean; masked: string; envVar: string } | null>(null);
 
+  // QQ Bot 状态
+  const [qqStatus, setQQStatus] = useState<{ online: boolean; lastSeen: number; messageCount: number; sessionId: string }>({
+    online: false, lastSeen: 0, messageCount: 0, sessionId: '',
+  });
+
   // 从 gateway 拉取 key 状态 (避免前端存真实 key)
   const loadKeyStatus = async () => {
     try {
-      const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
-      const r = await fetch(httpUrl + '/v1/settings/keys');
+      const r = await fetch(httpUrl() + '/v1/settings/keys');
       if (r.ok) {
         const data = await r.json();
         setKeyStatus(data);
@@ -31,7 +37,18 @@ export const Settings: React.FC = () => {
   useEffect(() => {
     loadKeyStatus();
     const t = setInterval(loadKeyStatus, 10000);
-    return () => clearInterval(t);
+
+    // QQ Bot 状态轮询
+    const loadQQStatus = async () => {
+      try {
+        const r = await fetch(httpUrl() + '/v1/qq/status');
+        if (r.ok) setQQStatus(await r.json());
+      } catch { /* gateway offline */ }
+    };
+    loadQQStatus();
+    const q = setInterval(loadQQStatus, 5000);
+
+    return () => { clearInterval(t); clearInterval(q); };
   }, [provider]);
 
   const saveKey = async () => {
@@ -41,8 +58,7 @@ export const Settings: React.FC = () => {
     }
     // 真保存走 gateway (写到 .env)
     try {
-      const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
-      const r = await fetch(httpUrl + '/v1/settings/keys', {
+      const r = await fetch(httpUrl() + '/v1/settings/keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, apiKey }),
@@ -177,6 +193,49 @@ export const Settings: React.FC = () => {
                         <li>不是照搬 Hermes, 是学它 30+ 平台的网关 + 工具注册模式</li>
                         <li>融合 Reasonix 的 Cache-First + 4 步修复</li>
                         <li>4 大自创: 中文注入扫描 / 风险门 / 反思门 / 智能路由</li>
+                      </ul>
+                    }
+                  />
+                </Space>
+              </Card>
+            ),
+          },
+          {
+            key: 'qq',
+            label: <span><RobotOutlined /> QQ Bot</span>,
+            children: (
+              <Card>
+                <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                  <Space>
+                    {qqStatus.online ? (
+                      <Tag color="success">已连接</Tag>
+                    ) : (
+                      <Tag color="default">未连接</Tag>
+                    )}
+                    {qqStatus.sessionId && (
+                      <span style={{ color: '#888', fontSize: 12 }}>
+                        Session: {qqStatus.sessionId}
+                      </span>
+                    )}
+                  </Space>
+                  {qqStatus.online && (
+                    <Descriptions size="small" column={1} bordered>
+                      <Descriptions.Item label="消息数">{qqStatus.messageCount}</Descriptions.Item>
+                      <Descriptions.Item label="上次心跳">
+                        {new Date(qqStatus.lastSeen).toLocaleTimeString()}
+                      </Descriptions.Item>
+                    </Descriptions>
+                  )}
+                  <Alert
+                    type="info"
+                    message="QQ 机器人说明"
+                    description={
+                      <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
+                        <li>QQ Bot 作为独立进程运行, 通过 HTTP 调 Gateway</li>
+                        <li>启动: <code>AGENTAI_QQ_APPID=xxx AGENTAI_QQ_SECRET=xxx pnpm --filter agentai-qqbot dev</code></li>
+                        <li>使用 QQ 官方机器人 API (非 go-cqhttp)</li>
+                        <li>支持私聊/群聊, 远程命令 (/help /new /abort /model 等)</li>
+                        <li>获取 AppID/Secret: <a href="https://q.qq.com/" target="_blank">QQ 开放平台</a></li>
                       </ul>
                     }
                   />

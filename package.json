@@ -4,7 +4,7 @@
   "description": "AgentAI Platform — 完全免费的智能体框架平台，内置生图生视频多模态能力 (Tauri 桌面壳 + Node.js Gateway + Python 技能)",
   "private": true,
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=22.0.0",
     "pnpm": ">=9.0.0",

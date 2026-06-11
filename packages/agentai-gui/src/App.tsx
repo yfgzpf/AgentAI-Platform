@@ -11,7 +11,6 @@ import { SkillLibrary } from './components/SkillLibrary';
 import { Settings } from './components/Settings';
 import { ImageGen } from './components/ImageGen';
 import { VideoGen } from './components/VideoGen';
-import { QQBotPanel } from './components/QQBotPanel';
 import { Editor } from './components/Editor';
 import { Onboarding } from './components/Onboarding';
 import { useProfileStore } from './store';
@@ -19,7 +18,7 @@ import { useProfileStore } from './store';
 const { Sider, Content, Header } = Layout;
 const { Title, Text } = Typography;
 
-type View = 'chat' | 'image' | 'video' | 'qq' | 'skills' | 'editor' | 'settings';
+type View = 'chat' | 'image' | 'video' | 'skills' | 'editor' | 'settings';
 
 export const App: React.FC = () => {
   const [view, setView] = useState<View>('chat');
@@ -30,7 +29,6 @@ export const App: React.FC = () => {
     { key: 'image', icon: <PictureOutlined />, label: '生图' },
     { key: 'video', icon: <VideoCameraOutlined />, label: '生视频' },
     { key: 'editor', icon: <EditOutlined />, label: '代码编辑器' },
-    { key: 'qq', icon: <RobotOutlined />, label: 'QQ机器人' },
     { key: 'skills', icon: <AppstoreOutlined />, label: '技能库' },
     { key: 'settings', icon: <SettingOutlined />, label: '设置' },
   ];
@@ -137,7 +135,6 @@ export const App: React.FC = () => {
             {view === 'image' && <ImageGen />}
             {view === 'video' && <VideoGen />}
             {view === 'editor' && <Editor />}
-            {view === 'qq' && <QQBotPanel />}
             {view === 'skills' && <SkillLibrary />}
             {view === 'settings' && <Settings />}
           </Content>

@@ -809,6 +809,35 @@ app.post('/v1/qq/message', async (req, res) => {
   }
 });
 
+// ===== QQ Bot 心跳 & 状态 (给 agentai-qqbot 和 GUI 用) =====
+let qqBotHeartbeat = { online: false, lastSeen: 0, messageCount: 0, sessionId: '' };
+
+app.post('/v1/qq/heartbeat', (req, res) => {
+  qqBotHeartbeat = {
+    online: true,
+    lastSeen: Date.now(),
+    messageCount: req.body?.messageCount ?? qqBotHeartbeat.messageCount,
+    sessionId: req.body?.sessionId ?? qqBotHeartbeat.sessionId,
+  };
+  res.json({ ok: true });
+});
+
+app.post('/v1/qq/offline', (_req, res) => {
+  qqBotHeartbeat.online = false;
+  res.json({ ok: true });
+});
+
+app.get('/v1/qq/status', (_req, res) => {
+  // 超过 45s 没心跳视为离线
+  const stale = !qqBotHeartbeat.online || (Date.now() - qqBotHeartbeat.lastSeen > 45_000);
+  res.json({
+    online: qqBotHeartbeat.online && !stale,
+    lastSeen: qqBotHeartbeat.lastSeen,
+    messageCount: qqBotHeartbeat.messageCount,
+    sessionId: qqBotHeartbeat.sessionId.slice(0, 8),
+  });
+});
+
 // ===== WebSocket (给 Tauri 桌面壳用) =====
 io.on('connection', (socket) => {
   console.log(`[ws] connected: ${socket.id}`);
