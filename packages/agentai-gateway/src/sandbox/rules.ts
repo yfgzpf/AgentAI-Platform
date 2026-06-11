@@ -106,21 +106,23 @@ export function globToRegex(glob: string): RegExp {
         .replace(/[.+^$|()\\]/g, '\\$&')
         .replace(/!/g, '\\!');
 
-    // 替换 ** → 占位符 (避免被 * 吞掉)
-    s = s.replace(/\*\*/g, '\x00DOUBLESTAR\x00');
+    // **/ → 可选多级路径段占位符 (避免被 * 吞掉)
+    s = s.replace(/\*\*\//g, '\x00DSSEP\x00');
 
-    // 替换 * → 任意 (不含 /)
+    // ** → 任意占位符 (避免被 * 替换吞掉)
+    s = s.replace(/\*\*/g, '\x00DSTAR\x00');
+
+    // * → 任意字符 (不含 /)
     s = s.replace(/\*/g, '[^/]*');
 
     // 还原 ** → 任意 (含 /)
-    s = s.replace(/\x00DOUBLESTAR\x00/g, '.*');
+    s = s.replace(/\x00DSTAR\x00/g, '.*');
+
+    // 还原 **/ → (.*\/)*  (可选零或多个路径段 + /)
+    s = s.replace(/\x00DSSEP\x00/g, '(.*/)*');
 
     // ? → 单字符 (不含 /)
     s = s.replace(/\?/g, '[^/]');
-
-    // [abc] 字符集 — 已在上面转义, 这里不需要
-    // 但 glob 里的 [abc] 不是正则特殊字符, 我们的转义没动 [ ]
-    // 验证: [a-z] 保持原样就是合法正则
 
     // {a,b} → (a|b)
     s = s.replace(/\{([^}]+)\}/g, (_, inner) => {
@@ -133,10 +135,12 @@ export function globToRegex(glob: string): RegExp {
 
 /**
  * 路径是否匹配任一 glob
+ * 注意: glob 模式不 normalize (保留相对路径语义), 只 normalize 被检查路径
  */
 export function matchAny(normalizedPath: string, patterns: string[]): { matched: boolean; pattern?: string } {
     for (const pat of patterns) {
-        const normPat = normalizePath(pat);
+        // glob 模式只做反斜杠替换, 不做 path.resolve (否则 ** 等相对模式被锚定到 cwd)
+        const normPat = pat.replace(/\\/g, '/');
         const re = globToRegex(normPat);
         if (re.test(normalizedPath)) {
             return { matched: true, pattern: pat };

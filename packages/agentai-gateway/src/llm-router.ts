@@ -178,7 +178,7 @@ export function scanPromptInjection(content: string): ScanResult {
   }
 
   return {
-    safe: threats.length === 0 || threats.every(t => t.severity === 'low'),
+    safe: threats.length === 0,
     threats,
   };
 }

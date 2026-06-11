@@ -195,8 +195,16 @@ export class Sandbox {
 
     /**
      * 检查路径是否允许操作
+     * - 未启用时永远返 allow, 不审计
      */
     async check(req: SandboxCheckRequest): Promise<SandboxCheckResult> {
+        if (!this.enabled) {
+            return {
+                verdict: 'allow',
+                reason: 'sandbox disabled (bypass mode)',
+                source: 'disabled',
+            };
+        }
         const r = check(req, this.rules);
         if (r.verdict === 'deny' || r.verdict === 'prompt') {
             await this.audit({
