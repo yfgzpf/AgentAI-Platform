@@ -23,6 +23,7 @@ import { AgentAILoop } from './agentai-loop.js';
 import { readMemory, writeMemory } from './memory.js';
 import path from 'path';
 import fs from 'fs';
+import { spawnSync } from 'child_process';
 import { frameworkSwitcher } from './frameworks/switcher.js';
 import { EXTRA_TOOLS, EXTRA_HANDLERS } from './tools.js';
 import { discoverSkills, callPython } from './python-bridge.js';
@@ -185,14 +186,132 @@ const BUILTIN_TOOLS = [
   },
 ];
 
-// 占位 handler (阶段 3 真接 Python 沙箱)
-// 合并 BUILTIN + EXTRA 工具
-const ALL_TOOLS = [...BUILTIN_TOOLS, ...EXTRA_TOOLS];
-const builtinStubs: Record<string, (args: any, ctx?: any) => any> = {};
-for (const t of BUILTIN_TOOLS) {
-  builtinStubs[t.name] = async (args: any) => ({ success: true, output: `[stub ${t.name}] ${JSON.stringify(args)}` });
+// ===== 内置工具真实现实 (NON-STUB) =====
+function resolveToolPath(p: string, ws?: string): string {
+  if (!p || path.isAbsolute(p)) return p;
+  return path.resolve(ws || process.cwd(), p);
 }
-const ALL_HANDLERS = { ...builtinStubs, ...EXTRA_HANDLERS };
+
+/** 沙箱守卫 (内置工具用) */
+async function builtinSandboxGuard(p: string, op: 'read' | 'write' | 'delete', size?: number): Promise<{ success: boolean; output: string } | null> {
+  const sb = getGlobalSandbox();
+  if (!sb) return null;
+  const v = await sb.check({ path: p, op, size });
+  if (v.verdict === 'allow') return null;
+  return { success: false, output: `[sandbox ${v.verdict}] ${v.reason}` };
+}
+
+const BUILTIN_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
+  read_file: async (args: any, ctx?: any) => {
+    try {
+      const p = resolveToolPath(args.file_path, (ctx as any)?.workspace);
+      const g = await builtinSandboxGuard(p, 'read');
+      if (g) return g;
+      if (!fs.existsSync(p)) return { success: false, output: `File not found: ${p}` };
+      const content = fs.readFileSync(p, 'utf-8');
+      if (args.limit && args.limit > 0) {
+        const lines = content.split('\n');
+        const start = (args.offset || 1) - 1;
+        return { success: true, output: lines.slice(start, start + args.limit).join('\n') };
+      }
+      if (args.offset) {
+        const lines = content.split('\n');
+        return { success: true, output: lines.slice((args.offset || 1) - 1).join('\n') };
+      }
+      if (content.length > 50000) {
+        return { success: true, output: content.slice(0, 50000) + '\n\n... (truncated, use offset/limit to read more)' };
+      }
+      return { success: true, output: content };
+    } catch (e: any) { return { success: false, output: `read_file error: ${e.message}` }; }
+  },
+
+  write_file: async (args: any, ctx?: any) => {
+    try {
+      const p = resolveToolPath(args.file_path, (ctx as any)?.workspace);
+      const g = await builtinSandboxGuard(p, 'write', Buffer.byteLength(args.content, 'utf-8'));
+      if (g) return g;
+      const dir = path.dirname(p);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(p, args.content, 'utf-8');
+      return { success: true, output: `Wrote ${args.content.length} bytes to ${p}` };
+    } catch (e: any) { return { success: false, output: `write_file error: ${e.message}` }; }
+  },
+
+  edit_file: async (args: any, ctx?: any) => {
+    try {
+      const p = resolveToolPath(args.file_path, (ctx as any)?.workspace);
+      const g = await builtinSandboxGuard(p, 'write');
+      if (g) return g;
+      if (!fs.existsSync(p)) return { success: false, output: `File not found: ${p}` };
+      const content = fs.readFileSync(p, 'utf-8');
+      if (!content.includes(args.old_str)) return { success: false, output: 'old_str not found in file' };
+      const idx = content.indexOf(args.old_str);
+      const newContent = content.slice(0, idx) + args.new_str + content.slice(idx + args.old_str.length);
+      fs.writeFileSync(p, newContent, 'utf-8');
+      return { success: true, output: `Applied edit to ${p}` };
+    } catch (e: any) { return { success: false, output: `edit_file error: ${e.message}` }; }
+  },
+
+  bash: async (args: any, ctx?: any) => {
+    try {
+      const { command, timeout = 30000 } = args;
+      const isWin = process.platform === 'win32';
+      const shell = isWin ? 'powershell.exe' : (process.env.SHELL || '/bin/bash');
+      const shellArgs = isWin ? ['-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command];
+      const result = spawnSync(shell, shellArgs, {
+        cwd: (ctx as any)?.workspace || process.cwd(),
+        timeout,
+        encoding: 'utf-8',
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, PAGER: 'cat', FORCE_COLOR: '0', NO_COLOR: '1' },
+      });
+      const out = (result.stdout || '') + (result.stderr || '');
+      if (result.error) return { success: false, output: `bash error: ${result.error.message}` };
+      if (!out.trim()) return { success: true, output: `(exit ${result.status})` };
+      return { success: true, output: out.slice(0, 50000) + (out.length > 50000 ? '... (truncated)' : '') };
+    } catch (e: any) { return { success: false, output: `bash error: ${e.message}` }; }
+  },
+
+  search_files: async (args: any, ctx?: any) => {
+    try {
+      const pattern = args.pattern;
+      const basePath = resolveToolPath(args.path || '.', (ctx as any)?.workspace);
+      const g = await import('glob');
+      const results = g.globSync(pattern, {
+        cwd: basePath,
+        ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
+        dot: false,
+      });
+      const limited = results.slice(0, 200);
+      return { success: true, output: limited.join('\n') || '(no matches)' };
+    } catch (e: any) { return { success: false, output: `search_files error: ${e.message}` }; }
+  },
+
+  generate_image: async (args: any) => {
+    try {
+      const apiKey = process.env.AGNES_API_KEY || process.env.AGENTAI_API_KEY;
+      if (!apiKey) return { success: false, output: 'AGNES_API_KEY not set in .env' };
+      const { prompt, model = 'agnes-image-2.1-flash', width = 1024, height = 1024 } = args;
+      const resp = await fetch('https://apihub.agnes-ai.com/v1/images/generations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, prompt, size: `${width}x${height}`, n: 1 }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!resp.ok) {
+        const err = await resp.text().catch(() => '');
+        return { success: false, output: `Agnes API ${resp.status}: ${err.slice(0, 200)}` };
+      }
+      const data = await resp.json() as any;
+      const url = data.data?.[0]?.url || '';
+      const revisedPrompt = data.data?.[0]?.revised_prompt || '';
+      return { success: true, output: `Image generated${revisedPrompt ? ': ' + revisedPrompt : ''}\n${url}`, data: { url, revised_prompt: revisedPrompt } };
+    } catch (e: any) { return { success: false, output: `generate_image error: ${e.message}` }; }
+  },
+};
+
+const ALL_TOOLS = [...BUILTIN_TOOLS, ...EXTRA_TOOLS];
+const ALL_HANDLERS = { ...BUILTIN_HANDLERS, ...EXTRA_HANDLERS };
 
 for (const t of ALL_TOOLS) {
   registry.register({
