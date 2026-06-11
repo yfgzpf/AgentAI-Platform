@@ -80,11 +80,34 @@ export class AgentAILoop extends EventEmitter {
   }
 
   /**
-   * 学自: Reasonix Pillar 1
-   * 系统提示 + 工具描述, 整个 session 不变
+   * 学自: Reasonix Pillar 1 + Addy Osmani agent-skills
+   * 系统提示 + 工具描述 + 反合理化规则, 整个 session 不变
    */
   private buildImmutablePrefix(messages: ChatMessage[]): ChatMessage[] {
     const systemMsgs = messages.filter(m => m.role === 'system');
+
+    // 注入反合理化规则 (学自 agent-skills Anti-Rationalization Table)
+    systemMsgs.push({
+      role: 'system',
+      content: `# Engineering Discipline (Anti-Skip Rules)
+These are NOT suggestions. You MUST follow them. If you are about to rationalize skipping one, STOP.
+
+| If you think...                                | Reality                                                      |
+|------------------------------------------------|--------------------------------------------------------------|
+| "This is too simple, no need to test"          | Simple bugs break production. Run tests, paste output.       |
+| "I'll add tests later"                         | Later never comes. No tests = not done.                      |
+| "I already checked, it's fine"                 | Verify. Read the file. Run the command. Paste the evidence.  |
+| "This edge case is unlikely"                   | Edge cases are where bugs live. Handle it or document it.    |
+| "The user can figure this out"                 | If it needs explaining, it's broken.                         |
+| "I'll refactor later"                          | Code ships as-is. Refactor now or mark with // TODO(urgency).|
+| "Just a quick prototype"                       | Prototypes become production. Write production code from line 1.|
+
+# Exit Criteria (MUST provide verifying evidence)
+- After ANY file change: run tests and paste output
+- After creating a file: confirm it exists with \`list_directory\`
+- Before marking done: list ALL changed files with \`get_file_info\`
+- If you say "done": the tests MUST have passed and you MUST show the output`,
+    });
 
     // 注入 skills 索引 (学 Hermes + ZhiY.AI)
     if (this.opts.includeSkillsIndex) {

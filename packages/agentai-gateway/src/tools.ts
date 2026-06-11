@@ -70,6 +70,7 @@ export const EXTRA_TOOLS = [
   { name: 'worktree_create', description: 'Create an isolated git worktree for parallel task execution (symlinks node_modules)', parameters: { type: 'object', properties: { branch_prefix: { type: 'string', default: 'task-' } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'worktree_list', description: 'List all git worktrees in the current repository', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
   { name: 'worktree_remove', description: 'Remove a git worktree and its branch (safety: blocks main/master removal)', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the worktree to remove' } }, required: ['path'] }, parallelSafe: false, riskLevel: 'high' },
+  { name: 'code_review', description: 'Multi-perspective code review: spawns 3 parallel sub-agents (security, code-quality, testing) and returns a merged verdict', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' }, description: 'List of absolute file paths to review' }, focus: { type: 'string', description: 'Optional: specific concern to focus on, e.g. "auth flow" or "error handling"' } }, required: ['files'] }, parallelSafe: false, riskLevel: 'low' },
 ];
 
 export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
@@ -365,5 +366,55 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       if (!r.ok) return { success: false, output: r.error || 'Failed to remove worktree' };
       return { success: true, output: `Worktree removed: ${args.path}` };
     } catch (e: any) { return { success: false, output: `worktree_remove error: ${e.message}` }; }
+  },
+  code_review: async (args: any, ctx?: any) => {
+    try {
+      const files: string[] = args.files || [];
+      if (files.length === 0) return { success: false, output: 'files required' };
+
+      const router = (ctx as any)?._router;
+      const registry = (ctx as any)?._registry;
+      if (!router || !registry) return { success: false, output: 'code_review: router/registry unavailable' };
+
+      // 读文件内容
+      const fileContents: string[] = [];
+      for (const f of files.slice(0, 10)) { // 最多 10 个文件
+        try { fileContents.push(`## ${f}\n\`\`\`\n${fs.readFileSync(f, 'utf-8').slice(0, 8000)}\n\`\`\``); }
+        catch { fileContents.push(`## ${f}\n(file not found or unreadable)`); }
+      }
+
+      const context = fileContents.join('\n\n');
+      const focus = args.focus ? `\nFocus area: ${args.focus}` : '';
+
+      // 3 个并行审查角色 (学自 Addy Osmani agent-skills /ship)
+      const { default: subagentMod } = await import('./subagent.js');
+      const [securityR, qualityR, testR] = await Promise.allSettled([
+        subagentMod.runSubagent('security-review', `Review for security vulnerabilities: SQL injection, XSS, hardcoded secrets, unsafe eval, path traversal, missing auth checks.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
+        subagentMod.runSubagent('review', `Review for code quality: readability, naming, duplication, error handling, architecture.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
+        subagentMod.runSubagent('review', `Review for testing: test coverage gaps, missing edge cases, testability issues.${focus}\n\n${context}`, router, registry, { userId: (ctx as any)?.userId || 'default', workspace: (ctx as any)?.workspace || process.cwd() }),
+      ]);
+
+      const security = securityR.status === 'fulfilled' ? (securityR.value || '(no findings)') : `(error: ${(securityR as any).reason?.message || 'timeout'})`;
+      const quality = qualityR.status === 'fulfilled' ? (qualityR.value || '(no findings)') : `(error: ${(qualityR as any).reason?.message || 'timeout'})`;
+      const testing = testR.status === 'fulfilled' ? (testR.value || '(no findings)') : `(error: ${(testR as any).reason?.message || 'timeout'})`;
+
+      const verdict = [
+        `# Code Review — ${files.length} files`,
+        '',
+        '## Security',
+        security,
+        '',
+        '## Code Quality',
+        quality,
+        '',
+        '## Testing',
+        testing,
+        '',
+        '## Verdict',
+        'Review complete. Address findings above before merging.',
+      ].join('\n');
+
+      return { success: true, output: verdict.slice(0, 8000) };
+    } catch (e: any) { return { success: false, output: `code_review error: ${e.message}` }; }
   },
 };
