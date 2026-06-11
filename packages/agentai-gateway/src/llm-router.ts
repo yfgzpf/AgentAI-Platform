@@ -27,15 +27,29 @@ import { writeMemory } from './memory.js';
 // ===== 类型定义 =====
 export type ProviderId = 'agentai' | 'deepseek' | 'openai';
 
+/** OpenAI 图片内容块 */
+export interface ImageContentBlock {
+  type: 'image_url';
+  image_url: { url: string; detail?: 'auto' | 'low' | 'high' };
+}
+
+/** OpenAI 文本内容块 */
+export interface TextContentBlock {
+  type: 'text';
+  text: string;
+}
+
+export type MessageContent = string | (TextContentBlock | ImageContentBlock)[];
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: MessageContent;
   name?: string;
   tool_call_id?: string;
 }
 
 export interface ChatRequest {
-  model: ProviderId;
+  model?: ProviderId;
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
@@ -48,6 +62,10 @@ export interface ChatRequest {
   stream?: boolean;
   /** 流式 delta 回调 (可选, 仅当 stream=true 时触发) */
   onDelta?: (delta: string) => void;
+  /** 启用 Thinking 模式 (Agnes 2.0 Flash 推荐, 提升代码/推理质量) */
+  thinking?: boolean;
+  /** Thinking token 预算 (默认 2048, 仅 thinking=true 时生效) */
+  thinkingBudget?: number;
 }
 
 export interface ChatResponse {
@@ -190,6 +208,28 @@ function classifySeverity(pattern: string): 'low' | 'medium' | 'high' | 'critica
   return 'low';
 }
 
+// ===== ToolSpec → OpenAI Tool 格式 =====
+interface OpenAITool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+/** 把内部 ToolSpec 转为 OpenAI function calling 格式 */
+export function toolSpecsToOpenAI(specs: ToolSpec[]): OpenAITool[] {
+  return specs.map(s => ({
+    type: 'function' as const,
+    function: {
+      name: s.name,
+      description: s.description,
+      parameters: s.parameters ?? { type: 'object', properties: {} },
+    },
+  }));
+}
+
 // ===== 智能路由门面 =====
 export class AgentAIRouter extends EventEmitter {
   private providers = new Map<ProviderId, ProviderStats>();
@@ -214,8 +254,8 @@ export class AgentAIRouter extends EventEmitter {
     // 初始化 provider stats (不写死成本, 留给用户 .env 覆盖)
     this.providers.set('agentai', {
       id: 'agentai',
-      costPer1kInput: 0.0001,   // Agnes API 主选
-      costPer1kOutput: 0.0003,
+      costPer1kInput: 0.0,      // 免费 (用户自有 API Key)
+      costPer1kOutput: 0.0,
       totalCalls: 0,
       successCount: 0,
       failureCount: 0,
@@ -230,12 +270,11 @@ export class AgentAIRouter extends EventEmitter {
       successCount: 0,
       failureCount: 0,
       recentLatencyMs: [],
-      tripped: true,           // 余额耗尽, 默认熔断, 用户在 settings 解熔
-      trippedAt: Date.now(),
+      tripped: false,           // 辅助模型, 默认可用
     });
     this.providers.set('openai', {
       id: 'openai',
-      costPer1kInput: 0.0025,    // 备选, 贵
+      costPer1kInput: 0.0025,
       costPer1kOutput: 0.01,
       totalCalls: 0,
       successCount: 0,
@@ -517,9 +556,9 @@ export class AgentAIRouter extends EventEmitter {
   // ===== Provider 执行 (具体 HTTP/SSE 调用) =====
   private async executeProvider(id: ProviderId, req: ChatRequest): Promise<any> {
     // 真接 3 个 provider (OpenAI 兼容协议)
-    // agentai: 走 apihub.agnes-ai.com 的 /v1/chat/completions
-    // deepseek: api.deepseek.com /v1/chat/completions
-    // openai: api.openai.com /v1/chat/completions
+    // agentai: apihub.agnes-ai.com/v1/chat/completions (支持 tools / thinking / image_url)
+    // deepseek: api.deepseek.com/v1/chat/completions
+    // openai: api.openai.com/v1/chat/completions
     const envKeyMap: Record<ProviderId, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
       agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-2.0-flash' },
       deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-chat' },
@@ -530,28 +569,37 @@ export class AgentAIRouter extends EventEmitter {
     const baseUrl = (process.env[cfg.baseEnv] || cfg.defaultBase).replace(/\/+$/, '');
     const modelName = process.env[cfg.modelEnv] || cfg.defaultModel;
 
-    // 没 key: 退到 stub, 但不静默, 标 [no-key]
     if (!apiKey) {
       const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
-      const userText = (lastMsg?.content || '').slice(0, 200);
+      const userText = (typeof lastMsg?.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg?.content)).slice(0, 200);
       const userId = (req as any).userId || '你';
       return {
-        content: `[${id} no-key] ${userId}, 收到你的消息: "${userText}"\n\n请在 .env 填 ${cfg.keyEnv} 即可真接 (无 key 时回退到 stub)。也可以在 GUI 设置页一键填。`,
+        content: `[${id} no-key] ${userId}, 收到你的消息: "${userText}"\n\n请在 .env 填 ${cfg.keyEnv} 即可真接。也可以在 GUI 设置页一键填。`,
         model: id,
         finishReason: 'stop',
         noKey: true,
       };
     }
 
-    // 实时算 usage (不靠 stub 1000+500)
-    let promptTokens = 0;
-    let completionTokens = 0;
-    for (const m of req.messages) {
-      if (typeof m.content === 'string') {
-        // 粗算: 中文 1 字 ≈ 1.5 token, 英文 1 词 ≈ 1.3 token
-        const cn = (m.content.match(/[\u4e00-\u9fff]/g) || []).length;
-        const en = m.content.length - cn;
-        promptTokens += Math.ceil(cn * 1.5 + en * 0.4);
+    // 构建请求体 (完整 OpenAI 兼容 + Agnes 扩展)
+    const bodyObj: Record<string, unknown> = {
+      model: modelName,
+      messages: req.messages.map(m => ({ role: m.role, content: m.content })),
+      temperature: req.temperature ?? 0.7,
+      max_tokens: req.maxTokens ?? 4096,
+      stream: req.stream === true || false,
+    };
+
+    // 工具调用 (Agnes 2.0 Flash 支持 )
+    if (req.tools && req.tools.length > 0) {
+      bodyObj.tools = toolSpecsToOpenAI(req.tools);
+    }
+
+    // Thinking 模式 (Agnes 2.0 Flash, 对代码/推理任务显著提升质量)
+    if (req.thinking) {
+      bodyObj.chat_template_kwargs = { enable_thinking: true };
+      if (req.thinkingBudget && req.thinkingBudget > 0) {
+        (bodyObj.chat_template_kwargs as any).thinking_budget = req.thinkingBudget;
       }
     }
 
@@ -563,28 +611,21 @@ export class AgentAIRouter extends EventEmitter {
           'Accept': 'text/event-stream',
           'Authorization': `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: modelName,
-          messages: req.messages.map(m => ({ role: m.role, content: m.content })),
-          temperature: req.temperature ?? 0.7,
-          max_tokens: req.maxTokens ?? 2048,
-          stream: req.stream === true,
-        }),
-        // 60s timeout (学 3 框架超时)
-        signal: AbortSignal.timeout(60_000),
+        body: JSON.stringify(bodyObj),
+        signal: AbortSignal.timeout(120_000),
       });
       if (!r.ok) {
         const errText = await r.text().catch(() => '');
         throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
       }
 
-      // ====== 流式响应 (SSE) ======
+      // ====== 流式响应 (SSE, 支持 tool_calls delta) ======
       if (req.stream === true && r.body) {
-        // Node 18+ 自带 ReadableStream in undici, 但 TS 类型不一定有
         const reader = (r.body as any).getReader();
         const decoder = new TextDecoder();
         let buf = '';
         let fullContent = '';
+        const toolCallsAcc: Map<number, { id: string; name: string; args: string }> = new Map();
         let usage: any = { prompt_tokens: 0, completion_tokens: 0 };
         let streamModel = modelName;
 
@@ -592,7 +633,6 @@ export class AgentAIRouter extends EventEmitter {
           const { value, done } = await reader.read();
           if (done) break;
           buf += decoder.decode(value, { stream: true });
-          // 按双换行切 SSE event
           const lines = buf.split('\n');
           buf = lines.pop() || '';
           for (const line of lines) {
@@ -602,41 +642,74 @@ export class AgentAIRouter extends EventEmitter {
             if (data === '[DONE]') continue;
             try {
               const chunk = JSON.parse(data);
-              const delta = chunk.choices?.[0]?.delta?.content || '';
-              if (delta) fullContent += delta;
+              const delta = chunk.choices?.[0]?.delta;
+              if (!delta) continue;
+              // 文本内容
+              if (delta.content) fullContent += delta.content;
+              // tool_calls delta (Agnes 支持)
+              if (delta.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  const idx = tc.index ?? 0;
+                  const acc = toolCallsAcc.get(idx) || { id: '', name: '', args: '' };
+                  if (tc.id) acc.id = tc.id;
+                  if (tc.function?.name) acc.name += tc.function.name;
+                  if (tc.function?.arguments) acc.args += tc.function.arguments;
+                  toolCallsAcc.set(idx, acc);
+                }
+              }
               if (chunk.model) streamModel = chunk.model;
               if (chunk.usage) usage = chunk.usage;
-              // 回调给上层 (如果有)
-              if (req.onDelta && delta) (req.onDelta as any)(delta);
-            } catch {}
+              if (req.onDelta && delta.content) (req.onDelta as any)(delta.content);
+            } catch { /* ignore parse errors */ }
           }
         }
-        completionTokens = usage.completion_tokens ?? Math.ceil(fullContent.length * 0.5);
-        promptTokens = usage.prompt_tokens ?? promptTokens;
+
+        const toolCalls: ToolCall[] = [...toolCallsAcc.values()]
+          .filter(tc => tc.name)
+          .map(tc => {
+            let args: Record<string, any> = {};
+            try { args = JSON.parse(tc.args || '{}'); } catch {}
+            return { id: tc.id || `call_${Math.random()}`, name: tc.name, args };
+          });
+
         return {
           content: fullContent,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           model: streamModel,
           finishReason: 'stop',
-          usage: { promptTokens, completionTokens },
+          usage: {
+            promptTokens: usage.prompt_tokens ?? 0,
+            completionTokens: usage.completion_tokens ?? 0,
+          },
         };
       }
 
-      // ====== 非流式 ======
+      // ====== 非流式 (支持 tool_calls) ======
       const data = await r.json() as any;
       const choice = data.choices?.[0];
       const content = choice?.message?.content || '';
-      completionTokens = data.usage?.completion_tokens ?? Math.ceil(content.length * 0.5);
-      promptTokens = data.usage?.prompt_tokens ?? promptTokens;
+      const rawToolCalls = choice?.message?.tool_calls;
+      let toolCalls: ToolCall[] | undefined;
+      if (Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
+        toolCalls = rawToolCalls.map((tc: any) => ({
+          id: tc.id || `call_${Date.now()}`,
+          name: tc.function?.name || '',
+          args: (() => { try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; } })(),
+        }));
+      }
       return {
         content,
+        toolCalls,
         model: data.model || modelName,
         finishReason: choice?.finish_reason || 'stop',
-        usage: { promptTokens, completionTokens }, // 给上层算 cost
+        usage: {
+          promptTokens: data.usage?.prompt_tokens ?? 0,
+          completionTokens: data.usage?.completion_tokens ?? 0,
+        },
       };
     } catch (err: any) {
-      // 真接失败: 返回错误信息, 但不抛 (让 router 走降级路径)
       const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
-      const userText = (lastMsg?.content || '').slice(0, 200);
+      const userText = (typeof lastMsg?.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg?.content)).slice(0, 200);
       return {
         content: `[${id} 调用失败] ${err.message}\n\n用户消息: "${userText}"\n\n(router 会自动降级到下一个 provider)`,
         model: id,
