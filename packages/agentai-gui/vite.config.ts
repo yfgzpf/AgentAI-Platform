@@ -22,6 +22,14 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      '/v1': {
+        target: 'http://127.0.0.1:18789',
+        changeOrigin: true,
+      },
+      '/agent': {
+        target: 'http://127.0.0.1:18789',
+        changeOrigin: true,
+      },
     },
   },
   build: {
