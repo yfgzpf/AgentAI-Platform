@@ -12,7 +12,7 @@ import {
   PictureOutlined, VideoCameraOutlined, GithubOutlined, EditOutlined,
   UserOutlined, LogoutOutlined, BulbOutlined,
 } from '@ant-design/icons';
-import { Chat } from './components/Chat';
+import { ChatView } from './components/ChatView';
 import { FrameworkSwitch } from './components/FrameworkSwitch';
 import { SkillLibrary } from './components/SkillLibrary';
 import { Settings } from './components/Settings';
@@ -113,7 +113,7 @@ export const App: React.FC = () => {
 
           {/* 中间: 内容区 */}
           <Content style={{ background: '#0f0f0f', overflowY: 'auto', boxShadow: '0 0 60px rgba(79,70,229,0.04), 0 0 20px rgba(79,70,229,0.02)' }}>
-            {view === 'chat' && <Chat />}
+            {view === 'chat' && <ChatView />}
             {view === 'image' && <ImageGen />}
             {view === 'video' && <VideoGen />}
             {view === 'editor' && <Editor />}

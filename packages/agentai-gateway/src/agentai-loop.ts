@@ -149,10 +149,11 @@ These are NOT suggestions. You MUST follow them. If you are about to rationalize
       this.iteration++;
       this.emit('loop:iteration', { n: this.iteration });
 
+      let userText = '';
       // 3.0 规则前置: 仅对 Agnes (无工具能力)生效, DeepSeek 原生调工具不干预
       if (this.iteration === 1 && this.opts.model !== 'deepseek') {
         const lastMsg = this.context.appendOnlyLog[this.context.appendOnlyLog.length - 1];
-        const userText = lastMsg?.role === 'user' ? (typeof lastMsg.content === 'string' ? lastMsg.content : '') : '';
+        userText = lastMsg?.role === 'user' ? (typeof lastMsg.content === 'string' ? lastMsg.content : '') : '';
         const ctx: any = { userId: this.opts.userId, workspace: this.opts.workspace, abortSignal: this.opts.abortSignal };
         if (/^(审查|分析|检查|探索|review|analyze|explore)/i.test(userText) && userText.length < 50) {
           try {
@@ -243,7 +244,7 @@ These are NOT suggestions. You MUST follow them. If you are about to rationalize
     // ============== 反思门 (Reflector) 闭环 ==============
     // 异步触发, 不阻塞返回
     if (this.opts.reflectEvery && this.opts.reflectEvery > 0) {
-      this.runReflector(lastResponse, userText).catch((e) => {
+      this.runReflector(lastResponse, (typeof userText === 'string' ? userText : '')).catch((e) => {
         console.warn('[reflector] failed:', (e as Error).message);
       });
     }
