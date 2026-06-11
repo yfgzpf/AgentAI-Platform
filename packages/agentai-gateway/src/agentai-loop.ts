@@ -29,6 +29,8 @@ export interface LoopOptions {
   reflectEvery?: number;
   /** 学 Hermes: system prompt 注入 skills 索引 */
   includeSkillsIndex?: boolean;
+  /** 强制指定模型 (默认走 router 智能选) */
+  model?: string;
 }
 
 /**
@@ -68,6 +70,7 @@ export class AgentAILoop extends EventEmitter {
       parallelMax: opts.parallelMax ?? 3,
       reflectEvery: opts.reflectEvery ?? 10,
       includeSkillsIndex: opts.includeSkillsIndex ?? true,
+      model: opts.model ?? 'agentai',
     };
 
     // 初始化 AgentContext (学 Reasonix 三段式)
@@ -164,7 +167,7 @@ These are NOT suggestions. You MUST follow them. If you are about to rationalize
           } catch {}
         }
         const readMatch = userText.match(/^(读|查看|读取|cat|read)\s+(.+)/i);
-        if (readMatch) {
+        if (readMatch?.[2]) {
           try {
             const r = await this.registry.executeOne({ id: 'pre_read', name: 'read_file', args: { file_path: readMatch[2].trim() } }, ctx);
             if (r?.success) {
@@ -243,8 +246,10 @@ These are NOT suggestions. You MUST follow them. If you are about to rationalize
 
     // ============== 反思门 (Reflector) 闭环 ==============
     // 异步触发, 不阻塞返回
+    const lastUserMsg = [...this.context.appendOnlyLog].reverse().find(m => m.role === 'user');
+    const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
     if (this.opts.reflectEvery && this.opts.reflectEvery > 0) {
-      this.runReflector(lastResponse, (typeof userText === 'string' ? userText : '')).catch((e) => {
+      this.runReflector(lastResponse, lastUserText).catch((e) => {
         console.warn('[reflector] failed:', (e as Error).message);
       });
     }
@@ -338,7 +343,11 @@ These are NOT suggestions. You MUST follow them. If you are about to rationalize
     // 简化: 统计最近 N 轮的失败/成本
     const recent = this.context.appendOnlyLog.slice(-this.opts.reflectEvery);
     const userTurns = recent.filter(m => m.role === 'user').length;
-    const toolErrors = recent.filter(m => m.role === 'tool' && m.content.startsWith('[ERROR]')).length;
+    const toolErrors = recent.filter(m => {
+      if (m.role !== 'tool') return false;
+      const c = m.content;
+      return typeof c === 'string' && c.startsWith('[ERROR]');
+    }).length;
 
     const summary = `[reflect ${new Date().toISOString()}] session=${this.context.sessionId} turns=${userTurns} tool_errors=${toolErrors}`;
 

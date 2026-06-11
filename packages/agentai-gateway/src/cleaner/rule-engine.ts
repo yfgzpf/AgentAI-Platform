@@ -10,6 +10,7 @@
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import type { Rule, FileMeta } from './types.js';
 
 export interface MatchContext {
@@ -90,6 +91,14 @@ export function matchRule(rules: Rule[], file: FileMeta, ctx?: Partial<MatchCont
 }
 
 /**
+ * 同步版本,供 watchRules 回调使用
+ */
+export function loadRulesSync(filePath: string): Rule[] {
+    const text = fsSync.readFileSync(filePath, 'utf-8');
+    return JSON.parse(text) as Rule[];
+}
+
+/**
  * 从 JSON 文件加载规则
  */
 export async function loadRules(filePath: string): Promise<Rule[]> {
@@ -124,11 +133,11 @@ export function watchRules(filePath: string, onChange: (rules: Rule[]) => void):
     // 初次加载(异步,失败静默)
     loadRules(filePath).then(r => onChange(r)).catch(() => { /* keep current */ });
 
-    let watcher: any;
+    let watcher: ReturnType<typeof fsSync.watch> | undefined;
     try {
-        watcher = fs.watch(filePath, async () => {
+        watcher = fsSync.watch(filePath, () => {
             try {
-                const r = await loadRules(filePath);
+                const r = loadRulesSync(filePath);
                 onChange(r);
             } catch {
                 /* keep current */

@@ -48,8 +48,10 @@ export function sampleCpuUsage(): number {
     const cpusList = cpus();
     let totalIdle = 0, total = 0;
     for (const c of cpusList) {
-        for (const t of c.times) total += t;
-        totalIdle += c.times.idle;
+        for (const _key of Object.keys(c.times)) {
+            totalIdle += (c.times as any)[_key];
+        }
+        total += Object.values(c.times).reduce((a: number, b: number) => a + b, 0);
     }
     if (total === 0) return 0;
     return Math.round(((1 - totalIdle / total) * 100));

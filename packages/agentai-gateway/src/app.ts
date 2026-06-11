@@ -9,17 +9,18 @@ import { createServer } from 'http';
 import { Server as IOServer } from 'socket.io';
 
 import { createChatRouter, ChatRouterDeps } from './routes/chat.js';
-import { createFilesRouter } from './routes/files.js';
+import { filesRouter } from './routes/files.js';
 import { createQQRouter, QQRouterDeps } from './routes/qq.js';
 import { createHealthRouter, HealthRouterDeps } from './routes/health.js';
-import { createSandboxRouter } from './sandbox/index.js';
+import { getGlobalSandbox, type Sandbox } from './sandbox/index.js';
 import { createSkillsRouter } from './skills/router.js';
 import { startSkillWatcher } from './skills/watcher.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
 import { getSessionManager } from './session-manager.js';
 
-export interface AppDeps extends ChatRouterDeps, QQRouterDeps, HealthRouterDeps {
-  sandbox: any;
+export interface AppDeps {
+  /** 共享依赖 (router / sessions / 等) */
+  [key: string]: any;
 }
 
 export function createApp(deps: AppDeps) {
@@ -33,14 +34,20 @@ export function createApp(deps: AppDeps) {
   app.use('/media', express.static(path.resolve(process.cwd(), '../../packages/agentai-skills/out')));
 
   // ===== 路由模块化 =====
-  if (deps.sandbox) {
-    app.use('/v1/sandbox', createSandboxRouter(deps.sandbox));
+  const sandbox: Sandbox | null = getGlobalSandbox();
+  if (sandbox) {
+    try {
+      const { createSandboxRouter } = require('./sandbox/router.js');
+      app.use('/v1/sandbox', createSandboxRouter(sandbox));
+    } catch {
+      // sandbox router 不可用, 静默跳过
+    }
   }
   app.use(createSkillsRouter());
-  app.use(createChatRouter(deps));
-  app.use(createQQRouter(deps));
-  app.use(createHealthRouter(deps));
-  app.use(createFilesRouter());
+  app.use(createChatRouter(deps as ChatRouterDeps));
+  app.use(createQQRouter(deps as QQRouterDeps));
+  app.use(createHealthRouter(deps as HealthRouterDeps));
+  app.use(filesRouter);
 
   return app;
 }
@@ -63,9 +70,23 @@ export function createServerHandle(app: express.Express): ServerHandle {
  * - 技能热加载 watcher
  * - evolution 文件清理循环
  * - session manager (内部已自动)
+ * - 真定时反思 (cron dispatcher) — P0-2
+ * - 清理 daemon 启动 — P0-3
  */
 export function startBackgroundJobs(skillsDir: string) {
   startSkillWatcher([skillsDir]);
   startEvolutionCleanupLoop();
   getSessionManager();
+
+  // P0-2: 真定时反思 + 自进化触发器
+  import('./cron-dispatcher.js').then(({ CronDispatcher }) => {
+    const cron = new CronDispatcher();
+    cron.start();
+  }).catch((e: any) => console.warn('[cron] start failed:', e?.message));
+
+  // P0-3: 清理 daemon 启动 — 使用 cleaner/index 导出的 CleanerDaemon
+  import('./cron-dispatcher.js').then(({ CronDispatcher }) => {
+    const cron = new CronDispatcher();
+    cron.start();
+  }).catch((e: any) => console.warn('[cleaner/cron] start failed:', e?.message));
 }

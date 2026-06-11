@@ -238,7 +238,7 @@ export class ToolRegistry extends EventEmitter {
     return results;
   }
 
-  private async executeOne(
+  public async executeOne(
     call: { id: string; name: string; args: Record<string, any> },
     ctx: ToolContext,
   ): Promise<ToolResult> {

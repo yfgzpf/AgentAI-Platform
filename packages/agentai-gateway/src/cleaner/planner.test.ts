@@ -19,6 +19,6 @@ describe('planner', () => {
 
     it('assigns planId starting with p_', () => {
         const r = plan(rules, [file('/tmp/a', 10)], { home: '/h', workspace: '/w' });
-        expect(r.safe[0].planId).toMatch(/^p_/);
+        expect(r.safe[0]?.planId).toMatch(/^p_/);
     });
 });
