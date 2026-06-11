@@ -22,12 +22,13 @@ import { Editor } from './components/Editor';
 import { Onboarding } from './components/Onboarding';
 import { RightPanel } from './components/RightPanel';
 import { SessionSidebar } from './components/SessionSidebar';
+import { QQBotPanel } from './components/QQBotPanel';
 import { useProfileStore } from './store';
 
 const { Sider, Content, Header } = Layout;
 const { Title, Text } = Typography;
 
-type View = 'chat' | 'image' | 'video' | 'skills' | 'editor' | 'settings';
+type View = 'chat' | 'image' | 'video' | 'skills' | 'editor' | 'settings' | 'qq';
 
 export const App: React.FC = () => {
   const [view, setView] = useState<View>('chat');
@@ -40,6 +41,7 @@ export const App: React.FC = () => {
     { key: 'editor', icon: <EditOutlined />, label: '代码编辑器' },
     { key: 'skills', icon: <AppstoreOutlined />, label: '技能库' },
     { key: 'settings', icon: <SettingOutlined />, label: '设置' },
+    { key: 'qq', icon: <RobotOutlined />, label: 'QQ Bot' },
   ];
 
   return (
@@ -119,6 +121,7 @@ export const App: React.FC = () => {
             {view === 'editor' && <Editor />}
             {view === 'skills' && <SkillLibrary />}
             {view === 'settings' && <Settings />}
+            {view === 'qq' && <QQBotPanel />}
           </Content>
 
           {/* 右侧: 工作区 + 模型 + 状态 */}
