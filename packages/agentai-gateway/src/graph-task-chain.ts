@@ -9,6 +9,23 @@ export interface GraphChainState extends ChainState { chainType: 'graph'; curren
 export interface CheckpointStore { save(threadId: string, state: any): Promise<void>; load(threadId: string): Promise<any | undefined>; }
 export class MemoryCheckpointStore implements CheckpointStore { private s = new Map<string, any>(); async save(k: string, v: any) { this.s.set(k, JSON.parse(JSON.stringify(v))); } async load(k: string) { return this.s.get(k); } }
 
+/** Postgres CheckpointStore (生产级持久化) */
+export interface PgQueryFn { (sql: string, params?: any[]): Promise<{ rows?: any[] }>; }
+export class PostgresCheckpointStore implements CheckpointStore {
+  constructor(private query: PgQueryFn) {}
+  async save(threadId: string, state: any): Promise<void> {
+    await this.query('INSERT INTO checkpoints (thread_id, state, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (thread_id) DO UPDATE SET state = $2, updated_at = NOW()', [threadId, JSON.stringify(state)]);
+  }
+  async load(threadId: string): Promise<any | undefined> {
+    const r = await this.query('SELECT state FROM checkpoints WHERE thread_id = $1', [threadId]);
+    if (r.rows?.[0]?.state) return typeof r.rows[0].state === 'string' ? JSON.parse(r.rows[0].state) : r.rows[0].state;
+    return undefined;
+  }
+}
+
+/** 并行节点组 (fan-out) */
+export interface ParallelNodeGroup { type: 'parallel'; nodes: string[]; next: Record<string, string[]>; }
+
 const DEFAULT_GRAPH: GraphNodeDef[] = [
   { id: 'plan', stage: 'plan', next: { default: ['solve'] } },
   { id: 'solve', stage: 'solve', next: { default: ['verify'] } },
