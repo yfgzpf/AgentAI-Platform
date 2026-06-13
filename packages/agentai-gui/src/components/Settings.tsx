@@ -4,10 +4,11 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Input, Button, Space, Tag, Alert, Form, message, Tabs, Descriptions } from 'antd';
 import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 import { ModelSelector } from './ModelSelector';
 import { useSettingsStore, useFrameworkStore } from '../store';
 
-const httpUrl = () => ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+const httpUrl = () => GATEWAY_HTTP;
 
 export const Settings: React.FC = () => {
   const { provider, hasKey, setProvider, setHasKey } = useSettingsStore();
@@ -188,13 +189,13 @@ export const Settings: React.FC = () => {
                   </div>
                   <Alert
                     type="info"
-                    message="自创整合说明"
+                    message="关于框架"
                     description={
                       <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
-                        <li>不是照搬 OpenClaw, 是学它系统提示含工具描述的写法</li>
-                        <li>不是照搬 Hermes, 是学它 30+ 平台的网关 + 工具注册模式</li>
-                        <li>融合 Reasonix 的 Cache-First + 4 步修复</li>
-                        <li>4 大自创: 中文注入扫描 / 风险门 / 反思门 / 智能路由</li>
+                        <li>OpenClaw: 原生系统提示 + 工具描述, 适合代码/工具调用</li>
+                        <li>Hermes: 支持 30+ 平台网关, 适合多渠道对话</li>
+                        <li>A/B 灰度: 1.0 = 全走 OpenClaw, 0.0 = 全走 Hermes</li>
+                        <li>切换后新建对话即生效, 无需重启</li>
                       </ul>
                     }
                   />

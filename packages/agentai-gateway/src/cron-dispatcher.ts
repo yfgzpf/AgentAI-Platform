@@ -97,13 +97,10 @@ export class CronDispatcher extends EventEmitter {
       try {
         const { getSessionManager } = await import('./session-manager.js');
         const sm = getSessionManager();
-        const sessions = sm?.get?.('temp') ? [sm.get('temp')] : [];
-        const idleCount = sessions.filter((s: any) => {
-          return Date.now() - (s.lastAccessedAt ?? 0) > 30 * 60 * 1000;
-        }).length;
-        if (idleCount > 0) {
-          console.log(`[cron] ${idleCount} idle sessions detected`);
-          this.emit('idle-sessions', { count: idleCount });
+        const stats = sm.stats();
+        if (stats.size > 0) {
+          console.log(`[cron] active sessions: ${stats.size}, total calls: ${stats.totalCalls}`);
+          this.emit('idle-sessions', { count: stats.size });
         }
       } catch (e: any) {
         console.warn('[cron] idle check failed:', e.message);

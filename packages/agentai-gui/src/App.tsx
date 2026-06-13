@@ -26,6 +26,7 @@ import { Settings } from './components/Settings';
 import { QQBotPanel } from './components/QQBotPanel';
 import { CleanerPanel } from './components/CleanerPanel';
 import { SkillLibrary } from './components/SkillLibrary';
+import { WechatSetup } from './components/WechatSetup';
 import { RightPanel } from './components/RightPanel';
 import { SessionSidebar } from './components/SessionSidebar';
 import { StatusBar } from './components/StatusBar';
@@ -34,7 +35,7 @@ import { useProfileStore } from './store';
 import { useModeStore } from './store/modeStore';
 
 /* ════════════════ 9 个 PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'settings';
+type PageKey = 'chat' | 'write' | 'image' | 'video' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'settings';
 
 interface PageMeta {
   key: PageKey;
@@ -58,6 +59,7 @@ const PAGES: PageMeta[] = [
   { key: 'skills',   label: '技能库',   icon: <AppstoreOutlined />,   comp: SkillLibrary,  group: 'system', desc: '25+ 技能 · 7 分类' },
   { key: 'cleaner',  label: '智能清理', icon: <ThunderboltOutlined />,comp: CleanerPanel,  group: 'system', desc: '扫描 / 分类 / 安全清理' },
   { key: 'qq',       label: 'QQ Bot',   icon: <QQIcon />,             comp: QQBotPanel,    group: 'system', desc: '反向 WS · 自动回复' },
+  { key: 'wechat',   label: '微信',     icon: <SmileOutlined />,      comp: WechatSetup,   group: 'system', desc: 'ClawBot 插件 · 扫码绑定' },
   { key: 'settings', label: '设置',     icon: <SettingOutlined />,    comp: Settings,      group: 'system', desc: '密钥 · 框架 · 模型 · 主题' },
 ];
 

@@ -31,7 +31,7 @@ const DEFAULT_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 分钟
 
 export class SessionManager {
   private map = new Map<string, SessionMeta>();
-  private cleanupTimer: NodeJS.Timeout | null = null;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private capacity: number;
   private ttl: number;
   private interval: number;
@@ -85,13 +85,13 @@ export class SessionManager {
   /**
    * 直接获取 (不创建)
    */
-  get(key: string): AgentAILoop | undefined {
+  get(key: string): { loop: AgentAILoop; userId: string; workspace: string } | undefined {
     const meta = this.map.get(key);
     if (!meta) return undefined;
     meta.lastAccessedAt = Date.now();
     this.map.delete(key);
     this.map.set(key, meta);
-    return meta.loop;
+    return { loop: meta.loop, userId: meta.userId, workspace: meta.workspace };
   }
 
   /**
@@ -173,6 +173,17 @@ export class SessionManager {
     }, this.interval);
     // 防止 unref 错误: 不阻止进程退出
     this.cleanupTimer.unref?.();
+  }
+
+  /**
+   * 遍历所有 session (不更新 LRU 顺序, 用于 cron 检查)
+   */
+  iterate(): Array<{ loop: AgentAILoop; userId: string; workspace: string }> {
+    const out: Array<{ loop: AgentAILoop; userId: string; workspace: string }> = [];
+    for (const m of this.map.values()) {
+      out.push({ loop: m.loop, userId: m.userId, workspace: m.workspace });
+    }
+    return out;
   }
 
   stop(): void {

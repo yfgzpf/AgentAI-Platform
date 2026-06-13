@@ -6,6 +6,7 @@ import { useChatStore, ChatSegment } from '../store/chatStore';
 import { useModelStore } from '../store/modelStore';
 import { useModeStore } from '../store/modeStore';
 import { ModelSwitcher } from './ModelSwitcher';
+import { apiStream, makeChatHandlers } from '../services/api';
 
 type AppMode = 'readonly' | 'planning' | 'auto';
 
@@ -39,77 +40,40 @@ export const ChatView: React.FC = () => {
 
     try {
       let provider = activeModelId || 'agentai';
-      const gatewayUrl = '/v1/chat';
-      const stream = mode === 'readonly';
+      const handlers = makeChatHandlers(botId, updateMessage);
 
-      const resp = await fetch(gatewayUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, stream, model: provider, mode, userId, workspace: '' }),
-        signal: controller.signal,
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-      if (!resp.body || !resp.body.getReader) {
+      if (mode === 'readonly') {
         // 非流式 JSON
+        const resp = await fetch('/v1/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, stream: false, model: provider, mode, userId: 'user', workspace: '' }),
+          signal: controller.signal,
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
         if (json.modelHint) msg.info({ content: `🔄 已切换至${json.modelHint}`, key: 'model-switch', duration: 3 });
-        updateMessage(botId, (m) => ({
+        updateMessage(botId, (m: any) => ({
           ...m, segments: json.content ? [{ kind: 'text', text: json.content }] : m.segments,
           streaming: false, provider: json.provider || provider,
         }));
         if (json.toolEvents?.length > 0) {
           for (const ev of json.toolEvents) {
-            if (ev.type === 'tool_start') updateMessage(botId, (m) => ({ ...m, segments: [...m.segments, { kind: 'tool', callId: ev.callId, name: ev.name, state: 'running' }] }));
-            else if (ev.type === 'tool_result') updateMessage(botId, (m) => {
-              const segs = m.segments.map(s => s.kind === 'tool' && s.callId === ev.callId ? { ...s, state: ev.ok ? 'success' : 'error', result: ev.result, ok: ev.ok, durationMs: ev.durationMs } : s);
+            if (ev.type === 'tool_start') updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'tool', callId: ev.callId, name: ev.name, state: 'running' }] }));
+            else if (ev.type === 'tool_result') updateMessage(botId, (m: any) => {
+              const segs = m.segments.map((s: any) => s.kind === 'tool' && s.callId === ev.callId ? { ...s, state: ev.ok ? 'success' : 'error', result: ev.result, ok: ev.ok, durationMs: ev.durationMs } : s);
               return { ...m, segments: segs };
             });
           }
         }
       } else {
-        // 流式 SSE
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let sepIdx: number;
-          while ((sepIdx = buffer.indexOf('\n\n')) >= 0) {
-            const frame = buffer.slice(0, sepIdx);
-            buffer = buffer.slice(sepIdx + 2);
-            const lines = frame.split('\n').map(l => l.trim());
-            let eventType = '', dataStr = '';
-            for (const line of lines) {
-              if (line.startsWith('event:')) eventType = line.slice(6).trim();
-              if (line.startsWith('data:')) dataStr += line.slice(5).trim();
-            }
-            if (!eventType) continue;
-            try {
-              const data = JSON.parse(dataStr);
-              if (eventType === 'delta') {
-                updateMessage(botId, (m) => {
-                  const segs = [...m.segments];
-                  const lt = segs.filter(s => s.kind === 'text').pop();
-                  if (lt && lt.kind === 'text') lt.text += data.delta || '';
-                  else segs.push({ kind: 'text', text: data.delta || '' });
-                  return { ...m, segments: segs, streaming: true };
-                });
-              } else if (eventType === 'tool_start') {
-                updateMessage(botId, (m) => ({ ...m, segments: [...m.segments, { kind: 'tool', callId: data.callId, name: data.name, state: 'running' }] }));
-              } else if (eventType === 'tool_result') {
-                updateMessage(botId, (m) => { const segs = m.segments.map(s => s.kind === 'tool' && s.callId === data.callId ? { ...s, state: 'success', result: data.result, ok: true } : s); return { ...m, segments: segs }; });
-              } else if (eventType === 'done') {
-                updateMessage(botId, (m) => ({ ...m, streaming: false, provider: data.provider }));
-              }
-            } catch {}
-          }
-        }
+        // 流式 SSE — 委托给 apiStream
+        await apiStream('/v1/chat', {
+          message: text, stream: true, model: provider, mode, userId: 'user', workspace: '',
+        }, handlers, controller.signal);
       }
     } catch (e: any) {
-      if (e.name !== 'AbortError') updateMessage(botId, (m) => ({ ...m, streaming: false, segments: [...m.segments, { kind: 'text', text: `\n\n❌ ${e.message}` }] }));
+      if (e.name !== 'AbortError') updateMessage(botId, (m: any) => ({ ...m, streaming: false, segments: [...m.segments, { kind: 'text', text: `\n\n❌ ${e.message}` }] }));
     } finally {
       setLoading(false);
       abortRef.current = null;

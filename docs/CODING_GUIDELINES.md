@@ -117,6 +117,82 @@ switch (ev.type) {
 
 ---
 
+---
+
+## 规则 7: 前端的 Reasonix 主题体系
+
+**所有 UI 组件必须优先使用 CSS 变量**（定义在 `global.css`），禁止硬编码颜色/阴影/圆角：
+
+```css
+/* ✅ 正确: 使用 CSS 变量 */
+background: var(--panel);
+color: var(--fg);
+border: 1px solid var(--border);
+border-radius: var(--radius);
+
+/* ❌ 错误: 硬编码值 */
+background: '#141414';
+color: '#ddd';
+```
+
+**CSS 变量参考**（来自 Reasonix OKLCH 色域）:
+| 变量 | 暗色值 | 用途 |
+|------|--------|------|
+| `--bg` | `oklch(17% 0.005 280)` | 页面背景 |
+| `--bg-2` | `oklch(20% 0.006 275)` | 顶栏/状态栏背景 |
+| `--panel` | `oklch(21.5% 0.007 275)` | 侧栏/面板背景 |
+| `--border` | `oklch(30% 0.008 275)` | 边框 |
+| `--fg` | `oklch(96% 0.004 280)` | 正文色 |
+| `--muted` | `oklch(63% 0.006 280)` | 辅助文字 |
+| `--accent` | `oklch(68% 0.16 38)` | 强调色(暖棕) |
+
+---
+
+## 规则 8: 组件注册规范
+
+**所有功能页面必须在 `App.tsx` 中注册三处**：
+1. View 类型联合
+2. PAGES 字典
+3. 导航标签
+
+```typescript
+// 1. View 类型
+type View = 'existing' | 'my-new-page';
+
+// 2. PAGES 字典
+const PAGES = {
+  'my-new-page': { label: '新页面', comp: MyNewPageComp },
+};
+
+// 3. 导航标签自动使用 PAGES 的 keys
+```
+
+**禁止**手动在 JSX 中写 `{view === 'xxx' && <Xxx />}` 条件渲染——使用 `PAGES` 字典自动渲染。
+
+---
+
+## 规则 9: process.kill 全面禁止
+
+在 Windows 上 **禁止任何形式**的 `process.kill(pid)`。只允许 `taskkill /F /PID <pid>`（通过 `child_process.execSync`）或 `AbortController`（前端中止请求）。
+
+```typescript
+// ❌ 禁止
+process.kill(pid);
+
+// ✅ 允许
+const { execSync } = require('child_process');
+execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+
+// ✅ 前端中止
+const controller = new AbortController();
+fetch(url, { signal: controller.signal });
+controller.abort();
+```
+
+**原因**: 在 Windows 上 `process.kill()` 可能误杀 npm/tsx 父进程，导致虚拟盘 (subst) 映射断裂，所有未入库文件不可恢复。
+
+---
+
 ## 附录: 代码审查标签
 
 - `[P0-HARDPATH]` — 硬编码路径

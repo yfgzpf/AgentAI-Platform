@@ -4,6 +4,8 @@ export const MCP_SERVERS: McpServerConfig[] = [
   // { name: 'filesystem', transport: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] },
 ];
 
+export const MCP_HOSTS = MCP_SERVERS;
+
 export interface McpServerConfig {
   name: string;
   transport: 'stdio' | 'streamable-http';

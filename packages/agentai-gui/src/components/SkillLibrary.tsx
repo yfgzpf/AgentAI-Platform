@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Input, List, Tag, Tabs, Badge, Empty, Spin, Alert } from 'antd';
 import { SearchOutlined, ApiOutlined, MessageOutlined, PictureOutlined, VideoCameraOutlined, SoundOutlined, CodeOutlined, GlobalOutlined } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 
 interface Skill {
   name: string;
@@ -41,7 +42,7 @@ const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   default: <ApiOutlined />,
 };
 
-const httpUrl = () => ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+const httpUrl = () => GATEWAY_HTTP;
 
 export const SkillLibrary: React.FC = () => {
   const [search, setSearch] = useState('');

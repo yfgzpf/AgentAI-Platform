@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { Modal, Input, Button, Space, Typography, Radio, Card, Avatar, Tag, message } from 'antd';
 import { UserOutlined, RocketOutlined, SmileOutlined, CodeOutlined, PictureOutlined, MessageOutlined, RightOutlined } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 import { useProfileStore } from '../store';
 
 const { Title, Paragraph, Text } = Typography;
@@ -65,7 +66,7 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
       return;
     }
     try {
-      const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+      const httpUrl = GATEWAY_HTTP;
       const r = await fetch(httpUrl + '/v1/settings/keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -96,9 +97,9 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
       {step === 'welcome' && (
         <div style={{ padding: 32, textAlign: 'center' }}>
           <Avatar size={80} style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #9333EA 100%)' }} icon={<RocketOutlined />} />
-          <Title level={2} style={{ marginTop: 16, color: '#fff' }}>欢迎使用 AgentAI Platform</Title>
+          <Title level={2} style={{ marginTop: 16, color: '#fff' }}>你好，我是你的 AI 助手 👋</Title>
           <Paragraph style={{ color: '#888', fontSize: 14 }}>
-            融合 3 大智能体框架 · 支持生图生视频 · VSCode/QQ/Tauri 全平台
+            花 10 秒认识一下？很快的～
           </Paragraph>
           <Space size={12} style={{ marginTop: 16 }} wrap>
             <Tag color="blue">Hermes</Tag>
@@ -117,8 +118,8 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
 
       {step === 'name' && (
         <div style={{ padding: 32 }}>
-          <Title level={3}><SmileOutlined /> 先认识一下</Title>
-          <Paragraph style={{ color: '#888' }}>你希望我叫你什么? (我会记住, 之后在所有地方用这个名字跟你说话)</Paragraph>
+          <Title level={3}><SmileOutlined /> 我叫你什么好?</Title>
+          <Paragraph style={{ color: '#888' }}>直接打字或选个昵称吧~</Paragraph>
           <Input
             size="large"
             prefix={<UserOutlined />}
@@ -147,8 +148,8 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
 
       {step === 'useCase' && (
         <div style={{ padding: 32 }}>
-          <Title level={3}>你主要想用 <Tag color="cyan">{name}</Tag> 来做什么?</Title>
-          <Paragraph style={{ color: '#888' }}>我会根据你的选择准备推荐 (可随时在设置改)</Paragraph>
+          <Title level={3}>{name}, 你想拿我干嘛?</Title>
+          <Paragraph style={{ color: '#888' }}>帮你挑最好的开始方式~</Paragraph>
           <Radio.Group value={useCase} onChange={(e) => setUseCase(e.target.value)} style={{ width: '100%' }}>
             <Space direction="vertical" style={{ width: '100%' }} size={12}>
               {USE_CASES.map(uc => (

@@ -1,17 +1,58 @@
-declare global { interface Window { __AGENTAI_GATEWAY__?: string; } }
-const GATEWAY_URL = (typeof window !== 'undefined' ? window.__AGENTAI_GATEWAY__ : '') || '';
+import { GATEWAY_HTTP } from './config';
 
 export interface ApiStreamHandlers {
   onDelta?: (text: string) => void;
   onToolStart?: (info: { callId: string; name: string; args: any }) => void;
   onToolResult?: (info: { callId: string; name: string; result: string; ok: boolean; durationMs: number }) => void;
-  onDone?: (info: { provider: string; content?: string; usage?: any }) => void;
+  onDone?: (info: { provider?: string; content?: string; usage?: any }) => void;
   onError?: (err: string) => void;
+}
+
+/**
+ * 从 SSE 流解析消息并更新 chatStore messages
+ * 适配 ChatView 的 segments 模型
+ */
+export function makeChatHandlers(
+  botId: string,
+  updateMessage: (id: string, fn: (m: any) => any) => void,
+) {
+  return {
+    onDelta: (text: string) => {
+      updateMessage(botId, (m: any) => {
+        const segs = [...m.segments];
+        const lt = segs.filter((s: any) => s.kind === 'text').pop();
+        if (lt && lt.kind === 'text') lt.text += text;
+        else segs.push({ kind: 'text', text });
+        return { ...m, segments: segs, streaming: true };
+      });
+    },
+    onToolStart: (info: any) => {
+      updateMessage(botId, (m: any) => ({
+        ...m, segments: [...m.segments, { kind: 'tool', callId: info.callId, name: info.name, state: 'running' }],
+      }));
+    },
+    onToolResult: (info: any) => {
+      updateMessage(botId, (m: any) => {
+        const segs = m.segments.map((s: any) =>
+          s.kind === 'tool' && s.callId === info.callId
+            ? { ...s, state: info.ok ? 'success' : 'error', result: info.result, ok: info.ok, durationMs: info.durationMs }
+            : s,
+        );
+        return { ...m, segments: segs };
+      });
+    },
+    onDone: (info: any) => {
+      updateMessage(botId, (m: any) => ({ ...m, streaming: false, provider: info.provider }));
+    },
+    onError: (err: string) => {
+      updateMessage(botId, (m: any) => ({ ...m, streaming: false, segments: [...m.segments, { kind: 'text', text: `\n\n❌ ${err}` }] }));
+    },
+  } as ApiStreamHandlers;
 }
 
 export async function apiStream(url: string, body: any, handlers: ApiStreamHandlers, signal?: AbortSignal): Promise<void> {
   try {
-    const resp = await fetch(GATEWAY_URL + url, {
+    const resp = await fetch(GATEWAY_HTTP + url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -66,14 +107,14 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
 }
 
 export async function apiPost<T = any>(url: string, body: any): Promise<T> {
-  const resp = await fetch(GATEWAY_URL + url, {
+  const resp = await fetch(GATEWAY_HTTP + url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   return resp.json() as T;
 }
 
 export async function apiGet<T = any>(url: string): Promise<T> {
-  const resp = await fetch(GATEWAY_URL + url);
+  const resp = await fetch(GATEWAY_HTTP + url);
   return resp.json() as T;
 }
 

@@ -19,6 +19,7 @@ import {
   DesktopOutlined, HomeOutlined, CodeOutlined, DeleteOutlined, EditOutlined as RenameIcon,
   FolderOpenOutlined as OpenFolderIcon,
 } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 import { useProfileStore } from '../store';
 
 interface FsEntry {
@@ -47,7 +48,7 @@ interface OpenFile {
   readonly: boolean;
 }
 
-const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+const httpUrl = GATEWAY_HTTP;
 
 const LANGS: Record<string, string> = {
   '.ts': 'typescript', '.tsx': 'typescript', '.js': 'javascript', '.jsx': 'javascript',

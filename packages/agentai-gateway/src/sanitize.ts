@@ -173,13 +173,26 @@ export function isDangerousUrl(url: string): { dangerous: boolean; reason?: stri
  * 危险命令黑名单
  */
 const DANGEROUS_COMMANDS = [
-  /(^|\||;|&)\s*(rm\s+-rf|format\s+.*\/\*|shutdown\s*-f|del\s+\/s\/q)/i,
-  /(^|\||;|&)\s*(dd\s+if=|mkfs|fdisk\s+-l)/i,
+  // --- POSIX ---
+  /(^|\||;|&)\s*(rm\s+-rf|rm\s+-r\s+--no-preserve-root|rm\s+--recursive\s+\/)/i,
+  /(^|\||;|&)\s*(format\s+.*\/\*|mkfs|mkdosfs|mke2fs)/i,
+  /(^|\||;|&)\s*(dd\s+if=|fdisk\s+-l)/i,
   /(^|\||;|&)\s*(wget\s+.*\|\s*(sh|bash)|curl\s+.*\|\s*(sh|bash))/i,
-  /(^|\||;|&)\s*(iptables\s+-F|ufw\s+reset)/i,
-  /(^|\||;|&)\s*(net\s+user\s+.*\/add|netsh\s+firewall)/i,
-  /(^|\||;|&)\s*(sc\s+create|reg\s+delete|schtasks)/i,
-  /(^|\||;|&)\s*(passwd|chown|chmod\s+666|sudo\s+-S)/i,
+  /(^|\||;|&)\s*(iptables\s+-F|ufw\s+reset|firewall-cmd\s+--reload)/i,
+  /(^|\||;|&)\s*(sc\s+create|reg\s+delete|schtasks\s+\/d)/i,
+  /(^|\||;|&)\s*(passwd|chown|chmod\s+666|sudo\s+-S|sudo\s+-l)/i,
+  // --- Windows ---
+  /(^|\||;|&)\s*(Format-Volume|Clear-Volume|Reset-ComputerMachinePassword)/i,
+  /(^|\||;|&)\s*(Remove-Item\s+[-\w\/]+\s+-Recurse\s+-Force)/i,
+  /(^|\||;|&)\s*(shutdown\s+-f\s+-t\s+0|shutdown\s+-a)/i,
+  /(^|\||;|&)\s*(net\s+user\s+.*\/add|net\s+localgroup\s+administrators)/i,
+  /(^|\||;|&)\s*(TakeOwn|icacls\s+\/grant|cacls)/i,
+  /(^|\||;|&)\s*(powershell\s+.*-ExecutionPolicy\s+(Bypass|Unrestricted))/i,
+  /(^|\||;|&)\s*(Invoke-Expression\s+|iex\s+\()/i,
+  /(^|\||;|&)\s*(Start-Process\s+-Verb\s+RunAs)/i,
+  /(^|\||;|&)\s*(bitsadmin\s+\/transfer)/i,
+  // --- 通用 ---
+  /(^|\||;|&)\s*(erase\s+\/f\/a\/s\/q|del\s+\/f\/a\/s\/q\/p)/i,
 ];
 
 /**

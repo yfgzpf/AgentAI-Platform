@@ -9,9 +9,15 @@ import { createServer } from 'http';
 import { Server as IOServer } from 'socket.io';
 
 import { createChatRouter, ChatRouterDeps } from './routes/chat.js';
+import { createAdminRouter } from './routes/admin.js';
+import { sessionsRouter } from './routes/sessions.js';
+
+// ===== CORS 配置 =====
+const CORS_ORIGINS = (process.env.AGENTAI_CORS_ORIGINS || 'http://localhost:5173,http://localhost:1420,tauri://localhost').split(',').map(o => o.trim());
 import { filesRouter } from './routes/files.js';
 import { createQQRouter } from './routes/qq.js';
 import { createHealthRouter, HealthRouterDeps } from './routes/health.js';
+import { wechatRouter } from './routes/wechat.js';
 import { getGlobalSandbox, type Sandbox } from './sandbox/index.js';
 import { createSkillsRouter } from './skills/router.js';
 import { startSkillWatcher } from './skills/watcher.js';
@@ -27,7 +33,17 @@ export function createApp(deps: AppDeps) {
   const app = express();
 
   // ===== 中间件 =====
-  app.use(cors());
+  app.use(cors({
+    origin: (origin, callback) => {
+      if (!origin || CORS_ORIGINS.includes(origin)) {
+        callback(null, origin || CORS_ORIGINS[0]);
+      } else {
+        console.warn(`[cors] rejected origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+  }));
   app.use(express.json({ limit: '10mb' }));
 
   // ===== 静态资源 =====
@@ -47,6 +63,13 @@ export function createApp(deps: AppDeps) {
   app.use(createChatRouter(deps as ChatRouterDeps));
   app.use(createQQRouter());
   app.use(createHealthRouter(deps as HealthRouterDeps));
+  app.use('/api/wechat', wechatRouter);
+  app.use('/api/sessions', sessionsRouter);
+  if (deps.router) {
+    app.use(createAdminRouter({ ...deps }));
+  } else {
+    app.use(createAdminRouter({}));
+  }
   app.use(filesRouter);
 
   return app;
@@ -60,7 +83,9 @@ export interface ServerHandle {
 export function createServerHandle(app: express.Express): ServerHandle {
   const httpServer = createServer(app);
   const io = new IOServer(httpServer, {
-    cors: { origin: '*' },
+    cors: {
+      origin: CORS_ORIGINS.length === 1 && CORS_ORIGINS[0] === '*' ? '*' : CORS_ORIGINS,
+    },
   });
   return { httpServer, io };
 }
@@ -70,8 +95,7 @@ export function createServerHandle(app: express.Express): ServerHandle {
  * - 技能热加载 watcher
  * - evolution 文件清理循环
  * - session manager (内部已自动)
- * - 真定时反思 (cron dispatcher) — P0-2
- * - 清理 daemon 启动 — P0-3
+ * - 真定时反思 (cron dispatcher)
  */
 export function startBackgroundJobs(skillsDir: string) {
   startSkillWatcher([skillsDir]);
@@ -83,10 +107,4 @@ export function startBackgroundJobs(skillsDir: string) {
     const cron = new CronDispatcher();
     cron.start();
   }).catch((e: any) => console.warn('[cron] start failed:', e?.message));
-
-  // P0-3: 清理 daemon 启动 — 使用 cleaner/index 导出的 CleanerDaemon
-  import('./cron-dispatcher.js').then(({ CronDispatcher }) => {
-    const cron = new CronDispatcher();
-    cron.start();
-  }).catch((e: any) => console.warn('[cleaner/cron] start failed:', e?.message));
 }

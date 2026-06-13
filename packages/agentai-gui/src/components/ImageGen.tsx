@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Input, Button, Select, Card, Space, Tag, Alert, Spin, message, Empty } from 'antd';
 import { PictureOutlined, ThunderboltOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 
 const PRESETS = [
   { label: '📷 写实摄影', prompt: 'cinematic photo, realistic, 8k, highly detailed, natural lighting' },
@@ -59,7 +60,7 @@ export const ImageGen: React.FC = () => {
     } catch {}
   }, [history]);
 
-  const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+  const httpUrl = GATEWAY_HTTP;
 
   const gen = async () => {
     if (!prompt.trim()) {

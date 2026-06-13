@@ -48,30 +48,8 @@ export const useFrameworkStore = create<FrameworkState>()(
   ),
 );
 
-// 2. Chat 状态 (消息流)
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  ts: number;
-  framework?: 'openclaw' | 'hermes';
-  streaming?: boolean;
-  tokens?: { prompt: number; completion: number };
-}
-interface ChatState {
-  messages: ChatMessage[];
-  appendMessage: (m: ChatMessage) => void;
-  updateMessage: (id: string, fn: (m: ChatMessage) => ChatMessage) => void;
-  clearMessages: () => void;
-}
-export const useChatStore = create<ChatState>((set) => ({
-  messages: [],
-  appendMessage: (m) => set((s) => ({ messages: [...s.messages, m] })),
-  updateMessage: (id, fn) => set((s) => ({
-    messages: s.messages.map((m) => (m.id === id ? fn(m) : m)),
-  })),
-  clearMessages: () => set({ messages: [] }),
-}));
+// 2. Chat 状态 (已移至 chatStore.ts, 保留此空接口供旧组件向后兼容)
+// 新组件应导入: import { useChatStore } from './store/chatStore';
 
 // 3. Settings 状态 (LLM provider / API key 状态)
 interface SettingsState {

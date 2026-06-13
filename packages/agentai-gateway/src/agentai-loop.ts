@@ -184,7 +184,7 @@ These are NOT suggestions. You MUST follow them. If you are about to rationalize
       ];
 
       const req: ChatRequest = {
-        model: 'agentai',
+        model: this.opts.model,
         messages,
         tools: this.registry.toLLMTools(),
         userId: this.opts.userId,

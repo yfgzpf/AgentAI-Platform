@@ -12,12 +12,11 @@ import { getSessionManager } from '../session-manager.js';
 export interface HealthRouterDeps {
   router: AgentAIRouter;
   registry: ToolRegistry;
-  sessions: Map<string, any>;
 }
 
 export function createHealthRouter(deps: HealthRouterDeps): Router {
   const r = Router();
-  const { router, registry, sessions } = deps;
+  const { router, registry } = deps;
 
   r.get('/v1/health', (_req, res) => {
     const providerStats = router.getProviderStats();
@@ -31,7 +30,6 @@ export function createHealthRouter(deps: HealthRouterDeps): Router {
       version: '0.1.0-alpha.1',
       providers: providerStats,
       tools: registry.listTools().length,
-      sessions: sessions.size,
       sessionManager: sessionStats,
       evolution: evolutionSummary,
     });

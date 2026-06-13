@@ -11,14 +11,9 @@
     "run": "python scripts/run_skill.py"
   },
   "dependencies": {
-    "dockerode": "^4.0.2",
-    "pyyaml": "^6.0.1",
-    "axios": "^1.7.4"
+    "dockerode": "^4.0.2"
   },
-  "devDependencies": {
-    "pytest": "^8.3.0",
-    "ruff": "^0.5.0"
-  },
+  "devDependencies": {},
   "author": "AgentAI Builder",
   "license": "MIT"
 }

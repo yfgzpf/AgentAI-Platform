@@ -12,13 +12,14 @@ import { writeMemory } from '../memory.js';
 export interface ChatRouterDeps {
   router: AgentAIRouter;
   registry: ToolRegistry;
-  sessions: Map<string, AgentAILoop>;
+  sessionManager: any;  // SessionManager
   frameworkSwitcher?: any; // FrameworkSwitcher
+  persistentMemory?: any; // PersistentMemory
 }
 
 export function createChatRouter(deps: ChatRouterDeps): Router {
   const r = Router();
-  const { router, registry, sessions, frameworkSwitcher } = deps;
+  const { router, registry, sessionManager, frameworkSwitcher, persistentMemory } = deps;
 
   r.post('/v1/chat', async (req: Request, res: Response) => {
     try {
@@ -42,29 +43,73 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
 
-        try {
-          const sessionKey = `${userId}:${workspace}`;
-          let loop = sessions.get(sessionKey);
-          if (!loop) {
-            loop = new AgentAILoop(router, registry, [], { maxIterations: 30, userId, workspace });
-            sessions.set(sessionKey, loop);
-          }
-
-          const resp = await router.chat({
-            model: 'agentai',
-            messages: [{ role: 'user', content: message }],
-            stream: true,
+      try {
+        const sessionKey = `${userId}:${workspace}`;
+        let loop;
+        let sessionId: string;
+        const sessionData = sessionManager.get(sessionKey);
+        if (!sessionData) {
+          loop = new AgentAILoop(router, registry, [], { maxIterations: 30, userId, workspace });
+          sessionManager['map'].set(sessionKey, {
+            loop,
             userId,
             workspace,
-            onDelta: (delta: string) => sendEvent('delta', { delta }),
+            lastAccessedAt: Date.now(),
+            createdAt: Date.now(),
+            callCount: 1,
           });
+          sessionId = loop.getContext().sessionId;
+          // 创建持久化 checkpoint
+          if (persistentMemory) {
+            persistentMemory.createCheckpoint(sessionId, userId, workspace);
+            persistentMemory.addMessage(sessionId, { role: 'user', content: message });
+          }
+        } else {
+          loop = sessionData.loop;
+          sessionId = loop.getContext().sessionId;
+        }
+        const resSessionId = sessionId;
 
-          sendEvent('done', { provider: resp.provider, usage: resp.usage, content: resp.content });
-          await writeMemory({
-            userId, workspace, role: 'assistant', content: resp.content,
-            metadata: { provider: resp.provider, durationMs: resp.durationMs }, source: 'session',
-          });
-          res.end();
+        // 监听 AgentAILoop 事件，转发为 SSE 事件
+        loop.on('tool:start', (info: any) => {
+          sendEvent('tool_start', { callId: info.callId, name: info.name, args: info.args });
+        });
+        loop.on('tool:result', (info: any) => {
+          sendEvent('tool_result', { callId: info.callId, name: info.name, result: info.result, ok: info.ok, durationMs: info.durationMs });
+        });
+        loop.on('loop:iteration', (info: any) => {
+          sendEvent('iteration', { n: info.n });
+        });
+        loop.on('reflect:start', () => {
+          sendEvent('reflect', { status: 'start' });
+        });
+        loop.on('reflect:done', (info: any) => {
+          sendEvent('reflect', { status: 'done', summary: info.summary });
+        });
+
+        // 通过 AgentAILoop.run() 执行对话（完整工具调用 + 反思 + 记忆闭环）
+        const response = await loop.run(message);
+
+        // 流式发送最终结果
+        sendEvent('delta', { delta: response.content });
+        sendEvent('done', {
+          provider: response.provider,
+          usage: response.usage,
+          content: response.content,
+          toolCalls: response.toolCalls,
+          sessionId: resSessionId,
+          iterations: response.iterations,
+        });
+
+        // 持久化 assistant 回复
+        if (persistentMemory) {
+          persistentMemory.addMessage(resSessionId, { role: 'assistant', content: response.content });
+        }
+        await writeMemory({
+          userId, workspace, role: 'assistant', content: response.content,
+          metadata: { provider: response.provider, durationMs: response.durationMs }, source: 'session',
+        });
+        res.end();
         } catch (e: any) {
           sendEvent('error', { error: String(e?.message || e) });
           res.end();
@@ -98,10 +143,12 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         }
       }
 
-      // 创建或获取 session
+      // 创建或获取 session (使用 SessionManager LRU)
       const sessionKey = `${userId}:${workspace}`;
-      let loop = sessions.get(sessionKey);
-      if (!loop) {
+      let loop: any;
+      let isNewSession = false;
+      let sessionData = sessionManager.get(sessionKey);
+      if (!sessionData) {
         const mode = req.body?.mode || 'auto';
         const userModel = req.body?.model;
         if (userModel && userModel !== 'agentai' && ['agentai', 'deepseek', 'openai'].includes(userModel)) {
@@ -111,15 +158,37 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           const isSimple = msg.length < 15 && !/代码|审查|分析|重构|改|修|建|查|找|debug|review|refactor|implement|analyze|create|fix/.test(msg);
           const isDeepReason = /架构|设计模式|性能优化|并发|安全|漏洞|内存泄漏|重构|复杂|体系|设计|security|vulnerability|memory leak|race|deadlock/i.test(msg);
           const usePro = (mode === 'auto' || mode === 'planning') && isDeepReason;
-          const useFlash = (mode === 'auto' || mode === 'planning') && !isSimple && !isDeepReason;
+          const useFlash = (mode === "auto" || mode === 'planning') && !isSimple && !isDeepReason;
           let chatModel = 'agentai';
           let modelName = '';
           if (usePro) { chatModel = 'deepseek'; modelName = 'deepseek-v4-pro'; }
           else if (useFlash) { chatModel = 'deepseek'; modelName = 'deepseek-v4-flash'; }
           loop = new AgentAILoop(router, registry, [], { maxIterations: 10, userId, workspace, mode, model: chatModel, modelName });
         }
-        sessions.set(sessionKey, loop);
+        sessionManager['map'].set(sessionKey, {
+          loop,
+          userId,
+          workspace,
+          lastAccessedAt: Date.now(),
+          createdAt: Date.now(),
+          callCount: 1,
+        });
+        sessionData = { loop, userId, workspace };
+        isNewSession = true;
+        // 创建持久化 checkpoint
+        if (persistentMemory) {
+          const sid = loop.getContext().sessionId;
+          persistentMemory.createCheckpoint(sid, userId, workspace);
+          persistentMemory.addMessage(sid, { role: 'user', content: message });
+        }
+      } else {
+        // Session 已存在，持久化用户消息（追加到旧 checkpoint）
+        if (persistentMemory) {
+          persistentMemory.addMessage(sessionData.loop.getContext().sessionId, { role: 'user', content: message });
+        }
       }
+      const resSessionId = isNewSession ? loop.getContext().sessionId : sessionData.loop.getContext().sessionId;
+      loop = sessionData.loop;
 
       // 收集工具事件
       const toolEvents: any[] = [];
@@ -129,6 +198,12 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       loop.on('tool:result' as any, onToolResult);
 
       const response = await loop.run(message);
+
+      // 持久化 assistant 回复
+      if (persistentMemory) {
+        const sid = loop.getContext().sessionId;
+        persistentMemory.addMessage(sid, { role: 'assistant', content: response.content });
+      }
 
       loop.off('tool:start' as any, onToolStart);
       loop.off('tool:result' as any, onToolResult);

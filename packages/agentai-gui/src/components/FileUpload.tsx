@@ -5,8 +5,9 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Upload, message, Button, Space, Image, Tag, Tooltip } from 'antd';
 import { InboxOutlined, PaperClipOutlined, PictureOutlined, FileTextOutlined, DeleteOutlined } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 
-const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+const httpUrl = GATEWAY_HTTP;
 
 export interface UploadedFile {
   filename: string;

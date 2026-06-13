@@ -15,6 +15,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Input, Button, Space, Tag, Alert, message, InputNumber, Select, Divider, Tooltip, Switch } from 'antd';
 import { SafetyOutlined, ReloadOutlined, ExperimentOutlined, CheckCircleOutlined, StopOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 
 const { TextArea } = Input;
 
@@ -39,7 +40,7 @@ interface SandboxStatus {
   lastReload: number;
 }
 
-const httpUrl = () => ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+const httpUrl = () => GATEWAY_HTTP;
 
 const VERDICT_COLOR: Record<string, string> = {
   allow: 'green',

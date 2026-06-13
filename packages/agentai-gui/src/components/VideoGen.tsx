@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Input, Button, Card, Space, Tag, Alert, Spin, message, Progress, Empty } from 'antd';
 import { VideoCameraOutlined, ThunderboltOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 
 const PRESETS = [
   { label: '🌅 风景', prompt: 'A cinematic sunset over a misty mountain valley, soft golden light, camera slowly panning' },
@@ -57,7 +58,7 @@ export const VideoGen: React.FC = () => {
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
-  const httpUrl = ((window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789').replace(/^ws/, 'http');
+  const httpUrl = GATEWAY_HTTP;
 
   const pollTask = (taskId: string, item: HistoryItem) => {
     if (pollRef.current) clearInterval(pollRef.current);

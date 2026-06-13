@@ -796,12 +796,31 @@ export class AgentAIRouter extends EventEmitter {
     return { safe: allThreats.length === 0, threats: allThreats };
   }
 
-  private computeUsage(p: ProviderStats, _repaired: any, _req: ChatRequest): ChatResponse['usage'] {
-    // 简化: 假设 1000 prompt + 500 completion
-    const promptTokens = 1000;
-    const completionTokens = 500;
-    const cost = (promptTokens / 1000) * p.costPer1kInput + (completionTokens / 1000) * p.costPer1kOutput;
-    return { promptTokens, completionTokens, cost, cacheHit: false };
+  private computeUsage(p: ProviderStats, repaired: any, req: ChatRequest): ChatResponse['usage'] {
+    // 优先使用 LLM API 返回的真实 usage
+    if (repaired.usage) {
+      return {
+        promptTokens: repaired.usage.promptTokens ?? repaired.usage.prompt_tokens ?? 0,
+        completionTokens: repaired.usage.completionTokens ?? repaired.usage.completion_tokens ?? 0,
+        cost: repaired.usage.cost ?? this._calculateCost(
+          repaired.usage.promptTokens ?? repaired.usage.prompt_tokens ?? 0,
+          repaired.usage.completionTokens ?? repaired.usage.completion_tokens ?? 0,
+          p,
+        ),
+        cacheHit: repaired.usage.cacheHit ?? false,
+      };
+    }
+    // fallback: 根据 provider 实际价格估算
+    return {
+      promptTokens: 0,
+      completionTokens: 0,
+      cost: this._calculateCost(0, 0, p),
+      cacheHit: false,
+    };
+  }
+
+  private _calculateCost(promptTokens: number, completionTokens: number, p: ProviderStats): number {
+    return (promptTokens / 1000) * p.costPer1kInput + (completionTokens / 1000) * p.costPer1kOutput;
   }
 
   private recordSuccess(p: ProviderStats, latencyMs: number): void {
