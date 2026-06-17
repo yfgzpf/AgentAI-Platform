@@ -123,6 +123,8 @@ interface ProviderStats {
   /** circuit breaker state */
   tripped: boolean;
   trippedAt?: number;
+  /** 最后一次错误的 HTTP 状态码 */
+  lastErrorStatus?: number;
 }
 
 // ===== ToolSpec → OpenAI Tool 格式 =====
@@ -381,10 +383,16 @@ export class AgentAIRouter extends EventEmitter {
     }
 
     // All providers failed — 尝试强制恢复免费 provider 再试一次
+    // 但跳过 HTTP 429（速率限制）错误 — 这不会被 untrip 修复
     const freeProviders = ['zhipu', 'agentai', 'cline'] as ProviderId[];
     for (const fp of freeProviders) {
       const p = this.providers.get(fp);
       if (!p) continue;
+      // 跳过速率限制熔断：untrip 也不能改变 API 侧的限制
+      if (p.lastErrorStatus === 429) {
+        console.log(`[router] skip emergency recovery for ${fp}: rate limited (429)`);
+        continue;
+      }
       // 强制解除熔断, 给一次机会
       p.tripped = false;
       p.trippedAt = undefined;
@@ -629,7 +637,7 @@ export class AgentAIRouter extends EventEmitter {
     // zhipu: open.bigmodel.cn/api/paas/v4 (GLM-4.7-Flash 免费)
     const envKeyMap: Record<string, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
       agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-2.0-flash' },
-      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-v4-flash' },
+      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-chat' },
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
       cline:   { keyEnv: 'CLINE_API_KEY',   baseEnv: 'CLINE_BASE_URL',   defaultBase: 'https://api.cline.bot/api/v1',  modelEnv: 'CLINE_MODEL', defaultModel: 'deepseek/deepseek-v4-flash' },
       zhipu:   { keyEnv: 'ZHIPU_API_KEY',   baseEnv: 'ZHIPU_BASE_URL',   defaultBase: 'https://open.bigmodel.cn/api/paas/v4', modelEnv: 'ZHIPU_MODEL', defaultModel: 'glm-4.7-flash' },
@@ -969,6 +977,9 @@ export class AgentAIRouter extends EventEmitter {
   private recordFailure(p: ProviderStats, _err: Error): void {
     p.totalCalls++;
     p.failureCount++;
+    // 从错误消息中提取 HTTP 状态码
+    const statusMatch = _err.message?.match(/HTTP\s*(\d{3})/);
+    if (statusMatch) p.lastErrorStatus = parseInt(statusMatch[1], 10);
     // 失败率超过 30% 熔断
     if (p.failureCount / p.totalCalls > 0.30) {
       p.tripped = true;
