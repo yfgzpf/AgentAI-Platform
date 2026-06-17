@@ -212,9 +212,12 @@ try {
 }
 
 // ===== 初始化 AI 工作目录管理器 (跨平台路径解析) =====
-// 默认项目根目录 = monorepo 根 (向上两级: packages/agentai-gateway → 根)
+// 默认项目根目录 = dist/index.js 所在目录 → packages/agentai-gateway → 向上两级到 monorepo 根
 // 运行时由前端传入 workspace 参数时动态更新
-const _defaultProjectRoot = path.resolve(process.cwd(), '..', '..');
+const _defaultProjectRoot = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:\/)/, '$1')),  // dist/
+  '..', '..', '..',  // → agentai-platform 根
+);
 const wm = new WorkspaceManager({ projectDir: _defaultProjectRoot });
 wm.init();
 console.log(`[workspace] AI work dir: ${wm.aiWorkDir}`);

@@ -83,8 +83,9 @@ export const AskUserCard: React.FC<Props> = ({
         }
       } else {
         answer = selected as string;
-        if (customInput.trim() && !selected) {
-          answer = customInput.trim();
+        // 修复: 选中选项 + 自定义输入时，合并发送
+        if (customInput.trim()) {
+          answer = answer ? `${answer}\n${customInput.trim()}` : customInput.trim();
         }
       }
     } else {
