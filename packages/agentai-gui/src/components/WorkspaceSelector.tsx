@@ -129,31 +129,38 @@ export const WorkspaceSelector: React.FC = () => {
 
   /** 原生文件夹选择器 (File System Access API 或 webkitdirectory 回退) */
   const handleNativeBrowse = async () => {
+    let folderName = '';
     try {
-      // 优先使用 File System Access API
       if ('showDirectoryPicker' in window) {
         const dirHandle = await (window as any).showDirectoryPicker();
-        applyWorkspace(dirHandle.name);
-        message.success(`已选择: ${dirHandle.name}`);
-        return;
+        folderName = dirHandle.name;
       }
     } catch (e: any) {
-      if (e.name === 'AbortError') return; // 用户取消
+      if (e.name === 'AbortError') return;
     }
-    // 回退: 使用 webkitdirectory input
-    const input = document.createElement('input');
-    input.type = 'file';
-    (input as any).webkitdirectory = true;
-    input.onchange = (e: any) => {
-      const files = e.target?.files;
-      if (files?.length) {
-        const fullPath = files[0].webkitRelativePath || files[0].name;
-        const dirName = fullPath.split(/[\\/]/)[0] || fullPath;
-        applyWorkspace(dirName);
-        message.success(`已选择: ${dirName}`);
-      }
-    };
-    input.click();
+    // 回退: webkitdirectory
+    if (!folderName) {
+      const input = document.createElement('input');
+      input.type = 'file';
+      (input as any).webkitdirectory = true;
+      await new Promise<void>((resolve) => {
+        input.onchange = (e: any) => {
+          const files = e.target?.files;
+          if (files?.length) {
+            const fullPath = files[0].webkitRelativePath || files[0].name;
+            folderName = fullPath.split(/[\\/]/)[0] || fullPath;
+          }
+          resolve();
+        };
+        input.click();
+      });
+    }
+    if (!folderName) return;
+    // 浏览器只能拿到文件夹名，弹出手动输入框让用户补全路径
+    setEditing(true);
+    const guessed = `F:\\${folderName}`;
+    setValue(guessed);
+    message.info(`已识别文件夹: ${folderName}，请补全完整路径 (如 ${guessed})`);
   };
 
   /** 确认选择文件夹 */
