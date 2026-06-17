@@ -192,16 +192,14 @@ export const WorkspaceSelector: React.FC = () => {
     }
   };
 
-  /** 首次加载自动获取项目根目录 (超时回退) */
+  /** 首次加载自动获取项目根目录 (Gateway 不可达立即回退) */
   useEffect(() => {
     if (!workspace) {
-      const timer = setTimeout(() => {
-        // 3秒超时: 回退到已知默认目录
-        setLoading(false);
-        setEditing(true);
-        setValue('F:\\agentai-platform');
-      }, 3000);
-      handleSetProjectRoot().finally(() => clearTimeout(timer));
+      const fallback = () => { setEditing(true); setValue('F:\\agentai-platform'); };
+      const timer = setTimeout(fallback, 2000); // 2秒超时
+      handleSetProjectRoot()
+        .then(() => clearTimeout(timer))
+        .catch(() => { clearTimeout(timer); fallback(); });
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
