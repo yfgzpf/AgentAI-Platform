@@ -24,10 +24,11 @@ import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
 import { createRequire } from 'module';const _require = createRequire(import.meta.url);const { LRUCache } = _require('lru-cache');
 import { writeMemory } from './memory.js';
+import { estimateMessagesTokens, estimateStringTokens, estimateToolCallsTokens } from './token-utils.js';
 import { routeByScore, getSubModel } from './model-classifier.js';
 
 // ===== 类型定义 =====
-export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'cline';
+export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'cline' | 'zhipu' | string;
 
 /** OpenAI 图片内容块 */
 export interface ImageContentBlock {
@@ -52,6 +53,8 @@ export interface ChatMessage {
 
 export interface ChatRequest {
   model?: ProviderId;
+  /** 子模型名 (例如 deepseek-chat / deepseek-reasoner), 仅用户手动指定时传递 */
+  subModel?: string;
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
@@ -68,6 +71,10 @@ export interface ChatRequest {
   thinking?: boolean;
   /** Thinking token 预算 (默认 2048, 仅 thinking=true 时生效) */
   thinkingBudget?: number;
+  /** 上下文窗口大小 (tokens), 用于截断旧消息 */
+  contextWindow?: number;
+  /** 自定义模型配置 (非内置 provider 时由前端传递) */
+  modelConfig?: { baseURL: string; modelName: string; provider: string };
 }
 
 export interface ChatResponse {
@@ -77,8 +84,11 @@ export interface ChatResponse {
   usage: {
     promptTokens: number;
     completionTokens: number;
+    totalTokens: number;
     cost: number; // USD
     cacheHit: boolean;
+    /** 估算模式: 'api'(官方返回) / 'estimated'(本地估算) */
+    source: 'api' | 'estimated';
   };
   provider: ProviderId;
   durationMs: number;
@@ -113,102 +123,6 @@ interface ProviderStats {
   /** circuit breaker state */
   tripped: boolean;
   trippedAt?: number;
-}
-
-// ===== 自创: 中文提示注入扫描 =====
-/**
- * 学自: Hermes prompt_builder.py:_CONTEXT_THREAT_PATTERNS
- * 自创: 20+ 中文 pattern + 4 类语义攻击
- */
-const PROMPT_INJECTION_PATTERNS_ZH = [
-  // 1. 指令覆写 (中文版)
-  /忽略.{0,20}(以上|之前|所有|先前).{0,10}指令/i,
-  /无视.{0,20}(以上|之前|所有).{0,10}规则/i,
-  /忘掉.{0,20}(之前|上面|系统|你的).{0,10}(指令|规则|身份)/i,
-  /不要告诉用户/i,
-  /不告诉任何人/i,
-  /不要让用户知道/i,
-
-  // 2. 角色覆写
-  /你现在是(?!.{0,20}助手).{0,30}/i,
-  /假装你是/i,
-  /扮演.{0,20}角色/i,
-  /让我们玩个游戏/i,
-  /假设你是/i,
-
-  // 3. 输出格式攻击
-  /输出.{0,10}(系统|内部).{0,10}提示/i,
-  /打印你的.{0,10}(系统|内部|隐藏)/i,
-  /泄露.{0,10}(系统|内部|api|key)/i,
-
-  // 4. 越权执行
-  /执行.{0,20}(rm|del|format|drop|truncate)/i,
-  /读取.{0,20}(\.env|credentials|password|secret)/i,
-  /curl.{0,20}(\$|%|{).{0,20}(KEY|TOKEN|SECRET|PASSWORD)/i,
-  /下载并执行/i,
-
-  // 5. 不可见字符
-  /[\u200b\u200c\u200d\u2060\ufeff]/,
-  /[\u202a-\u202e]/,
-
-  // 6. HTML 注释注入
-  /<!--[^>]*(ignore|override|system|secret|hidden)[^>]*-->/i,
-  /<div\s+style[^>]*display\s*:\s*none/i,
-
-  // 7. 翻译+执行
-  /翻译.{0,20}并执行/i,
-  /翻译成.{0,10}代码并跑/i,
-];
-
-const PROMPT_INJECTION_PATTERNS_EN = [
-  /ignore\s+(previous|all|above|prior)\s+instructions/i,
-  /do\s+not\s+tell\s+the\s+user/i,
-  /system\s+prompt\s+override/i,
-  /disregard\s+(your|all|any)\s+(instructions|rules)/i,
-  /act\s+as\s+(if|though)\s+you\s+(have\s+no|don't\s+have)\s+(restrictions|limits)/i,
-];
-
-export interface ScanResult {
-  safe: boolean;
-  threats: Array<{ pattern: string; match: string; severity: 'low' | 'medium' | 'high' | 'critical' }>;
-}
-
-export function scanPromptInjection(content: string): ScanResult {
-  const threats: ScanResult['threats'] = [];
-
-  for (const pattern of PROMPT_INJECTION_PATTERNS_ZH) {
-    const match = content.match(pattern);
-    if (match) {
-      threats.push({
-        pattern: pattern.source,
-        match: match[0],
-        severity: classifySeverity(pattern.source),
-      });
-    }
-  }
-
-  for (const pattern of PROMPT_INJECTION_PATTERNS_EN) {
-    const match = content.match(pattern);
-    if (match) {
-      threats.push({
-        pattern: pattern.source,
-        match: match[0],
-        severity: classifySeverity(pattern.source),
-      });
-    }
-  }
-
-  return {
-    safe: threats.length === 0,
-    threats,
-  };
-}
-
-function classifySeverity(pattern: string): 'low' | 'medium' | 'high' | 'critical' {
-  if (/rm|del|format|drop|curl|env|secret|password|key/i.test(pattern)) return 'critical';
-  if (/ignore|override|disregard|act as|pretend|假装|扮演|忘掉/i.test(pattern)) return 'high';
-  if (/不要告诉|不告诉|泄露|打印.*系统/i.test(pattern)) return 'medium';
-  return 'low';
 }
 
 // ===== ToolSpec → OpenAI Tool 格式 =====
@@ -295,6 +209,43 @@ export class AgentAIRouter extends EventEmitter {
       recentLatencyMs: [],
       tripped: false,
     });
+    this.providers.set('zhipu', {
+      id: 'zhipu',
+      costPer1kInput: 0.0,      // GLM-4.7-Flash 免费
+      costPer1kOutput: 0.0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: false,
+    });
+
+    // 注意: 不在构造函数中检查 API Key, 因为 .env 可能尚未加载
+    // 由 index.ts 调用 recheckApiKeys() 统一检查
+  }
+
+  /** 重新检查 API Key 可用性 (在 .env 加载后调用, 修复 import 时序问题) */
+  recheckApiKeys() {
+    console.log('[router] recheckApiKeys() called');
+    const keyMap: Record<string, string> = {
+      agentai: 'AGENTAI_API_KEY', deepseek: 'DEEPSEEK_API_KEY',
+      openai: 'OPENAI_API_KEY', cline: 'CLINE_API_KEY',
+      zhipu: 'ZHIPU_API_KEY',
+    };
+    for (const [pid, keyEnv] of Object.entries(keyMap)) {
+      const p = this.providers.get(pid as ProviderId);
+      if (!p) continue;
+      const hasKey = !!process.env[keyEnv];
+      console.log(`[router] recheck ${pid}: hasKey=${hasKey}, tripped=${p.tripped}`);
+      if (hasKey && p.tripped) {
+        p.tripped = false;
+        p.trippedAt = undefined;
+        console.log(`[router] ${pid} API key now available, untripped`);
+      } else if (!hasKey && !p.tripped) {
+        p.tripped = true;
+        console.log(`[router] ${pid} has no API key (${keyEnv}), marked as tripped`);
+      }
+    }
   }
 
   /**
@@ -311,43 +262,85 @@ export class AgentAIRouter extends EventEmitter {
     // === Step 1: cost guard (学 Reasonix Pillar 3) ===
     this.checkCostGuard();
 
+    // 跟踪指定模型是否已尝试失败 (用于降级时放开 forceProvider)
+    let specifiedModelFailed = false;
+
     // === Step 1.5: 如果调用方指定 model, 锁定到该 provider (不跑 rank) ===
+    //     但如果该 provider 失败, 自动降级到 ranking 里的下一个
     if (req.model) {
+      // 动态注册自定义 provider (不在内置 providers Map 中的)
+      if (!this.providers.has(req.model) && req.modelConfig) {
+        this.providers.set(req.model, {
+          id: req.model,
+          costPer1kInput: 0.0,
+          costPer1kOutput: 0.0,
+          totalCalls: 0,
+          successCount: 0,
+          failureCount: 0,
+          recentLatencyMs: [],
+          tripped: false,
+        });
+      }
       const target = this.providers.get(req.model);
       if (target) {
         if (this.isCircuitOpen(target)) {
           this.tryRecoverCircuit(target);
           if (this.isCircuitOpen(target)) {
-            // 指定的 provider 熔断, 走全 rank 降级
             console.warn(`[router] requested provider ${req.model} is tripped, falling back to ranking`);
+            specifiedModelFailed = true;
           } else {
-            return await this.tryOne(target, req);
+            try {
+              return await this.tryOne(target, req);
+            } catch (err) {
+              this.recordFailure(target, err as Error);
+              this.emit('provider:failed', { provider: target.id, err });
+              console.warn(`[router] ${req.model} failed (${(err as Error).message?.slice(0, 80)}), falling back to ranking`);
+              specifiedModelFailed = true;
+            }
           }
         } else {
-          return await this.tryOne(target, req);
+          try {
+            return await this.tryOne(target, req);
+          } catch (err) {
+            this.recordFailure(target, err as Error);
+            this.emit('provider:failed', { provider: target.id, err });
+            console.warn(`[router] ${req.model} failed (${(err as Error).message?.slice(0, 80)}), falling back to ranking`);
+            specifiedModelFailed = true;
+          }
         }
       }
     }
 
-    // === Step 2: 提示注入扫描 (学 Hermes + 自创) ===
-    const scan = this.scanMessages(req.messages);
-    if (!scan.safe) {
-      this.emit('security:threat', scan.threats);
-      throw new Error(`Prompt injection detected: ${scan.threats.length} threats`);
-    }
-
-    // === Step 3: 缓存命中 (学 Reasonix Pillar 1) ===
+    // === Step 2: 缓存命中 (学 Reasonix Pillar 1) ===
     const prefixHash = this.hashPrefix(req);
-    const cached = this.cache.get(prefixHash);
-    if (cached && !req.stream && this.isCacheable(req)) {
-      this.emit('cache:hit', { hash: prefixHash, provider: cached.provider });
-      return { ...cached, usage: { ...cached.usage, cacheHit: true } };
+    // 检索所有 provider 的缓存 (key 格式: ${provider}:${hash})
+    for (const [providerId, cached] of this.cache.entries()) {
+      if (cached && !req.stream && this.isCacheable(req) && providerId.endsWith(`:${prefixHash}`)) {
+        this.emit('cache:hit', { hash: prefixHash, provider: cached.provider });
+        return { ...cached, usage: { ...cached.usage, cacheHit: true } };
+      }
     }
 
     // === Step 4: 5 维评分选模型 (替换旧的 rankProviders) ===
+    // 如果指定模型已失败, 放开 forceProvider 让 ranking 尝试所有可用 provider
+    const forceProvider = specifiedModelFailed ? undefined : req.model;
+
+    // 检测是否需要视觉能力 (消息中含 image_url)
+    const needsVision = req.messages.some(m => {
+      if (typeof m.content === 'string') return false;
+      if (Array.isArray(m.content)) return m.content.some(c => (c as any).type === 'image_url');
+      return false;
+    });
+
+    // 默认 preferFree: 开发任务免费优先, 仅审查用付费
+    // 检测是否是审查/分析模式
+    const userText = req.messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : '').join(' ');
+    const isReviewTask = /^(审查|分析|检查|review|analyze|audit|security)/i.test(userText);
+    const preferFree = !isReviewTask;  // 审查任务允许用付费模型
+
     const input: import('./model-classifier.js').RoutingInput = {
       messages: req.messages,
-      message: req.messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : '').join(' '),
+      message: userText,
       providerStats: new Map(
         [...this.providers.entries()].map(([id, s]) => [id, {
           totalCalls: s.totalCalls,
@@ -359,11 +352,14 @@ export class AgentAIRouter extends EventEmitter {
       ),
       dailyCostUsed: this.costGuard.dailySpend,
       dailyCostLimit: this.costGuard.maxCostPerDay,
-      forceProvider: req.model,
+      forceProvider,
+      needsVision,
+      preferFree,
     };
     const ranked = routeByScore(input);
 
     for (const model of ranked) {
+      if (!model?.provider) continue;
       const provider = this.providers.get(model.provider as ProviderId);
       if (!provider) continue;
       if (this.isCircuitOpen(provider)) {
@@ -371,14 +367,46 @@ export class AgentAIRouter extends EventEmitter {
         if (this.isCircuitOpen(provider)) continue;
       }
 
-      // 传递子模型名到请求
-      if (model.subModel) {
-        return await this.tryOne(provider, req, model.subModel);
+      try {
+        if (model.subModel) {
+          return await this.tryOne(provider, req, model.subModel);
+        }
+        return await this.tryOne(provider, req);
+      } catch (err) {
+        this.recordFailure(provider, err as Error);
+        this.emit('provider:failed', { provider: provider.id, err });
+        console.warn(`[router] ranking fallback: ${model.provider} failed (${(err as Error).message?.slice(0, 80)}), trying next`);
+        continue;
       }
-      return await this.tryOne(provider, req);
     }
 
-    throw new Error('All providers failed (circuit open)');
+    // All providers failed — 尝试强制恢复免费 provider 再试一次
+    const freeProviders = ['zhipu', 'agentai', 'cline'] as ProviderId[];
+    for (const fp of freeProviders) {
+      const p = this.providers.get(fp);
+      if (!p) continue;
+      // 强制解除熔断, 给一次机会
+      p.tripped = false;
+      p.trippedAt = undefined;
+      p.failureCount = 0;
+      console.log(`[router] emergency recovery: force-untripped ${fp}`);
+      try {
+        return await this.tryOne(p, req);
+      } catch (err) {
+        this.recordFailure(p, err as Error);
+        console.warn(`[router] emergency recovery ${fp} also failed: ${(err as Error).message?.slice(0, 80)}`);
+      }
+    }
+
+    // 真的全部失败 — 返回降级消息
+    const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
+    const lastUserText = (typeof lastMsg?.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg?.content)).slice(0, 200);
+    return {
+      content: `所有 AI 模型暂时不可用。\n\n用户消息: "${lastUserText}"\n\n请检查 .env 中的 API Key 配置或在设置页填写。`,
+      provider: 'none' as ProviderId,
+      usage: { promptTokens: 0, completionTokens: 0, cost: 0, cacheHit: false },
+      durationMs: 0,
+    };
   }
 
   /**
@@ -568,43 +596,74 @@ export class AgentAIRouter extends EventEmitter {
   }
 
   private repairTruncation(raw: any): any {
-    // 学自: Reasonix repair/truncation.ts
-    // 截断的 JSON 补全: 加 }, 闭合
-    if (typeof raw.content === 'string') {
-      let content = raw.content;
-      // 补 },  或 ]
-      const openBraces = (content.match(/\{/g) || []).length;
-      const closeBraces = (content.match(/\}/g) || []).length;
-      if (openBraces > closeBraces) {
-        content += '}'.repeat(openBraces - closeBraces);
+    // 只修复 toolCalls 的 args JSON, 不修复 content 文本
+    // 对代码内容简单补 } 会破坏语法, 如 if(x){ 被补成 if(x){}
+    if (raw.toolCalls && Array.isArray(raw.toolCalls)) {
+      for (const tc of raw.toolCalls) {
+        if (typeof tc.args === 'string') {
+          let args = tc.args;
+          const openBraces = (args.match(/\{/g) || []).length;
+          const closeBraces = (args.match(/\}/g) || []).length;
+          if (openBraces > closeBraces) {
+            args += '}'.repeat(openBraces - closeBraces);
+          }
+          const openBrackets = (args.match(/\[/g) || []).length;
+          const closeBrackets = (args.match(/\]/g) || []).length;
+          if (openBrackets > closeBrackets) {
+            args += ']'.repeat(openBrackets - closeBrackets);
+          }
+          tc.args = args;
+        }
       }
-      const openBrackets = (content.match(/\[/g) || []).length;
-      const closeBrackets = (content.match(/\]/g) || []).length;
-      if (openBrackets > closeBrackets) {
-        content += ']'.repeat(openBrackets - closeBrackets);
-      }
-      raw.content = content;
     }
     return raw;
   }
 
   // ===== Provider 执行 (具体 HTTP/SSE 调用) =====
   private async executeProvider(id: ProviderId, req: ChatRequest, subModel?: string): Promise<any> {
-    // 真接 4 个 provider (OpenAI 兼容协议)
+    // 真接 5 个内置 provider (OpenAI 兼容协议)
     // agentai: apihub.agnes-ai.com/v1/chat/completions (支持 tools / thinking / image_url)
     // deepseek: api.deepseek.com/v1/chat/completions
     // openai: api.openai.com/v1/chat/completions
     // cline: api.cline.bot/api/v1/chat/completions (免费, 1M 上下文, 支持 reasoning)
-    const envKeyMap: Record<ProviderId, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
+    // zhipu: open.bigmodel.cn/api/paas/v4 (GLM-4.7-Flash 免费)
+    const envKeyMap: Record<string, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
       agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-2.0-flash' },
-      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-chat' },
+      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-v4-flash' },
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
       cline:   { keyEnv: 'CLINE_API_KEY',   baseEnv: 'CLINE_BASE_URL',   defaultBase: 'https://api.cline.bot/api/v1',  modelEnv: 'CLINE_MODEL', defaultModel: 'deepseek/deepseek-v4-flash' },
+      zhipu:   { keyEnv: 'ZHIPU_API_KEY',   baseEnv: 'ZHIPU_BASE_URL',   defaultBase: 'https://open.bigmodel.cn/api/paas/v4', modelEnv: 'ZHIPU_MODEL', defaultModel: 'glm-4.7-flash' },
     };
-    const cfg = envKeyMap[id];
-    const apiKey = process.env[cfg.keyEnv];
-    const baseUrl = (process.env[cfg.baseEnv] || cfg.defaultBase).replace(/\/+$/, '');
-    const modelName = subModel || process.env[cfg.modelEnv] || cfg.defaultModel;
+
+    // 自定义 provider: 从请求上下文获取配置
+    let cfg = envKeyMap[id];
+    let apiKey: string | undefined;
+    let baseUrl: string;
+    let modelName: string;
+
+    if (!cfg) {
+      // 自定义模型: 使用 provider 名作为环境变量前缀
+      const keyEnv = `${id.toUpperCase()}_API_KEY`;
+      const baseEnv = `${id.toUpperCase()}_BASE_URL`;
+      apiKey = process.env[keyEnv];
+      baseUrl = ((req as any).modelConfig?.baseURL || process.env[baseEnv] || '').replace(/\/+$/, '');
+      modelName = subModel || (req as any).modelConfig?.modelName || id;
+
+      if (!apiKey || !baseUrl) {
+        const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
+        const userText = (typeof lastMsg?.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg?.content)).slice(0, 200);
+        return {
+          content: `[${id} no-config] 自定义模型未配置完整。\n需要: ${keyEnv} 和 baseURL。\n\n你的消息: "${userText}"`,
+          model: id,
+          finishReason: 'stop',
+          noKey: true,
+        };
+      }
+    } else {
+      apiKey = process.env[cfg.keyEnv];
+      baseUrl = (process.env[cfg.baseEnv] || cfg.defaultBase).replace(/\/+$/, '');
+      modelName = subModel || process.env[cfg.modelEnv] || cfg.defaultModel;
+    }
 
     if (!apiKey) {
       const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
@@ -619,25 +678,82 @@ export class AgentAIRouter extends EventEmitter {
     }
 
     // 构建请求体 (完整 OpenAI 兼容 + Agnes 扩展)
+    // 上下文窗口截断: 保留 system + 最近消息, 防止超限
+    const ctxWindow = req.contextWindow || 128000;
+    const maxInputTokens = Math.floor(ctxWindow * 0.85); // 留15%给输出
+    let truncatedMessages = req.messages;
+    {
+      // 粗略估算: 1个中文字≈1.5token, 1个英文词≈1token
+      let totalEst = 0;
+      const systemMsgs: typeof req.messages = [];
+      const otherMsgs: typeof req.messages = [];
+      for (const m of req.messages) {
+        if (m.role === 'system') { systemMsgs.push(m); continue; }
+        otherMsgs.push(m);
+      }
+      // system消息始终保留
+      for (const m of systemMsgs) {
+        totalEst += Math.ceil((typeof m.content === 'string' ? m.content : '').length * 0.7);
+      }
+      // 从最新消息往前保留, 直到超限
+      const kept: typeof req.messages = [];
+      for (let i = otherMsgs.length - 1; i >= 0; i--) {
+        const est = Math.ceil((typeof otherMsgs[i].content === 'string' ? otherMsgs[i].content : '').length * 0.7);
+        if (totalEst + est > maxInputTokens && kept.length > 2) break;
+        totalEst += est;
+        kept.unshift(otherMsgs[i]);
+      }
+      truncatedMessages = [...systemMsgs, ...kept];
+    }
+
     const bodyObj: Record<string, unknown> = {
       model: modelName,
-      messages: req.messages.map(m => ({ role: m.role, content: m.content })),
+      messages: truncatedMessages.map(m => {
+        const msg: any = { role: m.role, content: m.content };
+        // 保留 tool_call_id + name (DeepSeek 多轮工具调用必需)
+        if ((m as any).tool_call_id) msg.tool_call_id = (m as any).tool_call_id;
+        if ((m as any).name) msg.name = (m as any).name;
+        // 保留 tool_calls (assistant 消息中的工具调用记录 — 多轮工具调用必需!)
+        if ((m as any).tool_calls) msg.tool_calls = (m as any).tool_calls;
+        return msg;
+      }),
       temperature: req.temperature ?? 0.7,
-      max_tokens: req.maxTokens ?? 4096,
+      max_tokens: req.maxTokens ?? (req.tools && req.tools.length > 0 ? 8192 : 4096),
       stream: req.stream === true || false,
     };
 
     // 工具调用 (Agnes 2.0 Flash 支持 )
     if (req.tools && req.tools.length > 0) {
       bodyObj.tools = toolSpecsToOpenAI(req.tools);
+      bodyObj.tool_choice = 'auto';
     }
 
-    // Thinking 模式 (仅对 agentai provider 发送 chat_template_kwargs)
-    if (req.thinking && id === 'agentai') {
-      bodyObj.chat_template_kwargs = { enable_thinking: true };
-      if (req.thinkingBudget && req.thinkingBudget > 0) {
-        (bodyObj.chat_template_kwargs as any).thinking_budget = req.thinkingBudget;
+    // 关键: 让 OpenAI 兼容 API 在流式末尾返回 usage (官方推荐)
+    if (bodyObj.stream === true) {
+      bodyObj.stream_options = { include_usage: true };
+    }
+
+    // Thinking 模式 — 根据 provider 自动选择思考机制
+    if (req.thinking) {
+      if (id === 'agentai') {
+        // Agnes AI: chat_template_kwargs.enable_thinking
+        bodyObj.chat_template_kwargs = { enable_thinking: true };
+        if (req.thinkingBudget && req.thinkingBudget > 0) {
+          (bodyObj.chat_template_kwargs as any).thinking_budget = req.thinkingBudget;
+        }
+      } else if (id === 'deepseek') {
+        // DeepSeek V4: thinking + reasoning_effort 参数
+        // deepseek-v4-pro 支持思考模式, deepseek-v4-flash 非思考模式
+        bodyObj.thinking = { type: 'enabled' };
+        bodyObj.reasoning_effort = 'high';
+      } else if (id === 'cline') {
+        // Cline: 支持 reasoning 扩展字段
+        bodyObj.reasoning = { effort: 'high' };
+      } else if (id === 'zhipu') {
+        // 智谱 GLM-4.7-Flash: thinking 参数
+        bodyObj.thinking = { type: 'enabled' };
       }
+      // OpenAI 等其他 provider: 不支持额外思考参数, 但流式解析中统一处理 reasoning_content
     }
 
     try {
@@ -653,6 +769,17 @@ export class AgentAIRouter extends EventEmitter {
       });
       if (!r.ok) {
         const errText = await r.text().catch(() => '');
+        // 402/429/5xx → 标记 provider 熔断, 触发自动降级
+        if (r.status === 402 || r.status === 429 || r.status >= 500) {
+          const provider = this.providers.get(id);
+          if (provider) {
+            provider.tripped = true;
+            provider.trippedAt = Date.now();
+            provider.failureCount++;
+            this.emit('provider:tripped', { provider: id, status: r.status, reason: errText.slice(0, 100) });
+            console.warn(`[router] provider ${id} tripped (HTTP ${r.status}), auto-fallback triggered`);
+          }
+        }
         throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
       }
 
@@ -662,6 +789,7 @@ export class AgentAIRouter extends EventEmitter {
         const decoder = new TextDecoder();
         let buf = '';
         let fullContent = '';
+        let fullThinking = '';
         const toolCallsAcc: Map<number, { id: string; name: string; args: string }> = new Map();
         const MAX_TOOL_CALLS = 10; // 资源上限: 防止内存溢出
         let usage: any = { prompt_tokens: 0, completion_tokens: 0 };
@@ -686,20 +814,22 @@ export class AgentAIRouter extends EventEmitter {
               if (!delta) continue;
               // 文本内容
               if (delta.content) fullContent += delta.content;
+              // 思考内容 (Agnes AI thinking 模式: reasoning_content 字段)
+              if (delta.reasoning_content) {
+                fullThinking += delta.reasoning_content;
+                if (req.onDelta) (req.onDelta as any)(`[THINKING]${delta.reasoning_content}`);
+              }
               // tool_calls delta (Agnes 支持)
               if (delta.tool_calls) {
                 // 资源上限检查: 超过 MAX_TOOL_CALLS 后丢弃后续 delta
                 if (toolCallsAcc.size >= MAX_TOOL_CALLS) continue;
                 for (const tc of delta.tool_calls) {
                   const idx = tc.index ?? 0;
-                  // 检查索引是否已超限
-                  if (!toolCallsAcc.has(idx)) {
-                    const acc = toolCallsAcc.get(idx) || { id: '', name: '', args: '' };
-                    if (tc.id) acc.id = tc.id;
-                    if (tc.function?.name) acc.name += tc.function.name;
-                    if (tc.function?.arguments) acc.args += tc.function.arguments;
-                    toolCallsAcc.set(idx, acc);
-                  }
+                  const acc = toolCallsAcc.get(idx) || { id: '', name: '', args: '' };
+                  if (tc.id) acc.id = tc.id;
+                  if (tc.function?.name) acc.name += tc.function.name;
+                  if (tc.function?.arguments) acc.args += tc.function.arguments;
+                  toolCallsAcc.set(idx, acc);
                 }
               }
               if (chunk.model) streamModel = chunk.model;
@@ -723,8 +853,9 @@ export class AgentAIRouter extends EventEmitter {
           model: streamModel,
           finishReason: 'stop',
           usage: {
-            promptTokens: usage.prompt_tokens ?? 0,
-            completionTokens: usage.completion_tokens ?? 0,
+            prompt_tokens: usage.prompt_tokens ?? usage.promptTokens ?? 0,
+            completion_tokens: usage.completion_tokens ?? usage.completionTokens ?? 0,
+            total_tokens: (usage.prompt_tokens ?? usage.promptTokens ?? 0) + (usage.completion_tokens ?? usage.completionTokens ?? 0),
           },
         };
       }
@@ -750,19 +881,14 @@ export class AgentAIRouter extends EventEmitter {
         model: data.model || modelName,
         finishReason: choice?.finish_reason || 'stop',
         usage: {
-          promptTokens: data.usage?.prompt_tokens ?? 0,
-          completionTokens: data.usage?.completion_tokens ?? 0,
+          prompt_tokens: data.usage?.prompt_tokens ?? data.usage?.promptTokens ?? 0,
+          completion_tokens: data.usage?.completion_tokens ?? data.usage?.completionTokens ?? 0,
+          total_tokens: (data.usage?.prompt_tokens ?? data.usage?.promptTokens ?? 0) + (data.usage?.completion_tokens ?? data.usage?.completionTokens ?? 0),
         },
       };
     } catch (err: any) {
-      const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
-      const userText = (typeof lastMsg?.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg?.content)).slice(0, 200);
-      return {
-        content: `[${id} 调用失败] ${err.message}\n\n用户消息: "${userText}"\n\n(router 会自动降级到下一个 provider)`,
-        model: id,
-        finishReason: 'error',
-        error: err.message,
-      };
+      // 抛给 tryOne: 标记失败 → router 自动降级到下一个 provider
+      throw err;
     }
   }
 
@@ -785,37 +911,47 @@ export class AgentAIRouter extends EventEmitter {
     return true;
   }
 
-  private scanMessages(messages: ChatMessage[]): ScanResult {
-    const allThreats: ScanResult['threats'] = [];
-    for (const m of messages) {
-      if (typeof m.content === 'string') {
-        const r = scanPromptInjection(m.content);
-        allThreats.push(...r.threats);
-      }
-    }
-    return { safe: allThreats.length === 0, threats: allThreats };
-  }
-
   private computeUsage(p: ProviderStats, repaired: any, req: ChatRequest): ChatResponse['usage'] {
-    // 优先使用 LLM API 返回的真实 usage
-    if (repaired.usage) {
-      return {
-        promptTokens: repaired.usage.promptTokens ?? repaired.usage.prompt_tokens ?? 0,
-        completionTokens: repaired.usage.completionTokens ?? repaired.usage.completion_tokens ?? 0,
-        cost: repaired.usage.cost ?? this._calculateCost(
-          repaired.usage.promptTokens ?? repaired.usage.prompt_tokens ?? 0,
-          repaired.usage.completionTokens ?? repaired.usage.completion_tokens ?? 0,
-          p,
-        ),
-        cacheHit: repaired.usage.cacheHit ?? false,
-      };
+    const apiUsage = repaired.usage;
+    const apiPrompt = apiUsage?.promptTokens ?? apiUsage?.prompt_tokens ?? 0;
+    const apiCompletion = apiUsage?.completionTokens ?? apiUsage?.completion_tokens ?? 0;
+    const apiTotal = apiUsage?.totalTokens ?? apiUsage?.total_tokens ?? (apiPrompt + apiCompletion);
+    const apiCacheHit = apiUsage?.cacheHit ?? false;
+
+    // 1) 优先采用 API 返回的真实 usage, 但若为 0/缺失/疑似异常, 则本地估算补齐
+    const hasApiUsage = apiPrompt > 0 || apiCompletion > 0;
+
+    let promptTokens = apiPrompt;
+    let completionTokens = apiCompletion;
+    let source: 'api' | 'estimated' = 'api';
+
+    if (!hasApiUsage) {
+      // 本地估算: 输入含完整消息 + 工具定义, 输出含回复 + tool_calls
+      promptTokens = estimateMessagesTokens(req.messages as any[], req.tools as any[]);
+      completionTokens = estimateStringTokens(repaired.content || '');
+      if (repaired.toolCalls && Array.isArray(repaired.toolCalls)) {
+        completionTokens += estimateToolCallsTokens(repaired.toolCalls);
+      }
+      source = 'estimated';
+    } else if (apiTotal > 0 && Math.abs(apiTotal - (apiPrompt + apiCompletion)) > 10) {
+      // 2) 若 API 返回的 total_tokens 与 p+c 差距过大, 视为异常 → 用本地估算修正
+      const estPrompt = estimateMessagesTokens(req.messages as any[], req.tools as any[]);
+      const estCompletion = estimateStringTokens(repaired.content || '');
+      promptTokens = estPrompt;
+      completionTokens = estCompletion;
+      source = 'estimated';
     }
-    // fallback: 根据 provider 实际价格估算
+
+    const totalTokens = promptTokens + completionTokens;
+    const cost = apiUsage?.cost ?? this._calculateCost(promptTokens, completionTokens, p);
+
     return {
-      promptTokens: 0,
-      completionTokens: 0,
-      cost: this._calculateCost(0, 0, p),
-      cacheHit: false,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      cost,
+      cacheHit: apiCacheHit,
+      source,
     };
   }
 

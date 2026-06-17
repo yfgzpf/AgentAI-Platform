@@ -1,0 +1,273 @@
+/**
+ * AgentAI 沙箱规则配置
+ *
+ * 目的：为Trae IDE提供沙箱规则配置，避免阻止必要的文件操作
+ * 解决问题：pnpm、npm、tsc、node等工具的文件操作被沙箱规则阻止
+ *
+ * 使用方式：
+ * 1. 在Trae IDE中打开 Settings -> Conversation -> Custom Sandbox Configuration
+ * 2. 将此文件的内容复制到配置中
+ * 3. 或者在启动时自动加载此配置
+ */
+
+{
+  "version": "1.0.0",
+  "description": "AgentAI 沙箱规则配置 - 允许必要的文件操作",
+
+  // ===== 文件路径白名单 =====
+  "allowedPaths": [
+    // Node.js相关路径
+    "C:\\Program Files\\nodejs\\",
+    "C:\\Users\\Administrator\\AppData\\Roaming\\npm\\",
+    "C:\\Users\\Administrator\\AppData\\Local\\pnpm-cache\\",
+    "C:\\Users\\Administrator\\AppData\\Local\\pnpm-state\\",
+    "C:\\Users\\Administrator\\.npm\\",
+    "C:\\Users\\Administrator\\.pnpm\\",
+
+    // 项目路径
+    "F:\\agentai-platform\\",
+    "F:\\agentai-platform\\node_modules\\",
+    "F:\\agentai-platform\\packages\\",
+    "F:\\agentai-platform\\packages\\agentai-gateway\\",
+    "F:\\agentai-platform\\packages\\agentai-gateway\\dist\\",
+    "F:\\agentai-platform\\packages\\agentai-gateway\\node_modules\\",
+    "F:\\agentai-platform\\packages\\agentai-gui\\",
+    "F:\\agentai-platform\\packages\\agentai-gui\\dist\\",
+    "F:\\agentai-platform\\packages\\agentai-gui\\node_modules\\",
+    "F:\\agentai-platform\\packages\\agentai-desktop\\",
+    "F:\\agentai-platform\\packages\\agentai-desktop\\dist\\",
+    "F:\\agentai-platform\\packages\\agentai-desktop\\node_modules\\",
+    "F:\\agentai-platform\\packages\\agentai-qqbot\\",
+    "F:\\agentai-platform\\packages\\agentai-qqbot\\dist\\",
+    "F:\\agentai-platform\\packages\\agentai-qqbot\\node_modules\\",
+    "F:\\agentai-platform\\packages\\agentai-skills\\",
+    "F:\\agentai-platform\\packages\\agentai-skills\\node_modules\\",
+    "F:\\agentai-platform\\packages\\agentai-vscode\\",
+    "F:\\agentai-platform\\packages\\agentai-vscode\\dist\\",
+    "F:\\agentai-platform\\packages\\agentai-vscode\\node_modules\\",
+
+    // 临时文件路径（pnpm、npm、tsc需要）
+    "F:\\_tmp_8204_",
+    "C:\\Users\\Administrator\\AppData\\Local\\Temp\\",
+    "C:\\Windows\\Temp\\",
+    "F:\\agentai-platform\\.cache\\",
+    "F:\\agentai-platform\\.vite\\",
+    "F:\\agentai-platform\\.workbuddy\\",
+
+    // 用户目录
+    "C:\\Users\\Administrator\\",
+    "C:\\Users\\Administrator\\.trae-cn\\",
+    "C:\\Users\\Administrator\\.trae-cn\\memory\\",
+    "C:\\Users\\Administrator\\.trae-cn\\mcps\\",
+  ],
+
+  // ===== 命令白名单 =====
+  "allowedCommands": [
+    // 包管理器
+    "pnpm",
+    "pnpm.cmd",
+    "npm",
+    "npm.cmd",
+    "npx",
+    "npx.cmd",
+    "yarn",
+    "yarn.cmd",
+
+    // 编译器
+    "tsc",
+    "tsc.cmd",
+    "esbuild",
+    "esbuild.cmd",
+    "vite",
+    "vite.cmd",
+    "webpack",
+    "webpack.cmd",
+
+    // 运行时
+    "node",
+    "node.exe",
+    "tsx",
+    "tsx.cmd",
+    "nodemon",
+    "nodemon.cmd",
+
+    // 工具
+    "concurrently",
+    "concurrently.cmd",
+    "git",
+    "git.exe",
+    "python",
+    "python.exe",
+    "pip",
+    "pip.exe",
+
+    // 系统命令
+    "cmd",
+    "cmd.exe",
+    "powershell",
+    "powershell.exe",
+    "taskkill",
+    "taskkill.exe",
+  ],
+
+  // ===== 文件操作白名单 =====
+  "allowedFileOperations": [
+    // 创建文件
+    "create",
+    "write",
+    "append",
+
+    // 修改文件
+    "modify",
+    "edit",
+    "replace",
+
+    // 删除文件（限制）
+    "delete",
+    "remove",
+
+    // 创建目录
+    "mkdir",
+    "createDirectory",
+
+    // 删除目录（限制）
+    "rmdir",
+    "removeDirectory",
+
+    // 复制文件
+    "copy",
+    "cp",
+
+    // 移动文件
+    "move",
+    "mv",
+  ],
+
+  // ===== 网络操作白名单 =====
+  "allowedNetworkOperations": [
+    // HTTP请求
+    "http",
+    "https",
+    "fetch",
+    "request",
+
+    // WebSocket
+    "ws",
+    "wss",
+
+    // API调用
+    "api",
+    "llm",
+    "deepseek",
+    "openai",
+    "zhipu",
+    "agentai",
+    "cline",
+  ],
+
+  // ===== 进程操作白名单 =====
+  "allowedProcessOperations": [
+    // 启动进程
+    "spawn",
+    "exec",
+    "fork",
+
+    // 停止进程（使用taskkill，不使用process.kill）
+    "taskkill",
+    "kill",
+
+    // 等待进程
+    "wait",
+    "waitForExit",
+  ],
+
+  // ===== 禁止操作 =====
+  "disallowedOperations": [
+    // 禁止使用process.kill（必须使用taskkill）
+    "process.kill",
+
+    // 禁止硬编码路径
+    "hardcodedPath",
+
+    // 禁止修改系统文件
+    "modifySystemFiles",
+
+    // 禁止访问敏感数据
+    "accessSensitiveData",
+
+    // 禁止发送数据到外部服务器（除非用户明确同意）
+    "sendToExternalServer",
+  ],
+
+  // ===== 特殊规则 =====
+  "specialRules": [
+    {
+      "name": "pnpm临时文件",
+      "description": "允许pnpm创建临时文件（如F:\\_tmp_8204_*）",
+      "pattern": "F:\\_tmp_8204_*",
+      "allowed": true,
+    },
+    {
+      "name": "pnpm缓存",
+      "description": "允许pnpm访问缓存目录",
+      "pattern": "C:\\Users\\Administrator\\AppData\\Local\\pnpm-*\\",
+      "allowed": true,
+    },
+    {
+      "name": "node_modules",
+      "description": "允许创建和修改node_modules目录",
+      "pattern": "**/node_modules/**",
+      "allowed": true,
+    },
+    {
+      "name": "dist目录",
+      "description": "允许创建和修改dist目录",
+      "pattern": "**/dist/**",
+      "allowed": true,
+    },
+    {
+      "name": ".cache目录",
+      "description": "允许创建和修改.cache目录",
+      "pattern": "**/.cache/**",
+      "allowed": true,
+    },
+    {
+      "name": ".vite目录",
+      "description": "允许创建和修改.vite目录",
+      "pattern": "**/.vite/**",
+      "allowed": true,
+    },
+    {
+      "name": ".workbuddy目录",
+      "description": "允许访问.workbuddy目录（项目数据存储）",
+      "pattern": "**/.workbuddy/**",
+      "allowed": true,
+    },
+    {
+      "name": "Trae配置目录",
+      "description": "允许访问.trae-cn目录",
+      "pattern": "C:\\Users\\Administrator\\.trae-cn\\**",
+      "allowed": true,
+    },
+  ],
+
+  // ===== 日志和监控 =====
+  "logging": {
+    "enabled": true,
+    "logLevel": "info",
+    "logFile": "F:\\agentai-platform\\.workbuddy\\logs\\sandbox.log",
+    "logOperations": [
+      "fileOperation",
+      "commandExecution",
+      "networkRequest",
+      "processOperation",
+    ],
+  },
+
+  // ===== 错误处理 =====
+  "errorHandling": {
+    "onDisallowedOperation": "warn", // warn | block | askUser
+    "showUserMessage": true,
+    "fallbackBehavior": "skip", // skip | abort | retry
+  },
+}
