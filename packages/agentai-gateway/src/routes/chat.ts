@@ -378,13 +378,13 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         } else {
           loop = sessionData.loop;
           sessionId = loop.getContext().sessionId;
-          if (requestModel) {
+          // 只在用户手动选择时覆盖模型（保护智能切换结果）
+          if (requestModel && loop.opts?.userPickedModel) {
             const mapped = MODEL_MAP[requestModel];
             if (mapped && mapped.provider !== loop.opts?.model) {
               loop.opts.model = mapped.provider;
               loop.opts.modelName = mapped.subModel || '';
               loop.opts.displayModelLabel = mapped.label;
-              loop.opts.userPickedModel = true;
               loop.opts.modelConfig = mapped.baseURL ? { baseURL: mapped.baseURL, modelName: mapped.subModel || '', provider: mapped.provider } : modelConfig;
             }
           }
@@ -460,6 +460,19 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         // 关键修复: 转发审批事件到前端 (之前缺失!)
         loop.on('approval:required', (info: any) => {
           sendEvent('approval_required', { id: info.id, type: info.type, filePath: info.filePath, summary: info.summary, riskLevel: info.riskLevel, diff: info.diff });
+        });
+        // 关键修复: 转发智能模型切换事件到前端
+        loop.on('model:auto-switched', (info: any) => {
+          sendEvent('model_fallback', { from: info.from, to: info.to, reason: info.reason || '连续熔断自动切换' });
+        });
+        loop.on('model:need-api-key', (info: any) => {
+          sendEvent('ask_user', {
+            question: `当前免费模型不可用，建议使用 ${info.provider || '商用API'} 获得更好体验。预估成本: ¥${(info.estimatedCost || 0).toFixed(4)}/千token`,
+            options: [
+              { id: 'provide_key', title: '提供API密钥', description: '在设置页面配置' },
+              { id: 'continue_free', title: '继续使用免费模型', description: '可能会慢或失败' },
+            ],
+          });
         });
 
         // ====== 统一注入附件到上下文 (MasterController/loop.run 都能收到) ======

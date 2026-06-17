@@ -16,7 +16,11 @@ function findPython(): string {
 }
 
 const PYTHON = findPython();
-const SKILLS_BASE = path.resolve('packages', 'agentai-skills');
+// SKILLS_BASE = monorepo_root/packages/agentai-skills
+// dist/ → packages/agentai-gateway → packages → ../../ → monorepo root
+const _distDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:\/)/, '$1'));
+const _monorepoRoot = path.resolve(_distDir, '..', '..', '..');
+const SKILLS_BASE = path.resolve(_monorepoRoot, 'packages', 'agentai-skills');
 
 interface SkillInfo {
   name: string;
