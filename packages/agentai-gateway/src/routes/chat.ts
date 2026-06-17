@@ -466,10 +466,20 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           sendEvent('model_fallback', { from: info.from, to: info.to, reason: info.reason || '连续熔断自动切换' });
         });
         loop.on('model:need-api-key', (info: any) => {
+          // 根据 provider 匹配获取地址
+          const keyUrlMap: Record<string, string> = {
+            agentai: 'https://platform.agnes-ai.com/',
+            deepseek: 'https://platform.deepseek.com/api_keys',
+            openai: 'https://platform.openai.com/api-keys',
+            zhipu: 'https://open.bigmodel.cn/usercenter/apikeys',
+            cline: 'https://cline.bot',
+          };
+          const keyUrl = keyUrlMap[info.provider] || '';
           sendEvent('ask_user', {
             question: `当前免费模型不可用，建议使用 ${info.provider || '商用API'} 获得更好体验。预估成本: ¥${(info.estimatedCost || 0).toFixed(4)}/千token`,
             options: [
-              { id: 'provide_key', title: '提供API密钥', description: '在设置页面配置' },
+              { id: 'get_key', title: '前往获取密钥', description: keyUrl || '请在对应平台官网获取 API Key' },
+              { id: 'provide_key', title: '我已有密钥', description: '在设置页面配置或在此输入' },
               { id: 'continue_free', title: '继续使用免费模型', description: '可能会慢或失败' },
             ],
           });
