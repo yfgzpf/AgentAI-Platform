@@ -182,6 +182,7 @@ export class AgentAILoop extends EventEmitter {
   /** 待审批队列: approvalId → { resolve, reject, timer } */
   private pendingApprovals = new Map<string, { resolve: (granted: boolean) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
 
+
   /** 智能模型切换: 连续触发熔断时自动换商用 API */
   private trippedCount = 0;
   private _smartSwitcher: any = null;
@@ -391,6 +392,32 @@ export class AgentAILoop extends EventEmitter {
         });
       }
     } catch (e: any) { /* persistent memory optional */ }
+
+    // === 4.5 自进化记忆 (跨会话经验 - 治失忆症) ===
+    // 设计意图见 evolution.ts:7 — 原本就该在启动时注入, 实现遗漏, 2026-06-18 补接
+    try {
+      const { readEvolutionForContext } = await import('./evolution.js');
+      const entries = readEvolutionForContext({
+        userId: this.opts.userId,
+        workspace: this.opts.workspace,
+        limit: 30,
+      });
+      // 只注入有价值的: failure > preference > success, 跳过 tool_stats (太啰嗦)
+      const valuable = entries
+        .filter(e => e.type !== 'tool_stats')
+        .slice(-20);
+      if (valuable.length > 0) {
+        const lines = valuable.map(e => {
+          const tag = e.type === 'failure' ? '[教训]' : e.type === 'preference' ? '[偏好]' : '[经验]';
+          const content = (e.content || '').slice(0, 100);
+          return `- ${tag} ${content}`;
+        });
+        systemMsgs.push({
+          role: 'system',
+          content: `\n# Evolution Memory (跨会话自进化经验 - 这些是你过去反思的结晶)\n${lines.join('\n')}\n\n参考这些历史经验调整行为, 但不要盲从 — 上下文可能已变化。`,
+        });
+      }
+    } catch (e: any) { /* evolution memory optional - 不影响主流程 */ }
 
     // === 5. DeepSeek 缓存策略: 构建稳定前缀 ===
     try {
