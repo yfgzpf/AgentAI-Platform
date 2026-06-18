@@ -5,9 +5,10 @@
  */
 import { Router, Request, Response } from 'express';
 import type { AgentAIRouter } from '../llm-router.js';
-import type { ToolRegistry } from '../tools.js';
+import type { ToolRegistry } from '../tool-registry.js';
 import { getSummary } from '../evolution.js';
 import { getSessionManager } from '../session-manager.js';
+import { globalRateLimiter } from '../rate-limiter.js';
 
 export interface HealthRouterDeps {
   router: AgentAIRouter;
@@ -19,9 +20,17 @@ export function createHealthRouter(deps: HealthRouterDeps): Router {
   const { router, registry } = deps;
 
   r.get('/v1/health', (_req, res) => {
-    const providerStats = router.getProviderStats();
+    const providerStats = typeof router.getProviderStats === 'function' ? router.getProviderStats() : {};
     const evolutionSummary = getSummary();
     const sessionStats = getSessionManager().stats();
+    // 速率限制可观测性: 暴露各 provider 的 RPM/TPM 配额使用情况
+    // (由 index.ts 订阅 router 事件填充, 仅用于监控, 不参与路由决策)
+    let rateLimitsSummary = 'unavailable';
+    try {
+      rateLimitsSummary = typeof globalRateLimiter.getStatusSummary === 'function'
+        ? globalRateLimiter.getStatusSummary()
+        : 'unavailable';
+    } catch { /* rate-limiter optional */ }
 
     res.json({
       ok: true,
@@ -29,9 +38,10 @@ export function createHealthRouter(deps: HealthRouterDeps): Router {
       timestamp: Date.now(),
       version: '0.1.0-alpha.1',
       providers: providerStats,
-      tools: registry.listTools().length,
+      tools: (typeof registry.list === 'function' ? registry.list() : []).length,
       sessionManager: sessionStats,
       evolution: evolutionSummary,
+      rateLimits: rateLimitsSummary,
     });
   });
 
@@ -40,7 +50,7 @@ export function createHealthRouter(deps: HealthRouterDeps): Router {
   });
 
   r.get('/v1/tools', (_req, res) => {
-    const tools = registry.listTools();
+    const tools = typeof registry.list === 'function' ? registry.list() : [];
     res.json({
       count: tools.length,
       tools: tools.map(t => ({

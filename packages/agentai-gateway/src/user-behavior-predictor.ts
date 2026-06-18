@@ -2,6 +2,14 @@
 /**
  * 用户行为预判模块 — 提前预测用户下一步行动，主动准备资源
  *
+ * ⚠️ @deprecated 待消费方 (2026-06-18 审查结论)
+ *    本模块逻辑真实可用 (_isSequentialPattern 硬编码 6 类模式, _filterSensitiveActions
+ *    真过滤密钥/密码/凭证), 但当前无消费方 — buildImmutablePrefix / loop 均未读取
+ *    predictNextActions() 的产出。保留代码与实例化, 待以下任一场景落地后接入:
+ *      a) 会话级预测: 在 loop 每轮调 predictNextActions, 注入 system prompt
+ *      b) 工具预热: 根据 preparedResources 触发真实工具预加载
+ *    在消费方就位前, 此模块不产生运行时价值, 仅维持 import 关系不破坏编译。
+ *
  * 核心能力：
  * 1. 分析历史会话，识别用户行为模式
  * 2. 预测用户下一步行动（如：创建组件后可能要测试）

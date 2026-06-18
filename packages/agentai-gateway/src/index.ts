@@ -32,6 +32,7 @@ import { UserBehaviorPredictor } from './user-behavior-predictor.js';
 import { DataPredictor } from './data-predictor.js';
 import { SmartModelSwitcher } from './smart-model-switcher.js';
 import { builtInToolsManager } from './builtin-tools-manager.js';
+import { globalRateLimiter } from './rate-limiter.js';
 import { userModel } from './user-model.js';
 import { DeepSeekCacheStrategy } from './deepseek-cache-strategy.js';
 import { industryEngine } from './industry-engine.js';
@@ -92,6 +93,33 @@ const HOST = process.env.AGENTAI_HOST || '127.0.0.1';
 const router = new AgentAIRouter();
 // .env 加载后重新检查 API Key (修复 import 时序导致的 tripped 问题)
 router.recheckApiKeys();
+
+// ===== 速率限制可观测性接入 (非侵入式: 只订阅事件, 不 patch router) =====
+// 设计说明: router 内部已有完整的 429/熔断/降级闭环 (llm-router.ts:780-790, 987),
+// 这里仅订阅 router 的 EventEmitter 事件, 把状态同步到 globalRateLimiter 做可观测性,
+// 不干预路由决策 — 避免与 router 内部逻辑双重处理。
+// (router-rate-limiter.ts 的 enhanceRouterWithRateLimit 是激进 monkey-patch 模式,
+//  会与 router 内部 429 处理冲突, 暂不启用, 保留代码作未来选项。)
+try {
+  router.on('provider:tripped', ({ provider, status }: { provider: string; status: number }) => {
+    // 429/402/5xx 熔断 → 记录为失败请求, 估算 token 留空 (真实值在 chat 完成时已计)
+    if (status === 429 || status === 402 || status >= 500) {
+      globalRateLimiter.recordRequest(provider, 0, false);
+    }
+  });
+  router.on('provider:failed', ({ provider }: { provider: string }) => {
+    // 单次失败 (非熔断级) → 记录, 但不重置配额 (避免抖动)
+    globalRateLimiter.recordRequest(provider, 0, false);
+  });
+  router.on('circuit:recovered', ({ provider }: { provider: string }) => {
+    // 熔断恢复 → 重置该 provider 速率计数, 让它重新获得完整配额
+    globalRateLimiter.resetProvider(provider);
+  });
+  console.log('[rate-limiter] 已订阅 router 事件 (provider:tripped/failed, circuit:recovered) — 可观测性模式');
+} catch (e) {
+  console.warn('[rate-limiter] 事件订阅失败, 跳过 (不影响主流程):', (e as Error).message);
+}
+
 const registry = new ToolRegistry();
 
 // ===== 注册内置工具 (EXTRA_TOOLS + EXTRA_HANDLERS) =====
@@ -128,19 +156,25 @@ console.log('[skill-evolver] Skill 进化引擎已初始化');
 console.log('[router-optimizer] 智能路由优化器已初始化');
 
 // ===== 用户行为预判 + 数据预判（安全保护） =====
+// ⚠️ 状态说明 (2026-06-18 审查):
+//   - UserBehaviorPredictor: 逻辑真实可用 (顺序模式识别+敏感数据过滤), 但缺消费方
+//     (buildImmutablePrefix 未接预测结果). 保留实例化以维持 import 关系, 待会话级
+//     预测场景明确后接入. 见 user-behavior-predictor.ts 顶部 @deprecated 说明.
+//   - DataPredictor: _fetchData 返回模拟数据 ("模拟数据-xxx"), 接入会向上下文灌假数据.
+//     暂注释实例化, 避免启动日志 "数据预判系统已初始化" 误导诊断. 代码本体保留.
 const userBehaviorPredictor = new UserBehaviorPredictor({
   enabled: true,
   analyzeSensitiveData: false,
   sendToExternalServer: false,
 });
-const dataPredictor = new DataPredictor({
-  enabled: true,
-  predictSensitiveData: false,
-  sendToExternalServer: false,
-  enableRateLimitProtection: true,
-});
-console.log('[user-behavior-predictor] 用户行为预判系统已初始化（安全保护已启用）');
-console.log('[data-predictor] 数据预判系统已初始化（安全保护已启用）');
+console.log('[user-behavior-predictor] 已初始化 (⚠️ 待消费方接入, 当前无产出消费)');
+// const dataPredictor = new DataPredictor({
+//   enabled: true,
+//   predictSensitiveData: false,
+//   sendToExternalServer: false,
+//   enableRateLimitProtection: true,
+// });
+// console.log('[data-predictor] 实例化已跳过 (_fetchData 为模拟实现, 接入会灌假数据)');
 
 // ===== 智能模型切换机制（AI自主决策） =====
 const smartModelSwitcher = new SmartModelSwitcher();
