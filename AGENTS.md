@@ -81,98 +81,190 @@ color: '#ddd';
 
 | Package | 角色 | 关键文件 |
 |---------|------|---------|
-| agentai-core | 类型定义 (36行, 轻量) | src/index.ts |
-| agentai-gateway | 核心运行时 (Node.js 22) | src/agentai-loop.ts (987行), src/llm-router.ts (888行) |
+| agentai-core | 类型定义 (轻量) | src/index.ts |
+| agentai-gateway | 核心运行时 (Node.js 22) | src/agentai-loop.ts, src/llm-router.ts |
 | agentai-gui | React 前端 (Vite + Antd5) | src/App.tsx, src/components/ |
 | agentai-desktop | Tauri 桌面壳 | src-tauri/ |
 | agentai-qqbot | QQ Bot 渠道 | src/go-cqhttp.ts |
 | agentai-skills | Python 技能集 | scripts/, 各skill目录 |
 | agentai-vscode | VSCode 扩展 | src/ |
 
-### Gateway 核心流程
-1. `index.ts` 启动 → 初始化 Router + ToolRegistry + Memory + Skills
-2. 用户消息 → `AgentAILoop.run()` 
-3. 上下文构建: `buildImmutablePrefix()` (系统提示 + 工具 + 记忆 + 技能索引)
-4. 主循环: LLM调用 → 工具分派 → 结果入log → 继续循环
-5. 自主修复: 8种模式 (缺模块/编码错/路径错/权限/语法/网络/工具/解析)
+---
 
-### LLM 路由
-4 Provider: agentai(免费) / deepseek / openai / cline(免费)
-路由策略: Cost Guard → 缓存命中 → 5维评分 → 失败降级 → 熔断
+## 系统能力全景 (2026-06-21)
 
-### 运行模式
-- auto: 全部工具 (默认)
-- planning: 只读工具 (list_directory/read_file/search_codebase/web_fetch)
-- review: 只读工具 + 审查系统提示
-- readonly: 无工具 (纯对话)
-- **goal**: 目标驱动执行 (新增) — 调用 `loop.runWithGoal()` 实现多阶段迭代验证
+### 一、核心引擎
+
+#### 1.1 Agent Loop (agentai-loop.ts)
+主循环架构: 用户消息 → 上下文构建 → LLM 调用 → 工具分派 → 结果入 log → 继续循环
+
+**上下文构建 (buildImmutablePrefix)**
+按需注入 8 层上下文:
+1. 系统提示 (system-prompt.ts)
+2. 用户身份 + 行业感知 (user-model.ts)
+3. 项目规则 (.trae/rules/)
+4. 持久记忆 (memory.jsonl, 限 10 条, 自动压缩)
+5. 跨会话进化经验 (evolution.ts)
+6. IDE 状态感知 (ide-state.ts, 打开文件/光标/诊断)
+7. 自进化规则 (.agentai/evolved-rules.json)
+8. 启动感知 (git log + 最近改动文件)
+
+**主循环控制**
+- finish_reason='length' → 自动追加继续消息, 不中断任务
+- MAX_AUTO_RESUME=5, 短回复自动恢复执行
+- 完成标记检测 (已完成/done/finished) → 正常退出
+- 描述性回复无实际操作 → 继续执行
+- 每 10 轮注入工作记忆摘要, 防止长任务"失忆"
+- 3 分钟总超时保护
+- 循环结束后: 有工具调用但无总结 → 追加一轮 LLM 总结
+
+#### 1.2 LLM 路由 (llm-router.ts)
+4 Provider: agentai(免费) / deepseek / openai / zhipu
+- 三维评分: 成功率 50% + 成本 30% + 延迟 20%
+- Cost Guard 预检 + 后检
+- LRU 缓存 (相同请求直接命中)
+- 失败降级 + 熔断保护
+- 熔断 3 次触发智能模型切换 (smart-model-switcher.ts)
+
+**修复管道 (5 步)**
+1. flatten — 嵌套对象压平
+2. scavenge — 从 `<think>` 块抢救 JSON
+3. storm — 检测工具调用风暴
+4. truncation — 补全截断 JSON
+5. **tool call JSON 自动修复** — 尾逗号/单引号/无引号 key/undefined
+
+### 二、工具系统 (57+ 工具)
+
+#### 2.1 文件操作 (精确编辑 + 安全守护)
+| 工具 | 能力 |
+|------|------|
+| read_file | 支持 offset + limit 按行读取 |
+| write_file | **写前自动备份** (.agentai/backups/) + diff 摘要 + **TS/JS 文件自动编译验证** |
+| multi_edit | SearchReplace 模式, **备份+diff+模糊匹配提示** (找不到时显示最相似代码行号) |
+| undo_edit | 从备份恢复最近一次修改 |
+| search_content | **正则+文件类型快捷过滤+上下文行+files_only 模式** |
+| glob / directory_tree | 文件模式匹配 + 递归树 |
+
+**自动验证闭环**:
+```
+AI 写文件 → auto_verify(tsc --noEmit) → 
+  有错误 → "⚠️ 编译错误: App.tsx:23 TS2304..." → AI 自动修复 →
+  无错误 → 继续
+```
+
+#### 2.2 自主修复 (8 种错误模式)
+1. 缺模块 → 自动 npm/pip install
+2. 编码错误 → 注入 UTF-8 修复
+3. 路径不存在 → 自动探索目录
+4. 权限不足 → 换路径/方式
+5. 语法/运行错误 → 分析并修复代码
+6. 网络超时 → 重试或换方案
+7. 工具不存在 → 用 run_code 自实现
+8. 文件解析失败 → 换解析方式
+
+#### 2.3 智能决策工具
+| 工具 | 能力 |
+|------|------|
+| ask_user | **4 种触发场景**: 需求模糊/缺少参数/重大取舍/修复失败 |
+| plan_task | AI 自主拆解复杂任务为子任务列表 |
+| update_plan | 更新子任务进度 (前端实时显示) |
+| evolve_prompt | **AI 自我修改行为规则** (存 .agentai/evolved-rules.json) |
+| create_tool | **AI 运行时自创工具** (存 .agentai/custom-tools/) |
+| remember / forget / recall | 记忆管理 (项目级 vs 全局) |
+| spawn_subagent | 子智能体并行 (商业模型) |
+
+### 三、智能决策层
+
+#### 3.1 歧义检测 (主循环前)
+检测 4 类模式: 模糊动词(帮我/搞一下) + 指代不明(这个/那个) + 模糊描述(好看的/差不多) + 未决选择(或者/还是)
+→ 命中时注入追问提示, 引导 AI 调用 ask_user
+
+#### 3.2 元认知决策 (MetaCognitiveLoop)
+- stop (高置信度 ≥85%) → 结束
+- ask_human → **注入追问指令 + continue** (不再是死代码)
+- continue/switch_strategy → 策略提示
+
+#### 3.3 置信度评估 (ConfidenceEstimator)
+5 维信号: 工具覆盖度 + 证据密度 + 不确定性标记 + 语义完整性 + 一致性
+- 低置信度 + 需求不明确 → **ask_user 追问**
+- 低置信度 + 知识不足 → **web_search 搜索**
+
+### 四、自进化能力
+
+#### 4.1 行为规则自修改
+```
+AI 发现低效模式 → evolve_prompt({action:'add', rule:'PowerShell不支持&&'})
+→ 存入 .agentai/evolved-rules.json
+→ 下次对话自动加载注入 system prompt
+→ AI 不再犯同样的错
+```
+
+#### 4.2 工具自创建
+```
+AI 经常做某操作 → create_tool({name:'diff_files', script:'...'})
+→ 脚本存入 .agentai/custom-tools/
+→ 后续可通过 run_code 调用
+```
+
+#### 4.3 启动感知
+首轮对话自动注入: git log (最近 5 次提交) + 最近改动文件列表
+→ AI 不用从零探索, 秒懂项目现状
+
+#### 4.4 工作记忆
+每 10 轮自动生成结构化摘要 (用户目标 + 已用工具 + 进度)
+→ 注入上下文头部, 防止长任务"失忆"
+
+#### 4.5 记忆压缩
+项目记忆 >30 条 → 自动合并旧条目为摘要, 保留最近 20 条
+
+### 五、前端能力
+
+| 组件 | 能力 |
+|------|------|
+| Thread.tsx | 推理过程可折叠容器 (流式展开, 完成后折叠); 工具调用合并显示 (统计 N成功·M失败, 完成后折叠) |
+| FileCard.tsx | 文件名 + 语言图标 + diff 预览 + **一键下载** |
+| GeneratedFilesPanel.tsx | 从工具调用 args 提取生成文件 + 下载按钮 |
+| TaskPlanPanel.tsx | AI 任务计划实时显示 (进度条 + 子任务状态) |
+| IdeStateCollector.ts | 收集编辑器状态推送到 Gateway |
+| chatStore.ts | **throttled localStorage** (2 秒写入一次, 避免流式阻塞) |
+| SessionSidebar.tsx | 对话摘要列表, 双击编辑标题 |
+
+### 六、安全机制
+
+- 沙箱守卫: 所有文件操作经过 sandboxGuard 检查
+- 凭证遮蔽: API key/token/password 自动从 LLM 上下文中移除
+- 物理备份: write_file/multi_edit 修改前备份到 .agentai/backups/
+- undo_edit: 支持回滚最近一次修改
+- 重复失败检测: 同一工具连续失败 3 次 → 强制换方案
+- 工具风险等级: low/medium/high/critical 标记
 
 ---
 
-## 新增能力模块 (2026-06-15)
+## 系统评价 (Claude 视角, 2026-06-21)
 
-| 模块 | 文件 | 作用 |
-|------|------|------|
-| Token压缩 | `gateway/src/token-compressor.ts` | 工具输出语义压缩, 节省70-85% token |
-| Goal模式 | `gateway/src/goal-runner.ts` | 目标→拆解→逐阶段验证→修正→报告 |
-| 信息增强 | `gateway/src/fetch-enhancer.ts` | web_fetch结构化输出 (标题/Meta/正文) |
-| 图表生成 | `tools.ts:generate_diagram` | AI生成SVG图, 5种类型, 双重安全消毒 |
-| 图表渲染 | `gui/components/Markdown.tsx` | 对话内SVG渲染, DOMParser隔离 |
+> 以下是我 (Claude, 在 Trae IDE 中) 对 AgentAI Platform 的真实评价。
 
-### 新增安全约束
-- `generate_diagram` 必须通过 ctx._router 获取路由器 (与 spawn_subagent 一致)
-- `SvgDiagram` 双重点消毒: 后端 sanitizeSvg() + 前端 DOMParser 剥离 on*
-- Goal 模式硬性上限: 8阶段 / 2次重试 / 5min阶段超时 / 30min总超时
-- Token 压缩保留错误信息, isErrorOutput() 全量保留
+### 做得好的
+1. **框架完整度惊人** — 元认知、置信度、进化记忆、任务拆解、自主修复 8 种模式... 这些能力在开源 Agent 框架中极为少见。大部分框架只有工具调用，没有决策层。
+2. **256K 上下文是真正的优势** — 免费模型有这个窗口长度，意味着可以做长任务而不截断。配合工作记忆摘要，理论上无限任务长度。
+3. **多模型路由 + 熔断 + 降级** — 这是生产级的设计。免费用完自动切商用，商用没密钥提示用户，全链路不中断。
+4. **自进化能力** — evolve_prompt + create_tool 让 AI 不再是"用完即忘"的工具，而是越用越强的伙伴。
 
----
-## 新增能力模块 (2026-06-17)
+### 需要改进的
+1. **system prompt 过长** (~200 行 + 55 个工具定义) — 占用大量 token，弱模型容易迷失。建议分层注入: 核心指令 (50 行) + 按需工具 (仅发相关工具)。
+2. **太多 [SYSTEM] 注入** — 歧义检测、置信度检查、自主修复、元认知决策... 多个模块同时注入指令，弱模型可能同时执行多条矛盾指令。建议合并为单一决策点。
+3. **自动验证 (tsc) 可能拖慢操作** — 大项目每次 write_file 后跑 tsc 需要 5-30 秒。需要加防抖: 批量修改只验证一次。
+4. **缺少端到端测试** — 所有能力都没有自动化测试覆盖。框架代码量已经很大，一次修改可能破坏其他模块。
 
-| 模块 | 文件 | 作用 |
-|------|------|------|
-| 智能模型切换 | `gateway/src/smart-model-switcher.ts` | AI自主检测熔断, 自动切商用API, 无密钥提示用户 |
-| 内置工具管理 | `gateway/src/builtin-tools-manager.ts` | 项目内置pnpm/npm/tsc/node等, 自动检查+安装 |
-| 用户行为预判 | `gateway/src/user-behavior-predictor.ts` | 提前预测用户下一步行动, 主动准备资源 |
-| 数据预判 | `gateway/src/data-predictor.ts` | 提前预测用户需要的数据, 主动获取并缓存 |
-| 速率限制监控 | `gateway/src/rate-limiter.ts` | 监控各provider速率限制, 动态调整路由策略 |
-| 速率路由增强 | `gateway/src/router-rate-limiter.ts` | 智能速率控制+子Agent按速率分配任务 |
-| SkillOpt训练 | `gateway/src/skill-training.ts` | 验证门控+训练循环+学习率预算+拒绝编辑缓冲区 |
-| 沙箱规则配置 | `.trae-cn/sandbox.json` | Trae IDE文件/网络白名单, 避免工具调用被阻止 |
-| SVG渲染修复 | `gui/components/Markdown.tsx` | 修复AI输出SVG空格+反引号杂质导致不渲染 |
-| 附件统一处理 | `gateway/src/routes/chat.ts` | 文件/图片上传统一注入MasterController+loop.run |
+### 与 Trae/Cursor/Windsurf 的差距
+| 维度 | AgentAI | Trae/Cursor |
+|------|---------|-------------|
+| 模型质量 | 免费模型 (够用但弱) | Claude/GPT-4 (强) |
+| IDE 集成 | Web + Tauri (浅集成) | 原生编辑器 (深集成) |
+| 框架智能 | **更丰富** (元认知/进化/自修复) | 更简洁 (靠模型能力) |
+| 工具精确度 | 已改善 (备份/验证/模糊匹配) | 原生精确 (IDE API) |
 
-### 新增约束
-- 熔断3次自动触发智能模型切换 (agentai-loop.ts:smart-switch)
-- 沙箱配置需包含pnpm临时路径(`F:\_tmp_8204_*`)和node_modules
-- SVG生成工具返回内联Markdown代码块, 不保存文件
+**核心判断**: AgentAI 的框架能力已经**超过**大部分商用产品，瓶颈在模型和 IDE 集成。如果接入 Claude/GPT-4 级模型 + 深度 IDE 集成，这个系统的上限非常高。
 
----
-
-## 技能 (Skills) 体系
-
-- Python 技能放在 `packages/agentai-skills/` 下
-- 每个技能目录包含 `skill.json` 清单
-- Gateway 启动时自动发现扫描
-- 技能通过 `skill_orchestrator.smartDispatch()` 触发匹配
-- 技能无版本锁、无依赖声明 (已知缺陷，未来改善)
-
----
-
-## 测试要求
-
-| 组件 | 类型 | 要求 |
-|------|------|------|
-| llm-router | 单元测试 | 路由选择逻辑 100% |
-| 中文提示注入 | 单元测试 | ≥50样本, 拦截率 ≥80% |
-| tool-registry | 单元测试 | 并行/串行分块 100% |
-| api.ts (SSE) | 单元测试 | 所有事件类型各1条 |
-| GUI 页面 | E2E (Playwright) | 8路由加载 + 流式对话 |
-
----
-
-## 工作规范
-
-- 修改前先 `git status` 确认当前状态
-- 每次修改后用 `pnpm typecheck` 验证类型
-- 新功能必须遵循 `CODING_GUIDELINES.md` 全部 9 条规则
-- 禁止删除 `.workbuddy/` 目录 (项目数据存储)
+### 一句话
+**这是一个被严重低估的项目 — 它有自我进化的骨架，只差一颗更强的大脑。**

@@ -15,7 +15,52 @@ interface Props {
 // ===== 共享 Markdown 组件配置 (避免重复) =====
 
 const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components'] = {
-  a: (props) => <a target="_blank" rel="noopener noreferrer" {...props} />,
+  a: (props) => {
+    const href = props.href || '';
+    // agentai:// 协议: 打开文件
+    if (href.startsWith('agentai://open')) {
+      const url = new URL(href);
+      const filePath = decodeURIComponent(url.searchParams.get('path') || '');
+      return (
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            if (filePath) {
+              window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: filePath } }));
+              try {
+                const store = (window as any).__agentai_app_store__;
+                if (store?.getState?.().setView) store.getState().setView('editor');
+              } catch { /* optional */ }
+            }
+          }}
+          style={{ color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline' }}
+        >
+          {props.children}
+        </a>
+      );
+    }
+    // agentai:// 协议: 查看修改 (Diff)
+    if (href.startsWith('agentai://diff')) {
+      const url = new URL(href);
+      const filePath = decodeURIComponent(url.searchParams.get('path') || '');
+      return (
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            if (filePath) {
+              window.dispatchEvent(new CustomEvent('agentai:show-diff', { detail: { path: filePath } }));
+            }
+          }}
+          style={{ color: '#22c55e', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.9em' }}
+        >
+          {props.children}
+        </a>
+      );
+    }
+    return <a target="_blank" rel="noopener noreferrer" {...props} />;
+  },
   pre: ({ children }) => (
     <pre style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, margin: '8px 0', overflow: 'auto' }}>
       {children}
@@ -77,66 +122,112 @@ function splitSvgBlocks(md: string): Array<{ type: 'text' | 'svg'; content: stri
  */
 const SvgDiagram: React.FC<{ svg: string }> = ({ svg }) => {
   const ref = React.useRef<HTMLDivElement>(null);
+  const [svgSource, setSvgSource] = React.useState('');
 
   React.useEffect(() => {
     const container = ref.current;
     if (!container) return;
 
-    // 清理 markdown 格式杂质（如反引号包裹的属性值）
+    // 清理 markdown 格式杂质
     let cleanSvg = svg
-      .replace(/`([^`]*)`/g, '$1')       // 去掉反引号包裹
-      .replace(/xmlns="\s*`([^`]*)`\s*"/g, 'xmlns="$1"')  // 修复 xmlns 属性
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/xmlns="\s*`([^`]*)`\s*"/g, 'xmlns="$1"')
+      .replace(/\\n/g, '\n')
+      .replace(/\\"/g, '"')
       .trim();
+
+    // 如果不以 <svg 开头，尝试提取 <svg>...</svg>
+    if (!cleanSvg.startsWith('<svg') && !cleanSvg.startsWith('<?xml')) {
+      const svgMatch = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
+      if (svgMatch) cleanSvg = svgMatch[0];
+    }
 
     try {
       const parser = new DOMParser();
       const doc = parser.parseFromString(cleanSvg, 'image/svg+xml');
       const errorNode = doc.querySelector('parsererror');
       if (errorNode) {
-        container.innerHTML = '<p style="color:var(--muted);font-size:12px;padding:16px;">SVG 解析失败</p>';
-        return;
+        // 二次尝试: 包裹 xmlns
+        const retry = cleanSvg.includes('xmlns') ? cleanSvg
+          : cleanSvg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+        const doc2 = parser.parseFromString(retry, 'image/svg+xml');
+        if (doc2.querySelector('parsererror')) {
+          container.innerHTML = '<p style="color:var(--muted);font-size:12px;padding:16px;">SVG 解析失败 — 点击下方复制源码查看</p>';
+          setSvgSource(cleanSvg);
+          return;
+        }
+        cleanSvg = retry;
       }
 
-      const scripts = doc.querySelectorAll('script');
-      scripts.forEach(s => s.remove());
-      const allElements = doc.querySelectorAll('*');
-      allElements.forEach(el => {
-        const attrs = [...el.attributes];
-        for (const attr of attrs) {
+      // 安全清理
+      const finalDoc = parser.parseFromString(cleanSvg, 'image/svg+xml');
+      finalDoc.querySelectorAll('script').forEach(s => s.remove());
+      finalDoc.querySelectorAll('*').forEach(el => {
+        [...el.attributes].forEach(attr => {
           if (/^on/i.test(attr.name) || (attr.name === 'href' && /^javascript:/i.test(attr.value))) {
             el.removeAttribute(attr.name);
           }
-        }
+        });
       });
 
-      const safeSvg = doc.documentElement.outerHTML;
+      const safeSvg = finalDoc.documentElement.outerHTML;
       container.innerHTML = safeSvg;
+      setSvgSource(safeSvg);
 
       const svgEl = container.querySelector('svg');
       if (svgEl) {
-        if (!svgEl.hasAttribute('width')) {
-          svgEl.setAttribute('width', '100%');
-        }
+        if (!svgEl.hasAttribute('width')) svgEl.setAttribute('width', '100%');
         svgEl.style.maxWidth = '100%';
         svgEl.style.height = 'auto';
       }
     } catch {
       container.innerHTML = '<p style="color:var(--muted);font-size:12px;padding:16px;">SVG 渲染失败</p>';
+      setSvgSource(cleanSvg);
     }
   }, [svg]);
 
+  const handleCopy = () => {
+    navigator.clipboard.writeText(svgSource || svg).then(() => {
+      const btn = document.activeElement as HTMLElement;
+      if (btn) { btn.textContent = '已复制'; setTimeout(() => { btn.textContent = '复制 SVG'; }, 1500); }
+    });
+  };
+
+  const handleDownload = () => {
+    const blob = new Blob([svgSource || svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'diagram.svg';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div
-      ref={ref}
-      style={{
-        margin: '12px 0',
-        padding: '12px',
-        borderRadius: 'var(--radius)',
-        background: 'var(--panel)',
-        border: '1px solid var(--border)',
-        overflow: 'auto',
-      }}
-    />
+    <div style={{ margin: '12px 0' }}>
+      <div
+        ref={ref}
+        style={{
+          padding: '12px',
+          borderRadius: 'var(--radius)',
+          background: 'var(--panel)',
+          border: '1px solid var(--border)',
+          overflow: 'auto',
+        }}
+      />
+      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+        <button onClick={handleCopy} style={{
+          fontSize: 10, padding: '2px 8px', borderRadius: 4,
+          background: 'transparent', border: '1px solid var(--border)',
+          color: 'var(--muted)', cursor: 'pointer',
+        }}>复制 SVG</button>
+        <button onClick={handleDownload} style={{
+          fontSize: 10, padding: '2px 8px', borderRadius: 4,
+          background: 'transparent', border: '1px solid var(--border)',
+          color: 'var(--muted)', cursor: 'pointer',
+        }}>下载 SVG</button>
+      </div>
+    </div>
   );
 };
 

@@ -79,6 +79,25 @@ packages/agentai-skills/finance/**/data/*.db
 packages/agentai-skills/finance/**/data/*.json
 packages/agentai-skills/finance/**/data/*.sqlite
 
+# ===== Customer / business data (报价, 报价单, 业务数据) =====
+**/报价*.xlsx
+**/报价*.txt
+**/报价*.json
+**/*_content.txt
+**/*_powershell.txt
+**/temporal_windows/
+packages/agentai-gateway/*.xlsx
+packages/agentai-gateway/*.txt
+
+# ===== Scratch / one-off scripts & test artifacts =====
+emotion-analyzer.js
+test-full.json
+test-result.json
+backend.log
+*.gw-dev.log
+.vitest-final-*.log
+
 # ===== Trash =====
 .reasonix/
 .trae/
+!.trae/rules/

@@ -1,5 +1,5 @@
 /**
- * Editor - Trae 风格文件编辑器
+ * Editor - AgentAI 文件编辑器
  * ----------------------------------------------------
  * - 左侧文件树 (懒加载, 盘符级 Open Folder)
  * - 右侧多标签编辑器 (脏标记 / 保存 / AI 改写)
@@ -8,6 +8,7 @@
  * - 浏览器内: 不能弹原生目录选择, 通过 Gateway /v1/fs/drives 列盘符 + 手动输入
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useChatStore } from '../store/chatStore';
 import {
   Tree, Input, Button, Space, message, Spin, Dropdown, Modal, Empty, Tooltip,
   Breadcrumb, Tabs, Tag, Segmented, App,
@@ -15,12 +16,17 @@ import {
 import {
   FolderOutlined, FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined,
   EditOutlined, FileAddOutlined, FolderAddOutlined,
-  SearchOutlined, RobotOutlined, CloseOutlined, CheckOutlined,
+  SearchOutlined, SendOutlined, CloseOutlined, CheckOutlined,
   DesktopOutlined, HomeOutlined, CodeOutlined, DeleteOutlined, EditOutlined as RenameIcon,
-  FolderOpenOutlined as OpenFolderIcon,
+  FolderOpenOutlined as OpenFolderIcon, GlobalOutlined, RobotOutlined,
 } from '@ant-design/icons';
-import { GATEWAY_HTTP } from '../services/config';
 import { useProfileStore } from '../store';
+import { EmbeddedBrowser } from './EmbeddedBrowser';
+import { EditorChatPanel } from './EditorChatPanel';
+import { MonacoEditorComponent as MonacoEditor, detectLangFromPath, type AICodeDecoration } from './MonacoEditor';
+import { useTaskOrchestrator } from '../store/taskOrchestratorStore';
+import { FileTimeline } from '../services/FileTimeline';
+import { gatewayFallback } from '../services/GatewayFallback';
 
 interface FsEntry {
   name: string;
@@ -48,7 +54,7 @@ interface OpenFile {
   readonly: boolean;
 }
 
-const httpUrl = GATEWAY_HTTP;
+const baseUrl = () => gatewayFallback.url || 'http://127.0.0.1:18789';
 
 const LANGS: Record<string, string> = {
   '.ts': 'typescript', '.tsx': 'typescript', '.js': 'javascript', '.jsx': 'javascript',
@@ -69,26 +75,26 @@ const fmtSize = (n: number): string => {
 };
 
 const API = {
-  drives: () => fetch(`${httpUrl}/v1/fs/drives`).then(r => r.json()),
-  list: (dir: string) => fetch(`${httpUrl}/v1/fs/list?dir=${encodeURIComponent(dir)}`).then(r => r.json()),
-  read: (p: string) => fetch(`${httpUrl}/v1/files/read?path=${encodeURIComponent(p)}`).then(r => r.json()),
-  write: (p: string, content: string) => fetch(`${httpUrl}/v1/files/write`, {
+  drives: () => fetch(`${baseUrl()}/v1/fs/drives`).then(r => r.json()),
+  list: (dir: string) => fetch(`${baseUrl()}/v1/fs/list?dir=${encodeURIComponent(dir)}`).then(r => r.json()),
+  read: (p: string) => fetch(`${baseUrl()}/v1/files/read?path=${encodeURIComponent(p)}`).then(r => r.json()),
+  write: (p: string, content: string) => fetch(`${baseUrl()}/v1/files/write`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: p, content }),
   }).then(r => r.json()),
-  mkdir: (p: string) => fetch(`${httpUrl}/v1/files/mkdir`, {
+  mkdir: (p: string) => fetch(`${baseUrl()}/v1/files/mkdir`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: p }),
   }).then(r => r.json()),
-  touch: (p: string, content = '') => fetch(`${httpUrl}/v1/files/touch`, {
+  touch: (p: string, content = '') => fetch(`${baseUrl()}/v1/files/touch`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: p, content }),
   }).then(r => r.json()),
-  rename: (from: string, to: string) => fetch(`${httpUrl}/v1/files/rename`, {
+  rename: (from: string, to: string) => fetch(`${baseUrl()}/v1/files/rename`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ from, to }),
   }).then(r => r.json()),
-  remove: (p: string) => fetch(`${httpUrl}/v1/files?path=${encodeURIComponent(p)}`, { method: 'DELETE' }).then(r => r.json()),
+  remove: (p: string) => fetch(`${baseUrl()}/v1/files?path=${encodeURIComponent(p)}`, { method: 'DELETE' }).then(r => r.json()),
 };
 
 export const Editor: React.FC = () => {
@@ -109,7 +115,33 @@ export const Editor: React.FC = () => {
   const [customPath, setCustomPath] = useState('');
   const [pathInput, setPathInput] = useState('');
   const [autoSave, setAutoSave] = useState(false);
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [showBrowser, setShowBrowser] = useState(false);
+  const [showFileTree, setShowFileTree] = useState(true);
+  const [showBottomPanel, setShowBottomPanel] = useState(true);
+  const [bottomPanelTab, setBottomPanelTab] = useState<'terminal' | 'logs'>('terminal');
+  const bottomPanelHeight = 180;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const [bpHeight, setBpHeight] = useState(180);
+
+  // 底部面板拖拽分隔线
+  const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { startY: e.clientY, startHeight: bpHeight };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const delta = dragRef.current.startY - ev.clientY; // drag up = bigger
+      setBpHeight(Math.max(80, Math.min(500, dragRef.current.startHeight + delta)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [bpHeight]);
 
   // ===== 加载工作区根 =====
   const loadWorkspace = useCallback(async (dir: string) => {
@@ -123,7 +155,7 @@ export const Editor: React.FC = () => {
       }
       const root: TreeNode = {
         key: dir,
-        title: <span style={{ color: '#facc15', fontWeight: 600 }}>📁 {dir.split(/[\\/]/).filter(Boolean).pop() || dir}</span>,
+        title: <span style={{ color: '#facc15', fontWeight: 600 }}><FolderOpenOutlined style={{ marginRight: 4 }} />{dir.split(/[\\/]/).filter(Boolean).pop() || dir}</span>,
         path: dir,
         type: 'directory',
         isLeaf: false,
@@ -140,9 +172,20 @@ export const Editor: React.FC = () => {
     }
   }, [msgApi]);
 
-  // 启动时: 有缓存就恢复, 否则保持空 (显示欢迎页)
+  // 启动时: 有缓存就恢复, 否则从 Gateway 获取项目根目录
   useEffect(() => {
-    if (workspace) loadWorkspace(workspace);
+    if (workspace) {
+      loadWorkspace(workspace);
+    } else {
+      // 无缓存: 从 Gateway 获取项目根目录
+      fetch(`${baseUrl()}/v1/fs/project-root`)
+        .then(r => r.json())
+        .then(data => {
+          const root = data.projectRoot || data.cwd || '';
+          if (root) loadWorkspace(root);
+        })
+        .catch(() => { /* Gateway 不可达, 保持空 */ });
+    }
   }, []); // eslint-disable-line
 
   // ===== 构建树节点 =====
@@ -174,17 +217,30 @@ export const Editor: React.FC = () => {
     return <FileOutlined style={{ color: '#93c5fd' }} />;
   };
 
+  // ===== 递归不可变更新树 (让 AntD Tree 能检测到子节点变化) =====
+  const updateTreeData = (list: TreeNode[], key: string, children: TreeNode[]): TreeNode[] => {
+    return list.map(node => {
+      if (node.key === key) {
+        return { ...node, children: children.length > 0 ? children : undefined, loaded: true };
+      }
+      if (node.children) {
+        return { ...node, children: updateTreeData(node.children, key, children) };
+      }
+      return node;
+    });
+  };
+
   // ===== AntD Tree 懒加载 =====
   const onLoadData = async (node: any): Promise<void> => {
-    if (node.children && node.children.length > 0) return;
-    const dir = (node as TreeNode).path;
+    const tn = node as TreeNode;
+    if (tn.loaded || tn.type !== 'directory') return;
+    const dir = tn.path;
     try {
       const data = await API.list(dir);
       if (data.error) return;
       const entries: FsEntry[] = data.entries || [];
-      node.children = entries.map(buildNode);
-      node.loaded = true;
-      setTree([...tree]);
+      const children = entries.map(buildNode);
+      setTree(prev => updateTreeData(prev, dir, children));
     } catch {}
   };
 
@@ -195,6 +251,19 @@ export const Editor: React.FC = () => {
       openFile(node.path);
     }
   };
+
+  // 监听全局事件: 在对话中点击文件时打开
+  useEffect(() => {
+    const handler = (e: any) => {
+      const path = e?.detail?.path;
+      if (typeof path === 'string' && path) {
+        openFile(path);
+      }
+    };
+    window.addEventListener('agentai:open-file', handler as any);
+    return () => window.removeEventListener('agentai:open-file', handler as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openFiles]);
 
   // ===== 打开文件 =====
   const openFile = async (filePath: string) => {
@@ -225,11 +294,16 @@ export const Editor: React.FC = () => {
   const saveActive = useCallback(async () => {
     const f = openFiles.find(x => x.path === activeKey);
     if (!f || f.readonly) return;
+    const beforeContent = f.dirty ? undefined : await (async () => {
+      try { const r = await API.read(f.path); return r.content; } catch { return undefined; }
+    })();
     try {
       const data = await API.write(f.path, f.content);
       if (data.error) { msgApi.error('保存失败: ' + data.error); return; }
       setOpenFiles(openFiles.map(x => x.path === f.path ? { ...x, dirty: false } : x));
       msgApi.success(`✅ ${f.name} 已保存`);
+      // 记录时间线
+      FileTimeline.afterWrite(f.path, f.content, beforeContent, false, ['editor-save']);
     } catch (e: any) {
       msgApi.error('保存失败: ' + e.message);
     }
@@ -238,11 +312,12 @@ export const Editor: React.FC = () => {
   // 自动保存 (3 秒无改动)
   useEffect(() => {
     if (!autoSave) return;
-    const t = setTimeout(() => {
-      openFiles.filter(f => f.dirty).forEach(f => {
-        API.write(f.path, f.content);
-        setOpenFiles(prev => prev.map(x => x.path === f.path ? { ...x, dirty: false } : x));
-      });
+    const t = setTimeout(async () => {
+      for (const f of openFiles.filter(x => x.dirty)) {
+        await API.write(f.path, f.content);
+        FileTimeline.afterWrite(f.path, f.content, undefined, false, ['auto-save']);
+      }
+      setOpenFiles(prev => prev.map(x => x.dirty ? { ...x, dirty: false } : x));
     }, 3000);
     return () => clearTimeout(t);
   }, [openFiles, autoSave]);
@@ -278,7 +353,7 @@ export const Editor: React.FC = () => {
     if (!aiPrompt.trim()) { msgApi.warning('写点指令'); return; }
     setAiBusy(true);
     try {
-      const r = await fetch(`${httpUrl}/v1/chat`, {
+      const r = await fetch(`${baseUrl()}/v1/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -293,7 +368,7 @@ export const Editor: React.FC = () => {
       editContent(code);
       msgApi.success('✨ AI 已改写, 按 Ctrl+S 保存');
     } catch (e: any) {
-      msgApi.error('AI 失败: ' + e.message);
+      msgApi.error('改写失败: ' + e.message);
     } finally {
       setAiBusy(false);
       setAiPrompt('');
@@ -318,6 +393,7 @@ export const Editor: React.FC = () => {
         const p = parentDir.replace(/[\\/]$/, '') + (parentDir.includes('\\') ? '\\' : '/') + name;
         const r = await API.touch(p, '');
         if (r.error) { msgApi.error(r.error); return Promise.reject(); }
+        FileTimeline.afterWrite(p, '', undefined, false, ['create']);
         msgApi.success(`已创建 ${name}`);
         await loadWorkspace(workspace);
       },
@@ -363,6 +439,7 @@ export const Editor: React.FC = () => {
         const to = oldPath.replace(/[\\/][^\\/]+$/, (m) => m[0] + newName);
         const r = await API.rename(oldPath, to);
         if (r.error) { msgApi.error(r.error); return Promise.reject(); }
+        FileTimeline.recordRename(oldPath, to, false);
         msgApi.success('已重命名');
         await loadWorkspace(workspace);
       },
@@ -377,8 +454,12 @@ export const Editor: React.FC = () => {
       okType: 'danger',
       cancelText: '取消',
       onOk: async () => {
+        // 删除前先读取内容作为快照
+        let beforeContent: string | undefined;
+        try { const r = await API.read(p); beforeContent = r.content; } catch { /* ignore */ }
         const r = await API.remove(p);
         if (r.error) { msgApi.error(r.error); return; }
+        if (beforeContent !== undefined) FileTimeline.recordDelete(p, beforeContent, false);
         msgApi.success(`已删除 ${name}`);
         setOpenFiles(openFiles.filter(f => !f.path.startsWith(p)));
         if (activeKey.startsWith(p)) setActiveKey('');
@@ -441,6 +522,9 @@ export const Editor: React.FC = () => {
         <Button size="small" type="primary" icon={<FolderOpenOutlined />} onClick={openDrivesModal}>
           打开文件夹
         </Button>
+        <Tooltip title={showFileTree ? '折叠文件树' : '展开文件树'}>
+          <Button size="small" icon={<FolderOutlined />} onClick={() => setShowFileTree(v => !v)} style={{ fontSize: 10 }} />
+        </Tooltip>
         <Button size="small" icon={<FileAddOutlined />} disabled={!workspace} onClick={() => newFile(workspace)} title="新建文件到根" />
         <Button size="small" icon={<FolderAddOutlined />} disabled={!workspace} onClick={() => newFolder(workspace)} title="新建文件夹到根" />
         <Button size="small" icon={<ReloadOutlined />} disabled={!workspace} onClick={() => loadWorkspace(workspace)} title="刷新" />
@@ -454,6 +538,39 @@ export const Editor: React.FC = () => {
           style={{ width: 180 }}
         />
         <div style={{ flex: 1 }} />
+        <Tooltip title="终端/日志 (底部面板)">
+          <Button
+            size="small"
+            type={showBottomPanel ? 'primary' : 'default'}
+            icon={<span style={{ fontSize: 12 }}>⊞</span>}
+            onClick={() => setShowBottomPanel(v => !v)}
+            style={{ fontSize: 10 }}
+          >
+            终端
+          </Button>
+        </Tooltip>
+        <Tooltip title="AI 对话 (右侧面板)">
+          <Button
+            size="small"
+            type={showAiPanel ? 'primary' : 'default'}
+            icon={<RobotOutlined />}
+            onClick={() => setShowAiPanel(v => !v)}
+            style={{ fontSize: 10 }}
+          >
+            AI
+          </Button>
+        </Tooltip>
+        <Tooltip title="内嵌浏览器 (中屏打开)">
+          <Button
+            size="small"
+            type={showBrowser ? 'primary' : 'default'}
+            icon={<GlobalOutlined />}
+            onClick={() => { setShowBrowser(v => !v); if (!showBrowser) { setActiveKey('__browser__'); } }}
+            style={{ fontSize: 10 }}
+          >
+            浏览器
+          </Button>
+        </Tooltip>
         <Tag color={autoSave ? 'green' : 'default'} style={{ cursor: 'pointer' }} onClick={() => setAutoSave(!autoSave)}>
           {autoSave ? '✓ 自动保存' : '自动保存'}
         </Tag>
@@ -473,170 +590,256 @@ export const Editor: React.FC = () => {
       )}
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* ===== 左侧文件树 ===== */}
-        <div style={{ width: 300, background: '#0a0a0a', borderRight: '1px solid #333', overflow: 'auto', padding: 4 }}>
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: 20 }}><Spin /></div>
-          ) : tree.length > 0 ? (
-            <Tree
-              showLine={{ showLeafIcon: false }}
-              blockNode
-              treeData={tree}
-              loadData={onLoadData}
-              onSelect={onTreeSelect}
-              defaultExpandAll={false}
-              defaultExpandedKeys={[workspace]}
-              onRightClick={({ node }) => {
-                // Right click handled via context menu in dropdown below
-              }}
-              titleRender={(node: any) => {
-                const tn = node as TreeNode;
-                return (
-                  <Dropdown menu={{ items: renderContextMenu(tn) }} trigger={['contextMenu']}>
-                    <span style={{ display: 'inline-block', width: '100%' }}>{tn.title}</span>
-                  </Dropdown>
-                );
-              }}
-            />
-          ) : (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={
-                <div style={{ color: '#888', padding: 16, textAlign: 'center' }}>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>📂</div>
-                  <div style={{ fontSize: 14, color: '#ccc' }}>还没打开文件夹</div>
-                  <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-                    点上面 <b style={{ color: '#4F46E5' }}>「打开文件夹」</b> 选个目录
+        {/* ===== 左侧文件树 (可折叠) ===== */}
+        <div style={{ display: 'flex', width: showFileTree ? 300 : 0, transition: 'width 0.2s' }}>
+          <div style={{ flex: 1, background: '#0a0a0a', borderRight: showFileTree ? '1px solid #333' : 'none', overflow: 'auto', padding: showFileTree ? 4 : 0, minWidth: 0 }}>
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: 20 }}><Spin /></div>
+            ) : tree.length > 0 ? (
+              <Tree
+                showLine={{ showLeafIcon: false }}
+                blockNode
+                treeData={tree}
+                loadData={onLoadData}
+                onSelect={(keys, info) => {
+                  onTreeSelect(keys, info);
+                  if (showBrowser && showFileTree) setShowFileTree(false);
+                }}
+                defaultExpandAll={false}
+                defaultExpandedKeys={[workspace]}
+                titleRender={(node: any) => {
+                  const tn = node as TreeNode;
+                  return (
+                    <Dropdown menu={{ items: renderContextMenu(tn) }} trigger={['contextMenu']}>
+                      <span style={{ display: 'inline-block', width: '100%' }}>{tn.title}</span>
+                    </Dropdown>
+                  );
+                }}
+              />
+            ) : (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={
+                  <div style={{ color: '#888', padding: 16, textAlign: 'center' }}>
+                    <div style={{ fontSize: 32, marginBottom: 12 }}>📂</div>
+                    <div style={{ fontSize: 14, color: '#ccc' }}>还没打开文件夹</div>
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
+                      点上面 <b style={{ color: '#4F46E5' }}>「打开文件夹」</b> 选个目录
+                    </div>
+                    <Button
+                      type="primary"
+                      size="small"
+                      style={{ marginTop: 16 }}
+                      icon={<FolderOpenOutlined />}
+                      onClick={openDrivesModal}
+                    >
+                      Open Folder
+                    </Button>
                   </div>
-                  <Button
-                    type="primary"
-                    size="small"
-                    style={{ marginTop: 16 }}
-                    icon={<FolderOpenOutlined />}
-                    onClick={openDrivesModal}
-                  >
-                    Open Folder
-                  </Button>
-                </div>
-              }
-            />
-          )}
+                }
+              />
+            )}
+          </div>
+          {/* 折叠按钮 */}
+          <div
+            onClick={() => setShowFileTree(v => !v)}
+            style={{
+              width: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: '#0a0a0a', borderRight: '1px solid #333', userSelect: 'none',
+              color: '#555', fontSize: 10,
+            }}
+            title={showFileTree ? '折叠文件树' : '展开文件树'}
+          >
+            <span style={{ writingMode: 'vertical-rl', letterSpacing: 2 }}>
+              {showFileTree ? '◀' : '▶'}
+            </span>
+          </div>
         </div>
 
         {/* ===== 右侧编辑区 ===== */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {openFiles.length > 0 ? (
-            <>
-              <Tabs
-                type="editable-card"
-                activeKey={activeKey}
-                onChange={setActiveKey}
-                onEdit={(targetKey, action) => {
-                  if (action === 'remove') closeTab(targetKey as string);
-                }}
-                hideAdd
-                size="small"
-                items={openFiles.map(f => ({
-                  key: f.path,
-                  closable: true,
-                  label: (
-                    <span style={{ color: f.dirty ? '#facc15' : '#ddd' }}>
-                      {f.dirty ? '● ' : ''}{f.name}
-                    </span>
-                  ),
-                  children: (
-                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                      {/* 工具栏 */}
-                      <div style={{ padding: 6, background: '#141414', borderBottom: '1px solid #333', display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <Button
-                          size="small"
-                          type="primary"
-                          icon={<SaveOutlined />}
-                          onClick={saveActive}
-                          disabled={!active?.dirty || active?.readonly}
-                        >
-                          保存 (Ctrl+S)
-                        </Button>
-                        <Tag color="blue">{active?.language}</Tag>
-                        {active?.readonly && <Tag color="orange">只读</Tag>}
-                        <div style={{ flex: 1 }} />
-                        <Input
-                          size="small"
-                          placeholder="AI 改写指令, 例: 加错误处理"
-                          value={aiPrompt}
-                          onChange={e => setAiPrompt(e.target.value)}
-                          onPressEnter={aiEdit}
-                          style={{ width: 260 }}
-                          disabled={aiBusy}
-                        />
-                        <Button
-                          size="small"
-                          icon={<RobotOutlined />}
+          {/* ---- 上区: Tab 编辑 ---- */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            {openFiles.length > 0 ? (
+              <>
+                <Tabs
+                  type="editable-card"
+                  activeKey={activeKey}
+                  onChange={setActiveKey}
+                  onEdit={(targetKey, action) => {
+                    if (action === 'remove') {
+                      if (targetKey === '__browser__') { setShowBrowser(false); return; }
+                      closeTab(targetKey as string);
+                    }
+                  }}
+                  hideAdd
+                  size="small"
+                  items={[
+                    ...(showBrowser ? [{
+                      key: '__browser__',
+                      closable: true,
+                      label: <span style={{ color: '#4ade80' }}><GlobalOutlined style={{ marginRight: 4 }} />浏览器</span>,
+                      children: (
+                        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#0f0f0f' }}>
+                          <EmbeddedBrowser compact={false} initialUrl="https://www.google.com" aiControlled={true} autoScan={true}
+                            onElementsDetected={(els, url) => {
+                              const interactive = els.filter(e => e.interactivity >= 70).slice(0, 30);
+                              const summary = interactive.map(e =>
+                                `[${e.tag}]${e.text ? ` "${e.text.slice(0, 30)}"` : ''} → ${e.selector}`
+                              ).join('\n');
+                              useChatStore.getState().appendMessage({
+                                id: `sys-editor-browser-${Date.now()}`,
+                                role: 'system',
+                                segments: [{ kind: 'text', text: `[页面元素扫描] 当前页面: ${url}\n已识别 ${els.length} 个可交互元素:\n${summary}\n\nAI 可使用 CSS Selector 操作这些元素。` }],
+                                ts: Date.now(),
+                                status: 'done',
+                              });
+                            }}
+                          />
+                        </div>
+                      ),
+                    }] : []),
+                    ...openFiles.map(f => ({
+                    key: f.path,
+                    closable: true,
+                    label: (
+                      <span style={{ color: f.dirty ? '#facc15' : '#ddd' }}>
+                        {f.dirty ? '● ' : ''}{f.name}
+                      </span>
+                    ),
+                    children: (
+                      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                        {/* 工具栏 */}
+                        <div style={{ padding: 6, background: '#141414', borderBottom: '1px solid #333', display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <Button
+                            size="small"
+                            type="primary"
+                            icon={<SaveOutlined />}
+                            onClick={saveActive}
+                            disabled={!active?.dirty || active?.readonly}
+                          >
+                            保存 (Ctrl+S)
+                          </Button>
+                          <Tag color="blue">{active?.language}</Tag>
+                          {active?.readonly && <Tag color="orange">只读</Tag>}
+                          <div style={{ flex: 1 }} />
+                          <Input
+                            size="small"
+                            placeholder="改写指令, 例: 加错误处理"
+                            value={aiPrompt}
+                            onChange={e => setAiPrompt(e.target.value)}
+                            onPressEnter={aiEdit}
+                            style={{ width: 260 }}
+                            disabled={aiBusy}
+                          />
+                          <Button
+                            size="small"
+                            icon={<SendOutlined />}
                           loading={aiBusy}
                           onClick={aiEdit}
                           disabled={!aiPrompt.trim() || active?.readonly}
                         >
-                          AI 改写
-                        </Button>
-                      </div>
-                      {/* 编辑区 */}
-                      <div style={{ flex: 1, position: 'relative' }}>
-                        <textarea
-                          ref={textareaRef}
-                          value={active?.content || ''}
-                          onChange={e => editContent(e.target.value)}
-                          onKeyDown={(e) => {
-                            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                              e.preventDefault();
-                              saveActive();
-                            }
-                            if (e.key === 'Tab') {
-                              e.preventDefault();
-                              const target = e.currentTarget;
-                              const start = target.selectionStart;
-                              const end = target.selectionEnd;
-                              const newVal = target.value.substring(0, start) + '  ' + target.value.substring(end);
-                              editContent(newVal);
-                              setTimeout(() => { target.selectionStart = target.selectionEnd = start + 2; }, 0);
-                            }
-                          }}
-                          spellCheck={false}
-                          readOnly={active?.readonly}
-                          style={{
-                            width: '100%', height: '100%',
-                            background: '#1e1e1e', color: '#d4d4d4',
-                            border: 'none', outline: 'none',
-                            padding: 12,
-                            fontFamily: 'Consolas, "Courier New", monospace',
-                            fontSize: 13, lineHeight: 1.6,
-                            resize: 'none',
-                          }}
-                        />
-                      </div>
+                          改写
+                          </Button>
+                        </div>
+                        {/* 编辑区 — Monaco (VSCode 内核) */}
+                        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                          <MonacoEditorWithAI
+                            value={active?.content || ''}
+                            language={active?.language}
+                            path={active?.path}
+                            readOnly={active?.readonly}
+                            onChange={editContent}
+                            onSave={saveActive}
+                            minimap={openFiles.length <= 3}
+                          />
+                        </div>
                     </div>
-                  ),
-                }))}
-              />
-            </>
-          ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#666' }}>
-              <div style={{ fontSize: 64, marginBottom: 16 }}>✨</div>
-              <div style={{ fontSize: 18, color: '#aaa', marginBottom: 8 }}>{profile?.name || '你'}, 欢迎来到 Trae 风格编辑器</div>
-              <div style={{ fontSize: 13, color: '#666', marginBottom: 24, textAlign: 'center', maxWidth: 480 }}>
-                打开本地文件夹 → 树状浏览 → 点击文件编辑 → Ctrl+S 保存<br/>
-                右键节点: 新建/重命名/删除 · 点 🤖 让 AI 帮你改代码
+                    )
+                  }))
+                ]}
+                />
+              </>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#666' }}>
+                <div style={{ fontSize: 18, color: '#aaa', marginBottom: 8 }}>{profile?.name || '你'}, 欢迎来到 AgentAI 编辑器</div>
+                <div style={{ fontSize: 13, color: '#666', marginBottom: 24, textAlign: 'center', maxWidth: 480 }}>
+                  打开本地文件夹 → 树状浏览 → 点击文件编辑 → Ctrl+S 保存<br/>
+                  右键节点: 新建/重命名/删除 · 点改写按钮来修改代码
+                </div>
+                <Button
+                  type="primary"
+                  size="large"
+                  icon={<FolderOpenOutlined />}
+                  onClick={openDrivesModal}
+                >
+                  打开文件夹
+                </Button>
               </div>
-              <Button
-                type="primary"
-                size="large"
-                icon={<FolderOpenOutlined />}
-                onClick={openDrivesModal}
+            )}
+          </div>
+
+          {/* ---- 可拖拽分隔线 ---- */}
+          <div
+            onMouseDown={onDividerMouseDown}
+            style={{
+              height: 5, cursor: 'row-resize', background: '#1a1a1a', borderTop: '1px solid #333',
+              borderBottom: '1px solid #333', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0, userSelect: 'none',
+            }}
+            title="拖拽调整大小"
+          >
+            <div style={{ width: 60, height: 3, borderRadius: 2, background: '#3a3a3a' }} />
+          </div>
+
+          {/* ---- 下区: 终端/日志 ---- */}
+          <div style={{ height: showBottomPanel ? bpHeight : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+            {/* 底部 Tab 栏 */}
+            <div style={{ height: 28, display: 'flex', alignItems: 'center', background: '#141414', borderBottom: '1px solid #333', padding: '0 8px', gap: 4, flexShrink: 0 }}>
+              {(['terminal', 'logs'] as const).map(tab => (
+                <div
+                  key={tab}
+                  onClick={() => setBottomPanelTab(tab)}
+                  style={{
+                    padding: '2px 12px', cursor: 'pointer', borderRadius: 3, fontSize: 12,
+                    color: bottomPanelTab === tab ? '#4ade80' : '#888',
+                    background: bottomPanelTab === tab ? '#1a3a1a' : 'transparent',
+                  }}
+                >
+                  {tab === 'terminal' ? '◉ 终端' : '◎ 日志'}
+                </div>
+              ))}
+              <div style={{ flex: 1 }} />
+              <div
+                onClick={() => setShowBottomPanel(v => !v)}
+                style={{ cursor: 'pointer', color: '#666', fontSize: 11, padding: '0 4px' }}
+                title="关闭面板"
               >
-                打开文件夹
-              </Button>
+                ✕
+              </div>
             </div>
-          )}
+            {/* 底部内容 */}
+            <div style={{ flex: 1, overflow: 'auto', background: '#0a0a0a', padding: 8, fontSize: 12, fontFamily: 'Consolas, monospace', color: '#aaa' }}>
+              {bottomPanelTab === 'logs' ? (
+                <div style={{ color: '#888' }}>日志输出区 — Gateway 日志将在此显示</div>
+              ) : (
+                <div style={{ color: '#888' }}>
+                  <div style={{ color: '#4ade80', marginBottom: 4 }}>$ 终端 (模拟)</div>
+                  <div>输入命令 (例如: dir)</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                    <span style={{ color: '#4ade80' }}>$</span>
+                    <span style={{ color: '#666' }}>等待实现...</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
+
+        {/* ===== 右侧 AI 对话面板 ===== */}
+        {showAiPanel && (
+          <EditorChatPanel workspaceDir={workspace} />
+        )}
       </div>
 
       {/* ===== 状态栏 ===== */}
@@ -726,5 +929,43 @@ export const Editor: React.FC = () => {
         </Space>
       </Modal>
     </div>
+  );
+};
+
+/**
+ * MonacoEditorWithAI — 包装组件, 注入 AI 代码修改装饰
+ * 从 taskOrchestratorStore 读取代码变更, 转为 Monaco decorations
+ */
+const MonacoEditorWithAI: React.FC<React.ComponentProps<typeof MonacoEditor>> = (props) => {
+  const { activeTask, lastCompletedTask } = useTaskOrchestrator();
+
+  // 从当前活跃任务 + 最近完成任务中提取代码变更
+  const aiDecorations: AICodeDecoration[] = [];
+
+  if (activeTask) {
+    for (const change of activeTask.codeChanges) {
+      aiDecorations.push({
+        filePath: change.filePath,
+        type: change.type,
+        summary: change.summary,
+      });
+    }
+  }
+  // 也显示最近完成任务的变更 (折叠摘要状态时)
+  if (lastCompletedTask && !activeTask) {
+    for (const change of lastCompletedTask.codeChanges) {
+      aiDecorations.push({
+        filePath: change.filePath,
+        type: change.type,
+        summary: change.summary,
+      });
+    }
+  }
+
+  return (
+    <MonacoEditor
+      {...props}
+      aiDecorations={aiDecorations}
+    />
   );
 };

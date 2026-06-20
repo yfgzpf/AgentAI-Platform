@@ -175,6 +175,7 @@ export class AgentAILoop extends EventEmitter {
   private contextReady = false;
 
   private _aborted = false;
+  private _startupInjected = false;
 
   /** 元认知循环实例 (复用, 不每轮重建) */
   private metaLoop: any = null;
@@ -266,6 +267,7 @@ export class AgentAILoop extends EventEmitter {
       persistentMemory: opts.persistentMemory ?? null,
       userPickedModel: opts.userPickedModel ?? false,
       mode: opts.mode ?? 'auto',
+      modelConfig: opts.modelConfig ?? { baseURL: '', modelName: '', provider: '' },
       _autoResumed: false,
     };
 
@@ -281,7 +283,9 @@ export class AgentAILoop extends EventEmitter {
   private async ensureContext() {
     if (this.contextReady) return;
     this.context.immutablePrefix = await this.buildImmutablePrefix(this.initialMessages);
-    this.context.appendOnlyLog = this.initialMessages.filter(m => m.role !== 'system');
+    // ⚠️ 保留已存在的 appendOnlyLog 内容 (附件可能在 loop.run() 之前被推入)
+    const initialLog = this.initialMessages.filter(m => m.role !== 'system');
+    this.context.appendOnlyLog = [...initialLog, ...this.context.appendOnlyLog];
     this.contextReady = true;
   }
 
@@ -378,17 +382,17 @@ export class AgentAILoop extends EventEmitter {
       const mems = await readMemory({
         userId: this.opts.userId,
         workspace: this.opts.workspace,
-        limit: 15,
+        limit: 10,
       });
       if (mems.length > 0) {
         const memEntries = mems.map(m => {
           const industryTag = m.industry && m.industry !== 'general' ? `[${m.industry}]` : '';
           const date = new Date(m.ts).toLocaleDateString();
-          return `- **${date}**${industryTag} ${m.content.slice(0, 120)}`;
+          return `- ${date}${industryTag} ${m.content.slice(0, 80)}`;
         });
         systemMsgs.push({
           role: 'system',
-          content: `\n# Persistent Memory (智能排序: 同行业优先 + 时效衰减)\n${memEntries.join('\n')}\n\n使用 \`recall_memory\` 查看详情，\`remember\` 保存新记忆，\`forget\` 删除记忆。`,
+          content: `\n# Persistent Memory\n${memEntries.join('\n')}\n使用 recall_memory 查看详情, remember 保存, forget 删除。`,
         });
       }
     } catch (e: any) { /* persistent memory optional */ }
@@ -418,6 +422,84 @@ export class AgentAILoop extends EventEmitter {
         });
       }
     } catch (e: any) { /* evolution memory optional - 不影响主流程 */ }
+
+    // === 4.6 IDE 状态感知: 注入当前编辑器状态 ===
+    try {
+      const { format_ide_context } = await import('./ide-state.js');
+      const ideCtx = format_ide_context();
+      if (ideCtx) {
+        systemMsgs.push({ role: 'system', content: ideCtx });
+      }
+    } catch { /* ide-state optional */ }
+
+    // === 4.65 开发偏好: 从 profile 读取用户的技术栈偏好 ===
+    try {
+      const profileFile = path.join(this.opts.workspace || process.cwd(), '.agentai', 'profile.json');
+      let devPrefs: any = null;
+      // 尝试从项目级 profile 读取
+      if (fs.existsSync(profileFile)) {
+        try { devPrefs = JSON.parse(fs.readFileSync(profileFile, 'utf-8'))?.devPrefs; } catch { /* ignore */ }
+      }
+      // 尝试从 chat route 传入的 profile 读取
+      if (!devPrefs && (this as any)._requestProfile?.devPrefs) {
+        devPrefs = (this as any)._requestProfile.devPrefs;
+      }
+      if (devPrefs && typeof devPrefs === 'object') {
+        const parts: string[] = [];
+        if (devPrefs.languages?.length) parts.push(`语言: ${devPrefs.languages.join(', ')}`);
+        if (devPrefs.frontend?.length) parts.push(`前端: ${devPrefs.frontend.join(', ')}`);
+        if (devPrefs.backend?.length) parts.push(`后端: ${devPrefs.backend.join(', ')}`);
+        if (devPrefs.packageManager?.length) parts.push(`包管理: ${devPrefs.packageManager.join(', ')}`);
+        if (devPrefs.css?.length) parts.push(`CSS: ${devPrefs.css.join(', ')}`);
+        if (parts.length > 0) {
+          systemMsgs.push({
+            role: 'system',
+            content: `\n# 用户开发偏好\n${parts.join('\n')}\n生成代码时请遵循这些偏好。`,
+          });
+        }
+      }
+    } catch { /* devPrefs optional */ }
+
+    // === 4.7 自进化规则: 加载 AI 自己创建的行为规则 ===
+    try {
+      const rulesFile = path.join(this.opts.workspace || process.cwd(), '.agentai', 'evolved-rules.json');
+      if (fs.existsSync(rulesFile)) {
+        const rulesData = fs.readFileSync(rulesFile, 'utf-8');
+        const rules = JSON.parse(rulesData);
+        if (Array.isArray(rules) && rules.length > 0) {
+          const ruleLines = rules.map((r: any) => `- ${r.rule}`).join('\n');
+          systemMsgs.push({
+            role: 'system',
+            content: `\n# 自进化规则 (你自己总结的行为准则)\n${ruleLines}`,
+          });
+        }
+      }
+    } catch { /* evolved rules optional */ }
+
+    // === 4.8 启动感知: 首轮注入项目摘要 ===
+    if (!this._startupInjected) {
+      this._startupInjected = true;
+      try {
+        const { execSync } = await import('child_process');
+        const ws = this.opts.workspace || process.cwd();
+        // 最近 5 次 git commit
+        let gitLog = '';
+        try {
+          gitLog = execSync('git log --oneline -5 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+        } catch { /* not a git repo */ }
+        // 最近修改的文件
+        let recentFiles = '';
+        try {
+          recentFiles = execSync('git diff --name-only HEAD~3 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+        } catch { /* git diff optional */ }
+        if (gitLog || recentFiles) {
+          const parts = ['# 项目近况 (启动时自动注入)'];
+          if (gitLog) parts.push(`最近提交:\n${gitLog}`);
+          if (recentFiles) parts.push(`最近改动文件:\n${recentFiles.split('\n').slice(0, 10).join('\n')}`);
+          systemMsgs.push({ role: 'system', content: parts.join('\n') });
+        }
+      } catch { /* startup awareness optional */ }
+    }
 
     // === 5. DeepSeek 缓存策略: 构建稳定前缀 ===
     try {
@@ -459,6 +541,22 @@ export class AgentAILoop extends EventEmitter {
           } catch (e: any) { /* sub-memory read optional */ }
         }
       } catch (e: any) { /* workspace context optional */ }
+    }
+
+    // === 6.3 项目规则文件自动加载/生成 (跨会话项目规范) ===
+    // 每次会话自动检测 .trae/rules/project_rules.md
+    // 存在 → 加载到上下文；不存在 → LLM 根据项目特征自动生成
+    if (this.opts.workspace) {
+      try {
+        const { ensureProjectRules } = await import('./project-rules-initializer.js');
+        const rules = await ensureProjectRules(this.opts.workspace, this.router);
+        if (rules && rules.trim().length > 0) {
+          systemMsgs.push({
+            role: 'system',
+            content: `\n# 项目规则 (来自 .trae/rules/project_rules.md)\n${rules}`,
+          });
+        }
+      } catch (e: any) { /* project rules init optional */ }
     }
 
     // === 6.5 自主能力自动触发规则 (授人以渔: 告诉AI何时该用、怎么用) ===
@@ -511,7 +609,7 @@ export class AgentAILoop extends EventEmitter {
       // 按分类聚合
       const categories = new Map<string, number>();
       for (const s of skills) {
-        const cat = s.skillMeta?.category || s.riskLevel || 'general';
+        const cat = s.skillMeta?.source || s.riskLevel || 'general';
         categories.set(cat, (categories.get(cat) || 0) + 1);
       }
       const summary = [...categories.entries()]
@@ -576,15 +674,45 @@ export class AgentAILoop extends EventEmitter {
     this.emit('log:appended', { role: 'user', content: messageText });
 
     // 1.1 自动检测图片/视频输入 → 切换到视觉模型
-    const hasImage = typeof messageContent !== 'string' &&
+    // 检测来源: runMessage (前端直接发送) 或 appendOnlyLog (后端注入的多路径附件)
+    const hasImage = (typeof messageContent !== 'string' &&
       Array.isArray(messageContent) &&
-      messageContent.some(b => b.type === 'image_url');
+      messageContent.some(b => b.type === 'image_url')) ||
+      this.context.appendOnlyLog.some(m =>
+        Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url')
+      );
     if (hasImage) {
-      console.log('[vision] detected image input, routing to vision model');
-      // 使用智谱免费视觉模型 (同 API Key, GLM-4.6V-Flash)
-      this.opts.model = 'zhipu';
-      this.opts.modelName = 'glm-4.6v-flash';
-      this.emit('model:switched', { to: 'zhipu:glm-4.6v-flash', reason: 'image_input' });
+      // 图片输入: 只在当前模型是免费模型且 zhipu 可用时才切换到视觉模型
+      // 如果用户手动选了商业模型, 不强制切换 (尊重用户选择)
+      // 如果 zhipu 也熔断了, 保留图片但降级为文字描述
+      const FREE_PROVIDERS_SET = new Set(['agentai', 'zhipu']);
+      const isCurrentFree = FREE_PROVIDERS_SET.has(this.opts.model);
+      const zhipuStats = (this.router as any)?.providers?.get('zhipu');
+      const zhipuAvailable = zhipuStats && !zhipuStats.tripped && !!process.env.ZHIPU_API_KEY;
+
+      if (isCurrentFree && zhipuAvailable) {
+        console.log('[vision] detected image input, routing to vision model');
+        this.opts.model = 'zhipu';
+        this.opts.modelName = 'glm-4.6v-flash';
+        this.emit('model:switched', { to: 'zhipu:glm-4.6v-flash', reason: 'image_input' });
+      } else if (isCurrentFree && !zhipuAvailable) {
+        // zhipu 不可用 → 将图片替换为文字描述, 避免图片数据被不支持vision的模型丢弃
+        console.log('[vision] image input but vision model unavailable, converting to text description');
+        for (const msg of this.context.appendOnlyLog) {
+          if (Array.isArray(msg.content)) {
+            const hasImageUrl = msg.content.some((c: any) => c.type === 'image_url');
+            if (hasImageUrl) {
+              // 将图片转为文字描述
+              const textParts = msg.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
+              const imageCount = msg.content.filter((c: any) => c.type === 'image_url').length;
+              msg.content = `${textParts}\n[用户上传了 ${imageCount} 张图片, 但当前模型不支持视觉理解, 请根据文字描述回答]`;
+            }
+          }
+        }
+      } else {
+        // 商业模型: 大多支持vision, 不切换, 直接使用
+        console.log(`[vision] detected image input, keeping current model ${this.opts.model} (commercial model likely supports vision)`);
+      }
     }
 
     // 1.5 自动创建任务链 (TaskChain / GraphTaskChain)
@@ -593,8 +721,8 @@ export class AgentAILoop extends EventEmitter {
       || messageText.trim().length < 20
       || /^(为什么|怎么|什么|如何|能不能|会不会|是不是|有没有)/.test(messageText.trim());
     const isComplex = !isSimpleChat
-      && /创建.*项目|开发.*系统|构建.*应用|重构.*模块|审查.*代码|修复.*bug|部署.*服务|实现.*功能|设计.*架构|优化.*性能|测试.*模块|配置.*环境|build.*project|create.*app|develop.*system|refactor.*module|review.*code|analyze.*architecture|fix.*issue|deploy.*service|implement.*feature|design.*system|optimize.*performance|test.*module|configure.*environment/i.test(messageText)
-      && messageText.length > 30;
+      && messageText.length > 30
+      && /做|写|改|建|生成|分析|创建|开发|构建|重构|审查|修复|部署|实现|设计|优化|测试|配置|总结|整理|对比|规划|帮我|请你|make|build|create|develop|refactor|review|fix|deploy|implement|design|optimize|test|analyze|generate|summarize/i.test(messageText);
     let taskChain: any = null;
     if (isComplex) {
       try {
@@ -608,6 +736,26 @@ export class AgentAILoop extends EventEmitter {
         }
         this.emit('plan:created', { chainId: taskChain.chainId, goal: messageText.slice(0, 200), stages: [{ key: 'understand', label: '理解' }, { key: 'execute', label: '执行' }, { key: 'report', label: '报告' }], currentStage: 'understand' });
       } catch (e: any) { console.warn('[TaskChain] init failed:', e?.message); }
+
+      // 复杂任务: 自动创建计划 + 自动追踪进度
+      try {
+        const { EXTRA_HANDLERS } = await import('./tools.js');
+        const goal = messageText.slice(0, 200);
+        await EXTRA_HANDLERS.plan_task({
+          goal,
+          subtasks: [
+            { id: 'understand', title: '理解需求', priority: 'high' },
+            { id: 'research', title: '调研分析', priority: 'medium' },
+            { id: 'execute', title: '执行操作', priority: 'high' },
+            { id: 'summary', title: '总结报告', priority: 'medium' },
+          ],
+        });
+        // 注入引导提示
+        this.context.appendOnlyLog.push({
+          role: 'system',
+          content: `[任务计划] 已自动创建执行计划。系统会根据你的工具调用自动更新进度。请按 理解→调研→执行→总结 的顺序推进。`,
+        });
+      } catch { /* plan creation optional */ }
     }
     try {
       const { skillOrchestrator } = await import('./skill-orchestrator.js');
@@ -662,7 +810,28 @@ export class AgentAILoop extends EventEmitter {
       }
     } catch (e: any) { /* model recommendation optional */ }
 
-    // 2. 反思门 (学 WorkBuddy, 自创触发点)
+    // 2. 歧义检测: 用户消息模糊时主动注入追问提示
+    if (!isSimpleChat && messageText.length > 10 && this.iteration === 0) {
+      const ambiguityPatterns = [
+        /做一个|帮我|搞一下|弄一下|处理/,       // 模糊动词
+        /这个|那个|它|这些|上面/,                 // 指代不明
+        /好看的|合适的|差不多|大概|随便/,         // 模糊描述
+        /或者|还是|要不/,                         // 二选一未决
+      ];
+      const hasAmbiguity = ambiguityPatterns.some(p => p.test(messageText));
+      const isShort = messageText.length < 30;
+      const lacksTarget = !/\.(tsx?|jsx?|py|css|html|json|md|vue|go|rs)/i.test(messageText)
+        && !/文件|目录|项目|页面|组件|模块|接口|数据库/i.test(messageText);
+
+      if (hasAmbiguity && (isShort || lacksTarget)) {
+        this.context.appendOnlyLog.push({
+          role: 'system',
+          content: `[歧义检测] 用户消息可能不够明确。如果你不确定用户想要什么，请立即调用 ask_user 工具追问，提供 2-4 个选项让用户选择。不要猜测用户意图后直接执行——猜错了成本更高。`,
+        });
+      }
+    }
+
+    // 3. 反思门 (学 WorkBuddy, 自创触发点)
     if (this.context.appendOnlyLog.length % this.opts.reflectEvery === 0) {
       await this.reflect();
     }
@@ -670,7 +839,7 @@ export class AgentAILoop extends EventEmitter {
     // 3. 主循环
     let lastResponse: ChatResponse | null = null;
     let autoResumeCount = 0;
-    const MAX_AUTO_RESUME = 2;
+    const MAX_AUTO_RESUME = 5;
 
     while (true) {
       if (this.opts.abortSignal.aborted) {
@@ -678,6 +847,30 @@ export class AgentAILoop extends EventEmitter {
       }
       this.iteration++;
       this.emit('loop:iteration', { n: this.iteration });
+
+      // 工作记忆摘要: 每 10 轮自动生成, 防止长对话"失忆"
+      if (this.iteration > 0 && this.iteration % 10 === 0) {
+        try {
+          const toolCalls = this.context.appendOnlyLog
+            .filter(m => m.role === 'tool')
+            .map(m => (m as any).name || 'unknown');
+          const toolSummary = [...new Set(toolCalls)].join(', ');
+          const userMsgs = this.context.appendOnlyLog
+            .filter(m => m.role === 'user' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM'))
+            .map(m => (m.content as string).slice(0, 60));
+          const lastUserGoal = userMsgs[userMsgs.length - 1] || messageText.slice(0, 60);
+          const completedTools = toolCalls.length;
+          const summary = `[工作记忆 · 轮次 ${this.iteration}]\n` +
+            `用户目标: ${lastUserGoal}\n` +
+            `已调用 ${completedTools} 次工具: ${toolSummary}\n` +
+            `当前迭代: ${this.iteration}/${this.opts.maxIterations}`;
+          // 注入到 log 开头, 不影响最近消息
+          this.context.appendOnlyLog.unshift({
+            role: 'system', content: summary,
+          });
+          console.log(`[working-memory] injected summary at iteration ${this.iteration}`);
+        } catch { /* working memory optional */ }
+      }
 
       // 总超时保护: 3分钟强制退出
       if (Date.now() - startedAt > MAX_RUNTIME_MS) {
@@ -691,7 +884,7 @@ export class AgentAILoop extends EventEmitter {
 
       // 检查是否被中断
       if (this._aborted) {
-        return { content: '[任务已中断]', provider: 'aborted', usage: { promptTokens: 0, completionTokens: 0, cost: 0, cacheHit: false }, iterations: this.iteration, durationMs: Date.now() - startedAt };
+        return { content: '[任务已中断]', provider: 'aborted', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const }, iterations: this.iteration, durationMs: Date.now() - startedAt };
       }
 
       let userText = '';
@@ -787,9 +980,11 @@ export class AgentAILoop extends EventEmitter {
       console.log('[run:chat] router.chat returned, provider=', res?.provider, 'contentLen=', res?.content?.length);
 
       // 🎯 智能模型切换: 检测连续熔断，自动切换商用 API
-      if (res?.provider && res.provider !== req.model) {
+      // 注意: 只有当所有 provider 都返回了 'none' (全部不可用) 时才计数
+      // 路由器内部正常降级 (如 deepseek→agentai 成功响应) 不算熔断
+      if (res?.provider === 'none') {
         this.trippedCount++;
-        console.log(`[smart-switch] 熔断计数: ${this.trippedCount}/3 (${req.model} → ${res.provider})`);
+        console.log(`[smart-switch] 全部 provider 不可用, 熔断计数: ${this.trippedCount}/3`);
         if (this.trippedCount >= 3) {
           const switcher = await this._getSmartSwitcher();
           const decision = switcher.analyzeSwitchNeed(
@@ -800,16 +995,30 @@ export class AgentAILoop extends EventEmitter {
           );
           if (decision.shouldSwitch && decision.hasApiKey) {
             console.log(`[smart-switch] ✅ 自动切换: ${req.model} → ${decision.targetProvider}`);
-            this.opts.model = decision.targetProvider;
-            this.emit('model:auto-switched', { from: req.model, to: decision.targetProvider, reason: '连续熔断自动切换' });
-            this.trippedCount = 0;
+            // 避免切到相同的 provider
+            if (decision.targetProvider === req.model) {
+              console.log(`[smart-switch] ⚠️ 目标 provider 与当前相同, 跳过切换`);
+              this.trippedCount = 0;
+            } else {
+              this.opts.model = decision.targetProvider;
+              const switchModelMap: Record<string, string> = {
+                superapi: 'deepseek-v4-flash',
+                deepseek: 'deepseek-v4-flash',
+                openai: 'gpt-4o-mini',
+                zhipu: 'glm-4-flash',
+              };
+              this.opts.modelName = switchModelMap[decision.targetProvider] || 'deepseek-v4-flash';
+              this.emit('model:auto-switched', { from: req.model, to: decision.targetProvider, reason: '当前模型全部不可用，自动切换' });
+              this.trippedCount = 0;
+            }
           } else if (decision.shouldSwitch && !decision.hasApiKey) {
             console.log(`[smart-switch] ⚠️ 需要商用 API 密钥: ${decision.targetProvider}, 提示用户`);
             this.emit('model:need-api-key', { provider: decision.targetProvider, estimatedCost: decision.estimatedCost });
           }
         }
-      } else if (res?.provider && res.provider === req.model) {
-        this.trippedCount = 0; // 恢复，重置计数
+      } else if (res?.provider) {
+        // 任何有效响应 (即使是降级到其他 provider) 都重置计数
+        this.trippedCount = 0;
       }
       lastResponse = res;
 
@@ -846,34 +1055,52 @@ export class AgentAILoop extends EventEmitter {
             }
           } catch (e: any) { /* TaskChain advance optional */ }
         }
-        // 子Agent 检测: spawn_subagent 调用 → 创建独立 AgentAILoop 并行执行
+        // 子Agent 检测: spawn_subagent 调用 → 创建独立 AgentAILoop 执行
+        // 模型策略: 免费模型(agentai/zhipu)禁用子智能体并行(配额有限), 商业模型以本体为主
+        const FREE_PROVIDERS = new Set(['agentai', 'zhipu']);
+        const isFreeModel = FREE_PROVIDERS.has(this.opts.model);
         for (const tc of res.toolCalls) {
           if (tc.name === 'spawn_subagent') {
-            const subId = `${tc.args?.type || 'sub'}-${Date.now()}`;
-            this.emit('subagent:start', { id: subId, type: tc.args?.type, task: tc.args?.task }); // 前端可见
-            (async () => {
-              try {
-                const subLoop = new AgentAILoop(this.router, this.registry, [], {
-                  maxIterations: 20,
-                  userId: this.opts.userId,
-                  workspace: this.opts.workspace,
-                  model: this.opts.model,
-                  userPickedModel: this.opts.userPickedModel,
-                });
-                const subResult = await subLoop.run(tc.args?.task || '');
-                this.emit('subagent:done', { id: subId, result: subResult.content?.slice(0, 200) });
-                this.context.appendOnlyLog.push({
-                  role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
-                  content: `[子Agent ${tc.args?.type || 'explore'}]: ${subResult.content.slice(0, 2000)}`,
-                });
-              } catch (e: any) {
-                this.emit('subagent:error', { id: subId, error: e.message });
-                this.context.appendOnlyLog.push({
-                  role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
-                  content: `[子Agent 失败]: ${e.message}`,
-                });
-              }
-            })();
+            if (isFreeModel) {
+              // 免费模型: 禁用子智能体并发, 由主Agent自己串行执行
+              console.log(`[subagent] free model ${this.opts.model} does not support subagent parallelism, deferring to main loop`);
+              this.emit('subagent:start', { id: `deferred-${Date.now()}`, type: tc.args?.type, task: tc.args?.task });
+              // 不创建子Agent, 让主Agent自己通过工具调用完成任务
+              // 替换为提示信息, 引导主Agent自行执行
+              this.context.appendOnlyLog.push({
+                role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
+                content: `[子Agent不可用] 当前使用免费模型, 不支持子智能体并行。请直接使用工具执行: ${tc.args?.task || ''}`,
+              });
+              this.emit('subagent:error', { id: `deferred-${Date.now()}`, error: 'Free model does not support subagent parallelism' });
+            } else {
+              // 商业模型: 以本体为主, 子智能体也用同一商业模型
+              const subId = `${tc.args?.type || 'sub'}-${Date.now()}`;
+              this.emit('subagent:start', { id: subId, type: tc.args?.type, task: tc.args?.task }); // 前端可见
+              (async () => {
+                try {
+                  const subLoop = new AgentAILoop(this.router, this.registry, [], {
+                    maxIterations: 20,
+                    userId: this.opts.userId,
+                    workspace: this.opts.workspace,
+                    model: this.opts.model,
+                    modelName: this.opts.modelName,
+                    userPickedModel: this.opts.userPickedModel,
+                  });
+                  const subResult = await subLoop.run(tc.args?.task || '');
+                  this.emit('subagent:done', { id: subId, result: subResult.content?.slice(0, 200) });
+                  this.context.appendOnlyLog.push({
+                    role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
+                    content: `[子Agent ${tc.args?.type || 'explore'}]: ${subResult.content.slice(0, 2000)}`,
+                  });
+                } catch (e: any) {
+                  this.emit('subagent:error', { id: subId, error: e.message });
+                  this.context.appendOnlyLog.push({
+                    role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
+                    content: `[子Agent 失败]: ${e.message}`,
+                  });
+                }
+              })();
+            }
           }
         }
         const rawResults = await this.dispatchToolCalls(res.toolCalls);
@@ -914,6 +1141,32 @@ export class AgentAILoop extends EventEmitter {
           });
           this.emit('log:appended', { role: 'tool', content: r.output });
           this.emit('tool:result', { callId: r.id, name: r.name, result: r.output, ok: !(r.output && r.output.startsWith('Error:')), durationMs: 0 }); // 前端可监听
+
+          // 自动计划追踪: 根据工具名推断当前阶段
+          try {
+            const { _active_plan, EXTRA_HANDLERS } = await import('./tools.js');
+            if (_active_plan) {
+              const readTools = ['read_file', 'list_directory', 'directory_tree', 'search_content', 'search_codebase', 'get_symbols', 'glob'];
+              const researchTools = ['web_search', 'web_fetch', 'recall_memory'];
+              const execTools = ['write_file', 'multi_edit', 'create_file', 'run_code', 'delete_file', 'create_directory', 'move_file', 'copy_file', 'generate_image', 'generate_diagram'];
+
+              let stageId = '';
+              if (readTools.includes(r.name)) stageId = 'understand';
+              else if (researchTools.includes(r.name)) stageId = 'research';
+              else if (execTools.includes(r.name)) stageId = 'execute';
+
+              if (stageId) {
+                // 标记之前的阶段为完成, 当前阶段为进行中
+                for (const t of _active_plan.subtasks) {
+                  if (t.id === stageId) {
+                    t.status = 'in_progress';
+                  } else if (_active_plan.subtasks.indexOf(t) < _active_plan.subtasks.findIndex((s: any) => s.id === stageId)) {
+                    if (t.status !== 'completed') t.status = 'completed';
+                  }
+                }
+              }
+            }
+          } catch { /* auto-track optional */ }
           if (r.name === 'ask_user' && r.data?.action === 'ask_user') {
             hasPendingAsk = true;
             askData = r.data;
@@ -1038,6 +1291,17 @@ export class AgentAILoop extends EventEmitter {
 
       // 3.7 无 tool call: 检查是否需要自动恢复
 
+      // finish_reason='length' → 回复被截断(max_tokens限制), 自动继续
+      if (res.finishReason === 'length') {
+        this.context.appendOnlyLog.push({
+          role: 'user',
+          content: '[SYSTEM] 你的回复被截断了(max_tokens限制)。请从断点继续完成你的回答和任务。',
+        });
+        autoResumeCount++;
+        this.emit('auto:resume', { reason: 'length_truncated', count: autoResumeCount });
+        continue;
+      }
+
       // ═══ 元认知决策: 让 AI 自己判断是否继续 ═══
       // 复用 metaLoop 实例, 不每轮重建, 保留跨轮经验积累
       try {
@@ -1045,7 +1309,7 @@ export class AgentAILoop extends EventEmitter {
           const { MetaCognitiveLoop } = await import('./meta/meta-cognitive-loop.js');
           this.metaLoop = new MetaCognitiveLoop({
             agentId: this.opts.userId,
-            task: { description: messageText.slice(0, 200), taskType: 'general', complexity: messageText.length > 200 ? 'high' : 'medium', requiredTools: [] },
+            task: { description: messageText.slice(0, 200), taskType: 'general', complexity: messageText.length > 200 ? 'high' : 'medium' },
             currentPlan: [],
             completedSteps: [],
             pendingQuestions: [],
@@ -1079,10 +1343,14 @@ export class AgentAILoop extends EventEmitter {
           this.emit('meta:decision', { action: 'stop', confidence: metaOutput.decision.confidence, reason: metaOutput.decision.reasoning });
           break;
         }
-        // 元认知决策: ask_human → 中断等待用户
+        // 元认知决策: ask_human → 注入追问指令让 AI 调用 ask_user
         if (metaOutput.decision.action === 'ask_human') {
           this.emit('meta:decision', { action: 'ask_human', question: metaOutput.decision.reasoning });
-          break;
+          this.context.appendOnlyLog.push({
+            role: 'user',
+            content: `[SYSTEM 元认知] 你需要向用户追问才能继续。原因: ${metaOutput.decision.reasoning}\n请立即调用 ask_user 工具提问，不要直接退出。`,
+          });
+          continue; // 继续循环让 AI 执行 ask_user
         }
         // 元认知决策: continue → 注入策略提示
         if (metaOutput.decision.action === 'continue' || metaOutput.decision.action === 'switch_strategy') {
@@ -1126,16 +1394,26 @@ export class AgentAILoop extends EventEmitter {
 
         const report = estimator.evaluate();
 
-        // 低置信度 → 自动触发补充动作
+        // 低置信度 → 区分: 知识不足(搜索) vs 需求不明确(追问用户)
         if (report.overallScore < 0.4 && this.iteration < this.opts.maxIterations * 0.7) {
-          const action = report.recommendation === 'retry_with_different_strategy'
-            ? '请使用 web_search 搜索相关信息后再回答, 不要凭猜测回复。'
-            : '请调用 read_file 或 web_search 补充信息, 确保回答有据可依。';
-
-          this.context.appendOnlyLog.push({
-            role: 'user',
-            content: `[SYSTEM 置信度检查] 你的置信度较低 (${(report.overallScore * 100).toFixed(0)}%), ${action}`,
-          });
+          // 检测是否为需求不明确 (回复中包含反问/不确定用户意图的词汇)
+          const needsClarification = /你(想要|希望|需要|指的是|是想|是要)|不确定你(的|想)|请(告诉|说明|确认|明确)|which|what do you|clarify/i.test(responseText);
+          if (needsClarification) {
+            // 需求不明确 → 追问用户
+            this.context.appendOnlyLog.push({
+              role: 'user',
+              content: `[SYSTEM 置信度检查] 你似乎不确定用户的需求 (置信度 ${(report.overallScore * 100).toFixed(0)}%)。请立即调用 ask_user 工具向用户追问，提供具体选项让用户选择，不要猜测。`,
+            });
+          } else {
+            // 知识不足 → 搜索
+            const action = report.recommendation === 'retry_with_different_strategy'
+              ? '请使用 web_search 搜索相关信息后再回答, 不要凭猜测回复。'
+              : '请调用 read_file 或 web_search 补充信息, 确保回答有据可依。';
+            this.context.appendOnlyLog.push({
+              role: 'user',
+              content: `[SYSTEM 置信度检查] 你的置信度较低 (${(report.overallScore * 100).toFixed(0)}%), ${action}`,
+            });
+          }
           this.emit('confidence:low', { score: report.overallScore, recommendation: report.recommendation, iteration: this.iteration });
           continue;
         }
@@ -1153,32 +1431,30 @@ export class AgentAILoop extends EventEmitter {
 
       // 规则1: 已使用工具 + 有实质回复 + 明确完成标记 → 任务完成
       const completionMarkers = /任务已完成|全部完成|已完成|完成！|done|finished|completed/i;
-      if (hasPriorTools && len > 60 && completionMarkers.test(text)) break;
+      if (hasPriorTools && len > 30 && completionMarkers.test(text)) break;
 
-      // 规则2: 已使用工具 + 有实质回复 → 检查是否真的完成了
-      if (hasPriorTools && len > 60) {
-        // 如果回复只是描述性/分析性的, 可能还没完成实际操作
-        // 但: 如果用户消息是闲聊/问答, 不强制要求"实际操作"
-        // 但: 如果用户消息是审查/分析类, 描述性回复就是预期结果, 不强制继续
-        const isUserChitChat = /^(你好|嗨|hi|hello|好的|谢谢|没问题|ok|嗯|对|是|不|行|可以|在吗|你在|怎么样|能不能|会不会|能不能听话|烦|气)/i.test(messageText.trim()) || messageText.trim().length < 10;
+      // 规则2: 描述性回复但无实际操作 → 继续执行
+      const userMessageStr = typeof userMessage === 'string' ? userMessage : '';
+      const isChitChat = /^(你好|嗨|hi|hello|好的|谢谢|没问题|ok|嗯|对|是|不|行|可以|能|在吗|你在|怎么样|能不能|会不会|为什么|怎么|什么|如何|哪里|哪个)/i.test(userMessageStr.trim())
+        || userMessageStr.trim().length < 15;
+      const isNoKeyResponse = /\[.*no-key\]/i.test(text);
+
+      if (hasPriorTools && len > 60 && this.iteration < this.opts.maxIterations * 0.7) {
+        const isUserChitChat = messageText.trim().length < 10;
         const isAnalysisTask = /^(审查|分析|检查|评估|review|analyze|inspect|audit|诊断)/i.test(messageText.trim());
         const isDescriptive = /我(看到|发现|了解|注意到|观察到|查看了|分析了)|让我(先|来)|这是|看起来|似乎|大概|目前|现状|情况/i.test(text);
         const hasAction = /已(创建|修改|写入|删除|安装|执行|生成)|成功|✅|完成/i.test(text);
-        if (isDescriptive && !hasAction && !isUserChitChat && !isAnalysisTask && this.iteration < this.opts.maxIterations * 0.7) {
-          // 描述性回复但无实际操作 → 继续执行
+        if (isDescriptive && !hasAction && !isUserChitChat && !isAnalysisTask) {
           this.context.appendOnlyLog.push({
             role: 'user',
             content: '[SYSTEM] 你只是描述了现状, 但还没有执行实际操作。请继续: 用 write_file/multi_edit 修改代码, 用 run_code 验证, 用 npm_install 安装依赖。不要只分析不行动!',
           });
           continue;
         }
-        break; // 有实际操作结果 → 任务完成
+        // 有操作标记 → 不在此处 break, 继续向下判断
       }
 
-      // 规则3: 长回复(> 200) 但无工具 → 可能是纯分析, 需要继续
-      // 但: 闲聊/问答类消息, 长回复是正常的, 不强制调工具
-      const isChitChat = /^(你好|嗨|hi|hello|好的|谢谢|没问题|ok|嗯|对|是|不|行|可以|能|在吗|你在|怎么样|能不能|会不会|为什么|怎么|什么|如何|哪里|哪个)/i.test(userMessage.trim())
-        || userMessage.trim().length < 15;
+      // 规则3: 长回复但无工具 + 非闲聊 + 早期迭代 → 提示使用工具
       if (len > 200 && !hasPriorTools && this.iteration < this.opts.maxIterations * 0.5 && !isChitChat) {
         this.context.appendOnlyLog.push({
           role: 'user',
@@ -1187,14 +1463,8 @@ export class AgentAILoop extends EventEmitter {
         continue;
       }
 
-      // 规则4: 长回复 + 有工具 → 任务完成
-      if (len > 200) break;
-
-      // 规则3: 短回复 + 无工具历史 + 还在早期迭代 → 自动恢复一次
-      // 但: 如果回复包含 no-key 消息 (provider不可用), 不再强制继续
-      // 但: 如果是闲聊/问答 (非任务型消息), 短回复是正常的, 不强制调工具
-      const isNoKeyResponse = /\[.*no-key\]/i.test(text);
-      if (!hasPriorTools && len < 200 && this.iteration <= 3 && autoResumeCount < MAX_AUTO_RESUME && !isNoKeyResponse && !isChitChat) {
+      // 规则4: 短回复 + 无工具 + 还有恢复次数 → 自动恢复
+      if (!hasPriorTools && len < 200 && autoResumeCount < MAX_AUTO_RESUME && !isNoKeyResponse && !isChitChat) {
         autoResumeCount++;
         this.context.appendOnlyLog.push({
           role: 'user',
@@ -1203,8 +1473,41 @@ export class AgentAILoop extends EventEmitter {
         continue;
       }
 
-      // 规则4: 短回复 + 已有工具历史 → 接受为最终回复
+      // 默认: finish_reason='stop' + 无 tool_calls → 自然结束
       break;
+    }
+
+    // ═══ 任务完成总结: 有工具调用但无明确总结 → 追加一轮总结 ═══
+    const hasPriorToolCalls = this.context.appendOnlyLog.some(
+      m => m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')
+    );
+    const lastText = (lastResponse?.content || '').trim();
+    const alreadySummarized = /任务已完成|全部完成|已完成|完成！|done|finished|completed|总结|summary/i.test(lastText);
+    if (hasPriorToolCalls && !alreadySummarized && lastText.length < 100 && this.iteration < this.opts.maxIterations - 1) {
+      try {
+        this.context.appendOnlyLog.push({
+          role: 'user',
+          content: '[SYSTEM] 任务已执行完毕。请用 2-3 句话简要总结你完成了什么工作、修改了哪些文件、关键结果是什么。不要重复执行操作，仅做总结。',
+        });
+        const summaryReq: ChatRequest = {
+          model: this.opts.model as ProviderId,
+          subModel: this.opts.modelName || undefined,
+          messages: [...this.context.immutablePrefix, ...this.context.appendOnlyLog],
+          tools: [],
+          userId: this.opts.userId,
+          workspace: this.opts.workspace,
+          stream: true,
+          onDelta: (delta: string) => { this.emit('llm:delta', { delta }); },
+        };
+        const summaryRes = await this.router.chat(summaryReq);
+        if (summaryRes?.content) {
+          this.context.appendOnlyLog.push({ role: 'assistant', content: summaryRes.content });
+          lastResponse = { ...lastResponse!, content: (lastResponse?.content || '') + '\n\n' + summaryRes.content };
+          this.emit('log:appended', { role: 'assistant', content: summaryRes.content });
+        }
+      } catch (e: any) {
+        console.warn('[summary] task summary failed:', e?.message);
+      }
     }
 
     // ═══ 上下文修剪: 同步执行, 确保实际生效 ═══
@@ -1231,8 +1534,18 @@ export class AgentAILoop extends EventEmitter {
     }
 
     if (!lastResponse) {
-      return { content: '任务已处理，但未能生成最终回复。请重新描述需求。', provider: 'agentai', usage: { promptTokens: 0, completionTokens: 0, cost: 0, cacheHit: false }, iterations: this.iteration, durationMs: Date.now() - startedAt };
+      return { content: '任务已处理，但未能生成最终回复。请重新描述需求。', provider: 'agentai', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const }, iterations: this.iteration, durationMs: Date.now() - startedAt };
     }
+
+    // 自动计划: 标记所有阶段完成
+    try {
+      const { _active_plan } = await import('./tools.js');
+      if (_active_plan) {
+        for (const t of _active_plan.subtasks) {
+          t.status = 'completed';
+        }
+      }
+    } catch { /* plan completion optional */ }
 
     this.emit('loop:done', { iterations: this.iteration, response: lastResponse });
 
@@ -1539,7 +1852,8 @@ export class AgentAILoop extends EventEmitter {
 
   /**
    * 反思门 (学 WorkBuddy auto_reflect + Reasonix telemetry)
-   * 自创: 把反思写进三层记忆
+   * 自创: 把反思写进三层记忆 + 智能可视化触发
+   * 规则: 只在用户任务需要可视化时才触发, 不是每次结构化数据都画图
    */
   private async reflect(): Promise<void> {
     this.emit('reflect:start', { sessionId: this.context.sessionId });
@@ -1555,7 +1869,49 @@ export class AgentAILoop extends EventEmitter {
 
     const summary = `[reflect ${new Date().toISOString()}] session=${this.context.sessionId} turns=${userTurns} tool_errors=${toolErrors}`;
 
-    this.emit('reflect:done', { summary, userTurns, toolErrors });
+    // === 智能可视化: 只在用户任务需要时才触发, 不做无意义的画图 ===
+    const userMessages = recent.filter(m => m.role === 'user');
+    const lastUserMsg = userMessages[userMessages.length - 1]?.content || '';
+    const isTextUserMsg = typeof lastUserMsg === 'string' ? lastUserMsg : '';
+
+    // 判断用户任务是否"适合"可视化 — 严格收紧条件, 只在明确需要画图时才触发
+    const needsVisualization = (() => {
+      // 明确请求画图/流程图/图表 → 绝对需要
+      if (/请.*画|画.*图|生成.*图表|流程图|架构图|思维导图|时间线图|可视化/i.test(isTextUserMsg)) return true;
+
+      // 明确要求"展示"架构/流程/关系 → 可能需要
+      if (/(画|生成|展示|绘制|创建).*(架构|流程|关系|依赖|拓补)/i.test(isTextUserMsg)) return true;
+
+      // 其他情况默认不需要, 避免误触发干扰 AI 正常执行
+      return false;
+    })();
+
+    if (needsVisualization) {
+      // 检查最近的工具调用是否产生了足够的素材来画图
+      const recentlyExecutedTools = recent.filter(m => m.role === 'tool' && m.name);
+      const hasEnoughContext = recentlyExecutedTools.length >= 3;
+
+      if (hasEnoughContext) {
+        const diagHint = `
+[可视化建议] 用户明确要求/适合可视化, 且已收集了 ${recentlyExecutedTools.length} 个工具的执行结果。
+考虑调用 generate_diagram 生成对应图表:
+- 系统审查/代码架构分析 → 架构图 (architecture)
+- 流程/步骤说明 → 流程图 (flowchart)
+- 方案对比/排行榜 → 对比图 (comparison)
+- 数据分析/统计 → 关系图/思维导图 (mindmap)
+
+**原则: 只在用户任务真正需要时才画图, 不要为了画图而画图。**`;
+        this.context.appendOnlyLog.push({ role: 'system', content: diagHint });
+        console.log(`[reflect] 💡 可视化建议触发: 用户需求明确, 已提供 ${recentlyExecutedTools.length} 个工具结果`);
+      } else {
+        console.log(`[reflect] ℹ️  可视化建议: 用户需求明确, 但工具结果还不够 (${recentlyExecutedTools.length}/3)`);
+      }
+    } else {
+      // 简单任务, 不需要画图 — 静默跳过
+      // console.log(`[reflect] ℹ️  无可视化需求: 用户任务不需要图`);
+    }
+
+    this.emit('reflect:done', { summary, userTurns, toolErrors, needsVisualisation: needsVisualization });
 
     // 写 volatile scratch (不发 LLM)
     this.context.volatileScratch += summary + '\n';

@@ -9,7 +9,7 @@
  *   - WorkBuddy 三层记忆              (写入工作空间记忆)
  *
  * 不照搬的:
- *   - 不抄 Hermes 30+ provider 配置 (我们只 4 个: agentai, deepseek, openai, cline)
+ *   - 不抄 Hermes 30+ provider 配置 (我们只 4 个: agentai, deepseek, openai, zhipu)
  *   - 不抄 Reasonix `<<<NEEDS_PRO>>>` (我们有自动降级)
  *
  * 核心创新:
@@ -23,12 +23,11 @@
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
 import { createRequire } from 'module';const _require = createRequire(import.meta.url);const { LRUCache } = _require('lru-cache');
-import { writeMemory } from './memory.js';
 import { estimateMessagesTokens, estimateStringTokens, estimateToolCallsTokens } from './token-utils.js';
 import { routeByScore, getSubModel } from './model-classifier.js';
 
 // ===== 类型定义 =====
-export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'cline' | 'zhipu' | string;
+export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'zhipu' | 'superapi' | string;
 
 /** OpenAI 图片内容块 */
 export interface ImageContentBlock {
@@ -125,6 +124,12 @@ interface ProviderStats {
   trippedAt?: number;
   /** 最后一次错误的 HTTP 状态码 */
   lastErrorStatus?: number;
+  /** 速率限制冷却到何时 (毫秒时间戳) */
+  rateLimitCooldownUntil?: number;
+  /** 冷却重试次数 (指数退避) */
+  rateLimitRetryCount: number;
+  /** 上次成功调用的时间戳 (用于主动调速) */
+  lastCallAt?: number;
 }
 
 // ===== ToolSpec → OpenAI Tool 格式 =====
@@ -158,6 +163,14 @@ export class AgentAIRouter extends EventEmitter {
   private appendOnlyLog: Array<{ ts: number; req: ChatRequest; res: ChatResponse }> = [];
   /** circuit breaker cooldown (5 分钟) */
   private static readonly CB_COOLDOWN_MS = 5 * 60 * 1000;
+  /** 速率限制初始冷却 (10 秒) */
+  private static readonly RL_BASE_COOLDOWN_MS = 10_000;
+  /** 速率限制最大冷却 (2 分钟) */
+  private static readonly RL_MAX_COOLDOWN_MS = 120_000;
+  /** 冷却退避因子 (每次 429 翻倍) */
+  private static readonly RL_BACKOFF_FACTOR = 2;
+  /** 主动调速: 两次请求之间的最小间隔 (3 秒, 避免免费模型突发限流) */
+  private static readonly REQUEST_PACING_MS = 3_000;
   /** 自创: cost guard */
   private costGuard = {
     maxCostPerTurn: 0.20,   // USD
@@ -180,6 +193,7 @@ export class AgentAIRouter extends EventEmitter {
       failureCount: 0,
       recentLatencyMs: [],
       tripped: false,
+      rateLimitRetryCount: 0,
     });
     this.providers.set('deepseek', {
       id: 'deepseek',
@@ -190,6 +204,7 @@ export class AgentAIRouter extends EventEmitter {
       failureCount: 0,
       recentLatencyMs: [],
       tripped: false,           // 辅助模型, 默认可用
+      rateLimitRetryCount: 0,
     });
     this.providers.set('openai', {
       id: 'openai',
@@ -200,16 +215,7 @@ export class AgentAIRouter extends EventEmitter {
       failureCount: 0,
       recentLatencyMs: [],
       tripped: false,
-    });
-    this.providers.set('cline', {
-      id: 'cline',
-      costPer1kInput: 0.0,      // 免费模型
-      costPer1kOutput: 0.0,
-      totalCalls: 0,
-      successCount: 0,
-      failureCount: 0,
-      recentLatencyMs: [],
-      tripped: false,
+      rateLimitRetryCount: 0,
     });
     this.providers.set('zhipu', {
       id: 'zhipu',
@@ -220,6 +226,18 @@ export class AgentAIRouter extends EventEmitter {
       failureCount: 0,
       recentLatencyMs: [],
       tripped: false,
+      rateLimitRetryCount: 0,
+    });
+    this.providers.set('superapi', {
+      id: 'superapi',
+      costPer1kInput: 0,
+      costPer1kOutput: 0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: true,  // 默认熔断, 等用户配置 API Key 后解除
+      rateLimitRetryCount: 0,
     });
 
     // 注意: 不在构造函数中检查 API Key, 因为 .env 可能尚未加载
@@ -231,8 +249,9 @@ export class AgentAIRouter extends EventEmitter {
     console.log('[router] recheckApiKeys() called');
     const keyMap: Record<string, string> = {
       agentai: 'AGENTAI_API_KEY', deepseek: 'DEEPSEEK_API_KEY',
-      openai: 'OPENAI_API_KEY', cline: 'CLINE_API_KEY',
+      openai: 'OPENAI_API_KEY',
       zhipu: 'ZHIPU_API_KEY',
+      superapi: 'SUPERAPI_API_KEY',
     };
     for (const [pid, keyEnv] of Object.entries(keyMap)) {
       const p = this.providers.get(pid as ProviderId);
@@ -368,6 +387,40 @@ export class AgentAIRouter extends EventEmitter {
         this.tryRecoverCircuit(provider);
         if (this.isCircuitOpen(provider)) continue;
       }
+      // === 速率限制冷却检查 ===
+      if (this.isRateLimited(provider)) {
+        // 有冷却中的 provider，查看排名中是否还有其他可用 provider
+        const hasOtherAvailable = ranked.some(m => {
+          if (!m?.provider || m.provider === model.provider) return false;
+          const p = this.providers.get(m.provider as ProviderId);
+          return p && !this.isCircuitOpen(p) && !this.isRateLimited(p);
+        });
+        if (hasOtherAvailable) {
+          console.info(`[router] ${model.provider} in cooldown, trying next`);
+          continue;
+        }
+        // 所有 provider 都在冷却 — 找最短冷却等待
+        const waitMs = this.findShortestCooldown();
+        if (waitMs > 0) {
+          console.info(`[router] all providers cooling, waiting ${waitMs}ms...`);
+          await new Promise(r => setTimeout(r, Math.min(waitMs, 5000)));
+        }
+      }
+
+      // === 主动调速: 避免免费模型突发限流 ===
+      // 如果上次调用距今不足最小间隔, 尝试排名中其他未用过的 provider
+      if (provider.lastCallAt && Date.now() - provider.lastCallAt < AgentAIRouter.REQUEST_PACING_MS) {
+        const hasUnused = ranked.some(m => {
+          if (!m?.provider || m.provider === model.provider) return false;
+          const p = this.providers.get(m.provider as ProviderId);
+          return p && !this.isCircuitOpen(p) && !this.isRateLimited(p) && (!p.lastCallAt || Date.now() - p.lastCallAt >= AgentAIRouter.REQUEST_PACING_MS);
+        });
+        if (hasUnused) {
+          continue; // 跳过刚用过的 provider, 换下一个
+        }
+        // 所有 provider 都最近用过 — 等最短间隔
+        await new Promise(r => setTimeout(r, AgentAIRouter.REQUEST_PACING_MS));
+      }
 
       try {
         if (model.subModel) {
@@ -382,17 +435,23 @@ export class AgentAIRouter extends EventEmitter {
       }
     }
 
-    // All providers failed — 尝试强制恢复免费 provider 再试一次
-    // 但跳过 HTTP 429（速率限制）错误 — 这不会被 untrip 修复
-    const freeProviders = ['zhipu', 'agentai', 'cline'] as ProviderId[];
+    // All providers failed — emergency recovery
+    // 尝试强制恢复免费 provider, 尊重冷却但不完全跳过
+    const freeProviders = ['zhipu', 'agentai'] as ProviderId[];
+    let allCooling = true;
+    let shortestCooldown = Infinity;
     for (const fp of freeProviders) {
       const p = this.providers.get(fp);
       if (!p) continue;
-      // 跳过速率限制熔断：untrip 也不能改变 API 侧的限制
-      if (p.lastErrorStatus === 429) {
-        console.log(`[router] skip emergency recovery for ${fp}: rate limited (429)`);
+
+      // 在冷却中 — 记录最短冷却时间
+      if (this.isRateLimited(p)) {
+        const remaining = (p.rateLimitCooldownUntil ?? 0) - Date.now();
+        if (remaining > 0 && remaining < shortestCooldown) shortestCooldown = remaining;
         continue;
       }
+      allCooling = false;
+
       // 强制解除熔断, 给一次机会
       p.tripped = false;
       p.trippedAt = undefined;
@@ -403,6 +462,61 @@ export class AgentAIRouter extends EventEmitter {
       } catch (err) {
         this.recordFailure(p, err as Error);
         console.warn(`[router] emergency recovery ${fp} also failed: ${(err as Error).message?.slice(0, 80)}`);
+      }
+    }
+
+    // 所有免费 provider 都在冷却 — 等待最短冷却后重试
+    if (allCooling && shortestCooldown < Infinity) {
+      const wait = Math.min(shortestCooldown, 5000);
+      console.info(`[router] all free providers cooling, waiting ${wait}ms...`);
+      await new Promise(r => setTimeout(r, wait));
+      // 再试一次 (冷却后第一个可用 provider)
+      for (const fp of freeProviders) {
+        const p = this.providers.get(fp);
+        if (!p || this.isRateLimited(p)) continue;
+        p.tripped = false;
+        p.trippedAt = undefined;
+        p.failureCount = 0;
+        try {
+          return await this.tryOne(p, req);
+        } catch (err) {
+          this.recordFailure(p, err as Error);
+        }
+      }
+    }
+
+    // === 闪电交替: 免费全限流 → 尝试 DeepSeek (如果有 API Key) ===
+    const deepseekProvider = this.providers.get('deepseek');
+    if (deepseekProvider && process.env.DEEPSEEK_API_KEY) {
+      if (this.isRateLimited(deepseekProvider)) {
+        const wait = Math.min((deepseekProvider.rateLimitCooldownUntil ?? Date.now()) - Date.now(), 3000);
+        if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      }
+      if (!this.isRateLimited(deepseekProvider)) {
+        console.info('[router] lightning swap: all free failed, trying deepseek-v4-flash');
+        deepseekProvider.tripped = false;
+        deepseekProvider.trippedAt = undefined;
+        deepseekProvider.failureCount = 0;
+        try {
+          return await this.tryOne(deepseekProvider, req, 'deepseek-v4-flash');
+        } catch (err) {
+          this.recordFailure(deepseekProvider, err as Error);
+          console.warn(`[router] deepseek fallback also failed: ${(err as Error).message?.slice(0, 80)}`);
+        }
+      }
+    }
+
+    // === 用户自定义模型兜底 (不在内置 5 个中的 provider) ===
+    const builtinIds = new Set(['agentai', 'deepseek', 'openai', 'zhipu']);
+    for (const [pid, p] of this.providers) {
+      if (builtinIds.has(pid)) continue;
+      if (this.isRateLimited(p) || this.isCircuitOpen(p)) continue;
+      console.info(`[router] trying custom provider ${pid} as fallback`);
+      try {
+        return await this.tryOne(p, req);
+      } catch (err) {
+        this.recordFailure(p, err as Error);
+        console.warn(`[router] custom provider ${pid} also failed: ${(err as Error).message?.slice(0, 80)}`);
       }
     }
 
@@ -433,23 +547,13 @@ export class AgentAIRouter extends EventEmitter {
       const res: ChatResponse = {
         content: repaired.content,
         toolCalls: repaired.toolCalls,
+        finishReason: repaired.finishReason || 'stop',
         usage,
         provider: provider.id,
         durationMs,
       };
 
       this.appendOnlyLog.push({ ts: Date.now(), req, res });
-
-      if (req.userId && req.workspace) {
-        await writeMemory({
-          userId: req.userId,
-          workspace: req.workspace,
-          role: 'assistant',
-          content: res.content,
-          source: 'auto_reflect',
-          metadata: { provider: res.provider, model: req.model },
-        });
-      }
 
       if (this.isCacheable(req)) {
         const cacheKey = `${provider.id}:${this.hashPrefix(req)}`;
@@ -500,6 +604,29 @@ export class AgentAIRouter extends EventEmitter {
     return failRate > 0.30 || p.tripped;
   }
 
+  /** 判断 provider 是否处于速率限制冷却中 */
+  private isRateLimited(p: ProviderStats): boolean {
+    if (!p.rateLimitCooldownUntil) return false;
+    if (Date.now() >= p.rateLimitCooldownUntil) {
+      // 冷却已过 — 重置
+      p.rateLimitCooldownUntil = undefined;
+      p.rateLimitRetryCount = Math.max(0, p.rateLimitRetryCount - 1); // 逐级降退避
+      return false;
+    }
+    return true;
+  }
+
+  /** 找出所有冷却中 provider 的最短剩余时间 */
+  private findShortestCooldown(): number {
+    let shortest = Infinity;
+    for (const [, p] of this.providers) {
+      if (!p.rateLimitCooldownUntil) continue;
+      const remaining = p.rateLimitCooldownUntil - Date.now();
+      if (remaining > 0 && remaining < shortest) shortest = remaining;
+    }
+    return shortest === Infinity ? 0 : shortest;
+  }
+
   private tryRecoverCircuit(p: ProviderStats): void {
     if (!p.tripped || !p.trippedAt) return;
     if (Date.now() - p.trippedAt < AgentAIRouter.CB_COOLDOWN_MS) return;
@@ -541,7 +668,34 @@ export class AgentAIRouter extends EventEmitter {
     // Step 4: truncation - 补全截断的 JSON
     repaired = this.repairTruncation(repaired);
 
+    // Step 5: 修复 tool_calls 参数中的常见 JSON 错误
+    repaired = this.repairToolCallArgs(repaired);
+
     return repaired;
+  }
+
+  /** 修复 tool call 参数中的常见 JSON 格式错误 */
+  private repairToolCallArgs(raw: any): any {
+    if (!raw.toolCalls || !Array.isArray(raw.toolCalls)) return raw;
+    for (const tc of raw.toolCalls) {
+      if (typeof tc.args === 'string') {
+        try { JSON.parse(tc.args); } catch {
+          let fixed = tc.args;
+          fixed = fixed.replace(/,\s*([}\]])/g, '$1');           // 尾逗号
+          fixed = fixed.replace(/'/g, '"');                       // 单引号 → 双引号
+          fixed = fixed.replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":'); // 无引号 key
+          fixed = fixed.replace(/:\s*undefined/g, ': null');     // undefined → null
+          try {
+            JSON.parse(fixed);
+            tc.args = fixed;
+            console.log('[repair] fixed tool call args JSON for', tc.name);
+          } catch {
+            // 二次修复失败, 保持原样让后续流程处理
+          }
+        }
+      }
+    }
+    return raw;
   }
 
   private flattenToolCalls(raw: any): any {
@@ -633,15 +787,16 @@ export class AgentAIRouter extends EventEmitter {
     // agentai: apihub.agnes-ai.com/v1/chat/completions (支持 tools / thinking / image_url)
     // deepseek: api.deepseek.com/v1/chat/completions
     // openai: api.openai.com/v1/chat/completions
-    // cline: api.cline.bot/api/v1/chat/completions (免费, 1M 上下文, 支持 reasoning)
     // zhipu: open.bigmodel.cn/api/paas/v4 (GLM-4.7-Flash 免费)
-    const envKeyMap: Record<string, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
+    // Provider 配置 (默认值可通过 .env 环境变量覆盖)
+    const PROVIDER_DEFAULTS: Record<string, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
       agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://apihub.agnes-ai.com/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-2.0-flash' },
-      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-chat' },
+      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-v4-flash' },
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
-      cline:   { keyEnv: 'CLINE_API_KEY',   baseEnv: 'CLINE_BASE_URL',   defaultBase: 'https://api.cline.bot/api/v1',  modelEnv: 'CLINE_MODEL', defaultModel: 'deepseek/deepseek-v4-flash' },
       zhipu:   { keyEnv: 'ZHIPU_API_KEY',   baseEnv: 'ZHIPU_BASE_URL',   defaultBase: 'https://open.bigmodel.cn/api/paas/v4', modelEnv: 'ZHIPU_MODEL', defaultModel: 'glm-4.7-flash' },
+      superapi: { keyEnv: 'SUPERAPI_API_KEY', baseEnv: 'SUPERAPI_BASE_URL', defaultBase: 'https://superapi.vanguard.dpdns.org/v1', modelEnv: 'SUPERAPI_MODEL', defaultModel: 'deepseek-v4-flash' },
     };
+    const envKeyMap = PROVIDER_DEFAULTS;
 
     // 自定义 provider: 从请求上下文获取配置
     let cfg = envKeyMap[id];
@@ -750,13 +905,12 @@ export class AgentAIRouter extends EventEmitter {
           (bodyObj.chat_template_kwargs as any).thinking_budget = req.thinkingBudget;
         }
       } else if (id === 'deepseek') {
-        // DeepSeek V4: thinking + reasoning_effort 参数
-        // deepseek-v4-pro 支持思考模式, deepseek-v4-flash 非思考模式
-        bodyObj.thinking = { type: 'enabled' };
-        bodyObj.reasoning_effort = 'high';
-      } else if (id === 'cline') {
-        // Cline: 支持 reasoning 扩展字段
-        bodyObj.reasoning = { effort: 'high' };
+        // DeepSeek V4: 仅 deepseek-v4-pro 支持 thinking 参数
+        // deepseek-v4-flash 是非思考模式, 加 thinking 会 400 错误
+        if (modelName?.includes('v4-pro') || modelName?.includes('reasoner')) {
+          bodyObj.thinking = { type: 'enabled' };
+          bodyObj.reasoning_effort = 'high';
+        }
       } else if (id === 'zhipu') {
         // 智谱 GLM-4.7-Flash: thinking 参数
         bodyObj.thinking = { type: 'enabled' };
@@ -800,8 +954,10 @@ export class AgentAIRouter extends EventEmitter {
         let fullThinking = '';
         const toolCallsAcc: Map<number, { id: string; name: string; args: string }> = new Map();
         const MAX_TOOL_CALLS = 10; // 资源上限: 防止内存溢出
+        const MAX_CONTENT_CHARS = 100_000; // 防止 OOM
         let usage: any = { prompt_tokens: 0, completion_tokens: 0 };
         let streamModel = modelName;
+        let contentTruncated = false;
 
         while (true) {
           const { value, done } = await reader.read();
@@ -820,10 +976,17 @@ export class AgentAIRouter extends EventEmitter {
               const chunk = rawChunk.data || rawChunk;
               const delta = chunk.choices?.[0]?.delta;
               if (!delta) continue;
-              // 文本内容
-              if (delta.content) fullContent += delta.content;
+              // 文本内容 (有大小限制防止 OOM)
+              if (delta.content) {
+                if (fullContent.length < MAX_CONTENT_CHARS) {
+                  fullContent += delta.content;
+                } else if (!contentTruncated) {
+                  fullContent += '\n\n[...内容过长, 已截断...]';
+                  contentTruncated = true;
+                }
+              }
               // 思考内容 (Agnes AI thinking 模式: reasoning_content 字段)
-              if (delta.reasoning_content) {
+              if (delta.reasoning_content && fullThinking.length < MAX_CONTENT_CHARS) {
                 fullThinking += delta.reasoning_content;
                 if (req.onDelta) (req.onDelta as any)(`[THINKING]${delta.reasoning_content}`);
               }
@@ -972,6 +1135,11 @@ export class AgentAIRouter extends EventEmitter {
     p.successCount++;
     p.recentLatencyMs.push(latencyMs);
     if (p.recentLatencyMs.length > 100) p.recentLatencyMs.shift();
+    // 成功调用 = 速率限制解除, 重置冷却
+    p.rateLimitCooldownUntil = undefined;
+    p.rateLimitRetryCount = Math.max(0, p.rateLimitRetryCount - 1);
+    // 记录调用时间 (用于主动调速)
+    p.lastCallAt = Date.now();
   }
 
   private recordFailure(p: ProviderStats, _err: Error): void {
@@ -980,11 +1148,32 @@ export class AgentAIRouter extends EventEmitter {
     // 从错误消息中提取 HTTP 状态码
     const statusMatch = _err.message?.match(/HTTP\s*(\d{3})/);
     if (statusMatch) p.lastErrorStatus = parseInt(statusMatch[1], 10);
+
+    // === 速率限制 (429) 单独处理 — 不触发熔断 ===
+    if (p.lastErrorStatus === 429) {
+      const backoff = Math.min(
+        AgentAIRouter.RL_BASE_COOLDOWN_MS * Math.pow(AgentAIRouter.RL_BACKOFF_FACTOR, p.rateLimitRetryCount),
+        AgentAIRouter.RL_MAX_COOLDOWN_MS,
+      );
+      p.rateLimitCooldownUntil = Date.now() + backoff;
+      p.rateLimitRetryCount++;
+      // 429 不计入成功/失败率, 撤消 failureCount++
+      p.failureCount = Math.max(0, p.failureCount - 1);
+      console.info(`[router] ${p.id} rate limited (429), cooling ${backoff / 1000}s (retry #${p.rateLimitRetryCount})`);
+      return;
+    }
+
+    // === 非 429 错误 — 正常熔断 ===
     // 失败率超过 30% 熔断
     if (p.failureCount / p.totalCalls > 0.30) {
-      p.tripped = true;
-      p.trippedAt = Date.now();
-      this.emit('circuit:tripped', { provider: p.id });
+      // 失败率只算非 429 错误
+      const non429Total = p.totalCalls - p.rateLimitRetryCount;
+      const non429Failures = p.failureCount - p.rateLimitRetryCount;
+      if (non429Total > 0 && non429Failures / non429Total > 0.30) {
+        p.tripped = true;
+        p.trippedAt = Date.now();
+        this.emit('circuit:tripped', { provider: p.id });
+      }
     }
   }
 

@@ -8,17 +8,28 @@
  *   - 图片: 缩略图 + 点击放大, base64编码发送给AI
  *   - Excel/文档: 解析内容后作为附件发送
  */
-import React, { useEffect, useMemo, useRef, useState, useCallback, type KeyboardEvent, type RefObject, type DragEvent } from 'react';
-import { Tooltip, Select, Image } from 'antd';
+import React, { useEffect, useMemo, useRef, useState, useCallback, useImperativeHandle, type KeyboardEvent, type RefObject, type DragEvent } from 'react';
+import { Tooltip, Select, Image, message } from 'antd';
 import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, SoundOutlined, BellOutlined, BulbOutlined } from '@ant-design/icons';
 import { useModeStore, type AppMode, MODE_CONFIG, MODE_ORDER } from '../store/modeStore';
 import { useModelStore } from '../store/modelStore';
 import { startSpeechRecognition, stopSpeechRecognition, isSpeechRecognitionSupported } from '../services/voice';
 import { isTtsEnabled, setTtsEnabled, isWakeEnabled, startWakeWord, stopWakeWord } from '../services/VoiceService';
+import VoiceSettings from './VoiceSettings';
+import type { VoiceSettingsState } from './VoiceSettings';
 import { parseFile, type ParsedAttachment } from '../services/file-parser';
 import { PromptOptimizer } from './PromptOptimizer';
 
 export type SlashCmd = { cmd: string; desc: string; run: () => void };
+
+export interface ComposerHandle {
+  /** 从外部设置输入框文本 (如点击建议/编辑消息) */
+  setDraft: (text: string) => void;
+  /** 获取当前输入框文本 */
+  getDraft: () => string;
+  /** 聚焦输入框 */
+  focus: () => void;
+}
 
 type PopupKind = { kind: 'slash'; query: string } | { kind: 'at'; query: string; nonce: number } | null;
 
@@ -28,9 +39,7 @@ const MODE_ENTRIES = MODE_ORDER.map(k => {
 });
 
 interface Props {
-  draft: string;
-  setDraft: (v: string) => void;
-  onSend: () => void;
+  onSend: (text: string) => void;
   onAbort: () => void;
   busy: boolean;
   disabled?: boolean;
@@ -40,11 +49,6 @@ interface Props {
   queuedSends?: string[];
   onQueueWhileBusy?: (text: string) => void;
   onDequeueSend?: (i: number) => void;
-  onOptimizePrompt?: () => void;
-  /** 提示词优化: 传入当前草稿文本 */
-  optimizeDraft?: string;
-  /** 提示词优化: 应用优化结果 */
-  onOptimizeApply?: (text: string) => void;
   /** 提示词优化: 是否禁用 */
   optimizeDisabled?: boolean;
   onBrowseWorkspace?: () => void;
@@ -56,18 +60,19 @@ interface Props {
   onThinkingChange?: (v: boolean) => void;
 }
 
-export const Composer: React.FC<Props> = ({
-  draft, setDraft, onSend, onAbort, busy, disabled,
+const ComposerBase = ({
+  onSend, onAbort, busy, disabled,
   slashCommands, textareaRef,
   workspaceDir, queuedSends, onQueueWhileBusy, onDequeueSend,
-  onOptimizePrompt, onBrowseWorkspace,
-  optimizeDraft, onOptimizeApply, optimizeDisabled,
+  onBrowseWorkspace,
+  optimizeDisabled,
   attachments = [], onAttachmentsChange,
   thinking = false, onThinkingChange,
-}) => {
+}: Props, ref: React.Ref<ComposerHandle>) => {
   const { mode, setMode, suggestedMode, suggestionReason, acceptSuggestion, clearSuggestion } = useModeStore();
   const activeModeConfig = MODE_CONFIG[mode];
   const { activeModelId, setActive: setActiveModel, models } = useModelStore();
+  const [draft, setDraft] = useState('');
   const [popup, setPopup] = useState<PopupKind>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [recording, setRecording] = useState(false);
@@ -75,12 +80,38 @@ export const Composer: React.FC<Props> = ({
   const [parsing, setParsing] = useState(false); // 文件解析中
   const [ttsOn, setTtsOn] = useState(isTtsEnabled());
   const [wakeOn, setWakeOn] = useState(isWakeEnabled());
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsState>(() => {
+    try {
+      const raw = localStorage.getItem('agentai.tts.settings');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return { enabled: isTtsEnabled(), engine: 'browser', voice: '', rate: 1.0, pitch: 1.0 };
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
   const srSupported = isSpeechRecognitionSupported();
 
+  // 暴露 setDraft / getDraft / focus 给父组件 (用于建议提示/编辑消息)
+  useImperativeHandle(ref, () => ({
+    setDraft: (text: string) => setDraft(text),
+    getDraft: () => draft,
+    focus: () => textareaRef.current?.focus(),
+  }), [draft]);
+
   const activeModel = models.find(m => m.id === activeModelId);
+
+  // 模型切换时的密钥检查
+  const handleModelChange = (modelId: string) => {
+    const targetModel = models.find(m => m.id === modelId);
+    if (targetModel) {
+      const hasKey = !!localStorage.getItem(targetModel.apiKeyEnv);
+      if (!hasKey && targetModel.isCommercial) {
+        message.warning({ content: `「${targetModel.label}」需配置密钥，请前往 设置 → 模型配置 输入密钥后使用`, duration: 5, key: 'missing-key' });
+      }
+    }
+    setActiveModel(modelId);
+  };
 
   /* ---- 粘贴 & 拖拽文件处理 ---- */
   const [dragOver, setDragOver] = useState(false);
@@ -205,13 +236,14 @@ export const Composer: React.FC<Props> = ({
       const hasContent = draft.trim() || attachments.length > 0;
       if (!hasContent) return;
       if (busy) {
-        onAbort();
+        // 排队，不中止前任务
         if (draft.trim()) {
           onQueueWhileBusy?.(draft.trim());
           setDraft('');
         }
       } else {
-        onSend();
+        onSend(draft);
+        setDraft('');
       }
     }
   };
@@ -434,13 +466,11 @@ export const Composer: React.FC<Props> = ({
             </button>
           </Tooltip>
           {/* 提示词优化: 与其他图标并齐 */}
-          {optimizeDraft !== undefined && onOptimizeApply && (
-            <PromptOptimizer
-              draft={optimizeDraft}
-              onApply={onOptimizeApply}
-              disabled={optimizeDisabled}
-            />
-          )}
+          <PromptOptimizer
+            draft={draft}
+            onApply={(text) => setDraft(text)}
+            disabled={optimizeDisabled}
+          />
           {srSupported && (
             <Tooltip title={recording ? '停止' : '语音输入'}>
               <button onClick={handleVoiceToggle} style={{
@@ -452,16 +482,14 @@ export const Composer: React.FC<Props> = ({
               </button>
             </Tooltip>
           )}
-          {/* TTS播报开关 */}
-          <Tooltip title={ttsOn ? '关闭语音播报' : '开启语音播报'}>
-            <button onClick={() => { const v = !ttsOn; setTtsEnabled(v); setTtsOn(v); }} style={{
-              ...iconBtn,
-              color: ttsOn ? '#6366F1' : undefined,
-              background: ttsOn ? 'rgba(99,102,241,0.12)' : undefined,
-            }}>
-              <SoundOutlined style={{ fontSize: 12 }} />
-            </button>
-          </Tooltip>
+          {/* 音色选择设置 */}
+          <VoiceSettings
+            state={voiceSettings}
+            onChange={(s) => {
+              setVoiceSettings(s);
+              setTtsOn(s.enabled);
+            }}
+          />
           {/* 语音唤醒开关 */}
           <Tooltip title={wakeOn ? '关闭语音唤醒' : '开启语音唤醒'}>
             <button onClick={() => { const v = !wakeOn; v ? startWakeWord() : stopWakeWord(); setWakeOn(v); }} style={{
@@ -485,13 +513,13 @@ export const Composer: React.FC<Props> = ({
 
           <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 4px' }} />
 
-          {/* 模型选择器 (与首页一致) */}
+          {/* 模型选择器 (拉宽显示完整模型名) */}
           {models.length > 0 && (
             <Select
               size="small"
               value={activeModelId}
-              onChange={setActiveModel}
-              style={{ width: 90, fontSize: 9 }}
+              onChange={handleModelChange}
+              style={{ width: 180, fontSize: 11 }}
               variant="borderless"
               options={models.map(m => ({
                 value: m.id,
@@ -536,7 +564,7 @@ export const Composer: React.FC<Props> = ({
             </button>
           ) : (
             <button
-              onClick={onSend}
+              onClick={() => { onSend(draft); setDraft(''); }}
               disabled={disabled || (!draft.trim() && attachments.length === 0)}
               style={{
                 ...sendBtnStyle,
@@ -589,6 +617,8 @@ export const Composer: React.FC<Props> = ({
     </div>
   );
 };
+
+export const Composer = React.forwardRef(ComposerBase);
 
 const iconBtn: React.CSSProperties = {
   width: 24, height: 24, borderRadius: 4,

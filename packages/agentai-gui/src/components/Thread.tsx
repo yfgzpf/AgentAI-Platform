@@ -16,6 +16,7 @@ import type { MessageStatus, ChatSegment } from '../store/chatStore';
 import { Avatar } from './Avatar';
 import { MsgActions } from './MsgActions';
 import { FileCard, FilesFromToolSegment } from './FileCard';
+import { DiffViewer } from './DiffViewer';
 
 /* ======================== CSS 动画注入 ======================== */
 const styleId = 'thread-animations';
@@ -518,6 +519,33 @@ export const ToolCard: React.FC<{
   const statusColor = ok === true ? 'var(--success)' : ok === false ? 'var(--danger)' : 'var(--muted)';
   const statusLabel = ok === true ? '完成' : ok === false ? '失败' : '进行中';
 
+  // 检测 diff 内容: write_file/edit_file 工具结果可能包含 unified diff
+  const [diffFileName, setDiffFileName] = useState<string | null>(null);
+  const [diffContent, setDiffContent] = useState<string>('');
+  const [oldContent, setOldContent] = useState<string>('');
+  const [newContent, setNewContent] = useState<string>('');
+
+  React.useEffect(() => {
+    if (!result || !name.match(/^(write_file|edit_file|str_replace|apply_patch)$/i)) return;
+    // 尝试从 result 中解析 diff
+    // 格式: --- a/path/to/file\n+++ b/path/to/file\n@@ ... @@\n+ ...\n- ...
+    const diffMatch = result.match(/^---\s+a\/[^\n]+\n\+\+\+\s+b\/([^\n]+)\n([\s\S]*)$/m);
+    if (diffMatch) {
+      setDiffFileName(diffMatch[1]);
+      setDiffContent(diffMatch[2]);
+      return;
+    }
+    // 尝试解析 old/new 格式
+    const oldMatch = result.match(/__OLD_CONTENT__\n([\s\S]*?)\n__NEW_CONTENT__/);
+    const newMatch = result.match(/__NEW_CONTENT__\n([\s\S]*?)\n__/);
+    if (oldMatch && newMatch) {
+      setOldContent(oldMatch[1]);
+      setNewContent(newMatch[1]);
+    }
+  }, [result, name]);
+
+  const hasDiff = !!diffContent || (!!oldContent && !!newContent);
+
   return (
     <div className="bubble-enter" style={{
       margin: '6px 0', borderRadius: 8,
@@ -560,7 +588,21 @@ export const ToolCard: React.FC<{
           {args && (
             <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--muted-2)', borderBottom: '1px solid var(--border)' }}>
               <div style={{ marginBottom: 2, fontWeight: 600 }}>参数:</div>
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{args.slice(0, 300)}</pre>
+              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{(typeof args === 'string' ? args : JSON.stringify(args, null, 2)).slice(0, 300)}</pre>
+            </div>
+          )}
+          {hasDiff && (
+            <div style={{ padding: '6px 10px' }}>
+              <div style={{ marginBottom: 4, fontWeight: 600, fontSize: 10, color: 'var(--fg-2)' }}>
+                📝 代码变更预览
+              </div>
+              <DiffViewer
+                diff={diffContent}
+                oldContent={oldContent}
+                newContent={newContent}
+                fileName={diffFileName ?? undefined}
+                collapsed={false}
+              />
             </div>
           )}
           {result != null && (
@@ -616,6 +658,34 @@ export const AssistantMsg: React.FC<{
     return parts.length ? parts.join(' · ') : null;
   };
 
+  // 工具调用合并容器状态
+  type ToolSeg = Extract<ChatSegment, { kind: 'tool' }>;
+  const toolSegments = segments.filter((s): s is ToolSeg => s.kind === 'tool');
+  const nonToolSegments = segments.filter(s => s.kind !== 'tool' && s.kind !== 'reasoning' && s.kind !== 'thinking');
+  const thinkSegments = segments.filter(s => s.kind === 'reasoning' || s.kind === 'thinking');
+  const [toolsOpen, setToolsOpen] = useState(true);
+  const [thinkOpen, setThinkOpen] = useState(true);
+  const successCount = toolSegments.filter(s => s.ok).length;
+  const failCount = toolSegments.filter(s => s.ok === false).length;
+  const runningCount = toolSegments.filter(s => s.state === 'running').length;
+
+  // 任务完成后自动折叠工具容器和思考容器
+  React.useEffect(() => {
+    if (pending) {
+      setToolsOpen(true);
+      setThinkOpen(true);
+    } else {
+      if (toolSegments.length > 0 && runningCount === 0) {
+        const t1 = setTimeout(() => setToolsOpen(false), 2000);
+        return () => clearTimeout(t1);
+      }
+      if (thinkSegments.length > 0) {
+        const t2 = setTimeout(() => setThinkOpen(false), 3000);
+        return () => clearTimeout(t2);
+      }
+    }
+  }, [pending, toolSegments.length, runningCount, thinkSegments.length]);
+
   return (
     <div className="msg-enter" style={{ display: 'flex', gap: 10, padding: '6px 16px', alignItems: 'flex-start' }}>
       {/* AI 头像 — 按 provider 动态显示 */}
@@ -658,76 +728,137 @@ export const AssistantMsg: React.FC<{
           )}
         </div>
 
-        {/* Segments — 工具调用自动折叠 */}
-        {(() => {
-          const toolSegments = segments.filter(s => s.kind === 'tool');
-          const nonToolSegments = segments.filter(s => s.kind !== 'tool');
-          const TOOL_COLLAPSE_THRESHOLD = 5;
-
-          // 先渲染非工具 segments
-          const nonToolRendered = nonToolSegments.map((s, i) => {
-            if (s.kind === 'text') {
-              return <AssistantText key={`nt-${i}`} text={s.text} streaming={pending && i === segments.length - 1} />;
-            }
-            if (s.kind === 'reasoning') {
-              return <ReasoningCard key={`nt-${i}`} text={s.text} streaming={pending && i === segments.length - 1} />;
-            }
-            if (s.kind === 'thinking') {
-              return <ThinkingCard key={`nt-${i}`} text={s.text} streaming={pending && i === segments.length - 1} />;
-            }
-            if (s.kind === 'image') {
-              return <ImageCard key={`nt-${i}`} url={s.url} base64={s.base64} alt={s.alt} filePath={s.filePath} />;
-            }
-            return null;
-          });
-
-          // 工具 segments: 少于阈值全部渲染，超过则折叠
-          if (toolSegments.length <= TOOL_COLLAPSE_THRESHOLD) {
-            const toolRendered = toolSegments.map((s, i) => {
-              if (s.name === 'run_command' || s.name === 'run_background') {
-                const cmd = extractCommand(s.args);
-                const state: ShellState = s.state === 'running' ? 'running' : s.ok ? 'done' : s.ok === false ? 'failed' : 'running';
-                return <ShellCard key={`t-${i}`} command={cmd || s.args || ''} output={s.result} state={state} durationMs={s.durationMs} />;
-              }
-              return <ToolCard key={`t-${i}`} name={s.name} args={typeof s.args === 'string' ? s.args : JSON.stringify(s.args)} result={s.result} ok={s.ok} durationMs={s.durationMs} />;
-            });
-            return [...nonToolRendered, ...toolRendered];
+        {/* 非工具段: 文本 / 图片 */}
+        {nonToolSegments.map((s, i) => {
+          if (s.kind === 'text') {
+            return <AssistantText key={`nt-${i}`} text={s.text}
+              streaming={pending && i === nonToolSegments.length - 1} />;
           }
+          if (s.kind === 'image') {
+            return <ImageCard key={`nt-${i}`} url={s.url}
+              base64={s.base64} alt={s.alt} filePath={s.filePath} />;
+          }
+          return null;
+        })}
 
-          // 折叠模式: 显示前2个 + 摘要 + 最后2个
-          const successCount = toolSegments.filter(s => s.ok).length;
-          const failCount = toolSegments.filter(s => s.ok === false).length;
-          const runningCount = toolSegments.filter(s => s.state === 'running').length;
-          const summary = `${toolSegments.length} 次工具调用` +
-            (successCount ? ` · ${successCount} 成功` : '') +
-            (failCount ? ` · ${failCount} 失败` : '') +
-            (runningCount ? ` · ${runningCount} 执行中` : '');
+        {/* 推理/思考过程: 合并到一个可折叠容器 */}
+        {thinkSegments.length > 0 && (
+          <div style={{
+            margin: '6px 0', borderRadius: 8,
+            border: '1px solid var(--border)',
+            overflow: 'hidden', background: 'var(--panel)',
+          }}>
+            <div
+              onClick={() => setThinkOpen(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '5px 10px', cursor: 'pointer',
+                userSelect: 'none', fontSize: 11, fontWeight: 500,
+                color: 'var(--muted)',
+              }}
+            >
+              <span style={{
+                display: 'inline-flex', transition: 'transform 0.2s ease',
+                transform: thinkOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                fontSize: 9,
+              }}>▶</span>
+              {pending && (
+                <span style={{
+                  width: 5, height: 5, borderRadius: '50%',
+                  background: 'var(--accent)',
+                  animation: 'pulse 1.6s ease-out infinite',
+                }} />
+              )}
+              <span>推理过程</span>
+              {pending && <span style={{ color: 'var(--accent)', fontSize: 10 }}>进行中...</span>}
+            </div>
+            {thinkOpen && (
+              <div style={{
+                padding: '6px 10px 10px',
+                borderTop: '1px solid var(--border)',
+                fontSize: 12, lineHeight: 1.7,
+                color: 'var(--muted)', fontStyle: 'italic',
+                whiteSpace: 'pre-wrap',
+                maxHeight: 400, overflowY: 'auto',
+              }}>
+                {thinkSegments.map((s, i) => (
+                  <div key={`tk-${i}`}>
+                    {(s as any).text}
+                    {pending && i === thinkSegments.length - 1 && (
+                      <span style={{
+                        animation: 'blink 1s infinite',
+                        marginLeft: 1, color: 'var(--accent)',
+                      }}>▌</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
-          const first2 = toolSegments.slice(0, 2).map((s, i) => {
-            if (s.name === 'run_command' || s.name === 'run_background') {
-              const cmd = extractCommand(s.args);
-              const state: ShellState = s.state === 'running' ? 'running' : s.ok ? 'done' : s.ok === false ? 'failed' : 'running';
-              return <ShellCard key={`t-${i}`} command={cmd || s.args || ''} output={s.result} state={state} durationMs={s.durationMs} />;
-            }
-            return <ToolCard key={`t-${i}`} name={s.name} args={typeof s.args === 'string' ? s.args : JSON.stringify(s.args)} result={s.result} ok={s.ok} durationMs={s.durationMs} />;
-          });
-
-          const last2 = toolSegments.slice(-2).map((s, i) => {
-            if (s.name === 'run_command' || s.name === 'run_background') {
-              const cmd = extractCommand(s.args);
-              const state: ShellState = s.state === 'running' ? 'running' : s.ok ? 'done' : s.ok === false ? 'failed' : 'running';
-              return <ShellCard key={`tl-${i}`} command={cmd || s.args || ''} output={s.result} state={state} durationMs={s.durationMs} />;
-            }
-            return <ToolCard key={`tl-${i}`} name={s.name} args={typeof s.args === 'string' ? s.args : JSON.stringify(s.args)} result={s.result} ok={s.ok} durationMs={s.durationMs} />;
-          });
-
-          return [
-            ...nonToolRendered,
-            ...first2,
-            <ToolCollapseSummary key="collapse" summary={summary} total={toolSegments.length} tools={toolSegments} />,
-            ...last2,
-          ];
-        })()}
+        {/* 工具调用: 合并到一个可折叠容器 */}
+        {toolSegments.length > 0 && (
+          <div style={{
+            margin: '6px 0', borderRadius: 8,
+            border: '1px solid var(--border)',
+            overflow: 'hidden', background: 'var(--panel)',
+          }}>
+            <div
+              onClick={() => setToolsOpen(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '5px 10px', cursor: 'pointer',
+                userSelect: 'none', fontSize: 11, fontWeight: 500,
+                color: 'var(--muted)',
+              }}
+            >
+              <span style={{
+                display: 'inline-flex', transition: 'transform 0.2s ease',
+                transform: toolsOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                fontSize: 9,
+              }}>▶</span>
+              {pending && runningCount > 0 && (
+                <span style={{
+                  width: 5, height: 5, borderRadius: '50%',
+                  background: 'var(--accent)',
+                  animation: 'pulse 1.6s ease-out infinite',
+                }} />
+              )}
+              <span>{toolSegments.length} 次工具调用</span>
+              <span style={{ marginLeft: 'auto', fontSize: 10 }}>
+                {successCount > 0 && `${successCount} 成功`}
+                {successCount > 0 && failCount > 0 && ' · '}
+                {failCount > 0 && `${failCount} 失败`}
+                {runningCount > 0 && ` · ${runningCount} 执行中`}
+              </span>
+            </div>
+            {toolsOpen && (
+              <div style={{
+                padding: '4px 6px',
+                borderTop: '1px solid var(--border)',
+              }}>
+                {toolSegments.map((s, i) => {
+                  if (s.name === 'run_command' || s.name === 'run_background') {
+                    const cmd = extractCommand(s.args);
+                    const state: ShellState = s.state === 'running'
+                      ? 'running' : s.ok ? 'done'
+                      : s.ok === false ? 'failed' : 'running';
+                    return <ShellCard key={`t-${i}`}
+                      command={cmd || s.args || ''}
+                      output={s.result} state={state}
+                      durationMs={s.durationMs} />;
+                  }
+                  return <ToolCard key={`t-${i}`} name={s.name}
+                    args={typeof s.args === 'string'
+                      ? s.args : JSON.stringify(s.args)}
+                    result={s.result} ok={s.ok}
+                    durationMs={s.durationMs} />;
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Footer: status + token usage */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, paddingLeft: 2 }}>
