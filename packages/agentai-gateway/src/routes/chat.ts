@@ -188,11 +188,11 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
   });
 
   r.post('/v1/chat', async (req: Request, res: Response) => {
-    const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig } = req.body;
+    const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile } = req.body;
 
     // 速率限制检查 (内部调用使用更高限制)
-    const isInternal = !!_internal;
-    const rl = limiter.check(userId, isInternal);
+    const isInternalReq = !!_internal;
+    const rl = limiter.check(userId, isInternalReq);
     if (!rl.allowed) {
       res.setHeader('Retry-After', String(rl.retryAfter || 60));
       return res.status(429).json({ error: rl.reason, retryAfter: rl.retryAfter });
@@ -204,19 +204,16 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         return res.status(400).json({ error: 'message required' });
       }
 
-      // 内部请求 (如情绪分析) 不写入记忆, 不走编排
-      const isInternal = !!_internal;
-
       // 动态设置项目目录: projectDir > workspace > PROJECT_ROOT
       const wm = WorkspaceManager.getInstance();
       if (rawProjectDir && fs.existsSync(rawProjectDir)) {
         try {
           wm.setProjectDir(rawProjectDir);
-        } catch {}
+        } catch (e: any) { /* workspace init fallback */ }
       } else if (rawWorkspace && fs.existsSync(rawWorkspace)) {
         try {
           wm.setProjectDir(rawWorkspace);
-        } catch {}
+        } catch (e: any) { /* workspace init fallback */ }
       }
       const workspace = wm.projectDir;
       if (!fs.existsSync(workspace)) {
@@ -256,8 +253,6 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         }
       }
 
-      await writeMemory({ userId, workspace, role: 'user', content: message, source: 'session' });
-
       // FTS5: 记录用户消息
       if (fts5Memory) {
         fts5Memory.recordMessage({ sessionId: userId, userId, workspace, role: 'user', content: message }).catch(() => {});
@@ -276,6 +271,13 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
 
+        // ====== SSE keep-alive: 每 15 秒发一次心跳, 防止浏览器/代理超时断开 ======
+        const keepAliveTimer = setInterval(() => {
+          try { res.write(': heartbeat\n\n'); } catch { /* conn already closed */ }
+        }, 15_000);
+        // 客户端断开时清理
+        req.on('close', () => { clearInterval(keepAliveTimer); });
+
         // ====== 请求队列: 同 session 串行, 防止并发覆盖 ======
         const queueKey = `queue:${userId}:${workspace}`;
         if (!(global as any).__msgQueues) (global as any).__msgQueues = new Map<string, Promise<any>>();
@@ -292,8 +294,34 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
           'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
           'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
-          'cline': { provider: 'cline', label: 'Cline DS Flash' },
           'zhipu': { provider: 'zhipu', subModel: 'glm-4-flash', label: '智谱 GLM-4 Flash' },
+          // 传统独立商业模型 (备选, 不与 SuperAPI 冲突)
+          'qwen': { provider: 'qwen', label: '通义千问 (阿里云)' },
+          'moonshot': { provider: 'moonshot', label: '月之暗面 Moonshot' },
+          'yi': { provider: 'yi', label: '零一万物 Yi' },
+          'baichuan': { provider: 'baichuan', label: '百川智能' },
+          'minimax': { provider: 'minimax', label: 'MiniMax' },
+          'anthropic': { provider: 'anthropic', label: 'Anthropic Claude' },
+          // SuperAPI 模型工厂 (子模型独立展示, 统一使用 SUPERAPI_API_KEY)
+          'superapi-deepseek-v4-flash': { provider: 'superapi', subModel: 'deepseek-v4-flash', label: 'SuperAPI · DeepSeek V4 Flash' },
+          'superapi-deepseek-v4-pro':  { provider: 'superapi', subModel: 'deepseek-v4-pro',  label: 'SuperAPI · DeepSeek V4 Pro' },
+          'superapi-glm-5.2':          { provider: 'superapi', subModel: 'glm-5.2',           label: 'SuperAPI · GLM-5.2' },
+          'superapi-qwen3.7-plus':     { provider: 'superapi', subModel: 'qwen3.7-plus',      label: 'SuperAPI · Qwen3.7 Plus' },
+          'superapi-qwen3.7-max':      { provider: 'superapi', subModel: 'qwen3.7-max',       label: 'SuperAPI · Qwen3.7 Max' },
+          'superapi-qwen3.6-plus':     { provider: 'superapi', subModel: 'qwen3.6-plus',      label: 'SuperAPI · Qwen3.6 Plus' },
+          'superapi-kimi-k2.7-code':   { provider: 'superapi', subModel: 'kimi-k2.7-code',    label: 'SuperAPI · Kimi K2.7 Code' },
+          'superapi-grok-4.3':         { provider: 'superapi', subModel: 'grok-4.3',          label: 'SuperAPI · Grok 4.3' },
+          'superapi-doubao-seed-2.0-pro': { provider: 'superapi', subModel: 'doubao-seed-2.0-pro', label: 'SuperAPI · 豆包 Seed 2.0 Pro' },
+          'superapi-step-3.7-flash':   { provider: 'superapi', subModel: 'step-3.7-flash',    label: 'SuperAPI · Step 3.7 Flash' },
+          'superapi-mimo-v2.5-pro':    { provider: 'superapi', subModel: 'mimo-v2.5-pro',     label: 'SuperAPI · Mimo V2.5 Pro' },
+          'superapi-minimax-m3':       { provider: 'superapi', subModel: 'MiniMax-M3',         label: 'SuperAPI · MiniMax M3' },
+          // 传统独立商业模型 (备选, 不与 SuperAPI 冲突)
+          'qwen': { provider: 'qwen', label: '通义千问 (阿里云)' },
+          'moonshot': { provider: 'moonshot', label: '月之暗面 Moonshot' },
+          'yi': { provider: 'yi', label: '零一万物 Yi' },
+          'baichuan': { provider: 'baichuan', label: '百川智能' },
+          'minimax': { provider: 'minimax', label: 'MiniMax' },
+          'anthropic': { provider: 'anthropic', label: 'Anthropic Claude' },
         };
 
         // 动态注册自定义模型 (前端通过 modelConfig 传递)
@@ -314,7 +342,6 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             agentai: 'AGENTAI_API_KEY',
             deepseek: 'DEEPSEEK_API_KEY',
             openai: 'OPENAI_API_KEY',
-            cline: 'CLINE_API_KEY',
             zhipu: 'ZHIPU_API_KEY',
           };
           const envKey = keyMap[mapped.provider] || `${mapped.provider.toUpperCase()}_API_KEY`;
@@ -327,8 +354,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             return { ...mapped, fallback: false };
           }
 
-          // 降级: 按优先级尝试免费模型 (agentai > cline)
-          const fallbackOrder = ['agentai', 'cline'];
+          // 降级: 按优先级尝试免费模型
+          const fallbackOrder = ['agentai'];
           for (const fb of fallbackOrder) {
             if (fb !== mapped.provider && process.env[keyMap[fb]] && !router['providers']?.get(fb)?.tripped) {
               const fbMapped = MODEL_MAP[fb];
@@ -361,7 +388,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           });
           const master = new MasterController({
             router, registry, userId, workspace,
-            masterModel: selected.provider === 'deepseek' ? 'deepseek' : 'agentai',
+            masterModel: 'agentai',
             proModel: 'deepseek',
             multimodalModel: 'agentai', subagentModel: 'agentai',
           });
@@ -396,25 +423,30 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         // 立即发送 thinking 事件 (消除空白等待感)
         sendEvent('thinking', { msg: '正在思考...' });
 
-        // ====== 跨会话记忆注入: 每次对话都加载历史上下文 ======
+        // ====== 跨会话记忆注入: 仅在首轮加载 (避免重复注入) ======
         if (persistentMemory && sessionId) {
           try {
-            const lastMsgs = persistentMemory.getMessages(sessionId);
-            if (lastMsgs?.length) {
-              const recent = lastMsgs.slice(-10); // 最近 10 条(5 轮对话)
-              const summary = recent
-                .filter((m:any) => m.role === 'user' || m.role === 'assistant')
-                .map((m:any) => `[${m.role}]: ${(typeof m.content === 'string' ? m.content : '').slice(0, 200)}`)
-                .join('\n');
-              if (summary) {
-                const isContinuation = /^(继续|接着|接着做|上次|之前|刚才|那个|go on|continue)/i.test(message.trim());
-                loop.context?.appendOnlyLog?.push({
-                  role: 'system',
-                  content: `[会话历史 — 最近对话]\n${summary}\n\n${isContinuation ? '用户说"继续"，请基于以上上下文继续执行未完成的任务。' : '以上是本会话的最近对话记录，请保持上下文连贯。'}`,
-                });
+            const sessionData_ = sessionManager.get(sessionKey);
+            const callCount = sessionData_?.callCount || 0;
+            // 只在首轮 (callCount <= 1) 注入历史, 避免每轮重复
+            if (callCount <= 1) {
+              const lastMsgs = persistentMemory.getMessages(sessionId);
+              if (lastMsgs?.length) {
+                const recent = lastMsgs.slice(-10); // 最近 10 条(5 轮对话)
+                const summary = recent
+                  .filter((m:any) => m.role === 'user' || m.role === 'assistant')
+                  .map((m:any) => `[${m.role}]: ${(typeof m.content === 'string' ? m.content : '').slice(0, 200)}`)
+                  .join('\n');
+                if (summary) {
+                  const isContinuation = /^(继续|接着|接着做|上次|之前|刚才|那个|go on|continue)/i.test(message.trim());
+                  loop.context?.appendOnlyLog?.push({
+                    role: 'system',
+                    content: `[会话历史 — 最近对话]\n${summary}\n\n${isContinuation ? '用户说"继续"，请基于以上上下文继续执行未完成的任务。' : '以上是本会话的最近对话记录，请保持上下文连贯。'}`,
+                  });
+                }
               }
             }
-          } catch {}
+          } catch (e: any) { /* persistent memory init fallback */ }
         }
 
         // 注册流式 delta 监听 (提前注册, loop.run 内触发)
@@ -485,7 +517,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           });
         });
 
-        // ====== 统一注入附件到上下文 (MasterController/loop.run 都能收到) ======
+        // ====== 统一注入附件到上下文 (所有执行路径: loop.run / MasterController subtasks) ======
         let runMessage: string | { content: any[] } = message;
         if (attachments && Array.isArray(attachments) && attachments.length > 0) {
           const attachmentParts: string[] = [];
@@ -497,10 +529,16 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
               attachmentParts.push(`--- 附件: ${att.name} ---\n${att.content}\n--- 附件结束 ---`);
             }
           }
+          // 图片统一注入 appendOnlyLog (让所有执行路径都能看到)
           if (imageBlocks.length > 0) {
             const textContent = message || '请查看上传的图片';
-            runMessage = { content: [{ type: 'text', text: textContent }, ...imageBlocks] } as any;
+            loop.context?.appendOnlyLog?.push({
+              role: 'user',
+              content: [{ type: 'text', text: textContent }, ...imageBlocks] as any,
+            });
+            // runMessage 保持纯文本, 避免 loop.run() 重复注入图片
           }
+          // 文件内容注入 appendOnlyLog (让 subtask 执行路径也能看到)
           if (attachmentParts.length > 0) {
             loop.context?.appendOnlyLog?.push({
               role: 'user',
@@ -509,32 +547,72 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           }
         }
 
-        // ====== 意图分类 (只用启发式, 不调 LLM) ======
-        const master = sessionData?.master || new MasterController({
-          router, registry, userId, workspace,
-          masterModel: 'deepseek', proModel: 'deepseek',
-          multimodalModel: 'agentai', subagentModel: 'agentai',
-        });
-        const { execPlan, shouldAutoRun } = await master.orchestrate(message);
+        // ====== 当前编辑器文件上下文注入 ======
+        if (activeFile && typeof activeFile === 'string' && activeFile.trim()) {
+          loop.getContext().appendOnlyLog.push({
+            role: 'system',
+            content: `[上下文] 用户当前正在编辑器中查看文件: ${activeFile}`,
+          });
+        }
 
-        // ====== 执行分支 ======
+        // ====== 启发式快速路径: 极简消息不绕 MasterController ======
+        // 寒暄/简短问答/搜索/媒体生成等简单消息直接走 loop.run()
+        // 只有 medium/complex 才进入编排器 (节省 token, 降低延迟)
+        const trimmedMessage = (message || '').trim();
+        const isVeryShort = trimmedMessage.length < 30;
+        const isChatLike = /^(你好|hi|hello|谢谢|感谢|bye|再见|ok|好的|嗯|哦|是|不是|对|不对|yes|no|算了|没事|收到|明白|懂了|了解)$/i.test(trimmedMessage);
+        const isSimpleSearch = /^.*(搜索|查找|找|search|find|查|帮我查).*代码|文件|目录|项目|函数|类|组件|接口|接口定义|API.*(路径|内容|地址|URL|端口|状态).*$/i.test(trimmedMessage);
+        const isSimpleMedia = /^.*(生成|创建|画|做|设计|生成图|生图|生成视频|画视频).*.*(图|视频|海报|插画|logo|icon|封面|配图).*$/i.test(trimmedMessage);
+        
+        let needMasterController = !isChatLike && !isSimpleSearch && !isSimpleMedia;
+        if (isVeryShort && !needMasterController) {
+            needMasterController = false; // 极简消息不绕编排器
+        }
+
+        const effectiveModel = requestModel || 'agentai';
+        const isFreeModel = ['agentai', 'zhipu'].includes(effectiveModel);
+
+        // 如果不需要 MasterController, 直接走 loop.run() (分支 3)
+        if (!needMasterController) {
+            console.log(`[chat] 🚀 快速路径: 不调 MasterController, 直接 loop.run()`);
+        }
+
+        const master = needMasterController ? (sessionData?.master || new MasterController({
+            router, registry, userId, workspace,
+            masterModel: 'agentai',
+            proModel: 'deepseek',
+            multimodalModel: 'agentai', subagentModel: 'agentai',
+        })) : null;
+
+        const execPlan = master ? await master.orchestrate(message).catch((e: any) => {
+          console.warn(`[chat] ⚠️ orchestrate 失败: ${e?.message}, 降级到直接 loop.run()`);
+          return null;
+        }) : null;
+        const shouldAutoRun = execPlan?.shouldAutoRun ?? true;
+
+        // ====== 执行分支 (带 try-catch 兜底, 防止异常导致网关掉线) ======
+        // 分支 1: 规划模式 → 只规划不执行
+        // 分支 2: 商业模型 + 子任务 → MasterController 编排 (并行子Agent/单子Agent)
+        // 分支 3: 其他 (免费模型 / shouldAutoRun=true / 快速路径) → loop.run()
         let finalContent: string = '';
         let finalProvider: string = '';
         let finalUsage: any = {};
         let finalToolCalls: any;
         let finalIterations: any;
 
+        try {
+
         // 规划模式: 非简单任务只规划不执行, 等用户确认
         const reqMode = req.body?.mode || 'auto';
         const isPlanningMode = reqMode === 'planning';
-        // 规划模式下: simple直接回复, 其他一律先展示审核卡片
-        const needPlanApproval = isPlanningMode && execPlan.intent.complexity !== 'simple';
+        const needPlanApproval = isPlanningMode && execPlan && execPlan.intent?.complexity !== 'simple';
 
         if (needPlanApproval) {
+          // ======================== 分支 1: 规划模式 ========================
           // 存储计划到 pendingPlans, 等待用户通过 /v1/chat/approve 确认
           pendingPlans.set(sessionId || 'default', {
             execPlan, message, userId, workspace, sessionId: sessionId || 'default',
-            profile: req.body?.profile, model: requestModel, displayModel,
+            profile: req.body?.profile, model: effectiveModel, displayModel,
           });
           sendEvent('plan_created', { chainId: execPlan.id, goal: execPlan.goal,
             stages: execPlan.stages, currentStage: execPlan.stages[0]?.key || 'plan',
@@ -544,18 +622,20 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             needsApproval: true, // 标记需要用户确认
           });
           // 发送规划结果, 不执行
-          const planSummary = `📋 任务规划完成 (规划模式 — 需确认后执行)\n\n目标: ${execPlan.goal}\n复杂度: ${execPlan.intent.complexity}\n\n子任务:\n${execPlan.subtasks.map((s, i) => `${i + 1}. [${s.agentType}] ${s.title}\n   ${s.description.slice(0, 100)}`).join('\n')}\n\n请确认是否执行, 或修改任务后执行。`;
+          const planSummary = `📋 任务规划完成 (规划模式 — 需确认后执行)\n\n目标: ${execPlan.goal}\n复杂度: ${execPlan.intent?.complexity || 'unknown'}\n\n子任务:\n${execPlan.subtasks.map((s, i) => `${i + 1}. [${s.agentType}] ${s.title}\n   ${s.description.slice(0, 100)}`).join('\n')}\n\n请确认是否执行, 或修改任务后执行。`;
           sendEvent('delta', { delta: planSummary });
           sendEvent('done', { provider: 'master-controller', displayModel, content: planSummary, usage: {}, needsApproval: true });
           finalContent = planSummary;
           finalProvider = 'master-controller';
-        } else if (!shouldAutoRun && execPlan.subtasks.length > 1) {
-          // 复杂任务: 分派子Agent 并行执行
+        } else if (master && !shouldAutoRun && execPlan?.subtasks?.length > 1 && !isFreeModel) {
+          // ======================== 分支 2a: 复杂多子任务 ========================
+          // 商业模型 + 需要子Agent → MasterController 并行执行
+          const stages = execPlan.stages || [];
           sendEvent('plan_created', { chainId: execPlan.id, goal: execPlan.goal,
-            stages: execPlan.stages, currentStage: execPlan.stages[0]?.key || 'plan',
+            stages: stages, currentStage: stages[0]?.key || 'plan',
             intent: execPlan.intent,
-            subtasks: execPlan.subtasks.map(s => ({ id: s.id, title: s.title, status: s.status, agentType: s.agentType })),
-            subtaskCount: execPlan.subtasks.length, autoRun: false });
+            subtasks: (execPlan.subtasks || []).map(s => ({ id: s.id, title: s.title, status: s.status, agentType: s.agentType })),
+            subtaskCount: (execPlan.subtasks || []).length, autoRun: false });
 
           // 监听子任务事件并转发到前端
           const onSubtaskStart = (task: any) => {
@@ -587,13 +667,15 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             master.off('subtask:end', onSubtaskEnd);
             master.off('subtask:model', onSubtaskModel);
           }
-        } else if (!shouldAutoRun) {
-          // 单子任务但非简单: 也由主控执行 (不通过 loop.run 多轮)
-          const sub = execPlan.subtasks[0];
+        } else if (master && !shouldAutoRun && execPlan?.subtasks?.length === 1 && !isFreeModel) {
+          // ======================== 分支 2b: 单子任务 ========================
+          // 商业模型 + 单子任务 → MasterController 执行子任务 (不通过 loop.run)
+          const sub = execPlan.subtasks?.[0];
+          const stages = execPlan.stages || [];
           sendEvent('plan_created', { chainId: execPlan.id, goal: execPlan.goal,
-            stages: execPlan.stages, currentStage: execPlan.stages[0]?.key || 'solve',
+            stages: stages, currentStage: stages[0]?.key || 'solve',
             intent: execPlan.intent,
-            subtasks: [{ id: sub.id, title: sub.title, status: sub.status, agentType: sub.agentType }],
+            subtasks: sub ? [{ id: sub.id, title: sub.title, status: sub.status, agentType: sub.agentType }] : [],
             subtaskCount: 1, autoRun: false });
 
           // 监听子任务事件
@@ -619,28 +701,54 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             master.off('subtask:end', onSubtaskEnd);
           }
         } else {
+          // ======================== 分支 3: loop.run() (免费模型 / 简单任务 / shouldAutoRun) ========================
           // 简单/中等任务: AgentAILoop 直接执行 (含自动继续 + 工具调用)
+          // 免费模型 (agentai/zhipu) + !shouldAutoRun → 跳过编排，直接 loop.run()
           // 只有非simple任务才显示编排器面板
-          if (execPlan.intent.complexity !== 'simple') {
-            sendEvent('plan_created', { chainId: execPlan.id, goal: execPlan.goal,
-              stages: execPlan.stages, currentStage: execPlan.stages[0]?.key || 'solve',
-              intent: execPlan.intent, subtaskCount: 1, autoRun: true });
+          // 复杂任务: MasterController 编排 (并行子Agent/单子Agent)
+          if (execPlan) {
+            if (execPlan.intent?.complexity !== 'simple') {
+              const stages = execPlan.stages || [];
+              const subtasks = execPlan.subtasks || [];
+              sendEvent('plan_created', {
+                chainId: execPlan.id,
+                goal: execPlan.goal,
+                stages: stages,
+                currentStage: stages[0]?.key || 'plan',
+                intent: execPlan.intent,
+                subtasks: subtasks.map(s => ({
+                  id: s.id, title: s.title, description: s.description, status: s.status, agentType: s.agentType
+                })),
+                subtaskCount: subtasks.length,
+                autoRun: shouldAutoRun,
+              });
+            }
           }
 
           // 注入意图提示到 loop 上下文
           const alreadyHints = loop.context?.appendOnlyLog?.filter(
-            (m: any) => m.role === 'system' && m.content?.startsWith('[意图评估]')
+            (m: any) => m.role === 'system' && (
+              (typeof m.content === 'string' && m.content.startsWith('[意图评估]')) ||
+              (Array.isArray(m.content) && m.content.some((c: any) => typeof c === 'object' && c.text?.startsWith('[意图评估]')))
+            )
           );
-          if (!alreadyHints?.length) {
+          if (!alreadyHints?.length && master && execPlan && execPlan.intent) {
+            const intentLabel = execPlan.intent.category === 'chat' ? 'chat' : `${execPlan.intent.category}(${execPlan.intent.summary})`;
             loop.context?.appendOnlyLog?.push({
               role: 'system',
-              content: `[意图评估] ${execPlan.intent.summary} (类别: ${execPlan.intent.category})`,
+              content: `[意图评估] ${intentLabel}`,
+            });
+          }
+          if (!master) {
+            loop.context?.appendOnlyLog?.push({
+              role: 'system',
+              content: `[意图评估] 快速路径 (不调 MasterController)`,
             });
           }
 
           // 监听loop的工具调用事件, 推进编排器stage
           const onToolStart = () => {
-            if (execPlan.intent.complexity !== 'simple') {
+            if (execPlan && execPlan.intent?.complexity !== 'simple') {
               sendEvent('plan_stage', { chainId: execPlan.id, stage: 'solve', status: 'running' });
             }
           };
@@ -678,7 +786,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           // loop完成 → 推进到report
           loop.off('tool:start', onToolStart);
           loop.off('tool:end', onToolEnd);
-          if (execPlan.intent.complexity !== 'simple') {
+          if (execPlan && execPlan.intent?.complexity !== 'simple') {
             sendEvent('plan_stage', { chainId: execPlan.id, stage: 'report', status: 'done' });
           }
 
@@ -697,34 +805,16 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           finalToolCalls = response?.toolCalls;
           finalIterations = response?.iterations;
         }
+      } catch (e: any) {
+        console.error(`[chat] ❌ 执行分支异常: ${e?.message || e}`);
+        sendEvent('delta', { delta: `\n\n❌ 执行出错: ${e?.message || '未知错误'}` });
+        sendEvent('done', { provider: 'error', displayModel, content: `执行出错: ${e?.message || '未知错误'}`, usage: {} });
+        finalContent = `[ERROR] ${e?.message || '未知错误'}`;
+      }
 
-        // 持久化 assistant 回复
+      // 持久化 assistant 回复
         if (persistentMemory && finalContent) {
           persistentMemory.addMessage(resSessionId, { role: 'assistant', content: finalContent });
-        }
-        await writeMemory({
-          userId, workspace, role: 'assistant', content: finalContent || '',
-          metadata: { provider: finalProvider, durationMs: 0 }, source: isInternal ? 'internal' : 'session',
-        });
-
-        // 任务完成自动记忆: 写入项目记忆文件 (.agentai/memory.jsonl)
-        // 内部请求 (如情绪分析) 不写入记忆, 避免污染
-        if (!isInternal && finalContent && finalContent.length > 50) {
-          try {
-            const summary = finalContent.slice(0, 300).replace(/\n+/g, ' ').trim();
-            await writeMemory({
-              userId, workspace, role: 'system',
-              content: `[任务完成] ${summary}`,
-              metadata: {
-                type: 'session_memory',
-                scope: 'project',
-                name: `task-${Date.now()}`,
-                description: '自动记录完成的任务',
-                provider: finalProvider,
-              },
-              source: 'auto_reflect',
-            });
-          } catch {}
         }
 
         // FTS5 深层记忆 + 用户建模
@@ -758,12 +848,6 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             [{ role: 'user', content: message }],
             { userId, workspace, tools: [] },
           );
-          await writeMemory({
-            userId, workspace, role: 'assistant',
-            content: res2.content,
-            metadata: { framework, provider: res2.provider, durationMs: res2.durationMs },
-            source: 'session',
-          });
           return res.json({
             content: res2.content,
             toolCalls: res2.toolCalls,
@@ -783,8 +867,27 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
         'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
         'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
-        'cline': { provider: 'cline', label: 'Cline DS Flash' },
         'zhipu': { provider: 'zhipu', subModel: 'glm-4-flash', label: '智谱 GLM-4 Flash' },
+        // SuperAPI 模型工厂 (非流式路径)
+        'superapi-deepseek-v4-flash': { provider: 'superapi', subModel: 'deepseek-v4-flash', label: 'SuperAPI · DeepSeek V4 Flash' },
+        'superapi-deepseek-v4-pro':  { provider: 'superapi', subModel: 'deepseek-v4-pro',  label: 'SuperAPI · DeepSeek V4 Pro' },
+        'superapi-glm-5.2':          { provider: 'superapi', subModel: 'glm-5.2',           label: 'SuperAPI · GLM-5.2' },
+        'superapi-qwen3.7-plus':     { provider: 'superapi', subModel: 'qwen3.7-plus',      label: 'SuperAPI · Qwen3.7 Plus' },
+        'superapi-qwen3.7-max':      { provider: 'superapi', subModel: 'qwen3.7-max',       label: 'SuperAPI · Qwen3.7 Max' },
+        'superapi-qwen3.6-plus':     { provider: 'superapi', subModel: 'qwen3.6-plus',      label: 'SuperAPI · Qwen3.6 Plus' },
+        'superapi-kimi-k2.7-code':   { provider: 'superapi', subModel: 'kimi-k2.7-code',    label: 'SuperAPI · Kimi K2.7 Code' },
+        'superapi-grok-4.3':         { provider: 'superapi', subModel: 'grok-4.3',          label: 'SuperAPI · Grok 4.3' },
+        'superapi-doubao-seed-2.0-pro': { provider: 'superapi', subModel: 'doubao-seed-2.0-pro', label: 'SuperAPI · 豆包 Seed 2.0 Pro' },
+        'superapi-step-3.7-flash':   { provider: 'superapi', subModel: 'step-3.7-flash',    label: 'SuperAPI · Step 3.7 Flash' },
+        'superapi-mimo-v2.5-pro':    { provider: 'superapi', subModel: 'mimo-v2.5-pro',     label: 'SuperAPI · Mimo V2.5 Pro' },
+        'superapi-minimax-m3':       { provider: 'superapi', subModel: 'MiniMax-M3',         label: 'SuperAPI · MiniMax M3' },
+        // 传统独立商业模型 (备选, 不与 SuperAPI 冲突)
+        'qwen': { provider: 'qwen', label: '通义千问 (阿里云)' },
+        'moonshot': { provider: 'moonshot', label: '月之暗面 Moonshot' },
+        'yi': { provider: 'yi', label: '零一万物 Yi' },
+        'baichuan': { provider: 'baichuan', label: '百川智能' },
+        'minimax': { provider: 'minimax', label: 'MiniMax' },
+        'anthropic': { provider: 'anthropic', label: 'Anthropic Claude' },
       };
 
       // 创建或获取 session (使用 SessionManager LRU)
@@ -798,10 +901,12 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         const mapped = nss_MODEL_MAP[userModel];
         const userPicked = !!(mapped && mapped.provider);
         if (userPicked) {
+          // SuperAPI: 从 modelConfig 获取子模型名
+          const superApiModelName = mapped.provider === 'superapi' && modelConfig?.modelName ? modelConfig.modelName : '';
           loop = new AgentAILoop(router, registry, [], {
             maxIterations: 30, userId, workspace, mode,
             model: mapped.provider,
-            modelName: mapped.subModel || '',
+            modelName: mapped.subModel || superApiModelName || '',
             displayModelLabel: mapped.label,
             userPickedModel: true,
             persistentMemory,
@@ -843,6 +948,32 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       const resSessionId = isNewSession ? loop.getContext().sessionId : sessionData.loop.getContext().sessionId;
       loop = sessionData.loop;
 
+      // ====== 非流式路径: 附件注入 (与流式路径相同逻辑) ======
+      if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+        const attachmentParts: string[] = [];
+        const imageBlocks: any[] = [];
+        for (const att of attachments) {
+          if (att.kind === 'image' && att.dataUrl) {
+            imageBlocks.push({ type: 'image_url', image_url: { url: att.dataUrl } });
+          } else if (att.content) {
+            attachmentParts.push(`--- 附件: ${att.name} ---\n${att.content}\n--- 附件结束 ---`);
+          }
+        }
+        if (imageBlocks.length > 0) {
+          const textContent = message || '请查看上传的图片';
+          loop.context?.appendOnlyLog?.push({
+            role: 'user',
+            content: [{ type: 'text', text: textContent }, ...imageBlocks] as any,
+          });
+        }
+        if (attachmentParts.length > 0) {
+          loop.context?.appendOnlyLog?.push({
+            role: 'user',
+            content: `[用户上传了以下文件, 请仔细阅读并分析]\n\n${attachmentParts.join('\n\n')}`,
+          });
+        }
+      }
+
       // 收集工具事件
       const toolEvents: any[] = [];
       const onToolStart = (info: any) => toolEvents.push({ type: 'tool_start', callId: info.callId, name: info.name, args: info.args });
@@ -867,12 +998,6 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       loop.off('tool:start' as any, onToolStart);
       loop.off('tool:result' as any, onToolResult);
 
-      await writeMemory({
-        userId, workspace, role: 'assistant', content: response.content || '',
-        metadata: { provider: response.provider, cost: response.usage?.cost ?? 0, durationMs: response.durationMs ?? 0 },
-        source: 'session',
-      });
-
       res.json({
         content: response.content || '',
         toolCalls: response.toolCalls,
@@ -892,7 +1017,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         hint: '检查后端日志和 API Key 配置 (AGENTAI_API_KEY)',
       });
     } finally {
-      limiter.release(userId, isInternal);
+      limiter.release(userId, isInternalReq);
     }
   });
 
@@ -943,7 +1068,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         master = sessionData.master || new MasterController({
           router: planRouter, registry: planRegistry,
           userId: planUserId, workspace: planWorkspace,
-          masterModel: 'deepseek', proModel: 'deepseek',
+          masterModel: 'agentai',
+          proModel: 'deepseek',
           multimodalModel: 'agentai', subagentModel: 'agentai',
         });
       } else {
@@ -954,7 +1080,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         master = new MasterController({
           router: planRouter, registry: planRegistry,
           userId: planUserId, workspace: planWorkspace,
-          masterModel: 'deepseek', proModel: 'deepseek',
+          masterModel: 'agentai',
+          proModel: 'deepseek',
           multimodalModel: 'agentai', subagentModel: 'agentai',
         });
         planSessionMgr.set(sessionKey, { loop, master, userId: planUserId, workspace: planWorkspace, callCount: 1 });
@@ -969,10 +1096,31 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       // 根据 subtasks 数量选择执行方式
       if (execPlan.subtasks.length > 1) {
         // 多子任务: 通过 MasterController 分派
-        await master.executeAll(execPlan, loop.opts.model, loop.context?.appendOnlyLog);
+        const subtaskResults = await master.executePlan(execPlan, loop.opts.model, loop.context?.appendOnlyLog);
+        const synthesis = await master.synthesize(execPlan.goal, subtaskResults);
+        console.log(`[chat:approve] 多子任务完成: ${subtaskResults.length} tasks, synthesis length: ${synthesis.length}`);
+        // 写入记忆供前端下一次请求可见
+        if (planPM) {
+          await planPM.save({
+            sessionId: planSessionId,
+            role: 'assistant',
+            content: synthesis,
+            metadata: { provider: 'master-controller', subtasks: subtaskResults.map(r => ({ id: r.id, title: r.title, status: r.status })) },
+          });
+        }
       } else {
         // 单子任务: 直接 loop.run
-        await loop.run(planMessage);
+        const response = await loop.run(planMessage);
+        console.log(`[chat:approve] 单子任务完成: provider=${response?.provider}, content length=${(response?.content || '').length}`);
+        // 写入记忆
+        if (planPM && response?.content) {
+          await planPM.save({
+            sessionId: planSessionId,
+            role: 'assistant',
+            content: response.content,
+            metadata: { provider: response.provider, iterations: response.iterations },
+          });
+        }
       }
 
       console.log(`[chat:approve] 计划执行完成: ${execPlan.id}`);

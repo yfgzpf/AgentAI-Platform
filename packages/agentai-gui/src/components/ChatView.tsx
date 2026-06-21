@@ -842,10 +842,13 @@ export const ChatView: React.FC = () => {
         updateMessage(userMsgId, (m: any) => ({ ...m, status: 'done' as const }));
       } else {
         // 流式 SSE
+        // 自动附带当前编辑器打开的文件 (让 AI 知道用户在看什么)
+        const activeEditorFile = localStorage.getItem('agentai.editor.activeFile') || '';
         await apiStream(base + '/v1/chat', {
           message: messageText, stream: true, model: provider, mode,
           userId: 'user', workspace: ws, projectDir: ws, profile, contextWindow,
           emotion: quickEmotion,
+          activeFile: activeEditorFile || undefined,
           attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
           thinking, modelConfig,
           systemRules: buildTimelinePrompt(),

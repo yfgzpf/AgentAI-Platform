@@ -106,7 +106,14 @@ export const Editor: React.FC = () => {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
-  const [activeKey, setActiveKey] = useState<string>('');
+  const [activeKey, setActiveKeyRaw] = useState<string>('');
+  // 包装 setActiveKey: 同时存到 localStorage 让 ChatView 读取
+  const setActiveKey = useCallback((key: string) => {
+    setActiveKeyRaw(key);
+    if (key && key !== '__browser__') {
+      localStorage.setItem('agentai.editor.activeFile', key);
+    }
+  }, []);
   const [searchQ, setSearchQ] = useState('');
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);

@@ -21,10 +21,14 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
     if (href.startsWith('agentai://open')) {
       const url = new URL(href);
       const filePath = decodeURIComponent(url.searchParams.get('path') || '');
+      const ext = filePath.split('.').pop()?.toLowerCase() || '';
+      const binaryExts = ['xlsx', 'xls', 'docx', 'doc', 'pdf', 'pptx', 'ppt', 'zip', 'rar', '7z', 'exe', 'dmg', 'mp3', 'mp4', 'avi', 'mov'];
+      const isBinary = binaryExts.includes(ext);
       return (
         <a
-          href="#"
-          onClick={(e) => {
+          href={isBinary ? `/api/files/download?path=${encodeURIComponent(filePath)}` : '#'}
+          download={isBinary ? filePath.split(/[\\/]/).pop() : undefined}
+          onClick={isBinary ? undefined : (e) => {
             e.preventDefault();
             if (filePath) {
               window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: filePath } }));
@@ -34,8 +38,12 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
               } catch { /* optional */ }
             }
           }}
-          style={{ color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline' }}
+          style={{
+            color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline',
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+          }}
         >
+          {isBinary && <span style={{ fontSize: 10 }}>⬇</span>}
           {props.children}
         </a>
       );

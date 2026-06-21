@@ -301,35 +301,43 @@ export class AgentAILoop extends EventEmitter {
       content: AGENT_SYSTEM_IDENTITY,
     });
 
-    // === 2. 用户身份 (姓名提示) ===
+    // === 2. 用户上下文 (姓名 + 情绪 + 开发偏好 合并为一条) ===
     try {
+      const ctxParts: string[] = [];
+      // 姓名
       const name = userModel.get().identity.name || this.opts.userId || '用户';
-      if (name && name !== 'User') {
-        systemMsgs.push({
-          role: 'system',
-          content: `\n# 用户身份\n当前用户姓名: ${name}\n在对话开始时应称呼用户姓名打招呼。`,
-        });
+      if (name && name !== 'User') ctxParts.push(`用户: ${name}`);
+      // 情绪
+      if (this.opts.emotion && this.opts.emotion.emotion !== 'neutral') {
+        const e = this.opts.emotion;
+        const tips: Record<string, string> = {
+          anxious: '焦虑中, 请耐心安抚', angry: '愤怒中, 先共情再方案',
+          sad: '低落中, 请温和鼓励', negative: '消极中, 请积极引导',
+          positive: '积极, 可自信推进', joyful: '愉快, 保持轻松氛围',
+        };
+        ctxParts.push(`情绪: ${e.label} (${tips[e.emotion] || ''})`);
       }
-    } catch (e: any) { /* workspace context optional */ }
-
-    // === 2.5 用户情绪上下文 (前端实时注入) ===
-    if (this.opts.emotion && this.opts.emotion.emotion !== 'neutral') {
-      const e = this.opts.emotion;
-      const tips: Record<string, string> = {
-        anxious: '用户当前焦虑不安, 请耐心安抚, 给出明确可执行的方案, 避免模糊回答',
-        angry: '用户当前愤怒不满, 请先共情理解, 再提供解决方案, 语气要温和专业',
-        sad: '用户当前情绪低落, 请温和鼓励, 提供积极的建设性建议',
-        surprised: '用户当前感到惊讶, 请解释清楚原因, 消除疑虑',
-        negative: '用户当前情绪消极, 请积极引导, 提供可行的改进方案',
-        positive: '用户当前情绪积极, 可以更自信地推进任务',
-        joyful: '用户当前心情愉快, 可以保持轻松的交流氛围',
-      };
-      const tip = tips[e.emotion] || '';
-      systemMsgs.push({
-        role: 'system',
-        content: `\n# 用户当前情绪: ${e.label} (强度: ${Math.round(e.intensity * 100)}%)\n${tip}\n请在回复中体现对用户情绪的关注和回应。`,
-      });
-    }
+      // 开发偏好
+      try {
+        const profileFile = path.join(this.opts.workspace || process.cwd(), '.agentai', 'profile.json');
+        let devPrefs: any = null;
+        if (fs.existsSync(profileFile)) {
+          try { devPrefs = JSON.parse(fs.readFileSync(profileFile, 'utf-8'))?.devPrefs; } catch {}
+        }
+        if (!devPrefs && (this as any)._requestProfile?.devPrefs) devPrefs = (this as any)._requestProfile.devPrefs;
+        if (devPrefs && typeof devPrefs === 'object') {
+          const dp: string[] = [];
+          if (devPrefs.languages?.length) dp.push(`语言:${devPrefs.languages.join(',')}`);
+          if (devPrefs.frontend?.length) dp.push(`前端:${devPrefs.frontend.join(',')}`);
+          if (devPrefs.backend?.length) dp.push(`后端:${devPrefs.backend.join(',')}`);
+          if (devPrefs.packageManager?.length) dp.push(`包管理:${devPrefs.packageManager.join(',')}`);
+          if (dp.length) ctxParts.push(`开发偏好: ${dp.join(' | ')}`);
+        }
+      } catch {}
+      if (ctxParts.length > 0) {
+        systemMsgs.push({ role: 'system', content: `# 用户上下文\n${ctxParts.join('\n')}` });
+      }
+    } catch (e: any) { /* user context optional */ }
 
     // === 3. 用户行业 + 身份 + knowledge base ===
     try {
@@ -432,34 +440,6 @@ export class AgentAILoop extends EventEmitter {
       }
     } catch { /* ide-state optional */ }
 
-    // === 4.65 开发偏好: 从 profile 读取用户的技术栈偏好 ===
-    try {
-      const profileFile = path.join(this.opts.workspace || process.cwd(), '.agentai', 'profile.json');
-      let devPrefs: any = null;
-      // 尝试从项目级 profile 读取
-      if (fs.existsSync(profileFile)) {
-        try { devPrefs = JSON.parse(fs.readFileSync(profileFile, 'utf-8'))?.devPrefs; } catch { /* ignore */ }
-      }
-      // 尝试从 chat route 传入的 profile 读取
-      if (!devPrefs && (this as any)._requestProfile?.devPrefs) {
-        devPrefs = (this as any)._requestProfile.devPrefs;
-      }
-      if (devPrefs && typeof devPrefs === 'object') {
-        const parts: string[] = [];
-        if (devPrefs.languages?.length) parts.push(`语言: ${devPrefs.languages.join(', ')}`);
-        if (devPrefs.frontend?.length) parts.push(`前端: ${devPrefs.frontend.join(', ')}`);
-        if (devPrefs.backend?.length) parts.push(`后端: ${devPrefs.backend.join(', ')}`);
-        if (devPrefs.packageManager?.length) parts.push(`包管理: ${devPrefs.packageManager.join(', ')}`);
-        if (devPrefs.css?.length) parts.push(`CSS: ${devPrefs.css.join(', ')}`);
-        if (parts.length > 0) {
-          systemMsgs.push({
-            role: 'system',
-            content: `\n# 用户开发偏好\n${parts.join('\n')}\n生成代码时请遵循这些偏好。`,
-          });
-        }
-      }
-    } catch { /* devPrefs optional */ }
-
     // === 4.7 自进化规则: 加载 AI 自己创建的行为规则 ===
     try {
       const rulesFile = path.join(this.opts.workspace || process.cwd(), '.agentai', 'evolved-rules.json');
@@ -501,17 +481,7 @@ export class AgentAILoop extends EventEmitter {
       } catch { /* startup awareness optional */ }
     }
 
-    // === 5. DeepSeek 缓存策略: 构建稳定前缀 ===
-    try {
-      const cache = await getOrCreateCache(this.registry);
-      if (cache) {
-        const stats = cache.getCacheStats();
-        systemMsgs.push({
-          role: 'system',
-          content: `\n# Cache: prefix ${stats.prefixTokens} tokens stable, ${stats.toolsCached ? 'tools cached' : ''}, ${stats.skillsCount} skills loaded`,
-        });
-      }
-    } catch (e: any) { /* cache stats optional */ }
+    // === 5. (cache stats removed — noise, wasted tokens) ===
 
     // === 6. Workspace 上下文 + 子目录记忆 ===
     if (this.opts.workspace) {
@@ -559,46 +529,14 @@ export class AgentAILoop extends EventEmitter {
       } catch (e: any) { /* project rules init optional */ }
     }
 
-    // === 6.5 自主能力自动触发规则 (授人以渔: 告诉AI何时该用、怎么用) ===
+    // === 6.5 自主能力 + 成本意识 (合并精简) ===
     systemMsgs.push({
       role: 'system',
-      content: `\n# 自主能力自动触发规则 (CRITICAL — 不用等用户命令!)
-你是具备自主探索、行业洞察和系统管理能力的智能体。以下场景你必须**主动调用**对应工具，不要等用户来要求：
-
-## 1. 代码探索 (explore_project)
-**触发场景**: 
-- 首次进入一个项目 (你不知道目录结构时) → 调用 \`explore_project {mode:"structure"}\`
-- 用户提到某个文件/模块但你不了解其依赖 → 调用 \`explore_project {trace_from:"文件路径"}\`
-- 用户说"这个项目怎么组织的" / "架构是什么" → 调用 \`explore_project {mode:"full"}\`
-**注意**: 只在新项目或结构变化时调用，不要每次都探索。
-
-## 2. 行业洞察 (industry_insight)
-**触发场景**:
-- 对话中出现行业术语/工作流/痛点时 → 调用 \`industry_insight {action:"detect", message:"用户消息"}\`
-- 需要了解用户行业的深度知识时 → 调用 \`industry_insight {action:"profile", industry_id:"software_dev"}\`
-- 用户分享了有价值的行业经验 → 调用 \`industry_insight {action:"add", ...}\` 存入洞察库
-- 想查看已积累的行业知识 → 调用 \`industry_insight {action:"summary"}\`
-**注意**: 行业洞察是跨会话持久化的，积累越多AI越了解用户行业。
-
-## 3. 系统自检 (self_diagnose)
-**触发场景**:
-- 连续 2 次工具调用失败时 → 调用 \`self_diagnose {action:"diagnose"}\`
-- 用户反馈"系统慢了"或"为什么失败" → 调用 \`self_diagnose {action:"diagnose"}\`
-- 发现磁盘空间不足的迹象 → 调用 \`self_diagnose {action:"cleanup"}\`
-- 诊断发现问题 → 调用 \`self_diagnose {action:"autofix"}\` 自动修复
-- 会话开始时 → 建议调用 \`self_diagnose {action:"health_prompt"}\` 告知用户系统状态`,
-    });
-
-    // === 6.6 成本意识提示 (节省 token, 勿一次加载全目录) ===
-    systemMsgs.push({
-      role: 'system',
-      content: `\n# 成本意识 (CRITICAL)
-## 你的行为直接影响用户的钱包
-1. **不要一上来就加载整个目录**: 先用 \`list_directory\` 看顶层, 再用 \`read_file\` 按需读文件
-2. **不要做全盘文本搜索** (\`search_content\`) 除非明确需要: 先思考问题范围再精准搜索
-3. **代码开发尽量用免费模型**: 架构设计、代码生成用免费模型, 仅在安全审查/性能分析时用付费模型
-4. **能用单行命令解决的问题不要写多函数**: 优先简单方案, 避免过度工程
-5. **skills 按需发现**: 不用的 skills 不要加载到上下文`,
+      content: `# 行为准则
+- 先行动后解释, 调用工具完成任务而非描述计划
+- 首次进入项目 → explore_project; 行业术语出现 → industry_insight; 连续失败 → self_diagnose
+- 节省 token: 按需 read_file, 不要一次加载整个目录; 精准 search_content, 不全盘搜索
+- 能用简单方案解决不写复杂代码; 文件操作用相对路径`,
     });
 
     // === 5. Skills 索引 (按需精简, 不浪费 token) ===
@@ -1737,7 +1675,26 @@ export class AgentAILoop extends EventEmitter {
     const callsToDispatch = calls.filter(c => approvedCalls.includes(c.id));
     // 发射 tool:start 事件 (仅被批准的)
     for (const c of callsToDispatch) this.emit('tool:start', { callId: c.id, name: c.name, args: c.args });
-    const results = callsToDispatch.length > 0 ? await this.registry.dispatch(callsToDispatch, ctx) : [];
+    let results = callsToDispatch.length > 0 ? await this.registry.dispatch(callsToDispatch, ctx) : [];
+
+    // 自动重试: 失败的工具最多重试 2 次 (仅限可重试的临时错误)
+    const retryableErrors = /timeout|ECONNREFUSED|ECONNRESET|ETIMEDOUT|network|503|429|rate.limit/i;
+    for (let retry = 0; retry < 2; retry++) {
+      const failedCalls = callsToDispatch.filter(c => {
+        const r = results.find(x => x.id === c.id);
+        const output = r?.result?.output || '';
+        return r?.result?.success === false && retryableErrors.test(output);
+      });
+      if (failedCalls.length === 0) break;
+      console.log(`[tool-retry] retry ${retry + 1}: ${failedCalls.map(c => c.name).join(', ')}`);
+      await new Promise(r => setTimeout(r, 1000 * (retry + 1))); // 1s, 2s 退避
+      const retryResults = await this.registry.dispatch(failedCalls, ctx);
+      // 合并重试结果
+      for (const rr of retryResults) {
+        const idx = results.findIndex(x => x.id === rr.id);
+        if (idx >= 0) results[idx] = rr;
+      }
+    }
     // 发射 tool:result 事件 (仅被批准的)
     for (const c of callsToDispatch) {
       const r = results.find(x => x.id === c.id);
