@@ -25,7 +25,7 @@ interface OnboardProps {
   onFinish?: (name: string) => void;
 }
 
-type Step = 'welcome' | 'name' | 'industry' | 'useCase' | 'devPrefs' | 'questionnaire' | 'key' | 'done';
+type Step = 'welcome' | 'name' | 'industry' | 'useCase' | 'questionnaire' | 'key' | 'done';
 
 const USE_CASES = [
   { key: 'chat', label: '日常聊天', icon: <MessageOutlined />, gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', desc: '问问题, 写文案, 翻译' },
@@ -87,9 +87,9 @@ const QUESTION_PRESETS: Record<string, string[][]> = {
   ],
 };
 
-const STEPS: Step[] = ['welcome', 'name', 'industry', 'useCase', 'devPrefs', 'questionnaire', 'key', 'done'];
+const STEPS: Step[] = ['welcome', 'name', 'industry', 'useCase', 'questionnaire', 'key', 'done'];
 const stepLabels: Record<Step, string> = {
-  welcome: '欢迎', name: '名字', industry: '行业', useCase: '用例', devPrefs: '开发', questionnaire: '问卷', key: '密钥', done: '完成',
+  welcome: '欢迎', name: '名字', industry: '行业', useCase: '用例', questionnaire: '问卷', key: '密钥', done: '完成',
 };
 
 const DEV_OPTIONS = {
@@ -127,7 +127,7 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
       language: 'zh' as const,
       industry: industryId,
       useCase,
-      devPrefs: (useCase === 'code' || useCase === 'auto' || industryId === 'developer') ? devPrefs : undefined,
+      devPrefs: showDevPrefs ? devPrefs : undefined,
       questionnaire: answers,
       industrySkills: industry?.requiredSkills || [],
     };
@@ -159,7 +159,7 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
         name: name.trim(),
         industry: industryId,
         useCase,
-        devPrefs: (useCase === 'code' || useCase === 'auto' || industryId === 'developer') ? devPrefs : undefined,
+        devPrefs: showDevPrefs ? devPrefs : undefined,
         questionnaire: answers,
         industrySkills: industry?.requiredSkills || [],
         onboardedAt: Date.now(),
@@ -188,24 +188,22 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
     } catch { finish(); }
   };
 
+  // 是否显示开发偏好（替代行业问卷）
+  const showDevPrefs = industryId === 'developer';
+
   const nextStep = () => {
     const idx = STEPS.indexOf(step);
-    // 非代码用例: 跳过开发偏好
-    if (step === 'useCase' && useCase !== 'code' && useCase !== 'auto' && industryId !== 'developer') {
-      // general/非开发行业也跳过问卷
-      if (industryId === 'general') {
-        setStep('key'); return;
-      }
-      setStep('questionnaire'); return;
-    }
-    // 如果是 general/developer 行业，跳过问卷
-    if (step === 'devPrefs' && (industryId === 'general' || industryId === 'developer')) {
+    // general 行业: 跳过问卷
+    if (step === 'useCase' && industryId === 'general') {
       setStep('key'); return;
     }
     if (idx < STEPS.length - 1) setStep(STEPS[idx + 1]!);
   };
   const prevStep = () => {
     const idx = STEPS.indexOf(step);
+    if (step === 'key' && industryId === 'general') {
+      setStep('useCase'); return;
+    }
     if (idx > 0) setStep(STEPS[idx - 1]!);
   };
 
@@ -387,112 +385,111 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
         </div>
       )}
 
-      {/* DevPrefs — 开发偏好选择 */}
-      {step === 'devPrefs' && (
+      {/* Questionnaire — 行业问卷 / 开发者偏好 */}
+      {step === 'questionnaire' && (
         <div style={{ padding: 32 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--panel)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <CodeOutlined style={{ fontSize: 18, color: 'var(--fg)' }} />
-            </div>
-            <Title level={3} style={{ margin: 0 }}>开发偏好</Title>
-          </div>
-          <Paragraph style={{ color: 'var(--muted-2)', marginLeft: 46 }}>AI 会根据你的技术栈生成匹配的代码风格</Paragraph>
-          {Object.entries(DEV_OPTIONS).map(([category, options]) => {
-            const labels: Record<string, string> = {
-              languages: '编程语言', frontend: '前端框架', backend: '后端框架',
-              packageManager: '包管理器', css: 'CSS 方案',
-            };
-            const selected = devPrefs[category] || [];
-            return (
-              <div key={category} style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)', marginBottom: 6 }}>
-                  {labels[category] || category}
+          {showDevPrefs ? (
+            /* 开发者行业: 显示开发偏好 */
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--panel)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <CodeOutlined style={{ fontSize: 18, color: 'var(--fg)' }} />
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {options.map(opt => {
-                    const isSelected = selected.includes(opt);
-                    return (
-                      <button
-                        key={opt}
-                        onClick={() => {
-                          setDevPrefs(prev => ({
-                            ...prev,
-                            [category]: isSelected
-                              ? prev[category].filter(v => v !== opt)
-                              : [...prev[category], opt],
-                          }));
-                        }}
-                        style={{
-                          padding: '4px 12px', borderRadius: 16, fontSize: 12,
-                          border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border)',
-                          background: isSelected ? 'rgba(99,102,241,0.15)' : 'var(--card)',
-                          color: isSelected ? 'var(--accent)' : 'var(--fg-2)',
-                          cursor: 'pointer', fontWeight: isSelected ? 600 : 400,
-                          transition: 'all 0.15s',
-                          boxShadow: isSelected ? '0 0 6px rgba(99,102,241,0.2)' : 'none',
-                        }}
-                      >
-                        {isSelected && '✓ '}{opt}
-                      </button>
-                    );
-                  })}
-                </div>
+                <Title level={3} style={{ margin: 0 }}>开发偏好</Title>
               </div>
-            );
-          })}
-          <div style={{ marginTop: 16, fontSize: 11, color: 'var(--muted-2)' }}>
-            可多选，也可跳过。AI 会在开发中自动学习你的偏好。
-          </div>
-        </div>
-      )}
-
-      {/* Questionnaire — 下拉预设选项 */}
-      {step === 'questionnaire' && industry && industry.knowledgeQuestions.length > 0 && (
-        <div style={{ padding: 32 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: 10,
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <ExperimentOutlined style={{ fontSize: 18, color: 'var(--fg)' }} />
-            </div>
-            <Title level={3} style={{ margin: 0 }}>{industry.label} 知识问卷</Title>
-          </div>
-          <Paragraph style={{ color: 'var(--muted-2)', marginLeft: 50 }}>帮助系统了解你的专业背景</Paragraph>
-          <Space direction="vertical" style={{ width: '100%' }} size={14}>
-            {industry.knowledgeQuestions.map((q, i) => {
-              const presets = QUESTION_PRESETS[industryId]?.[i];
-              return (
-                <div key={i}>
-                  <Text style={{ fontSize: 13, color: '#ccc', display: 'block', marginBottom: 6 }}>{q}</Text>
-                  {presets && presets.length > 0 ? (
-                    <AutoComplete
-                      size="middle"
-                      options={presets.map(p => ({ value: p }))}
-                      placeholder="选择或输入答案..."
-                      value={answers[`q${i}`] || ''}
-                      onChange={(v: string) => setAnswers(prev => ({ ...prev, [`q${i}`]: v }))}
-                      filterOption={(input, option) => (option?.value as string)?.toLowerCase().includes(input.toLowerCase())}
-                      style={{ width: '100%' }}
-                    />
-                  ) : (
-                    <Input
-                      placeholder="你的答案..."
-                      value={answers[`q${i}`] || ''}
-                      onChange={e => setAnswers(prev => ({ ...prev, [`q${i}`]: e.target.value }))}
-                      size="middle"
-                    />
-                  )}
+              <Paragraph style={{ color: 'var(--muted-2)', marginLeft: 46 }}>AI 会根据你的技术栈生成匹配的代码风格</Paragraph>
+              {Object.entries(DEV_OPTIONS).map(([category, options]) => {
+                const labels: Record<string, string> = {
+                  languages: '编程语言', frontend: '前端框架', backend: '后端框架',
+                  packageManager: '包管理器', css: 'CSS 方案',
+                };
+                const selected = devPrefs[category] || [];
+                return (
+                  <div key={category} style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)', marginBottom: 6 }}>
+                      {labels[category] || category}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {options.map(opt => {
+                        const isSelected = selected.includes(opt);
+                        return (
+                          <button
+                            key={opt}
+                            onClick={() => {
+                              setDevPrefs(prev => ({
+                                ...prev,
+                                [category]: isSelected
+                                  ? prev[category].filter(v => v !== opt)
+                                  : [...prev[category], opt],
+                              }));
+                            }}
+                            style={{
+                              padding: '4px 12px', borderRadius: 16, fontSize: 12,
+                              border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border)',
+                              background: isSelected ? 'rgba(99,102,241,0.15)' : 'var(--card)',
+                              color: isSelected ? 'var(--accent)' : 'var(--fg-2)',
+                              cursor: 'pointer', fontWeight: isSelected ? 600 : 400,
+                              transition: 'all 0.15s',
+                              boxShadow: isSelected ? '0 0 6px rgba(99,102,241,0.2)' : 'none',
+                            }}
+                          >
+                            {isSelected && '✓ '}{opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          ) : industry && industry.knowledgeQuestions.length > 0 ? (
+            /* 其他行业: 显示行业问卷 */
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: 10,
+                  background: 'var(--card)', border: '1px solid var(--border)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <ExperimentOutlined style={{ fontSize: 18, color: 'var(--fg)' }} />
                 </div>
-              );
-            })}
-          </Space>
+                <Title level={3} style={{ margin: 0 }}>{industry.label} 知识问卷</Title>
+              </div>
+              <Paragraph style={{ color: 'var(--muted-2)', marginLeft: 50 }}>帮助系统了解你的专业背景</Paragraph>
+              <Space direction="vertical" style={{ width: '100%' }} size={14}>
+                {industry.knowledgeQuestions.map((q, i) => {
+                  const presets = QUESTION_PRESETS[industryId]?.[i];
+                  return (
+                    <div key={i}>
+                      <Text style={{ fontSize: 13, color: '#ccc', display: 'block', marginBottom: 6 }}>{q}</Text>
+                      {presets && presets.length > 0 ? (
+                        <AutoComplete
+                          size="middle"
+                          options={presets.map(p => ({ value: p }))}
+                          placeholder="选择或输入答案..."
+                          value={answers[`q${i}`] || ''}
+                          onChange={(v: string) => setAnswers(prev => ({ ...prev, [`q${i}`]: v }))}
+                          filterOption={(input, option) => (option?.value as string)?.toLowerCase().includes(input.toLowerCase())}
+                          style={{ width: '100%' }}
+                        />
+                      ) : (
+                        <Input
+                          placeholder="你的答案..."
+                          value={answers[`q${i}`] || ''}
+                          onChange={e => setAnswers(prev => ({ ...prev, [`q${i}`]: e.target.value }))}
+                          size="middle"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </Space>
+            </>
+          ) : null}
           <div style={{ marginTop: 24, display: 'flex', gap: 8, justifyContent: 'space-between' }}>
             <Button onClick={prevStep}>上一步</Button>
             <Space>
-              <Button onClick={() => setStep('key')}>跳过问卷</Button>
+              <Button onClick={() => setStep('key')}>跳过</Button>
               <Button type="primary" onClick={nextStep}>下一步</Button>
             </Space>
           </div>

@@ -78,6 +78,32 @@ const ComposerBase = ({
   const [recording, setRecording] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [parsing, setParsing] = useState(false); // 文件解析中
+
+  // URL 检测: 从 draft 中提取链接, 显示为链接卡片
+  const detectedUrls = useMemo(() => {
+    const urlRegex = /https?:\/\/[^\s<>"']+/gi;
+    const matches = draft.match(urlRegex);
+    if (!matches) return [];
+    return [...new Set(matches)].map(url => {
+      let label = '链接';
+      try {
+        const u = new URL(url);
+        const host = u.hostname.replace('www.', '');
+        if (host.includes('weixin.qq.com') || host.includes('mp.weixin')) label = '微信文章';
+        else if (host.includes('github.com')) label = 'GitHub';
+        else if (host.includes('zhihu.com')) label = '知乎';
+        else if (host.includes('juejin.cn')) label = '掘金';
+        else if (host.includes('csdn.net')) label = 'CSDN';
+        else if (host.includes('bilibili.com')) label = 'B站';
+        else if (host.includes('xiaohongshu.com')) label = '小红书';
+        else if (host.includes('youtube.com')) label = 'YouTube';
+        else if (host.includes('twitter.com') || host.includes('x.com')) label = 'X/Twitter';
+        else if (host.includes('stackoverflow.com')) label = 'StackOverflow';
+        else label = host.split('.').slice(-2, -1)[0] || host;
+      } catch { /* invalid url */ }
+      return { url, label };
+    });
+  }, [draft]);
   const [ttsOn, setTtsOn] = useState(isTtsEnabled());
   const [wakeOn, setWakeOn] = useState(isWakeEnabled());
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsState>(() => {
@@ -342,6 +368,23 @@ const ComposerBase = ({
         overflow: 'hidden',
         boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
       }}>
+        {/* URL 链接卡片 */}
+        {detectedUrls.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 12px 0', borderBottom: '1px solid var(--border)' }}>
+            {detectedUrls.map((u, i) => (
+              <span key={i} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px', borderRadius: 12, fontSize: 11,
+                background: 'rgba(99,102,241,0.1)', color: 'var(--accent)',
+                border: '1px solid rgba(99,102,241,0.2)',
+                maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                <span style={{ fontSize: 10 }}>🔗</span>
+                <span style={{ fontWeight: 600 }}>{u.label}</span>
+              </span>
+            ))}
+          </div>
+        )}
         {/* Textarea */}
         <textarea
           ref={textareaRef as React.RefObject<HTMLTextAreaElement>}

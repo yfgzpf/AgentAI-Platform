@@ -1439,6 +1439,10 @@ export class AgentAILoop extends EventEmitter {
         || userMessageStr.trim().length < 15;
       const isNoKeyResponse = /\[.*no-key\]/i.test(text);
 
+      // 检测告别/结束语: 用户说退出 或 AI 回复告别
+      const isGoodbye = /退出|结束|不用了|不需要了|算了|拜拜|再见|goodbye|bye|没事了|over|final_end/i.test(userMessageStr)
+        || /再见|祝你|祝您|拜拜|下次见|随时|欢迎.*回来|需要.*随时|期待.*再次|have a|goodbye|bye|告别/i.test(text);
+
       if (hasPriorTools && len > 60 && this.iteration < this.opts.maxIterations * 0.7) {
         const isUserChitChat = messageText.trim().length < 10;
         const isAnalysisTask = /^(审查|分析|检查|评估|review|analyze|inspect|audit|诊断)/i.test(messageText.trim());
@@ -1454,8 +1458,8 @@ export class AgentAILoop extends EventEmitter {
         // 有操作标记 → 不在此处 break, 继续向下判断
       }
 
-      // 规则3: 长回复但无工具 + 非闲聊 + 早期迭代 → 提示使用工具
-      if (len > 200 && !hasPriorTools && this.iteration < this.opts.maxIterations * 0.5 && !isChitChat) {
+      // 规则3: 长回复但无工具 + 非闲聊 + 非告别 + 早期迭代 → 提示使用工具
+      if (len > 200 && !hasPriorTools && this.iteration < this.opts.maxIterations * 0.5 && !isChitChat && !isGoodbye) {
         this.context.appendOnlyLog.push({
           role: 'user',
           content: '[SYSTEM] 你的回复很长但没有调用任何工具。如果用户需要你执行操作, 请立即调用工具。如果只是回答问题, 请明确说"回答完毕"。',
@@ -1463,8 +1467,8 @@ export class AgentAILoop extends EventEmitter {
         continue;
       }
 
-      // 规则4: 短回复 + 无工具 + 还有恢复次数 → 自动恢复
-      if (!hasPriorTools && len < 200 && autoResumeCount < MAX_AUTO_RESUME && !isNoKeyResponse && !isChitChat) {
+      // 规则4: 短回复 + 无工具 + 还有恢复次数 + 非告别 → 自动恢复
+      if (!hasPriorTools && len < 200 && autoResumeCount < MAX_AUTO_RESUME && !isNoKeyResponse && !isChitChat && !isGoodbye) {
         autoResumeCount++;
         this.context.appendOnlyLog.push({
           role: 'user',

@@ -113,9 +113,24 @@ function detectAndInsertImage(
           alt: parsed.alt || toolName,
         }],
       }));
+      return;
     }
   } catch {
-    // result 不是 JSON, 忽略
+    // result 不是 JSON — 检查是否包含图片文件路径
+    const text = String(result);
+    const imgMatch = text.match(/([^\s`'"]+\.(png|jpg|jpeg|gif|webp|bmp|svg))/i);
+    if (imgMatch) {
+      const imgPath = imgMatch[1];
+      const imgName = imgPath.split(/[\\/]/).pop() || imgPath;
+      // 通过 gateway API 加载图片
+      updateMessage(botId, (m: any) => ({
+        ...m,
+        segments: [...m.segments, {
+          kind: 'text',
+          text: `\n\n> 🖼️ **已生成图片**: [${imgName}](agentai://open?path=${encodeURIComponent(imgPath)})\n\n![${imgName}](/api/files/download?path=${encodeURIComponent(imgPath)})\n`,
+        }],
+      }));
+    }
   }
 }
 
@@ -556,12 +571,18 @@ export const ChatView: React.FC = () => {
         }
 
         // 生成文件: 在对话中显示可点击的文件链接（不注入文件内容）
-        if (['write_file', 'create_file'].includes(info.name) && info.ok) {
+        if (['write_file', 'create_file', 'run_code'].includes(info.name) && info.ok) {
           try {
             // 从缓存读取 args（不依赖 orchestrator store）
             const cachedArgs = handlers._toolArgsCache[info.callId];
             const args = typeof cachedArgs === 'string' ? JSON.parse(cachedArgs) : cachedArgs;
-            const filePath = args?.file_path || args?.path || '';
+            let filePath = args?.file_path || args?.path || '';
+            // run_code: 从结果中提取文件路径
+            if (!filePath && info.name === 'run_code' && info.result) {
+              const resultStr = typeof info.result === 'string' ? info.result : JSON.stringify(info.result);
+              const fileMatch = resultStr.match(/(?:已生成|已创建|saved?|wrote|created|output)[:\s]*[`'"]*([^\s`'"]+\.\w{2,5})/i);
+              if (fileMatch) filePath = fileMatch[1];
+            }
             if (filePath) {
               const fileName = filePath.split(/[\\/]/).pop() || filePath;
               updateMessage(botId, (m: any) => ({

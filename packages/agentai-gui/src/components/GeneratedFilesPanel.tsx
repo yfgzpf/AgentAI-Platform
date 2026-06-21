@@ -22,10 +22,16 @@ export const GeneratedFilesPanel: React.FC = () => {
           for (const seg of msg.segments) {
             if (seg.kind === 'tool' && seg.name) {
               const name = seg.name.toLowerCase();
-              if (!/^(write_file|edit_file|create_file|multi_edit|str_replace)$/i.test(name)) continue;
+              if (!/^(write_file|edit_file|create_file|multi_edit|str_replace|run_code|generate_image|generate_diagram)$/i.test(name)) continue;
               // 从 args 提取文件路径 (args 包含 path/file_path/file)
               const args = typeof seg.args === 'string' ? safeJson(seg.args) : seg.args;
-              const filePath = args?.path || args?.file_path || args?.file || '';
+              let filePath = args?.path || args?.file_path || args?.file || '';
+              // run_code: 从结果中提取生成的文件路径
+              if (!filePath && name === 'run_code' && seg.result) {
+                const resultStr = typeof seg.result === 'string' ? seg.result : JSON.stringify(seg.result);
+                const fileMatch = resultStr.match(/(?:已生成|已创建|saved?|wrote|created|output)[:\s]*[`'"]*([^\s`'"]+\.\w{2,5})/i);
+                if (fileMatch) filePath = fileMatch[1];
+              }
               if (filePath && !seen.has(filePath)) {
                 seen.add(filePath);
                 result.push({ path: filePath, action: seg.name, ts: msg.ts });
