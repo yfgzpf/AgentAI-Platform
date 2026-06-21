@@ -58,20 +58,22 @@ function wm(): WorkspaceManager {
   return WorkspaceManager.getInstance();
 }
 
-/** 解析工具操作路径: 相对于项目目录 */
+/** 解析工具操作路径: 相对于项目目录, 但允许安全的绝对路径 */
 const resolvePath = (p: string, ws?: string) => {
-  // 优先使用 WorkspaceManager 的项目目录
   const base = ws || wm().projectDir;
-  // 空值 → 默认到项目根
   if (!p) return base;
-  // 已经是绝对路径
   if (path.isAbsolute(p)) {
-    // 如果路径在项目目录内, 直接返回
-    try { return wm().resolveProjectPath(p); } catch { /* fall through */ }
-    // 绝对路径但不在项目目录内 → 拒绝
-    throw new Error(`Path "${p}" is outside the project directory "${base}". Use a relative path instead.`);
+    // 先尝试项目目录解析
+    try { return wm().resolveProjectPath(p); } catch { /* not in project */ }
+    // 安全检查: 拒绝敏感系统目录
+    const normalized = p.replace(/\\/g, '/').toLowerCase();
+    const BLOCKED = ['/windows/', '/system32/', '/program files/', '/programdata/', '/.ssh/', '/.gnupg/', '/appdata/local/temp/'];
+    if (BLOCKED.some(b => normalized.includes(b))) {
+      throw new Error(`安全拒绝: 不允许访问系统目录 "${p}"`);
+    }
+    // 允许绝对路径 (用户桌面/其他盘等)
+    return path.normalize(p);
   }
-  // 相对路径 → resolve 到项目根
   return path.resolve(base, p);
 };
 

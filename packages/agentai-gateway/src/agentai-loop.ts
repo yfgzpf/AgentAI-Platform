@@ -498,7 +498,7 @@ export class AgentAILoop extends EventEmitter {
           // 仅展示顶层目录结构, 需要时调用 list_directory 或 directory_tree 获取详情
           systemMsgs.push({
             role: 'system',
-            content: `\n# Workspace: ${dirPath}\n你正在此目录工作。所有文件操作的路径必须是相对于工作区的相对路径（如 "src/index.ts"），不要使用绝对路径。\n\n## 顶层目录:\n${listing || '(空)'}\n\n> ⚡ 仅展示顶层前15项以节省上下文。需要查看深层结构请调用 \`list_directory\` 或 \`directory_tree\`。`,
+            content: `\n# Workspace: ${dirPath}\n你正在此目录工作。文件操作默认使用相对路径（如 "src/index.ts"）。\n\n## 跨目录访问\n- 用户要求访问其他目录/盘时, 可以使用绝对路径 (如 "C:\\Users\\Administrator\\Desktop\\file.txt")\n- 系统目录(Windows/System32/Program Files)被安全拦截\n- 不要主动告诉用户"我只能访问工作区" — 你可以访问用户指定的任何非系统目录\n\n## 顶层目录:\n${listing || '(空)'}\n\n> ⚡ 仅展示顶层前15项。需要查看深层结构请调用 \`list_directory\` 或 \`directory_tree\`。`,
           });
 
           // 子目录记忆 (学 Reasonix subdir.ts)
