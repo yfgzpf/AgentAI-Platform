@@ -602,7 +602,9 @@ export class AgentAILoop extends EventEmitter {
     this.iteration = 0;
     this.context.volatileScratch = '';
     const startedAt = Date.now();
-    const MAX_RUNTIME_MS = 180_000; // 3分钟总超时保护
+    let lastToolActivityAt = Date.now(); // 工具活动时间戳
+    const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5分钟无工具活动才超时
+    const ABSOLUTE_MAX_MS = 30 * 60 * 1000; // 30分钟绝对上限
 
     // 1. 用户消息进 append-only log (支持结构化 content, 含 image_url)
     const messageContent: MessageContent = typeof userMessage === 'string' ? userMessage : userMessage.content;
@@ -810,11 +812,14 @@ export class AgentAILoop extends EventEmitter {
         } catch { /* working memory optional */ }
       }
 
-      // 总超时保护: 3分钟强制退出
-      if (Date.now() - startedAt > MAX_RUNTIME_MS) {
+      // 智能超时: 有工具活动时重置, 只在长时间无活动或绝对上限时退出
+      const idleTime = Date.now() - lastToolActivityAt;
+      const totalTime = Date.now() - startedAt;
+      if (idleTime > IDLE_TIMEOUT_MS || totalTime > ABSOLUTE_MAX_MS) {
+        const reason = totalTime > ABSOLUTE_MAX_MS ? '30分钟绝对上限' : '5分钟无工具活动';
         this.context.appendOnlyLog.push({
           role: 'user',
-          content: '[SYSTEM] 已超过3分钟执行时限, 请立即总结当前进展并结束。',
+          content: `[SYSTEM] 执行超时 (${reason}), 请立即总结当前进展并结束。已运行 ${Math.round(totalTime / 60000)} 分钟。`,
         });
         // 再给一次机会让AI总结
         if (this.iteration > this.opts.maxIterations - 2) break;
@@ -1042,6 +1047,7 @@ export class AgentAILoop extends EventEmitter {
           }
         }
         const rawResults = await this.dispatchToolCalls(res.toolCalls);
+        lastToolActivityAt = Date.now(); // 工具执行完成, 重置超时计时器
 
         // ═══ Token 压缩: 在入 log 前对工具输出做语义压缩 ═══
         // 学习 RTK 的 4 层压缩: 噪音过滤 → 结构化分组 → 重复折叠 → 智能截断

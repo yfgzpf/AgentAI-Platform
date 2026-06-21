@@ -891,9 +891,17 @@ export const ChatView: React.FC = () => {
         segments: [...m.segments, { kind: 'text', text: '\n\n⏹ 已中止' }],
       }));
     }
-    // 清空排队消息
-    setQueuedSends([]);
-  }, [messages, updateMessage]);
+    // 中止后立即发送排队的第一条消息（用户排队就是想替代当前任务）
+    setQueuedSends(prev => {
+      if (prev.length > 0) {
+        const [first, ...rest] = prev;
+        // 延迟发送，等 loading=false 生效
+        setTimeout(() => handleSend(first), 100);
+        return rest;
+      }
+      return prev;
+    });
+  }, [messages, updateMessage, handleSend]);
 
   /**
    * 重新生成 AI 回复: 删除该 AI 消息及其后所有消息, 重发上一条用户消息
