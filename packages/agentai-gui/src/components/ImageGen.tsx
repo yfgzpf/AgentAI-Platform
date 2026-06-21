@@ -63,7 +63,7 @@ export const ImageGen: React.FC = () => {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [current, setCurrent] = useState<HistoryItem | null>(null);
   const [zoomUrl, setZoomUrl] = useState<string | null>(null);
-  const [refImage, setRefImage] = useState<string>(''); // 参考图 base64
+  const [refImages, setRefImages] = useState<string[]>([]); // 多图参考 base64 数组
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -89,9 +89,9 @@ export const ImageGen: React.FC = () => {
     setBusy(true);
     try {
       // 有参考图时自动切换到 Agnes (Cogview 不支持图生图)
-      const effectiveModel = refImage ? 'agnes' : model;
+      const effectiveModel = refImages.length > 0 ? 'agnes' : model;
       const body: any = { prompt, size, model: effectiveModel };
-      if (refImage) body.image = refImage; // Data URI
+      if (refImages.length > 0) body.image = refImages; // 多图数组
       const r = await fetch(httpUrl + '/v1/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -142,20 +142,34 @@ export const ImageGen: React.FC = () => {
               options={MODELS.map(m => ({ value: m.value, label: m.label }))}
             />
             <Button size="small" icon={<PictureOutlined />} onClick={() => fileRef.current?.click()}>
-              {refImage ? '更换参考图' : '上传参考图'}
+              {refImages.length > 0 ? `已选 ${refImages.length} 张` : '上传参考图'}
             </Button>
+            {refImages.length > 0 && <Button size="small" danger onClick={() => setRefImages([])}>清除全部</Button>}
             <input
               ref={fileRef}
               type="file"
               accept="image/*"
+              multiple
               style={{ display: 'none' }}
               onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                if (file.size > 6 * 1024 * 1024) { message.error('参考图不能超过 6MB'); return; }
-                const reader = new FileReader();
-                reader.onload = () => { setRefImage(reader.result as string); message.success('参考图已加载'); };
-                reader.readAsDataURL(file);
+                const files = e.target.files;
+                if (!files || files.length === 0) return;
+                const newImages: string[] = [];
+                let loaded = 0;
+                for (let i = 0; i < Math.min(files.length, 5); i++) {
+                  const file = files[i];
+                  if (file.size > 6 * 1024 * 1024) { message.error(`${file.name} 超过 6MB，已跳过`); continue; }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    newImages.push(reader.result as string);
+                    loaded++;
+                    if (loaded >= Math.min(files.length, 5)) {
+                      setRefImages(prev => [...prev, ...newImages].slice(0, 5));
+                      message.success(`已加载 ${newImages.length} 张参考图`);
+                    }
+                  };
+                  reader.readAsDataURL(file);
+                }
                 e.target.value = '';
               }}
             />
@@ -197,15 +211,23 @@ export const ImageGen: React.FC = () => {
           {model === 'agnes' && (
             <Alert type="info" message="Agnes Image 2.1 Flash, 需 AGENTAI_API_KEY。" style={{ fontSize: 11 }} showIcon />
           )}
-          {/* 参考图预览 */}
-          {refImage && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8, borderRadius: 8, background: '#1a1a1a', border: '1px solid #333' }}>
-              <img src={refImage} alt="参考图" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6 }} />
-              <div style={{ flex: 1, fontSize: 12, color: '#999' }}>
-                已上传参考图 (图生图)<br />
-                <span style={{ fontSize: 11, color: '#666' }}>将自动使用 Agnes Image 引擎生成</span>
+          {/* 参考图预览 (多图) */}
+          {refImages.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, borderRadius: 8, background: '#1a1a1a', border: '1px solid #333', flexWrap: 'wrap' }}>
+              {refImages.map((img, i) => (
+                <div key={i} style={{ position: 'relative' }}>
+                  <img src={img} alt={`参考图${i + 1}`} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6, border: '1px solid #444' }} />
+                  <span
+                    onClick={() => setRefImages(prev => prev.filter((_, j) => j !== i))}
+                    style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: '50%', background: '#ef4444', color: '#fff', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                    ×
+                  </span>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: '#999', marginLeft: 4 }}>
+                {refImages.length} 张参考图 · 图生图模式<br />
+                <span style={{ fontSize: 10, color: '#666' }}>自动使用 Agnes 2.0 引擎 · 最多 5 张</span>
               </div>
-              <Button size="small" danger onClick={() => setRefImage('')}>移除</Button>
             </div>
           )}
         </Space>

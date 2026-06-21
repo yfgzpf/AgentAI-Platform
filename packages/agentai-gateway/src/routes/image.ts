@@ -41,32 +41,65 @@ export function createImageRouter() {
         }
       }
 
-      // ---- 引擎 2: agnes-image-2.1-flash ----
+      // ---- 引擎 2: Agnes Image ----
+      // 2.1-flash = 纯文生图; 2.0-flash = 图生图/多图合成/编辑
       const apiKey = process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY'];
       if (!apiKey) {
         return res.status(400).json({ error: 'No API Key. Set ZHIPU_API_KEY (免费) or AGENTAI_API_KEY in .env' });
       }
       const agnesSize = ['1024x1024','720x1280','1280x720','1024x768','768x1024'].includes(size) ? size : '1024x1024';
-      const body: any = { model: 'agnes-image-2.1-flash', prompt, size: agnesSize };
-      if (negative_prompt) body.negative_prompt = negative_prompt;
-      // 图生图: 传入参考图 (Data URI 或 URL)
-      if (image) body.image = image;
-      const resp = await fetch('https://apihub.agnes-ai.com/v1/images/generations', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => '');
-        return res.status(resp.status).json({ error: `HTTP ${resp.status}: ${errText.slice(0, 200)}` });
+
+      if (image) {
+        // 图生图/多图: 使用 agnes-image-2.0-flash + extra_body
+        const images = Array.isArray(image) ? image : [image];
+        const body: any = {
+          model: 'agnes-image-2.0-flash',
+          prompt,
+          size: agnesSize,
+          extra_body: {
+            tags: ['img2img'],
+            image: images,
+            response_format: 'url',
+          },
+        };
+        if (negative_prompt) body.negative_prompt = negative_prompt;
+        const resp = await fetch('https://apihub.agnes-ai.com/v1/images/generations', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          return res.status(resp.status).json({ error: `HTTP ${resp.status}: ${errText.slice(0, 200)}` });
+        }
+        const data: any = await resp.json();
+        const imageUrl = data.data?.[0]?.url || data.url || data.image_url;
+        if (imageUrl) {
+          return res.json({ url: imageUrl, prompt, size, provider: 'agnes-image-2.0 (图生图)' });
+        }
+        return res.json({ url: '', provider: 'none', ...(data || {}) });
+      } else {
+        // 纯文生图: 使用 agnes-image-2.1-flash
+        const body: any = { model: 'agnes-image-2.1-flash', prompt, size: agnesSize };
+        if (negative_prompt) body.negative_prompt = negative_prompt;
+        const resp = await fetch('https://apihub.agnes-ai.com/v1/images/generations', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          return res.status(resp.status).json({ error: `HTTP ${resp.status}: ${errText.slice(0, 200)}` });
+        }
+        const data: any = await resp.json();
+        const imageUrl = data.data?.[0]?.url || data.url || data.image_url;
+        if (imageUrl) {
+          return res.json({ url: imageUrl, prompt, size, provider: 'agnes-image-2.1' });
+        }
+        return res.json({ url: '', provider: 'none', ...(data || {}) });
       }
-      const data: any = await resp.json();
-      const imageUrl = data.data?.[0]?.url || data.url || data.image_url;
-      if (imageUrl) {
-        return res.json({ url: imageUrl, prompt, size, provider: 'agnes-image' });
-      }
-      return res.json({ url: '', provider: 'none', ...(data || {}) });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
