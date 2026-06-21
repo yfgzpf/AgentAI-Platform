@@ -905,11 +905,14 @@ export class AgentAIRouter extends EventEmitter {
           (bodyObj.chat_template_kwargs as any).thinking_budget = req.thinkingBudget;
         }
       } else if (id === 'deepseek') {
-        // DeepSeek V4: 仅 deepseek-v4-pro 支持 thinking 参数
-        // deepseek-v4-flash 是非思考模式, 加 thinking 会 400 错误
-        if (modelName?.includes('v4-pro') || modelName?.includes('reasoner')) {
-          bodyObj.thinking = { type: 'enabled' };
-          bodyObj.reasoning_effort = 'high';
+        // DeepSeek V4: Flash 和 Pro 都支持 thinking 模式
+        // Flash: thinking + reasoning_effort=high (省钱但有推理)
+        // Pro: thinking + reasoning_effort=max (最强推理)
+        bodyObj.thinking = { type: 'enabled' };
+        if (modelName?.includes('v4-pro')) {
+          bodyObj.reasoning_effort = 'max'; // Pro 用 max
+        } else {
+          bodyObj.reasoning_effort = 'high'; // Flash 用 high
         }
       } else if (id === 'zhipu') {
         // 智谱 GLM-4.7-Flash: thinking 参数
