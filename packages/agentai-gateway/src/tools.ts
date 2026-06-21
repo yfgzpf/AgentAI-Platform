@@ -419,13 +419,35 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       if (!url) return { success: false, output: 'url required' };
       try {
         const parsed = new URL(url);
-        // 使用 sanitize.ts 的安全检查
         const { isDangerousUrl } = await import('./sanitize.js');
         const check = isDangerousUrl(url);
         if (check.dangerous) return { success: false, output: `Blocked: ${check.reason} (SSRF): ${parsed.hostname}` };
       } catch { return { success: false, output: 'Invalid URL' }; }
-      const resp = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } });
-      if (!resp.ok) return { success: false, output: `Fetch failed: ${resp.status}` };
+
+      // 完整的浏览器 Headers (解决微信/知乎等反爬虫)
+      const browserHeaders: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'identity', // 不压缩, 方便解析
+        'Cache-Control': 'no-cache',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+      };
+      // 微信公众号特殊处理
+      if (url.includes('mp.weixin.qq.com')) {
+        browserHeaders['Referer'] = 'https://mp.weixin.qq.com/';
+      }
+
+      const resp = await fetch(url, {
+        signal: AbortSignal.timeout(30000), // 30秒 (微信重定向较慢)
+        headers: browserHeaders,
+        redirect: 'follow',
+      });
+      if (!resp.ok) return { success: false, output: `Fetch failed: ${resp.status} ${resp.statusText}` };
       const html = await resp.text();
       // 增强: 结构化提取 + Markdown 输出 (学习 Agent-Reach 结构保留)
       try {
