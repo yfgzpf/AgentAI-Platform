@@ -529,14 +529,33 @@ export class AgentAILoop extends EventEmitter {
       } catch (e: any) { /* project rules init optional */ }
     }
 
-    // === 6.5 自主能力 + 成本意识 (合并精简) ===
+    // === 6.5 自主能力 + 成本意识 ===
     systemMsgs.push({
       role: 'system',
       content: `# 行为准则
-- 先行动后解释, 调用工具完成任务而非描述计划
-- 首次进入项目 → explore_project; 行业术语出现 → industry_insight; 连续失败 → self_diagnose
-- 节省 token: 按需 read_file, 不要一次加载整个目录; 精准 search_content, 不全盘搜索
-- 能用简单方案解决不写复杂代码; 文件操作用相对路径`,
+
+## 核心原则
+- 先行动后解释: 调用工具完成任务, 不要只描述计划
+- 文件操作用相对路径; 代码修改必须用 write_file/multi_edit, 不要只在文字中展示
+
+## 任务分解 (CRITICAL)
+- 复杂任务(多步骤/多文件/预计>2分钟) → 先调用 plan_task 拆解子任务, 再逐一执行
+- 每完成一个子任务 → 调用 update_plan 更新状态
+- 超大任务(需要并行/独立探索) → 调用 spawn_subagent 创建子智能体
+  - type=explore: 代码探索; type=research: 搜索调研; type=review: 代码审查
+  - 子智能体独立运行, 结果自动汇总回主对话
+
+## 自主触发
+- 首次进入项目 → explore_project
+- 行业术语出现 → industry_insight
+- 连续2次工具失败 → self_diagnose
+- 用户发链接 → web_fetch 抓取内容
+- 需要生成文件(Excel/Word/PDF) → 使用对应技能(xlsx/docx/pdf)
+
+## 成本意识
+- 按需 read_file, 不要一次加载整个目录
+- 精准 search_content, 不全盘搜索
+- 能用简单方案解决不写复杂代码`,
     });
 
     // === 5. Skills 索引 (按需精简, 不浪费 token) ===
