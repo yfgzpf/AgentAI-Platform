@@ -23,6 +23,7 @@ import { ChatView } from './components/ChatView';
 import { WritePage } from './components/WritePage';
 import { ImageGen } from './components/ImageGen';
 import { VideoGen } from './components/VideoGen';
+import { Model3DGen } from './components/Model3DGen';
 import { Editor } from './components/Editor';
 import { Settings } from './components/Settings';
 import { QQBotPanel } from './components/QQBotPanel';
@@ -41,7 +42,7 @@ import { ModelSelector } from './components/ModelSelector';
 import { gatewayFallback } from './services/GatewayFallback';
 
 /* ════════════════ 9 个 PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'settings';
+type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'settings';
 
 interface PageMeta {
   key: PageKey;
@@ -60,7 +61,8 @@ const PAGES: PageMeta[] = [
   { key: 'chat',     label: '对话',     icon: <MessageOutlined />,    comp: ChatView,      group: 'core',   desc: '智能对话 · 多模型 · 工具调用' },
   { key: 'editor',   label: '编辑器',   icon: <CodeOutlined />,       comp: Editor,        group: 'core',   desc: '代码编辑 · 改写 · 文件管理' },
   { key: 'image',    label: '生图',     icon: <PictureOutlined />,    comp: ImageGen,      group: 'media',  desc: '文生图 · 多风格 · 多尺寸' },
-  { key: 'video',    label: '生视频',   icon: <VideoCameraOutlined />,comp: VideoGen,      group: 'media',  desc: '文生视频 · 实时进度' },
+  { key: 'video',    label: '生视频',   icon: <VideoCameraOutlined />,comp: VideoGen,      group: 'media',  desc: '文生视频 · 图生视频 · 首尾帧' },
+  { key: '3d',       label: '3D建模',   icon: <AppstoreOutlined />,   comp: Model3DGen,    group: 'media',  desc: '文/图生3D · 混元 · 豆包' },
   { key: 'write',    label: '写作',     icon: <EditOutlined />,       comp: WritePage,     group: 'media',  desc: '长文写作 · 模板 · 一键导出' },
   { key: 'skills',   label: '技能库',   icon: <AppstoreOutlined />,   comp: SkillLibrary,  group: 'system', desc: '25+ 技能 · 7 分类' },
   { key: 'cleaner',  label: '智能清理', icon: <ThunderboltOutlined />,comp: CleanerPanel,  group: 'system', desc: '扫描 / 分类 / 安全清理' },

@@ -138,9 +138,8 @@ export const ImageGen: React.FC = () => {
               options={MODELS.map(m => ({ value: m.value, label: m.label }))}
             />
             <Button size="small" icon={<PictureOutlined />} onClick={() => fileRef.current?.click()}>
-              {refImage ? '已选参考图' : '上传参考图'}
+              {refImage ? '更换参考图' : '上传参考图'}
             </Button>
-            {refImage && <Button size="small" danger onClick={() => setRefImage('')}>移除</Button>}
             <input
               ref={fileRef}
               type="file"
@@ -185,7 +184,7 @@ export const ImageGen: React.FC = () => {
               }} disabled={busy}>优化</Button>
             </Tooltip>
             <Button type="primary" size="large" icon={<ThunderboltOutlined />} loading={busy} onClick={gen}>
-              {busy ? 'AI 画图中...' : '✨ 立即生成'}
+              {busy ? '生成中...' : '生成'}
             </Button>
           </Space>
           {model === 'cogview' && (
@@ -193,6 +192,17 @@ export const ImageGen: React.FC = () => {
           )}
           {model === 'agnes' && (
             <Alert type="info" message="Agnes Image 2.1 Flash, 需 AGENTAI_API_KEY。" style={{ fontSize: 11 }} showIcon />
+          )}
+          {/* 参考图预览 */}
+          {refImage && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8, borderRadius: 8, background: '#1a1a1a', border: '1px solid #333' }}>
+              <img src={refImage} alt="参考图" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6 }} />
+              <div style={{ flex: 1, fontSize: 12, color: '#999' }}>
+                已上传参考图<br />
+                <span style={{ fontSize: 11, color: '#666' }}>生成时将作为风格参考</span>
+              </div>
+              <Button size="small" danger onClick={() => setRefImage('')}>移除</Button>
+            </div>
           )}
         </Space>
       </Card>
