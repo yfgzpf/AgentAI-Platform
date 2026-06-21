@@ -422,6 +422,13 @@ export const ChatView: React.FC = () => {
 
   /* ---- Send handler ---- */
   const handleSend = useCallback(async (text: string, extraAttachments?: ParsedAttachment[]) => {
+    // 追问卡片自动退让: 用户在对话框直接输入时关闭卡片（用 ref 避免闭包陷阱）
+    if (askUserCardRef.current) {
+      if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
+      setLoading(false);
+      setAskUserCard(null);
+    }
+
     // 正在处理时排队，不中止前一个任务
     if (loading) {
       if (text.trim()) {
@@ -1060,8 +1067,10 @@ export const ChatView: React.FC = () => {
   const [chainCurrent, setChainCurrent] = useState<ChainStage>('plan');
   // 审批提案
   const [approvalProposal, setApprovalProposal] = useState<any>(null);
-  // 追问卡片
+  // 追问卡片状态 ref (避免 handleSend 闭包陷阱)
   const [askUserCard, setAskUserCard] = useState<{ question: string; options: Array<{ id: string; title: string }> } | null>(null);
+  const askUserCardRef = useRef(askUserCard);
+  askUserCardRef.current = askUserCard;
   // 追问答案待发送 (避免 React 闭包陷阱)
   const [pendingAnswer, setPendingAnswer] = useState<string | null>(null);
   // Diff 预览
@@ -1357,6 +1366,11 @@ export const ChatView: React.FC = () => {
         <AskUserCard
           question={askUserCard.question}
           options={askUserCard.options}
+          onClose={() => {
+            if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
+            setLoading(false);
+            setAskUserCard(null);
+          }}
           onAnswer={(answer) => {
             const answerText = Array.isArray(answer)
               ? answer.join(', ')

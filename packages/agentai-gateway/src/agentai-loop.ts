@@ -509,6 +509,42 @@ export class AgentAILoop extends EventEmitter {
               systemMsgs.push({ role: 'system', content: `\n${mem}\n\n使用 \`read_file\` 查看完整规则。` });
             }
           } catch (e: any) { /* sub-memory read optional */ }
+
+          // === 最近生成文件感知: 扫描工作区最近 24h 内创建/修改的产出文件 ===
+          try {
+            const now = Date.now();
+            const ONE_DAY = 24 * 60 * 60 * 1000;
+            const outputExts = new Set(['.xlsx', '.xls', '.docx', '.doc', '.pdf', '.pptx', '.png', '.jpg', '.svg', '.csv', '.json', '.py', '.html']);
+            const recentFiles: string[] = [];
+            const scanDir = (dir: string, depth: number) => {
+              if (depth > 2) return; // 只扫 2 层
+              try {
+                for (const entry of fsSync.readdirSync(dir)) {
+                  if (entry.startsWith('.') || entry === 'node_modules') continue;
+                  const full = pathSync.join(dir, entry);
+                  try {
+                    const stat = fsSync.statSync(full);
+                    if (stat.isDirectory()) { scanDir(full, depth + 1); continue; }
+                    const ext = pathSync.extname(entry).toLowerCase();
+                    if (outputExts.has(ext) && (now - stat.mtimeMs) < ONE_DAY) {
+                      const rel = pathSync.relative(dirPath, full).replace(/\\/g, '/');
+                      const age = Math.round((now - stat.mtimeMs) / 60000);
+                      const ageStr = age < 60 ? `${age}分钟前` : `${Math.round(age / 60)}小时前`;
+                      const size = stat.size < 1024 ? `${stat.size}B` : `${(stat.size / 1024).toFixed(1)}KB`;
+                      recentFiles.push(`- ${rel} (${size}, ${ageStr})`);
+                    }
+                  } catch { /* stat error skip */ }
+                }
+              } catch { /* readdir error skip */ }
+            };
+            scanDir(dirPath, 0);
+            if (recentFiles.length > 0) {
+              systemMsgs.push({
+                role: 'system',
+                content: `# 最近生成的文件 (24h内)\n${recentFiles.slice(0, 15).join('\n')}\n\n用户说"上次那个文件"时，优先在这些文件中查找。可用 read_file 查看内容。`,
+              });
+            }
+          } catch { /* recent files scan optional */ }
         }
       } catch (e: any) { /* workspace context optional */ }
     }
@@ -555,7 +591,12 @@ export class AgentAILoop extends EventEmitter {
 ## 成本意识
 - 按需 read_file, 不要一次加载整个目录
 - 精准 search_content, 不全盘搜索
-- 能用简单方案解决不写复杂代码`,
+- 能用简单方案解决不写复杂代码
+
+## 长内容策略
+- 生成报告/方案书/长文档时: 先输出大纲(标题+要点), 等用户确认方向再展开
+- 生成代码超过 100 行时: 先说明架构思路, 再分文件生成
+- 用户说"直接生成/不用确认/全部写出来"时跳过大纲直接完成`,
     });
 
     // === 5. Skills 索引 (按需精简, 不浪费 token) ===

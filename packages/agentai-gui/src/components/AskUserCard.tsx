@@ -11,7 +11,7 @@
  */
 import React, { useState } from 'react';
 import { Card, Button, Tag, Space, Radio, Checkbox, Input, message, Switch } from 'antd';
-import { QuestionCircleOutlined, CheckOutlined, SendOutlined, KeyOutlined, LinkOutlined, SafetyOutlined } from '@ant-design/icons';
+import { QuestionCircleOutlined, CheckOutlined, SendOutlined, KeyOutlined, LinkOutlined, SafetyOutlined, CloseOutlined } from '@ant-design/icons';
 
 interface OptionItem {
   id: string;
@@ -24,6 +24,7 @@ interface Props {
   options?: OptionItem[];
   multiSelect?: boolean;
   onAnswer: (answer: string | string[]) => void;
+  onClose?: () => void;
   sessionId?: string;
 }
 
@@ -32,6 +33,7 @@ export const AskUserCard: React.FC<Props> = ({
   options = [],
   multiSelect = false,
   onAnswer,
+  onClose,
   sessionId,
 }) => {
   const [selected, setSelected] = useState<string | string[]>(multiSelect ? [] : '');
@@ -70,7 +72,7 @@ export const AskUserCard: React.FC<Props> = ({
         id: 'provide_key',
         apiKey: apiKey.trim(),
         trust: trustKey,
-      });
+      } as any);
       return;
     }
 
@@ -129,15 +131,26 @@ export const AskUserCard: React.FC<Props> = ({
         </Space>
       }
       extra={
-        <Button
-          size="small"
-          type="primary"
-          icon={<SendOutlined />}
-          loading={loading}
-          onClick={handleAnswer}
-        >
-          回答
-        </Button>
+        <Space size={4}>
+          <Button
+            size="small"
+            type="primary"
+            icon={<SendOutlined />}
+            loading={loading}
+            onClick={handleAnswer}
+          >
+            回答
+          </Button>
+          {onClose && (
+            <Button
+              size="small"
+              type="text"
+              icon={<CloseOutlined />}
+              onClick={onClose}
+              style={{ color: 'var(--muted)' }}
+            />
+          )}
+        </Space>
       }
     >
       {/* 问题内容 */}
