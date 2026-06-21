@@ -88,10 +88,14 @@ export const ImageGen: React.FC = () => {
     }
     setBusy(true);
     try {
+      // 有参考图时自动切换到 Agnes (Cogview 不支持图生图)
+      const effectiveModel = refImage ? 'agnes' : model;
+      const body: any = { prompt, size, model: effectiveModel };
+      if (refImage) body.image = refImage; // Data URI
       const r = await fetch(httpUrl + '/v1/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, size, model }),
+        body: JSON.stringify(body),
       });
       const data = await r.json();
       if (data.error) {
@@ -198,8 +202,8 @@ export const ImageGen: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8, borderRadius: 8, background: '#1a1a1a', border: '1px solid #333' }}>
               <img src={refImage} alt="参考图" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6 }} />
               <div style={{ flex: 1, fontSize: 12, color: '#999' }}>
-                已上传参考图<br />
-                <span style={{ fontSize: 11, color: '#666' }}>生成时将作为风格参考</span>
+                已上传参考图 (图生图)<br />
+                <span style={{ fontSize: 11, color: '#666' }}>将自动使用 Agnes Image 引擎生成</span>
               </div>
               <Button size="small" danger onClick={() => setRefImage('')}>移除</Button>
             </div>
