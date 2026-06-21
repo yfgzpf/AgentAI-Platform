@@ -535,21 +535,27 @@ export const ChatView: React.FC = () => {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // 超时保护: 3 分钟无响应自动中止
-    const timeoutId = setTimeout(() => {
-      if (abortRef.current === controller) {
+    // 智能超时保护: 有活动(delta/工具调用)时重置计时器, 只在完全无响应时才中止
+    let lastActivityTs = Date.now();
+    const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 分钟无任何活动才超时
+    const timeoutChecker = setInterval(() => {
+      if (Date.now() - lastActivityTs > IDLE_TIMEOUT && abortRef.current === controller) {
         controller.abort();
         updateMessage(botId, (m: any) => ({
           ...m, streaming: false, status: 'error',
-          segments: [...m.segments, { kind: 'text', text: '\n\n⏱ 请求超时 (3 分钟无响应)' }],
+          segments: [...m.segments, { kind: 'text', text: '\n\n⏱ 请求超时 (5 分钟无响应)' }],
         }));
         setLoading(false);
         abortRef.current = null;
+        clearInterval(timeoutChecker);
       }
-    }, 180000);
+    }, 30000); // 每 30 秒检查一次
 
+    const baseHandlers = makeChatHandlers(botId, updateMessage);
     const handlers = {
-      ...makeChatHandlers(botId, updateMessage),
+      ...baseHandlers,
+      // 包装 onDelta: 重置超时计时器
+      onDelta: (info: any) => { lastActivityTs = Date.now(); baseHandlers.onDelta?.(info); },
       // 缓存工具调用参数 (onToolResult 中需要)
       _toolArgsCache: {} as Record<string, any>,
       onModelFallback: (info: any) => {
@@ -559,6 +565,7 @@ export const ChatView: React.FC = () => {
         }));
       },
       onToolStart: (info: any) => {
+        lastActivityTs = Date.now(); // 重置超时计时器
         // 缓存 args 供 onToolResult 使用
         handlers._toolArgsCache[info.callId] = info.args;
         updateMessage(botId, (m: any) => ({
@@ -571,6 +578,7 @@ export const ChatView: React.FC = () => {
         });
       },
       onToolResult: (info: any) => {
+        lastActivityTs = Date.now(); // 重置超时计时器
         updateMessage(botId, (m: any) => {
           const segs = m.segments.map((s: any) =>
             s.kind === 'tool' && s.callId === info.callId
@@ -863,7 +871,7 @@ export const ChatView: React.FC = () => {
         updateMessage(userMsgId, (m: any) => ({ ...m, status: 'error' }));
       }
     } finally {
-      clearTimeout(timeoutId);
+      clearInterval(timeoutChecker);
       setLoading(false);
       abortRef.current = null;
     }
