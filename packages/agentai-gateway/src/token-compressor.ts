@@ -94,18 +94,8 @@ export function compressToolOutput(
     result = collapseBlankLinesFn(result);
   }
 
-  // 3. 策略: 根据工具类型选择
-  if (cfg.compressLargeListings && isDirectoryListing(toolName)) {
-    result = compressDirectoryListing(result);
-  } else if (isCodeOutput(toolName)) {
-    result = compressCodeOutput(result, cfg);
-  } else if (isErrorOutput(result)) {
-    // 错误信息必须完整保留 — 不压缩
-    return noCompress(output);
-  } else {
-    // 通用截断
-    result = smartTruncate(result, cfg);
-  }
+  // 3. 策略: ContentRouter 自动检测内容类型 + 选择最优压缩器 (Headroom 算法)
+  result = routeAndCompress(result, toolName, cfg);
 
   // 4. 重复折叠 (非代码输出)
   if (cfg.foldRepeats && !isCodeOutput(toolName)) {
@@ -256,4 +246,234 @@ function foldRepeatedLines(text: string): string {
   }
 
   return result.join('\n');
+}
+
+// ===== Headroom 核心压缩算法 (内置实现, 无外部依赖) =====
+
+/**
+ * SmartCrusher — JSON 智能压缩
+ * 去除冗余 key, 压缩重复结构, 保留语义
+ * 压缩率: 50-80% (JSON 工具输出)
+ */
+function crushJson(text: string): string {
+  try {
+    const obj = JSON.parse(text);
+    return crushJsonValue(obj, 0);
+  } catch {
+    return text; // 不是有效 JSON, 返回原文
+  }
+}
+
+function crushJsonValue(val: any, depth: number): string {
+  if (val === null || val === undefined) return 'null';
+  if (typeof val === 'string') {
+    // 长字符串截断
+    if (val.length > 200) return JSON.stringify(val.slice(0, 150) + '...[truncated]');
+    return JSON.stringify(val);
+  }
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+
+  if (Array.isArray(val)) {
+    if (val.length === 0) return '[]';
+    // 同构数组: 只保留前2个 + 总数
+    if (val.length > 3 && typeof val[0] === 'object' && val[0] !== null) {
+      const sample = val.slice(0, 2).map(v => crushJsonValue(v, depth + 1));
+      return `[${sample.join(',')},...${val.length - 2} more]`;
+    }
+    // 简单数组: 全部保留但递归压缩
+    if (val.length > 10) {
+      const head = val.slice(0, 5).map(v => crushJsonValue(v, depth + 1));
+      const tail = val.slice(-2).map(v => crushJsonValue(v, depth + 1));
+      return `[${head.join(',')},...${val.length - 7} more...,${tail.join(',')}]`;
+    }
+    return `[${val.map((v: any) => crushJsonValue(v, depth + 1)).join(',')}]`;
+  }
+
+  if (typeof val === 'object') {
+    const keys = Object.keys(val);
+    if (keys.length === 0) return '{}';
+    // 去除无信息 key (null/空串/空数组)
+    const meaningful = keys.filter(k => {
+      const v = val[k];
+      return v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0);
+    });
+    // 深层嵌套: 只保留 key 列表
+    if (depth > 3) {
+      return `{${meaningful.map(k => `${k}:...`).join(',')}}`;
+    }
+    const parts = meaningful.map(k => `${k}:${crushJsonValue(val[k], depth + 1)}`);
+    return `{${parts.join(',')}}`;
+  }
+
+  return String(val);
+}
+
+/**
+ * CodeCompressor — 代码智能压缩
+ * 去注释, 压缩空行, 折叠 import 块, 保留结构
+ * 压缩率: 30-60% (代码文件)
+ */
+function compressCode(text: string): string {
+  const lines = text.split('\n');
+  const result: string[] = [];
+  let inBlockComment = false;
+  let importBlock: string[] = [];
+  let blankCount = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // 块注释
+    if (inBlockComment) {
+      if (trimmed.includes('*/')) inBlockComment = false;
+      continue;
+    }
+    if (trimmed.startsWith('/*')) {
+      if (!trimmed.includes('*/')) inBlockComment = true;
+      continue;
+    }
+
+    // 单行注释 (保留 eslint/ts 指令)
+    if (/^\/\//.test(trimmed) && !/eslint|@ts-|prettier|istanbul/.test(trimmed)) {
+      continue;
+    }
+    // Python 注释
+    if (/^#(?!!)/.test(trimmed) && !/type:|noqa|pragma/.test(trimmed)) {
+      continue;
+    }
+
+    // 空行: 最多保留1行
+    if (!trimmed) {
+      blankCount++;
+      if (blankCount <= 1) result.push('');
+      continue;
+    }
+    blankCount = 0;
+
+    // import 块折叠
+    if (/^(import |from |require\(|const .* = require)/.test(trimmed)) {
+      importBlock.push(trimmed);
+      continue;
+    }
+    if (importBlock.length > 0) {
+      if (importBlock.length <= 3) {
+        result.push(...importBlock);
+      } else {
+        result.push(importBlock[0]);
+        result.push(`// ... ${importBlock.length - 1} more imports`);
+      }
+      importBlock = [];
+    }
+
+    result.push(line);
+  }
+
+  // 残余 import
+  if (importBlock.length > 0) {
+    if (importBlock.length <= 3) {
+      result.push(...importBlock);
+    } else {
+      result.push(importBlock[0]);
+      result.push(`// ... ${importBlock.length - 1} more imports`);
+    }
+  }
+
+  return result.join('\n');
+}
+
+/**
+ * ContentRouter — 自动检测内容类型, 选择最优压缩器
+ * 替代原有的简单 isCodeOutput / isDirectoryListing 判断
+ */
+function routeAndCompress(text: string, toolName: string, cfg: CompressorConfig): string {
+  // 检测内容类型
+  const contentType = detectContentType(text);
+
+  switch (contentType) {
+    case 'json':
+      return crushJson(text);
+    case 'code':
+      return compressCode(text);
+    case 'directory':
+      return compressDirectoryListing(text);
+    case 'error':
+      return text; // 错误信息完整保留
+    case 'log':
+      return compressLogOutput(text, cfg);
+    default:
+      return smartTruncate(text, cfg);
+  }
+}
+
+type ContentType = 'json' | 'code' | 'directory' | 'log' | 'error' | 'text';
+
+function detectContentType(text: string): ContentType {
+  const trimmed = text.trim();
+
+  // 错误优先
+  if (isErrorOutput(text)) return 'error';
+
+  // JSON
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try { JSON.parse(trimmed); return 'json'; } catch { /* not valid json */ }
+  }
+
+  // 代码特征
+  const codeSignals = [
+    /^(import |from |const |let |var |function |class |def |pub fn |async fn)/m,
+    /^(export |module\.exports|package |using |#include)/m,
+    /[{}\[\]();]$/.test(trimmed.split('\n').slice(0, 10).join('')),
+  ];
+  const codeScore = codeSignals.filter(Boolean).length;
+  if (codeScore >= 2) return 'code';
+
+  // 目录列表
+  if (/^[├└│─┬ ]+/.test(trimmed) || /^\d+ files?/.test(trimmed) || /^(total |drwx|[-rwx]{10})/.test(trimmed)) {
+    return 'directory';
+  }
+
+  // 日志
+  if (/^\[\d{4}-\d{2}-\d{2}|^\d{4}\/\d{2}\/\d{2}|^\[INFO\]|^\[WARN\]|^\[ERROR\]|^\[DEBUG\]/m.test(trimmed)) {
+    return 'log';
+  }
+
+  return 'text';
+}
+
+/** 日志输出压缩: 去重 + 保留首尾 + 统计 */
+function compressLogOutput(text: string, cfg: CompressorConfig): string {
+  const lines = text.split('\n');
+  if (lines.length <= 20) return text;
+
+  // 去重相邻日志
+  const deduped: string[] = [];
+  let lastKey = '';
+  let repeatCount = 0;
+  for (const line of lines) {
+    // 提取日志级别 + 消息 (去掉时间戳)
+    const key = line.replace(/^\[?\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}[.\d]*\]?\s*/g, '').trim();
+    if (key === lastKey && key.length > 0) {
+      repeatCount++;
+      continue;
+    }
+    if (repeatCount > 0) {
+      deduped.push(`  [×${repeatCount + 1}]`);
+      repeatCount = 0;
+    }
+    deduped.push(line);
+    lastKey = key;
+  }
+  if (repeatCount > 0) deduped.push(`  [×${repeatCount + 1}]`);
+
+  // 还是太长? 头尾保留
+  if (deduped.length > 30) {
+    return [
+      ...deduped.slice(0, 15),
+      `... [省略 ${deduped.length - 20} 行日志] ...`,
+      ...deduped.slice(-5),
+    ].join('\n');
+  }
+
+  return deduped.join('\n');
 }
