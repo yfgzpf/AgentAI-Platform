@@ -916,10 +916,36 @@ export class AgentAILoop extends EventEmitter {
       }
 
       // 3.1 构造 LLM 请求 (immutable prefix + append-only log)
-      const messages: ChatMessage[] = [
+      let messages: ChatMessage[] = [
         ...this.context.immutablePrefix,
         ...this.context.appendOnlyLog,
       ];
+
+      // 3.1.1 对话历史智能压缩: 保留 system + 最近 10 条, 压缩中间历史
+      const MAX_MSGS = 30; // 超过此数量启动压缩
+      if (messages.length > MAX_MSGS) {
+        const systemMsgs = messages.filter(m => m.role === 'system');
+        const nonSystem = messages.filter(m => m.role !== 'system');
+        const keepRecent = 10; // 保留最近 10 条
+        const recent = nonSystem.slice(-keepRecent);
+        const old = nonSystem.slice(0, -keepRecent);
+
+        if (old.length > 0) {
+          // 将旧消息压缩为摘要
+          const summary = old.map(m => {
+            const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? 'AI' : m.role;
+            const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+            return `[${role}] ${text.slice(0, 80)}`;
+          }).join('\n');
+
+          messages = [
+            ...systemMsgs,
+            { role: 'system', content: `# 历史摘要 (${old.length} 条消息已压缩)\n${summary.slice(0, 2000)}` },
+            ...recent,
+          ];
+          console.log(`[history-compress] ${systemMsgs.length + nonSystem.length} → ${messages.length} messages`);
+        }
+      }
 
       // 凭证遮蔽: 防止 API key / token / password 泄露到 LLM 上下文
       for (const msg of messages) {
@@ -936,7 +962,7 @@ export class AgentAILoop extends EventEmitter {
       const readonlyToolNames = ['read_file','list_directory','directory_tree','search_codebase','web_fetch','ask_user'];
       const isReadonlyTools = (t: any) => readonlyToolNames.includes(t.name || t.function?.name || '');
 
-      // 计算工具列表: 根据模式 + 模型能力过滤
+      // 计算工具列表: 根据模式 + 消息意图智能过滤 (减少工具数量提升准确率)
       let requestTools: any[] = [];
       if (this.opts.mode !== 'readonly') {
         const allTools = this.registry.toLLMTools();
@@ -951,7 +977,8 @@ export class AgentAILoop extends EventEmitter {
         } else if (this.opts.mode === 'planning' || this.opts.mode === 'review') {
           requestTools = allTools.filter(isReadonlyTools);
         } else {
-          requestTools = allTools;
+          // 智能工具过滤: 根据消息意图只给AI相关工具 (减少噪音, 提升准确率)
+          requestTools = this.filterToolsByIntent(messageText, allTools);
         }
       }
 
@@ -1049,6 +1076,40 @@ export class AgentAILoop extends EventEmitter {
 
       // 3.4 处理 tool calls
       if (res.toolCalls && res.toolCalls.length > 0) {
+        // ═══ 工具调用修复循环 (学 Reasonix 4-pass repair) ═══
+        // Pass 1: 截断 JSON 修复 (args 被 max_tokens 截断)
+        for (const tc of res.toolCalls) {
+          if (typeof tc.args === 'string') {
+            try { tc.args = JSON.parse(tc.args); } catch {
+              // 尝试修复截断的 JSON: 补齐未闭合的括号
+              let fixed = tc.args;
+              const opens = (fixed.match(/\{/g) || []).length;
+              const closes = (fixed.match(/\}/g) || []).length;
+              if (opens > closes) fixed += '}'.repeat(opens - closes);
+              const openBrackets = (fixed.match(/\[/g) || []).length;
+              const closeBrackets = (fixed.match(/\]/g) || []).length;
+              if (openBrackets > closeBrackets) fixed += ']'.repeat(openBrackets - closeBrackets);
+              try { tc.args = JSON.parse(fixed); console.log(`[tool-repair] fixed truncated JSON for ${tc.name}`); }
+              catch { tc.args = {}; console.warn(`[tool-repair] unfixable JSON for ${tc.name}, using empty args`); }
+            }
+          }
+        }
+        // Pass 2: 去重 (同名+同参数的重复调用 — storm 抑制)
+        const seen = new Set<string>();
+        const deduped: typeof res.toolCalls = [];
+        for (const tc of res.toolCalls) {
+          const key = `${tc.name}:${JSON.stringify(tc.args)}`;
+          if (seen.has(key)) {
+            console.log(`[tool-repair] suppressed duplicate: ${tc.name}`);
+            continue;
+          }
+          seen.add(key);
+          deduped.push(tc);
+        }
+        if (deduped.length < res.toolCalls.length) {
+          console.log(`[tool-repair] storm suppression: ${res.toolCalls.length} → ${deduped.length}`);
+          res.toolCalls = deduped;
+        }
         // 任务链推进: 有工具调用 = 进入执行阶段
         if (taskChain) {
           try {
@@ -1621,6 +1682,66 @@ export class AgentAILoop extends EventEmitter {
     } catch (e) {
       console.warn('[reflector] import/exec failed:', (e as Error).message);
     }
+  }
+
+  /**
+   * 智能工具过滤: 根据消息意图选择相关工具 (10-20 个), 减少噪音提升准确率
+   * 核心工具始终包含, 其他按意图匹配
+   */
+  private filterToolsByIntent(message: string, allTools: any[]): any[] {
+    const msg = message.toLowerCase();
+    const getName = (t: any) => t.name || t.function?.name || '';
+
+    // 核心工具: 永远包含 (读写文件 + 搜索 + 追问 + 执行)
+    const CORE = new Set([
+      'read_file', 'write_file', 'list_directory', 'search_content',
+      'ask_user', 'run_code', 'run_shell_command', 'directory_tree',
+    ]);
+
+    // 意图→工具组映射
+    const INTENT_TOOLS: Array<{ pattern: RegExp; tools: string[] }> = [
+      { pattern: /编辑|修改|改|重构|替换|edit|modify|refactor/i, tools: ['multi_edit', 'create_directory', 'copy_file', 'move_file', 'delete_file', 'get_file_info'] },
+      { pattern: /搜索|查找|查|找|search|find|grep/i, tools: ['search_content', 'search_codebase', 'web_search', 'web_fetch'] },
+      { pattern: /网|链接|url|http|搜|百度|google|网页/i, tools: ['web_search', 'web_fetch'] },
+      { pattern: /图|画|图片|image|picture|海报|效果图|插画/i, tools: ['generate_image'] },
+      { pattern: /视频|video|动画|短片/i, tools: ['generate_video', 'query_video'] },
+      { pattern: /图表|流程|架构|diagram|chart/i, tools: ['generate_diagram'] },
+      { pattern: /记忆|记住|remember|recall|偏好/i, tools: ['remember', 'recall_memory', 'forget'] },
+      { pattern: /计划|分解|子任务|plan|task|排期/i, tools: ['plan_task', 'update_plan', 'spawn_subagent'] },
+      { pattern: /探索|项目|架构|分析|explore/i, tools: ['explore_project', 'directory_tree'] },
+      { pattern: /行业|装修|报价|方案/i, tools: ['industry_insight', 'remember', 'recall_memory'] },
+      { pattern: /诊断|检查|修复|self.*diagnose/i, tools: ['self_diagnose'] },
+      { pattern: /进化|规则|evolve|自我/i, tools: ['evolve_prompt', 'create_tool'] },
+      { pattern: /文件|上传|下载|excel|docx|pdf|pptx/i, tools: ['get_file_info', 'copy_file', 'move_file'] },
+      { pattern: /命令|终端|shell|npm|git|pip/i, tools: ['run_shell_command', 'run_code'] },
+      { pattern: /微信|qq|wechat|bot/i, tools: ['wechat_bot', 'connect_qq_bot'] },
+    ];
+
+    // 收集匹配的工具名
+    const selected = new Set<string>(CORE);
+    for (const { pattern, tools } of INTENT_TOOLS) {
+      if (pattern.test(msg)) {
+        for (const t of tools) selected.add(t);
+      }
+    }
+
+    // 如果消息很复杂 (>50字) 或是首轮, 给更多工具
+    if (msg.length > 50 || this.iteration === 0) {
+      selected.add('plan_task');
+      selected.add('update_plan');
+      selected.add('spawn_subagent');
+      selected.add('web_search');
+      selected.add('remember');
+      selected.add('recall_memory');
+      selected.add('explore_project');
+    }
+
+    // 后续轮次 (工具调用后) 给全部工具 — AI 需要继续之前的工作
+    if (this.iteration > 0) return allTools;
+
+    const filtered = allTools.filter(t => selected.has(getName(t)));
+    console.log(`[tools-filter] ${allTools.length} → ${filtered.length} tools (msg: ${msg.slice(0, 40)})`);
+    return filtered.length >= 5 ? filtered : allTools; // 安全兜底: 太少就给全部
   }
 
   /**
