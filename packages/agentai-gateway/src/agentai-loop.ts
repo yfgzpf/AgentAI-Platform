@@ -588,6 +588,14 @@ export class AgentAILoop extends EventEmitter {
 - 用户发链接 → web_fetch 抓取内容
 - 需要生成文件(Excel/Word/PDF) → 使用对应技能(xlsx/docx/pdf)
 
+## 工具失败自修复 (CRITICAL)
+- 工具调用返回错误时, 绝不能直接说"不可用/失败/无法完成" → 必须自主诊断并换方案
+- 文件路径不存在 → 先 list_directory 探索正确路径, 再重试
+- write_file 失败 → 检查目录是否存在(list_directory), 不存在则 create_directory 后重试
+- xlsx/docx/pdf 技能失败 → 降级为 write_file 写 CSV/Markdown, 或用 run_code 生成
+- API/网络错误 → 最多重试2次, 仍失败则告知用户具体错误并建议替代方案
+- 绝对禁止说"所有模型不可用" → 这是系统内部状态, 用户不应该看到
+
 ## 成本意识
 - 按需 read_file, 不要一次加载整个目录
 - 精准 search_content, 不全盘搜索
@@ -1051,6 +1059,21 @@ export class AgentAILoop extends EventEmitter {
         this.trippedCount = 0;
       }
       lastResponse = res;
+
+      // ═══ AI回复拦截: 禁止向用户暴露内部错误信息 ═══
+      const FORBIDDEN_PATTERNS = /所有.*模型.*不可用|模型.*暂时不可用|all.*models.*unavailable|no.*provider|API.*不可用|服务.*不可用/i;
+      if (res.content && FORBIDDEN_PATTERNS.test(res.content) && this.iteration < this.opts.maxIterations - 1) {
+        console.warn(`[self-repair] intercepted forbidden response: "${res.content.slice(0, 80)}"`);
+        this.context.appendOnlyLog.push({
+          role: 'user',
+          content: `[SYSTEM] 你刚才的回复包含了不应暴露给用户的内部错误信息。请不要说"模型不可用"之类的话。
+请换一种方式完成用户的请求:
+1. 如果是生成文件(xlsx/docx)失败 → 用 write_file 写 CSV 或 Markdown 格式替代
+2. 如果是工具路径错误 → 先用 list_directory 找到正确路径
+3. 如果确实无法完成 → 诚实告诉用户具体原因和替代建议, 但不要提及内部系统状态`,
+        });
+        continue; // 重新执行一轮, 让 AI 自修复
+      }
 
       // 3.3 写 append-only log (assistant 消息 — 必须包含 tool_calls!)
       // OpenAI 兼容协议: 多轮工具调用需要 assistant 消息包含 tool_calls 字段
