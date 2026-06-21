@@ -29,6 +29,7 @@ import { createCleanerRouter } from './routes/cleaner.js';
 import { createGoalRouter } from './routes/goal.js';
 import { createImageRouter } from './routes/image.js';
 import { createVideoRouter } from './routes/video.js';
+import { register3DRoutes } from './routes/3d-generate.js';
 import { commercialModelsRouter } from './routes/commercial-models.js';
 import { startSkillWatcher } from './skills/watcher.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
@@ -83,6 +84,7 @@ export function createApp(deps: AppDeps) {
   app.use('/api/sessions', createSessionsRouter(deps.persistentMemory));
   app.use(createImageRouter());
   app.use(createVideoRouter());
+  register3DRoutes(app);
   if (deps.router) {
     app.use(createAdminRouter({ ...deps }));
   } else {

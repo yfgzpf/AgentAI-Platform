@@ -1,21 +1,26 @@
 /**
- * ImageGen - 真接 agentai image API 的图片生成面板
- * 直接在页面上显示生成的图, 不再到文件系统找
+ * ImageGen - AI 图片生成面板
+ * 引擎: Cogview-3-Flash (智谱免费) 优先 / agnes-image-2.1-flash 降级
+ * 共用: ZHIPU_API_KEY (文本/生图/生视频同一 key)
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Input, Button, Select, Card, Space, Tag, Alert, Spin, message, Empty } from 'antd';
-import { PictureOutlined, ThunderboltOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Input, Button, Select, Card, Space, Tag, Alert, Spin, message, Empty, Tooltip, Modal } from 'antd';
+import { PictureOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined, SendOutlined, SwapOutlined, BulbOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 
 const PRESETS = [
-  { label: '📷 写实摄影', prompt: 'cinematic photo, realistic, 8k, highly detailed, natural lighting' },
-  { label: '🎨 动漫插画', prompt: 'anime illustration, vibrant colors, studio ghibli style' },
-  { label: '🖼️ 油画', prompt: 'oil painting, impressionist, monet style' },
-  { label: '🧊 3D 渲染', prompt: '3D render, octane, unreal engine, soft lighting' },
-  { label: '🖌️ 水墨', prompt: 'chinese ink wash painting, traditional, minimalist' },
-  { label: '👾 像素', prompt: 'pixel art, 16-bit retro game style' },
-  { label: '🏰 奇幻', prompt: 'fantasy art, magical, dragons, epic landscape' },
-  { label: '🌆 赛博朋克', prompt: 'cyberpunk, neon lights, rain, futuristic city' },
+  { label: '写实摄影', prompt: 'cinematic photo, realistic, 8k, highly detailed, natural lighting' },
+  { label: '动漫插画', prompt: 'anime illustration, vibrant colors, studio ghibli style' },
+  { label: '油画', prompt: 'oil painting, impressionist, monet style' },
+  { label: '3D 渲染', prompt: '3D render, octane, unreal engine, soft lighting' },
+  { label: '水墨', prompt: 'chinese ink wash painting, traditional, minimalist' },
+  { label: '像素', prompt: 'pixel art, 16-bit retro game style' },
+  { label: '奇幻', prompt: 'fantasy art, magical, dragons, epic landscape' },
+  { label: '赛博朋克', prompt: 'cyberpunk, neon lights, rain, futuristic city' },
+  { label: '室内设计', prompt: 'interior design, modern living room, natural light, 8k render, minimalist' },
+  { label: '电影海报', prompt: 'movie poster, cinematic, dramatic lighting, 4k, typography' },
+  { label: '国风插画', prompt: 'chinese traditional painting, ink wash, elegant, silk texture' },
+  { label: '产品摄影', prompt: 'product photography, white background, studio lighting, commercial' },
 ];
 
 const SIZES = [
@@ -25,14 +30,27 @@ const SIZES = [
   { value: '1024x768', label: '1024x768 (横屏)' },
   { value: '768x1024', label: '768x1024 (竖屏)' },
   { value: '1920x1080', label: '1920x1080 (FHD)' },
+  // Cogview 专属尺寸
+  { value: '768x1344', label: '768x1344 (竖屏)' },
+  { value: '864x1152', label: '864x1152' },
+  { value: '1344x768', label: '1344x768 (横屏)' },
+  { value: '1152x864', label: '1152x864' },
+  { value: '1440x720', label: '1440x720 (横屏)' },
+  { value: '720x1440', label: '720x1440 (竖屏)' },
+];
+
+const MODELS = [
+  { value: 'cogview', label: 'Cogview-3-Flash (免费)', desc: '智谱免费, 同 ZHIPU_API_KEY' },
+  { value: 'agnes', label: 'Agnes Image 2.1 Flash', desc: '需 AGENTAI_API_KEY' },
 ];
 
 interface HistoryItem {
   id: string;
   prompt: string;
-  url: string;       // /media/... 路径, 可直接 <img src>
+  url: string;
   size: string;
   ts: number;
+  provider?: string;
 }
 
 const STORAGE_KEY = 'agentai-image-history';
@@ -40,12 +58,14 @@ const STORAGE_KEY = 'agentai-image-history';
 export const ImageGen: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState('1024x1024');
+  const [model, setModel] = useState('cogview');
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [current, setCurrent] = useState<HistoryItem | null>(null);
+  const [zoomUrl, setZoomUrl] = useState<string | null>(null);
+  const [refImage, setRefImage] = useState<string>(''); // 参考图 base64
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // 从 localStorage 拉历史
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -53,7 +73,6 @@ export const ImageGen: React.FC = () => {
     } catch {}
   }, []);
 
-  // 持久化
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(0, 50)));
@@ -72,65 +91,26 @@ export const ImageGen: React.FC = () => {
       const r = await fetch(httpUrl + '/v1/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, size }),
+        body: JSON.stringify({ prompt, size, model }),
       });
       const data = await r.json();
       if (data.error) {
         message.error('生成失败: ' + data.error);
         return;
       }
-      // data.url 是后端给的 /media 路径
       const item: HistoryItem = {
-        id: data.id || `${Date.now()}`,
+        id: `${Date.now()}`,
         prompt,
         url: data.url,
         size,
         ts: Date.now(),
+        provider: data.provider,
       };
       setCurrent(item);
       setHistory([item, ...history]);
-      message.success('🎨 生成成功!');
+      message.success('🎨 生成成功! 引擎: ' + (data.provider || 'unknown'));
     } catch (e: any) {
       message.error('网络错误: ' + e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // 图生图
-  const handleUpload = async (file: File) => {
-    if (!prompt.trim()) {
-      message.warning('上传图片后请描述要改的效果');
-      return;
-    }
-    setBusy(true);
-    try {
-      // 先把图转 base64
-      const b64 = await new Promise<string>((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result as string);
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
-      const r = await fetch(httpUrl + '/v1/image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, size, image: b64, mode: 'img2img' }),
-      });
-      const data = await r.json();
-      if (data.error) { message.error('失败: ' + data.error); return; }
-      const item: HistoryItem = {
-        id: data.id || `${Date.now()}`,
-        prompt: `[图生图] ${prompt}`,
-        url: data.url,
-        size,
-        ts: Date.now(),
-      };
-      setCurrent(item);
-      setHistory([item, ...history]);
-      message.success('🖌️ 图生图成功!');
-    } catch (e: any) {
-      message.error('上传失败: ' + e.message);
     } finally {
       setBusy(false);
     }
@@ -147,19 +127,35 @@ export const ImageGen: React.FC = () => {
     <div style={{ padding: 16, color: '#fff', height: '100%', overflow: 'auto' }}>
       <Card
         size="small"
-        title={<Space><PictureOutlined />AI 生图 (Agnes Image 2.1 Flash · 1024x1024 · 7-15s)</Space>}
+        title={<Space><PictureOutlined />AI 生图</Space>}
         extra={
           <Space>
+            <Select
+              size="small"
+              value={model}
+              onChange={setModel}
+              style={{ width: 220 }}
+              options={MODELS.map(m => ({ value: m.value, label: m.label }))}
+            />
+            <Button size="small" icon={<PictureOutlined />} onClick={() => fileRef.current?.click()}>
+              {refImage ? '已选参考图' : '上传参考图'}
+            </Button>
+            {refImage && <Button size="small" danger onClick={() => setRefImage('')}>移除</Button>}
             <input
               ref={fileRef}
               type="file"
               accept="image/*"
               style={{ display: 'none' }}
-              onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (file.size > 6 * 1024 * 1024) { message.error('参考图不能超过 6MB'); return; }
+                const reader = new FileReader();
+                reader.onload = () => { setRefImage(reader.result as string); message.success('参考图已加载'); };
+                reader.readAsDataURL(file);
+                e.target.value = '';
+              }}
             />
-            <Button size="small" icon={<PictureOutlined />} onClick={() => fileRef.current?.click()}>
-              上传参考图
-            </Button>
           </Space>
         }
       >
@@ -183,19 +179,28 @@ export const ImageGen: React.FC = () => {
           <Space wrap>
             <span style={{ color: '#888' }}>📐 尺寸:</span>
             <Select value={size} onChange={setSize} options={SIZES} style={{ width: 180 }} disabled={busy} />
+            <Tooltip title="AI 自动优化提示词">
+              <Button size="small" icon={<BulbOutlined />} onClick={() => {
+                setPrompt(`masterpiece, best quality, ${prompt}, 8k, ultra detailed, sharp focus`);
+              }} disabled={busy}>优化</Button>
+            </Tooltip>
             <Button type="primary" size="large" icon={<ThunderboltOutlined />} loading={busy} onClick={gen}>
               {busy ? 'AI 画图中...' : '✨ 立即生成'}
             </Button>
           </Space>
+          {model === 'cogview' && (
+            <Alert type="info" message="Cogview-3-Flash 免费模型, 同 ZHIPU_API_KEY。智谱生图/文本/视频共用同一 Key。" style={{ fontSize: 11 }} showIcon />
+          )}
+          {model === 'agnes' && (
+            <Alert type="info" message="Agnes Image 2.1 Flash, 需 AGENTAI_API_KEY。" style={{ fontSize: 11 }} showIcon />
+          )}
         </Space>
       </Card>
 
-      {/* 当前生成结果 */}
       {busy && (
         <div style={{ textAlign: 'center', padding: 60 }}>
           <Spin size="large" />
-          <div style={{ marginTop: 16, color: '#888' }}>AI 正在画图, 通常 7-15 秒...</div>
-          <div style={{ marginTop: 4, color: '#666', fontSize: 12 }}>提示: 用 .env 配的真 key 直连 Agnes</div>
+          <div style={{ marginTop: 16, color: '#888' }}>处理中, 通常 7-15 秒...</div>
         </div>
       )}
 
@@ -203,7 +208,7 @@ export const ImageGen: React.FC = () => {
         <Card
           size="small"
           style={{ marginTop: 16 }}
-          title={<Space><PictureOutlined />当前结果</Space>}
+          title={<Space><PictureOutlined />当前结果 <Tag>{current.provider || 'unknown'}</Tag></Space>}
           extra={
             <Space>
               <Button size="small" icon={<DownloadOutlined />} onClick={() => downloadImg(current.url, current.prompt)}>下载</Button>
@@ -215,7 +220,8 @@ export const ImageGen: React.FC = () => {
             <img
               src={current.url}
               alt={current.prompt}
-              style={{ maxWidth: '100%', maxHeight: 512, borderRadius: 4 }}
+              style={{ maxWidth: '100%', maxHeight: 512, borderRadius: 4, cursor: 'pointer' }}
+              onClick={() => setZoomUrl(current.url)}
             />
           </div>
           <div style={{ marginTop: 8, color: '#888', fontSize: 12 }}>
@@ -224,17 +230,11 @@ export const ImageGen: React.FC = () => {
         </Card>
       )}
 
-      {/* 历史画廊 */}
       {history.length > 0 && (
         <Card
           size="small"
           style={{ marginTop: 16 }}
-          title={
-            <Space>
-              <HistoryOutlined />
-              <span>历史记录 ({history.length})</span>
-            </Space>
-          }
+          title={<Space><HistoryOutlined />历史记录 ({history.length})</Space>}
           extra={
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { setHistory([]); setCurrent(null); }}>
               清空
@@ -263,13 +263,19 @@ export const ImageGen: React.FC = () => {
               </div>
             ))}
           </div>
-          <div style={{ marginTop: 8, color: '#666', fontSize: 11 }}>💡 提示: 点击查看大图, 右键下载</div>
+          <div style={{ marginTop: 8, color: '#666', fontSize: 11 }}>点击查看大图, 右键下载</div>
         </Card>
       )}
 
       {!current && !busy && history.length === 0 && (
         <Empty description={<span style={{ color: '#666' }}>还没生成过图片, 上面写 prompt 点生成</span>} style={{ marginTop: 60 }} />
       )}
+
+      {/* 图片放大预览 */}
+      <Modal open={!!zoomUrl} footer={null} onCancel={() => setZoomUrl(null)} width="90%" centered
+        styles={{ body: { padding: 0, textAlign: 'center', background: '#000' } }}>
+        {zoomUrl && <img src={zoomUrl} alt="zoom" style={{ maxWidth: '100%', maxHeight: '85vh' }} />}
+      </Modal>
     </div>
   );
 };
