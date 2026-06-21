@@ -805,6 +805,43 @@ export const ChatView: React.FC = () => {
       onAskUser: (info: any) => {
         setAskUserCard({ question: info.question, options: info.options || [] });
       },
+      // 子智能体事件: 渲染为可见文本
+      onSubagentStart: (info: any) => {
+        lastActivityTs = Date.now();
+        updateMessage(botId, (m: any) => ({
+          ...m, segments: [...m.segments, {
+            kind: 'text',
+            text: `\n\n> 🤖 **子智能体启动** [${info.type}]: ${info.task}\n`,
+          }],
+        }));
+      },
+      onSubagentDone: (info: any) => {
+        lastActivityTs = Date.now();
+        updateMessage(botId, (m: any) => ({
+          ...m, segments: [...m.segments, {
+            kind: 'text',
+            text: `\n\n> ✅ **子智能体完成**: ${(info.result || '').slice(0, 300)}\n`,
+          }],
+        }));
+      },
+      onSubagentError: (info: any) => {
+        lastActivityTs = Date.now();
+        updateMessage(botId, (m: any) => ({
+          ...m, segments: [...m.segments, {
+            kind: 'text',
+            text: `\n\n> ❌ **子智能体失败**: ${info.error}\n`,
+          }],
+        }));
+      },
+      onToolStuck: (info: any) => {
+        lastActivityTs = Date.now();
+        updateMessage(botId, (m: any) => ({
+          ...m, segments: [...m.segments, {
+            kind: 'text',
+            text: `\n\n> ⚠️ 工具 \`${info.tool}\` 疑似卡死 (${info.count} 次调用)\n`,
+          }],
+        }));
+      },
     };
 
     try {
