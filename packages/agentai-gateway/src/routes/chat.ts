@@ -405,8 +405,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         } else {
           loop = sessionData.loop;
           sessionId = loop.getContext().sessionId;
-          // 只在用户手动选择时覆盖模型（保护智能切换结果）
-          if (requestModel && loop.opts?.userPickedModel) {
+          // 模型切换: 用户手动选择了不同模型时更新
+          if (requestModel && requestModel in MODEL_MAP) {
             const mapped = MODEL_MAP[requestModel];
             if (mapped && mapped.provider !== loop.opts?.model) {
               loop.opts.model = mapped.provider;

@@ -919,6 +919,7 @@ export class AgentAIRouter extends EventEmitter {
     }
 
     try {
+      console.log(`[router] executeProvider: id=${id}, model=${modelName}, baseUrl=${baseUrl}, hasKey=${!!apiKey}`);
       const r = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
