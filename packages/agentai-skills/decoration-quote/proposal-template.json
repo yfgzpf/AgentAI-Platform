@@ -1,0 +1,166 @@
+{
+  "_comment": "装修方案书生成模板 - AI 按此结构生成 DOCX 客户方案书",
+  "_version": "1.0",
+  "_update": "2026-06-21",
+
+  "document_structure": {
+    "format": "docx",
+    "page_size": "A4",
+    "font": "微软雅黑",
+    "sections": ["cover", "company", "concept", "space_plan", "material", "budget", "schedule", "warranty", "appendix"]
+  },
+
+  "cover": {
+    "title": "装修设计方案书",
+    "fields": [
+      { "key": "company_name", "label": "装修公司", "default": "築廷装饰" },
+      { "key": "company_logo", "label": "公司LOGO路径", "default": "" },
+      { "key": "project_name", "label": "项目名称", "example": "森林海2#203" },
+      { "key": "customer_name", "label": "客户姓名", "example": "张总" },
+      { "key": "customer_phone", "label": "联系电话" },
+      { "key": "address", "label": "项目地址" },
+      { "key": "area", "label": "建筑面积(㎡)", "example": "120" },
+      { "key": "style", "label": "设计风格", "example": "现代简约" },
+      { "key": "quality_level", "label": "装修档次", "options": ["standard", "mid", "high", "luxury"] },
+      { "key": "designer", "label": "设计师", "default": "" },
+      { "key": "date", "label": "日期", "auto": "YYYY-MM-DD" }
+    ]
+  },
+
+  "company": {
+    "title": "公司简介",
+    "template": "以下为公司介绍模板，AI 根据公司名称和行业经验生成：\n- 公司成立时间\n- 服务范围\n- 设计团队\n- 施工团队\n- 质量承诺\n- 荣誉资质",
+    "default_content": "{company_name} 是一家专注于家装/工装设计与施工的一站式装饰企业。公司拥有专业设计团队和经验丰富的施工队伍，秉承「品质至上、客户至上」的理念，累计服务客户 XXX 户。"
+  },
+
+  "concept": {
+    "title": "设计理念",
+    "ai_prompt": "根据客户选择的风格 {style}，生成 200-300 字的设计理念描述，包含：\n1. 风格核心特点\n2. 色彩搭配方案\n3. 材料选择思路\n4. 空间氛围营造\n5. 适合的生活方式",
+    "style_keywords": {
+      "现代简约": "线条简洁、空间通透、功能至上、黑白灰+木色",
+      "新中式": "东方韵味、禅意空间、木质+水墨、对称留白",
+      "北欧": "自然清新、原木色调、功能美学、柔和光线",
+      "日式": "侘寂美学、原木色+白色、收纳极致、宁静致远",
+      "轻奢": "品质感、金属质感、大理石、低调奢华",
+      "美式": "自由随性、深色木质、壁炉元素、温馨厚重",
+      "法式": "浪漫优雅、弧形线条、莫兰迪色、精致细节",
+      "工业风": "裸露管线、水泥质感、金属+砖墙、粗犷个性",
+      "奶油风": "暖白色调、柔和曲线、温柔治愈、极简温馨"
+    }
+  },
+
+  "space_plan": {
+    "title": "空间规划方案",
+    "rooms": [
+      {
+        "name": "客厅",
+        "items": ["地面处理", "墙面处理", "顶面处理", "电视背景墙", "沙发背景墙", "灯光设计"],
+        "ai_prompt": "根据客厅面积和风格，描述每个区域的设计方案，包含材料选择和效果描述"
+      },
+      {
+        "name": "餐厅",
+        "items": ["地面处理", "墙面处理", "顶面处理", "餐边柜", "灯光设计"],
+        "ai_prompt": "描述餐厅空间布局和氛围营造"
+      },
+      {
+        "name": "主卧",
+        "items": ["地面处理", "墙面处理", "顶面处理", "衣柜", "床头背景", "灯光设计"],
+        "ai_prompt": "描述主卧的舒适度和收纳方案"
+      },
+      {
+        "name": "次卧",
+        "items": ["地面处理", "墙面处理", "顶面处理", "衣柜", "灯光设计"],
+        "ai_prompt": "描述次卧的功能定位（儿童房/书房/客房）"
+      },
+      {
+        "name": "厨房",
+        "items": ["地面处理", "墙面处理", "顶面处理", "橱柜", "电器布局", "水电改造"],
+        "ai_prompt": "描述厨房的动线设计和收纳方案"
+      },
+      {
+        "name": "卫生间",
+        "items": ["地面处理", "墙面处理", "顶面处理", "防水工程", "洁具选型", "干湿分离"],
+        "ai_prompt": "描述卫生间的防水方案和功能布局"
+      },
+      {
+        "name": "阳台",
+        "items": ["地面处理", "墙面处理", "顶面处理", "洗衣机位", "晾晒区"],
+        "ai_prompt": "描述阳台的功能分区"
+      }
+    ]
+  },
+
+  "material": {
+    "title": "主材推荐",
+    "categories": ["地砖", "木地板", "乳胶漆", "衣柜板材", "橱柜", "洁具", "五金", "灯具", "开关插座"],
+    "ai_prompt": "根据装修档次 {quality_level}，从 price-reference.json 中推荐每类主材的品牌+型号+价格区间",
+    "brand_recommendations": {
+      "standard": {
+        "地砖": "东鹏/蒙娜丽莎/宏宇",
+        "木地板": "圣象/德尔/大自然",
+        "乳胶漆": "立邦/多乐士",
+        "板材": "千年舟/兔宝宝 E0级",
+        "洁具": "箭牌/恒洁/九牧",
+        "开关插座": "公牛/西门子"
+      },
+      "mid": {
+        "地砖": "马可波罗/诺贝尔/简一",
+        "木地板": "大卫/久盛/生活家",
+        "乳胶漆": "芬琳/都芳",
+        "板材": "兔宝宝 ENF级/爱格",
+        "洁具": "TOTO/科勒",
+        "开关插座": "施耐德/西门子睿致"
+      },
+      "high": {
+        "地砖": "简一/新中源/ICC",
+        "木地板": "必美/飞美/得高",
+        "乳胶漆": "芬琳/本杰明摩尔",
+        "板材": "爱格/克诺斯邦",
+        "洁具": "杜拉维特/汉斯格雅",
+        "开关插座": "罗格朗/ABB"
+      }
+    }
+  },
+
+  "budget": {
+    "title": "预算概览",
+    "ai_prompt": "根据面积和档次，从 price-reference.json 计算各大项费用，生成汇总表",
+    "categories": ["地面工程", "墙面工程", "顶面工程", "水电改造", "防水工程", "柜体工程", "门窗工程", "安装工程"],
+    "management_fee_rate": 0.08,
+    "design_fee": { "standard": 0, "mid": 50, "high": 80, "luxury": 150, "unit": "元/m²" }
+  },
+
+  "schedule": {
+    "title": "施工周期",
+    "ai_prompt": "根据面积生成施工进度表，从 construction-schedule.json 读取标准工期",
+    "note": "详见 construction-schedule.json"
+  },
+
+  "warranty": {
+    "title": "质保承诺",
+    "items": [
+      { "project": "水电隐蔽工程", "period": "终身质保" },
+      { "project": "防水工程", "period": "5年质保" },
+      { "project": "墙面/顶面工程", "period": "2年质保" },
+      { "project": "地面工程", "period": "2年质保" },
+      { "project": "柜体工程", "period": "5年质保" },
+      { "project": "整体装修", "period": "2年整体质保" }
+    ]
+  },
+
+  "collect_fields": {
+    "_comment": "AI 生成方案书前需要收集的信息（不足时用 ask_user 追问）",
+    "required": ["customer_name", "project_name", "area", "style", "quality_level"],
+    "optional": ["customer_phone", "address", "rooms", "budget_limit", "move_in_date", "designer"],
+    "ask_user_template": {
+      "action": "ask_user",
+      "question": "为了生成专业的装修方案书，请提供以下信息：",
+      "options": [
+        { "id": "quick_120_modern", "title": "120㎡ 现代简约 中档" },
+        { "id": "quick_90_nordic", "title": "90㎡ 北欧风 标准" },
+        { "id": "quick_150_luxury", "title": "150㎡ 轻奢风 高档" },
+        { "id": "custom", "title": "自定义（我来填写）" }
+      ]
+    }
+  }
+}

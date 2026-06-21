@@ -1,0 +1,67 @@
+{
+  "_comment": "装修报价表样式定义 - AI生成Excel报价单的结构规范",
+  "_version": "2.0",
+  "_update": "2026-06-14",
+  "_style": "築廷装饰空间报价法 - 森林海2#203案例模板",
+
+  "excel_structure": {
+    "sheets": ["封面", "报价明细", "项目汇总"],
+    "password_protected": false,
+    "formulas_enabled": true
+  },
+
+  "sheet_cover": {
+    "title": "装修报价表",
+    "fields": [
+      { "row": 1, "label": "装修公司", "value": "{company_name}" },
+      { "row": 2, "label": "项目名称", "value": "{project_name}" },
+      { "row": 3, "label": "客户姓名", "value": "{customer_name}" },
+      { "row": 4, "label": "联系电话", "value": "{customer_phone}" },
+      { "row": 5, "label": "项目地址", "value": "{address}" },
+      { "row": 6, "label": "装修面积", "value": "{total_area} m²" },
+      { "row": 7, "label": "装修档次", "value": "{quality_level}" },
+      { "row": 8, "label": "报价日期", "value": "{date}" }
+    ]
+  },
+
+  "sheet_detail": {
+    "columns": {
+      "A": { "header": "序号", "width": 6 },
+      "B": { "header": "空间", "width": 12, "bg_by_space": true },
+      "C": { "header": "项目类别", "width": 10 },
+      "D": { "header": "项目名称", "width": 22 },
+      "E": { "header": "规格/品牌", "width": 20 },
+      "F": { "header": "工艺说明", "width": 30 },
+      "G": { "header": "单位", "width": 6 },
+      "H": { "header": "数量", "width": 10, "editable": true },
+      "I": { "header": "单价(元)", "width": 10, "editable": true },
+      "J": { "header": "小计(元)", "width": 12, "formula": "=H{row}*I{row}" }
+    },
+    "space_colors": {
+      "客餐厅": "D9E2F3", "主卧": "E2EFDA", "次卧": "FFF2CC",
+      "厨房": "D9D9D9", "主卫": "DAEEF3", "次卫": "DAEEF3",
+      "阳台": "E4DFEC", "玄关过道": "F2F2F2"
+    }
+  },
+
+  "sheet_summary": {
+    "fields": [
+      { "row": 3, "label": "工程直接费", "formula": "=SUMIF(报价明细!D:D,\"*小计\",报价明细!J:J)" },
+      { "row": 4, "label": "管理费", "formula": "=工程直接费*{management_rate}/100" },
+      { "row": 6, "label": "合同总金额", "formula": "=工程直接费+管理费", "style": "bold_total" },
+      { "row": 8, "label": "单价(元/m²)", "formula": "=合同总金额/{total_area}" }
+    ]
+  },
+
+  "item_ordering": {
+    "sequence": ["水电工程", "拆除工程", "砌墙工程", "防水工程", "瓦工工程", "木工工程", "油漆工程", "门窗工程", "安装工程", "其他项目"],
+    "space_sequence": ["客餐厅", "主卧", "次卧", "厨房", "主卫", "次卫", "阳台", "玄关过道"]
+  },
+
+  "excel_styling": {
+    "font_header": { "name": "微软雅黑", "size": 11, "bold": true, "color": "FFFFFF" },
+    "font_body": { "name": "微软雅黑", "size": 10 },
+    "font_total": { "name": "微软雅黑", "size": 12, "bold": true, "color": "C00000" },
+    "header_fill": "4472C4"
+  }
+}

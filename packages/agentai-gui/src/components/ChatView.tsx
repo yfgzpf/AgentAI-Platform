@@ -200,6 +200,49 @@ export const ChatView: React.FC = () => {
   try { const raw = localStorage.getItem('agentai.profile'); if (raw) extraProfile = JSON.parse(raw); } catch { /* ignore */ }
   const currentIndustry = extraProfile?.industry || zustandProfile?.industry || 'general';
 
+  // 行业快捷指令: 根据用户选择的行业返回对应的快捷操作
+  const getIndustryQuickActions = (industry: string) => {
+    const INDUSTRY_ACTIONS: Record<string, Array<{ label: string; prompt: string }>> = {
+      decoration: [
+        { label: '📋 快速报价', prompt: '帮我做一份装修报价单，我告诉你户型和面积' },
+        { label: '📐 材料算量', prompt: '帮我计算装修材料用量' },
+        { label: '🎨 效果图参考', prompt: '帮我生成一张装修效果图' },
+        { label: '📅 施工排期', prompt: '帮我制定一份施工进度计划表' },
+        { label: '📄 方案书', prompt: '帮我生成一份客户装修方案书' },
+        { label: '🏗️ 施工规范', prompt: '查询装修施工验收标准' },
+      ],
+      ecommerce: [
+        { label: '📊 数据分析', prompt: '帮我分析店铺数据表现' },
+        { label: '📝 商品文案', prompt: '帮我写一段商品详情文案' },
+        { label: '🎯 营销方案', prompt: '帮我制定一个营销推广方案' },
+        { label: '📦 库存管理', prompt: '帮我做一份库存盘点表' },
+      ],
+      education: [
+        { label: '📚 教案生成', prompt: '帮我写一份教学教案' },
+        { label: '📝 试卷出题', prompt: '帮我出一套考试试卷' },
+        { label: '📊 成绩分析', prompt: '帮我分析学生成绩数据' },
+        { label: '📋 课程大纲', prompt: '帮我制定一份课程大纲' },
+      ],
+      developer: [
+        { label: '🔍 审查代码', prompt: '审查当前项目代码质量' },
+        { label: '🏗️ 项目架构', prompt: '帮我分析这个项目的架构' },
+        { label: '🐛 修复 Bug', prompt: '帮我排查和修复这个问题' },
+        { label: '⚡ 性能优化', prompt: '帮我分析和优化性能瓶颈' },
+      ],
+      comic: [
+        { label: '🎨 角色设计', prompt: '帮我设计一个漫画角色' },
+        { label: '📖 分镜脚本', prompt: '帮我写一段漫画分镜脚本' },
+        { label: '🖼️ 场景插画', prompt: '帮我生成一张场景插画' },
+      ],
+    };
+    // 通用行业只显示基础操作
+    return INDUSTRY_ACTIONS[industry] || [
+      { label: '💬 开始对话', prompt: '你好，请介绍一下你能做什么' },
+      { label: '📄 写文档', prompt: '帮我写一份文档' },
+      { label: '🔍 搜索信息', prompt: '帮我搜索' },
+    ];
+  };
+
   const [loading, setLoading] = useState(false);
   const [queuedSends, setQueuedSends] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ParsedAttachment[]>([]);
@@ -1111,14 +1154,9 @@ export const ChatView: React.FC = () => {
             <div style={{ fontSize: 12, color: 'var(--muted-2)', marginBottom: 24 }}>
               {systemInfo || 'x-agent'}
             </div>
-            {/* Quick actions */}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 420 }}>
-              {[
-                { label: '审查代码', prompt: '审查当前项目代码' },
-                { label: '探索项目', prompt: '帮我分析这个项目的架构' },
-                { label: '系统自检', prompt: '检查系统状态' },
-                { label: '写代码', prompt: '帮我写一段' },
-              ].map(action => (
+            {/* 行业快捷指令 — 根据用户选择的行业动态显示 */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 480 }}>
+              {getIndustryQuickActions(currentIndustry).map(action => (
                 <button
                   key={action.label}
                   onClick={() => { composerRef.current?.setDraft(action.prompt); composerRef.current?.focus(); }}

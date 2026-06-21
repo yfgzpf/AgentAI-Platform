@@ -1,0 +1,152 @@
+{
+  "_comment": "装修施工标准工期表 - AI 根据面积自动计算排期",
+  "_version": "1.0",
+  "_update": "2026-06-21",
+  "_note": "基于 120㎡ 标准三室两厅，面积增减按比例调整",
+
+  "base_area": 120,
+  "total_days_range": { "min": 90, "max": 120 },
+
+  "phases": [
+    {
+      "id": "demolition",
+      "name": "拆改阶段",
+      "order": 1,
+      "days": { "base": 5, "unit": "天", "adjust": "面积>150㎡加2天" },
+      "items": ["墙体拆除", "墙体新建", "门窗拆除", "垃圾清运"],
+      "注意": "承重墙不可拆除，需物业报备",
+      "depends_on": []
+    },
+    {
+      "id": "hydropower",
+      "name": "水电改造",
+      "order": 2,
+      "days": { "base": 10, "unit": "天", "adjust": "全改加3-5天" },
+      "items": ["强电线路", "弱电线路", "给水管路", "排水管路", "开关插座定位", "灯位定位"],
+      "注意": "水电验收后才能进入下一阶段，预留检修口",
+      "depends_on": ["demolition"],
+      "milestone": "水电验收"
+    },
+    {
+      "id": "waterproof",
+      "name": "防水工程",
+      "order": 3,
+      "days": { "base": 5, "unit": "天", "adjust": "含48h闭水试验" },
+      "items": ["卫生间防水", "厨房防水", "阳台防水", "闭水试验"],
+      "注意": "闭水48小时，楼下无渗漏才合格",
+      "depends_on": ["hydropower"],
+      "milestone": "闭水试验合格"
+    },
+    {
+      "id": "tiling",
+      "name": "泥瓦工程",
+      "order": 4,
+      "days": { "base": 20, "unit": "天", "adjust": "瓷砖面积大或拼花加5天" },
+      "items": ["地面找平", "墙砖铺贴", "地砖铺贴", "过门石安装", "地漏安装", "挡水条安装"],
+      "注意": "铺贴24h内不踩踏，7天后美缝",
+      "depends_on": ["waterproof"]
+    },
+    {
+      "id": "carpentry",
+      "name": "木工工程",
+      "order": 5,
+      "days": { "base": 15, "unit": "天", "adjust": "吊顶复杂加5天" },
+      "items": ["石膏板吊顶", "窗帘盒", "电视背景墙", "门套基层", "柜体安装预留"],
+      "注意": "可与泥瓦工交叉施工（不同房间）",
+      "depends_on": ["tiling"],
+      "parallel_with": ["tiling"]
+    },
+    {
+      "id": "painting",
+      "name": "油漆工程",
+      "order": 6,
+      "days": { "base": 15, "unit": "天", "adjust": "面积大或艺术漆加5天" },
+      "items": ["墙面腻子（3遍）", "墙面打磨", "底漆（1遍）", "面漆（2遍）", "顶面漆"],
+      "注意": "每遍间隔24h以上，雨天停工",
+      "depends_on": ["carpentry"]
+    },
+    {
+      "id": "cabinet_install",
+      "name": "柜体安装",
+      "order": 7,
+      "days": { "base": 5, "unit": "天", "adjust": "全屋定制加3天" },
+      "items": ["橱柜安装", "衣柜安装", "浴室柜安装", "鞋柜安装"],
+      "注意": "油漆干透后再安装，保护成品面",
+      "depends_on": ["painting"]
+    },
+    {
+      "id": "door_install",
+      "name": "门窗安装",
+      "order": 8,
+      "days": { "base": 3, "unit": "天" },
+      "items": ["室内门安装", "门锁五金", "窗台石安装"],
+      "depends_on": ["painting"]
+    },
+    {
+      "id": "installation",
+      "name": "安装阶段",
+      "order": 9,
+      "days": { "base": 8, "unit": "天", "adjust": "智能家居加3天" },
+      "items": ["开关插座面板", "灯具安装", "洁具安装", "五金挂件", "热水器", "集成灶/油烟机", "窗帘杆", "晾衣架"],
+      "注意": "先安装灯具开关，再安装洁具五金",
+      "depends_on": ["cabinet_install", "door_install"]
+    },
+    {
+      "id": "floor_install",
+      "name": "木地板铺设",
+      "order": 10,
+      "days": { "base": 3, "unit": "天" },
+      "items": ["防潮垫铺设", "木地板安装", "踢脚线安装"],
+      "注意": "所有脏活完成后再铺木地板",
+      "depends_on": ["installation"]
+    },
+    {
+      "id": "cleanup",
+      "name": "收尾保洁",
+      "order": 11,
+      "days": { "base": 3, "unit": "天" },
+      "items": ["开荒保洁", "美缝施工", "补漆修补", "全屋检查", "甲醛检测"],
+      "depends_on": ["floor_install"],
+      "milestone": "竣工验收"
+    },
+    {
+      "id": "softdecor",
+      "name": "软装进场",
+      "order": 12,
+      "days": { "base": 5, "unit": "天" },
+      "items": ["家具进场", "家电安装", "窗帘安装", "装饰品摆放", "绿植配置"],
+      "depends_on": ["cleanup"],
+      "milestone": "正式入住"
+    }
+  ],
+
+  "area_factor": {
+    "_comment": "面积调整系数: 总工期 = base_days × factor",
+    "60-80": 0.75,
+    "80-100": 0.85,
+    "100-120": 1.0,
+    "120-150": 1.1,
+    "150-200": 1.25,
+    "200+": 1.4
+  },
+
+  "excel_gantt": {
+    "_comment": "生成甘特图 Excel 的结构",
+    "columns": ["阶段", "工作内容", "计划天数", "开始日期", "结束日期", "备注"],
+    "chart_type": "横道图",
+    "color_scheme": {
+      "demolition": "#FF6B6B",
+      "hydropower": "#4ECDC4",
+      "waterproof": "#45B7D1",
+      "tiling": "#96CEB4",
+      "carpentry": "#DDA15E",
+      "painting": "#BC6C25",
+      "cabinet_install": "#606C38",
+      "door_install": "#283618",
+      "installation": "#FEFAE0",
+      "floor_install": "#D4A373",
+      "cleanup": "#CCD5AE",
+      "softdecor": "#E9EDC9"
+    }
+  }
+}
