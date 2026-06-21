@@ -164,13 +164,6 @@ export const VideoGen: React.FC = () => {
               style={{ width: 240 }}
               options={MODELS.map(m => ({ value: m.value, label: m.label }))}
             />
-            <input
-              ref={imgRef}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
-            />
           </Space>
         }
       >

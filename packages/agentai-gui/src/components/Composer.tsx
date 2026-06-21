@@ -11,8 +11,9 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, useImperativeHandle, type KeyboardEvent, type RefObject, type DragEvent } from 'react';
 import { Tooltip, Select, Image, message } from 'antd';
 import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, SoundOutlined, BellOutlined, BulbOutlined } from '@ant-design/icons';
-import { useModeStore, type AppMode, MODE_CONFIG, MODE_ORDER } from '../store/modeStore';
+import { useModeStore, MODE_CONFIG, MODE_ORDER } from '../store/modeStore';
 import { useModelStore } from '../store/modelStore';
+import { GATEWAY_HTTP } from '../services/config';
 import { startSpeechRecognition, stopSpeechRecognition, isSpeechRecognitionSupported } from '../services/voice';
 import { isTtsEnabled, setTtsEnabled, isWakeEnabled, startWakeWord, stopWakeWord } from '../services/VoiceService';
 import VoiceSettings from './VoiceSettings';
@@ -215,7 +216,41 @@ const ComposerBase = ({
     return q ? slashCommands.filter(c => c.cmd.toLowerCase().includes(q)) : slashCommands;
   }, [popup, slashCommands]);
 
-  const items = popup?.kind === 'slash' ? slashItems : [];
+  // @文件选择: 从工作区获取文件列表
+  const [atFiles, setAtFiles] = useState<Array<{ name: string; path: string; isDir: boolean }>>([]);
+  useEffect(() => {
+    if (!popup || popup.kind !== 'at') { setAtFiles([]); return; }
+    const q = popup.query.toLowerCase();
+    const ws = workspaceDir || '';
+    if (!ws) return;
+    // 防抖 300ms
+    const timer = setTimeout(async () => {
+      try {
+        const base = GATEWAY_HTTP;
+        const r = await fetch(`${base}/v1/fs/list?dir=${encodeURIComponent(ws)}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        const files = (data.files || data || [])
+          .filter((f: any) => {
+            const name = (f.name || f.path || '').toLowerCase();
+            return !name.startsWith('.') && name !== 'node_modules';
+          })
+          .filter((f: any) => !q || (f.name || f.path || '').toLowerCase().includes(q))
+          .slice(0, 15);
+        setAtFiles(files.map((f: any) => ({
+          name: f.name || f.path,
+          path: f.path || f.name,
+          isDir: !!f.isDirectory || !!f.isDir,
+        })));
+      } catch { /* fetch error */ }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [popup, workspaceDir]);
+
+  const items: Array<SlashCmd | { name: string; path: string; isDir: boolean }> =
+    popup?.kind === 'slash' ? slashItems
+    : popup?.kind === 'at' ? atFiles
+    : [];
   useEffect(() => { setActiveIdx(0); }, [items.length]);
 
   const prevDraftRef = useRef(draft);
@@ -245,6 +280,11 @@ const ComposerBase = ({
       const next = draft.replace(/[/][^\s]*$/, '').trimEnd();
       setDraft(next);
       (it as SlashCmd).run();
+    } else if (popup.kind === 'at') {
+      // 插入文件路径到 draft
+      const file = it as { name: string; path: string };
+      const next = draft.replace(/@[^\s]*$/, `@${file.path} `);
+      setDraft(next);
     }
     setPopup(null);
     textareaRef.current?.focus();
@@ -629,11 +669,16 @@ const ComposerBase = ({
           borderRadius: 8, boxShadow: 'var(--shadow-lg)', padding: 4,
           maxHeight: 200, overflowY: 'auto', zIndex: 100,
         }}>
+          <div style={{ padding: '4px 8px', fontSize: 10, color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: 2 }}>
+            {popup.kind === 'slash' ? '/ 命令' : '@ 选择文件'}
+          </div>
           {items.map((item, i) => {
-            const cmd = item as SlashCmd;
+            const isSlash = popup.kind === 'slash';
+            const label = isSlash ? (item as SlashCmd).cmd : (item as any).name;
+            const desc = isSlash ? (item as SlashCmd).desc : ((item as any).isDir ? '📁 目录' : '📄 文件');
             return (
               <div
-                key={cmd.cmd}
+                key={label}
                 data-active={i === activeIdx}
                 onClick={() => pickItem(i)}
                 onMouseEnter={() => setActiveIdx(i)}
@@ -649,9 +694,9 @@ const ComposerBase = ({
                   background: 'var(--accent-soft)', color: 'var(--accent)',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 10, fontWeight: 700, flexShrink: 0,
-                }}>/</span>
-                <span style={{ fontWeight: 600 }}>{cmd.cmd}</span>
-                <span style={{ color: 'var(--muted-2)', fontSize: 11 }}>{cmd.desc}</span>
+                }}>{isSlash ? '/' : '@'}</span>
+                <span style={{ fontWeight: 600 }}>{label}</span>
+                <span style={{ color: 'var(--muted-2)', fontSize: 11 }}>{desc}</span>
               </div>
             );
           })}
