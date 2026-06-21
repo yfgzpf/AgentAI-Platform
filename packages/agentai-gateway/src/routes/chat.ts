@@ -294,7 +294,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
           'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
           'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
-          'zhipu': { provider: 'zhipu', subModel: 'glm-4-flash', label: '智谱 GLM-4 Flash' },
+          'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
           // 传统独立商业模型 (备选, 不与 SuperAPI 冲突)
           'qwen': { provider: 'qwen', label: '通义千问 (阿里云)' },
           'moonshot': { provider: 'moonshot', label: '月之暗面 Moonshot' },
@@ -408,11 +408,16 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           // 模型切换: 用户手动选择了不同模型时更新
           if (requestModel && requestModel in MODEL_MAP) {
             const mapped = MODEL_MAP[requestModel];
-            if (mapped && mapped.provider !== loop.opts?.model) {
-              loop.opts.model = mapped.provider;
-              loop.opts.modelName = mapped.subModel || '';
-              loop.opts.displayModelLabel = mapped.label;
-              loop.opts.modelConfig = mapped.baseURL ? { baseURL: mapped.baseURL, modelName: mapped.subModel || '', provider: mapped.provider } : modelConfig;
+            if (mapped) {
+              const providerChanged = mapped.provider !== loop.opts?.model;
+              const subModelChanged = (mapped.subModel || '') !== (loop.opts?.modelName || '');
+              if (providerChanged || subModelChanged) {
+                console.log(`[chat] model switch: ${loop.opts?.model}/${loop.opts?.modelName} → ${mapped.provider}/${mapped.subModel || ''}`);
+                loop.opts.model = mapped.provider;
+                loop.opts.modelName = mapped.subModel || '';
+                loop.opts.displayModelLabel = mapped.label;
+                loop.opts.modelConfig = mapped.baseURL ? { baseURL: mapped.baseURL, modelName: mapped.subModel || '', provider: mapped.provider } : modelConfig;
+              }
             }
           }
         }
@@ -867,7 +872,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
         'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
         'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
-        'zhipu': { provider: 'zhipu', subModel: 'glm-4-flash', label: '智谱 GLM-4 Flash' },
+        'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
         // SuperAPI 模型工厂 (非流式路径)
         'superapi-deepseek-v4-flash': { provider: 'superapi', subModel: 'deepseek-v4-flash', label: 'SuperAPI · DeepSeek V4 Flash' },
         'superapi-deepseek-v4-pro':  { provider: 'superapi', subModel: 'deepseek-v4-pro',  label: 'SuperAPI · DeepSeek V4 Pro' },
@@ -943,6 +948,19 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         // Session 已存在，持久化用户消息（追加到旧 checkpoint）
         if (persistentMemory) {
           persistentMemory.addMessage(sessionData.loop.getContext().sessionId, { role: 'user', content: message });
+        }
+        // 模型切换: 非流式路径也需要处理
+        const userModel = req.body?.model;
+        if (userModel && nss_MODEL_MAP[userModel]) {
+          const mapped = nss_MODEL_MAP[userModel];
+          const providerChanged = mapped.provider !== sessionData.loop.opts?.model;
+          const subModelChanged = (mapped.subModel || '') !== (sessionData.loop.opts?.modelName || '');
+          if (providerChanged || subModelChanged) {
+            console.log(`[chat:non-stream] model switch: ${sessionData.loop.opts?.model}/${sessionData.loop.opts?.modelName} → ${mapped.provider}/${mapped.subModel || ''}`);
+            sessionData.loop.opts.model = mapped.provider;
+            sessionData.loop.opts.modelName = mapped.subModel || '';
+            sessionData.loop.opts.displayModelLabel = mapped.label;
+          }
         }
       }
       const resSessionId = isNewSession ? loop.getContext().sessionId : sessionData.loop.getContext().sessionId;
