@@ -27,7 +27,7 @@ import { estimateMessagesTokens, estimateStringTokens, estimateToolCallsTokens }
 import { routeByScore, getSubModel } from './model-classifier.js';
 
 // ===== 类型定义 =====
-export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'zhipu' | 'superapi' | string;
+export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'zhipu' | 'superapi' | 'dxnt' | string;
 
 /** OpenAI 图片内容块 */
 export interface ImageContentBlock {
@@ -64,8 +64,10 @@ export interface ChatRequest {
   workspace?: string;
   /** 流式响应 */
   stream?: boolean;
-  /** 流式 delta 回调 (可选, 仅当 stream=true 时触发) */
-  onDelta?: (delta: string) => void;
+/** 流式 delta 回调 (可选, 仅当 stream=true 时触发) */
+onDelta?: (delta: string) => void;
+/** 流式思考内容回调 (可选, reasoning_content 的流式 delta) */
+onThinking?: (delta: string) => void;
   /** 启用 Thinking 模式 (Agnes 2.0 Flash 推荐, 提升代码/推理质量) */
   thinking?: boolean;
   /** Thinking token 预算 (默认 2048, 仅 thinking=true 时生效) */
@@ -74,11 +76,14 @@ export interface ChatRequest {
   contextWindow?: number;
   /** 自定义模型配置 (非内置 provider 时由前端传递) */
   modelConfig?: { baseURL: string; modelName: string; provider: string };
+  /** 用户中断信号 (与 fetch 超时信号合并, 实现用户点中断时取消 in-flight 请求) */
+  abortSignal?: AbortSignal;
 }
 
 export interface ChatResponse {
   content: string;
   toolCalls?: ToolCall[];
+  finishReason?: string;
   iterations?: number;
   usage: {
     promptTokens: number;
@@ -143,13 +148,15 @@ interface OpenAITool {
 }
 
 /** 把内部 ToolSpec 转为 OpenAI function calling 格式 */
-export function toolSpecsToOpenAI(specs: ToolSpec[]): OpenAITool[] {
+export function toolSpecsToOpenAI(specs: ToolSpec[], stripParams = false): OpenAITool[] {
   return specs.map(s => ({
     type: 'function' as const,
     function: {
       name: s.name,
       description: s.description,
-      parameters: s.parameters ?? { type: 'object', properties: {} },
+      // deepseek flash 节省 token: 不发送完整 JSON Schema (~834 tokens saved for 25 tools)
+      // LLM 靠 description 足以判断是否调用, 参数由 runner 在执行时验证
+      parameters: stripParams ? { type: 'object', properties: {} } : (s.parameters ?? { type: 'object', properties: {} }),
     },
   }));
 }
@@ -161,8 +168,8 @@ export class AgentAIRouter extends EventEmitter {
   private cache: LRUCache<string, ChatResponse>;
   /** append-only log (学 Reasonix Pillar 1) */
   private appendOnlyLog: Array<{ ts: number; req: ChatRequest; res: ChatResponse }> = [];
-  /** circuit breaker cooldown (5 分钟) */
-  private static readonly CB_COOLDOWN_MS = 5 * 60 * 1000;
+  /** circuit breaker cooldown (2 分钟, 商业模型更快恢复) */
+  private static readonly CB_COOLDOWN_MS = 2 * 60 * 1000;
   /** 速率限制初始冷却 (10 秒) */
   private static readonly RL_BASE_COOLDOWN_MS = 10_000;
   /** 速率限制最大冷却 (2 分钟) */
@@ -171,13 +178,22 @@ export class AgentAIRouter extends EventEmitter {
   private static readonly RL_BACKOFF_FACTOR = 2;
   /** 主动调速: 两次请求之间的最小间隔 (3 秒, 避免免费模型突发限流) */
   private static readonly REQUEST_PACING_MS = 3_000;
-  /** 自创: cost guard */
+  /** 成本守卫 - 已禁用 (ATLAS 以免费模型为主，商业模型由用户自主决定) */
   private costGuard = {
-    maxCostPerTurn: 0.20,   // USD
-    maxCostPerDay: 5.00,    // USD
+    maxCostPerTurn: 100.00,   // USD - 放宽限制
+    maxCostPerDay: 1000.00,   // USD - 放宽限制
     dailySpend: 0,
     dailyResetAt: Date.now() + 86_400_000,
+    exceeded: false,
+    disabled: true,           // 标记为禁用
   };
+
+  /** 每个 provider 是否支持 reasoning_content (流式响应急时检测, 不写死) */
+  private _hasReasoningSupport = new Map<ProviderId, boolean>();
+  /** 已知不支持 stream_options 的 provider (响应 400 后自动加入) */
+  private _noStreamOptions = new Set<ProviderId>();
+  /** 当前正在调用的 provider (流式解析时用) */
+  private _currentProviderId: ProviderId | null = null;
 
   constructor() {
     super();
@@ -239,6 +255,53 @@ export class AgentAIRouter extends EventEmitter {
       tripped: true,  // 默认熔断, 等用户配置 API Key 后解除
       rateLimitRetryCount: 0,
     });
+    this.providers.set('dxnt', {
+      id: 'dxnt',
+      costPer1kInput: 0,      // 免费 (用户自有 API Key)
+      costPer1kOutput: 0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: false,
+      rateLimitRetryCount: 0,
+    });
+    // 商汤 SenseNova (免费额度, OpenAI 兼容: token.sensenova.cn/v1)
+    this.providers.set('sensenova', {
+      id: 'sensenova',
+      costPer1kInput: 0,
+      costPer1kOutput: 0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: false,
+      rateLimitRetryCount: 0,
+    });
+    // 美团 LongCat (免费额度, OpenAI 兼容: api.longcat.chat/openai)
+    this.providers.set('longcat', {
+      id: 'longcat',
+      costPer1kInput: 0,
+      costPer1kOutput: 0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: false,
+      rateLimitRetryCount: 0,
+    });
+    // NVIDIA NIM (免费额度, OpenAI 兼容: integrate.api.nvidia.com/v1)
+    this.providers.set('nvidia', {
+      id: 'nvidia',
+      costPer1kInput: 0,
+      costPer1kOutput: 0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: false,
+      rateLimitRetryCount: 0,
+    });
 
     // 注意: 不在构造函数中检查 API Key, 因为 .env 可能尚未加载
     // 由 index.ts 调用 recheckApiKeys() 统一检查
@@ -252,7 +315,15 @@ export class AgentAIRouter extends EventEmitter {
       openai: 'OPENAI_API_KEY',
       zhipu: 'ZHIPU_API_KEY',
       superapi: 'SUPERAPI_API_KEY',
+      dxnt: 'DXNT_API_KEY',
+      sensenova: 'SENSENOVA_API_KEY',
+      longcat: 'LONGCAT_API_KEY',
+      nvidia: 'NVIDIA_API_KEY',
     };
+    
+    const availableProviders: string[] = [];
+    const unavailableProviders: string[] = [];
+    
     for (const [pid, keyEnv] of Object.entries(keyMap)) {
       const p = this.providers.get(pid as ProviderId);
       if (!p) continue;
@@ -262,10 +333,26 @@ export class AgentAIRouter extends EventEmitter {
         p.tripped = false;
         p.trippedAt = undefined;
         console.log(`[router] ${pid} API key now available, untripped`);
+        availableProviders.push(pid);
       } else if (!hasKey && !p.tripped) {
         p.tripped = true;
         console.log(`[router] ${pid} has no API key (${keyEnv}), marked as tripped`);
+        unavailableProviders.push(pid);
+      } else if (hasKey && !p.tripped) {
+        availableProviders.push(pid);
+      } else {
+        unavailableProviders.push(pid);
       }
+    }
+    
+    console.log(`[router] ✅ 可用模型: ${availableProviders.join(', ') || '无'}`);
+    console.log(`[router] ❌ 不可用模型: ${unavailableProviders.join(', ') || '无'}`);
+    
+    // 如果免费池中的模型不可用，发出警告
+    const FREE_POOL = ['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', 'nvidia'];
+    const unavailableFree = unavailableProviders.filter(p => FREE_POOL.includes(p));
+    if (unavailableFree.length > 0) {
+      console.warn(`[router] ⚠️ 以下免费模型不可用: ${unavailableFree.join(', ')}`);
     }
   }
 
@@ -281,10 +368,20 @@ export class AgentAIRouter extends EventEmitter {
    */
   async chat(req: ChatRequest): Promise<ChatResponse> {
     // === Step 1: cost guard (学 Reasonix Pillar 3) ===
-    this.checkCostGuard();
+    // 不再 throw, 仅标记超限, 免费模型继续可用
+    const budgetOk = this.checkCostGuard();
+    if (!budgetOk) {
+      console.info('[cost-guard] 日预算已超限, 仅允许免费模型');
+    }
 
     // 跟踪指定模型是否已尝试失败 (用于降级时放开 forceProvider)
     let specifiedModelFailed = false;
+
+// 免费模型池: 这些可以互相切换 (sensenova/longcat 有免费额度, 也加入)
+const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', 'nvidia']);
+    const isFreeModel = (id: string) => FREE_POOL.has(id);
+    // 用户选了付费模型 → 只锁该 provider, 不 fallback 到免费池
+    const isPremiumModel = req.model && !isFreeModel(req.model);
 
     // === Step 1.5: 如果调用方指定 model, 锁定到该 provider (不跑 rank) ===
     //     但如果该 provider 失败, 自动降级到 ranking 里的下一个
@@ -304,28 +401,34 @@ export class AgentAIRouter extends EventEmitter {
       }
       const target = this.providers.get(req.model);
       if (target) {
+        // 付费模型不在 ranking 中兜底 — circuit open 时返回空内容让 loop 救场链处理
+        const premiumEmpty = (): ChatResponse => ({
+          content: '',
+          provider: req.model as ProviderId,
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+          durationMs: 0,
+        });
         if (this.isCircuitOpen(target)) {
           this.tryRecoverCircuit(target);
           if (this.isCircuitOpen(target)) {
-            console.warn(`[router] requested provider ${req.model} is tripped, falling back to ranking`);
+            console.warn(`[router] requested provider ${req.model} is tripped`);
+            if (isPremiumModel) return premiumEmpty();
             specifiedModelFailed = true;
           } else {
             try {
-              return await this.tryOne(target, req);
+              return await this.tryOne(target, req, req.subModel);
             } catch (err) {
-              this.recordFailure(target, err as Error);
-              this.emit('provider:failed', { provider: target.id, err });
-              console.warn(`[router] ${req.model} failed (${(err as Error).message?.slice(0, 80)}), falling back to ranking`);
+              console.warn(`[router] ${req.model} failed (${(err as Error).message?.slice(0, 80)}`);
+              if (isPremiumModel) return premiumEmpty();
               specifiedModelFailed = true;
             }
           }
         } else {
           try {
-            return await this.tryOne(target, req);
+            return await this.tryOne(target, req, req.subModel);
           } catch (err) {
-            this.recordFailure(target, err as Error);
-            this.emit('provider:failed', { provider: target.id, err });
-            console.warn(`[router] ${req.model} failed (${(err as Error).message?.slice(0, 80)}), falling back to ranking`);
+            console.warn(`[router] ${req.model} failed (${(err as Error).message?.slice(0, 80)}`);
+            if (isPremiumModel) return premiumEmpty();
             specifiedModelFailed = true;
           }
         }
@@ -333,11 +436,11 @@ export class AgentAIRouter extends EventEmitter {
     }
 
     // === Step 2: 缓存命中 (学 Reasonix Pillar 1) ===
-    const prefixHash = this.hashPrefix(req);
+    const requestHash = this.hashRequest(req);
     // 检索所有 provider 的缓存 (key 格式: ${provider}:${hash})
     for (const [providerId, cached] of this.cache.entries()) {
-      if (cached && !req.stream && this.isCacheable(req) && providerId.endsWith(`:${prefixHash}`)) {
-        this.emit('cache:hit', { hash: prefixHash, provider: cached.provider });
+      if (cached && !req.stream && this.isCacheable(req) && providerId.endsWith(`:${requestHash}`)) {
+        this.emit('cache:hit', { hash: requestHash, provider: cached.provider });
         return { ...cached, usage: { ...cached.usage, cacheHit: true } };
       }
     }
@@ -379,10 +482,47 @@ export class AgentAIRouter extends EventEmitter {
     };
     const ranked = routeByScore(input);
 
+    // ═══ 系统管控员: 动态能力矩阵调整路由排序 ═══
+    // 根据运行时表现 (成功率/工具调用/质量分) 对静态排序做动态调整
+    try {
+      const { getTracker } = await import('./governor/runtime-capability-tracker.js');
+      const tracker = getTracker();
+      if (tracker.getTrackedModels().length > 0) {
+        // 为每个模型计算动态调整分
+        const adjustments = new Map<string, number>();
+        for (const model of ranked) {
+          const dynCap = tracker.getDynamicCapabilities(model.id, 'general');
+          if (dynCap.hasRuntimeData && dynCap.runtimeWeight > 0) {
+            // 动态分与静态分的差异 → 调整分
+            const diff = dynCap.runtimeOverall - dynCap.staticOverall;
+            adjustments.set(model.id, diff * dynCap.runtimeWeight);
+          }
+        }
+        // 如果有调整, 重新排序
+        if (adjustments.size > 0) {
+          ranked.sort((a, b) => {
+            const adjA = adjustments.get(a.id) || 0;
+            const adjB = adjustments.get(b.id) || 0;
+            // 原始排序分数 + 动态调整
+            const scoreA = (ranked.indexOf(a) + 1) - adjA * 10; // 放大调整因子
+            const scoreB = (ranked.indexOf(b) + 1) - adjB * 10;
+            return scoreA - scoreB;
+          });
+          console.log(`[router] 🧠 动态能力矩阵调整了 ${adjustments.size} 个模型的排序`);
+        }
+      }
+    } catch { /* dynamic adjustment 容错 */ }
+
+    const isFreeProvider = (id: string) => ['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', 'nvidia'].includes(id);
+
     for (const model of ranked) {
       if (!model?.provider) continue;
       const provider = this.providers.get(model.provider as ProviderId);
       if (!provider) continue;
+      // === 成本守卫: 预算超限时跳过付费模型, 只允许免费 ===
+      if (!budgetOk && !isFreeProvider(model.provider)) {
+        continue;
+      }
       if (this.isCircuitOpen(provider)) {
         this.tryRecoverCircuit(provider);
         if (this.isCircuitOpen(provider)) continue;
@@ -428,8 +568,6 @@ export class AgentAIRouter extends EventEmitter {
         }
         return await this.tryOne(provider, req);
       } catch (err) {
-        this.recordFailure(provider, err as Error);
-        this.emit('provider:failed', { provider: provider.id, err });
         console.warn(`[router] ranking fallback: ${model.provider} failed (${(err as Error).message?.slice(0, 80)}), trying next`);
         continue;
       }
@@ -498,7 +636,9 @@ export class AgentAIRouter extends EventEmitter {
         deepseekProvider.trippedAt = undefined;
         deepseekProvider.failureCount = 0;
         try {
-          return await this.tryOne(deepseekProvider, req, 'deepseek-v4-flash');
+          // 降级时关闭 thinking 模式 (避免 reasoning_content 兼容性问题)
+          const fallbackReq = { ...req, thinking: false };
+          return await this.tryOne(deepseekProvider, fallbackReq, 'deepseek-v4-flash');
         } catch (err) {
           this.recordFailure(deepseekProvider, err as Error);
           console.warn(`[router] deepseek fallback also failed: ${(err as Error).message?.slice(0, 80)}`);
@@ -506,8 +646,29 @@ export class AgentAIRouter extends EventEmitter {
       }
     }
 
-    // === 用户自定义模型兜底 (不在内置 5 个中的 provider) ===
-    const builtinIds = new Set(['agentai', 'deepseek', 'openai', 'zhipu']);
+    // === DXNT 紧急兜底 (免费100次/天) ===
+    const dxntProvider = this.providers.get('dxnt');
+    if (dxntProvider && process.env.DXNT_API_KEY) {
+      if (this.isRateLimited(dxntProvider)) {
+        const wait = Math.min((dxntProvider.rateLimitCooldownUntil ?? Date.now()) - Date.now(), 3000);
+        if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      }
+      if (!this.isRateLimited(dxntProvider)) {
+        console.info('[router] emergency fallback: trying dxnt free-route');
+        dxntProvider.tripped = false;
+        dxntProvider.trippedAt = undefined;
+        dxntProvider.failureCount = 0;
+        try {
+          return await this.tryOne(dxntProvider, req, 'free-route');
+        } catch (err) {
+          this.recordFailure(dxntProvider, err as Error);
+          console.warn(`[router] dxnt fallback also failed: ${(err as Error).message?.slice(0, 80)}`);
+        }
+      }
+    }
+
+    // === 用户自定义模型兜底 (不在内置 6 个中的 provider) ===
+    const builtinIds = new Set(['agentai', 'deepseek', 'openai', 'zhipu', 'superapi', 'dxnt', 'sensenova', 'longcat', 'nvidia']);
     for (const [pid, p] of this.providers) {
       if (builtinIds.has(pid)) continue;
       if (this.isRateLimited(p) || this.isCircuitOpen(p)) continue;
@@ -556,13 +717,15 @@ export class AgentAIRouter extends EventEmitter {
       this.appendOnlyLog.push({ ts: Date.now(), req, res });
 
       if (this.isCacheable(req)) {
-        const cacheKey = `${provider.id}:${this.hashPrefix(req)}`;
+        const cacheKey = `${provider.id}:${this.hashRequest(req)}`;
         this.cache.set(cacheKey, res);
       }
 
       this.recordSuccess(provider, durationMs);
       return res;
     } catch (err) {
+      const errorMsg = (err as Error).message || String(err);
+      console.error(`[router] ❌ Provider ${provider.id} failed: ${errorMsg.slice(0, 200)}`);
       this.recordFailure(provider, err as Error);
       this.emit('provider:failed', { provider: provider.id, err });
       throw err;
@@ -599,9 +762,11 @@ export class AgentAIRouter extends EventEmitter {
 
   private isCircuitOpen(p: ProviderStats): boolean {
     if (!p.tripped) return false;
-    // 失败率 > 30% 自动熔断
-    const failRate = p.failureCount / Math.max(p.totalCalls, 1);
-    return failRate > 0.30 || p.tripped;
+    // tripped = true 时先尝试恢复
+    this.tryRecoverCircuit(p);
+    if (!p.tripped) return false; // 已恢复
+    // 仍在冷却期 → circuit open
+    return true;
   }
 
   /** 判断 provider 是否处于速率限制冷却中 */
@@ -630,28 +795,47 @@ export class AgentAIRouter extends EventEmitter {
   private tryRecoverCircuit(p: ProviderStats): void {
     if (!p.tripped || !p.trippedAt) return;
     if (Date.now() - p.trippedAt < AgentAIRouter.CB_COOLDOWN_MS) return;
+    // 冷却期已过 — 恢复
     p.tripped = false;
+    p.totalCalls = 0; // 重置调用计数, 避免旧失败率阻止恢复
     p.failureCount = 0;
     p.trippedAt = undefined;
+    p.lastErrorStatus = undefined;
     this.emit('circuit:recovered', { provider: p.id });
+    console.info(`[router] circuit recovered: ${p.id} (cooldown elapsed)`);
   }
 
-  // ===== Cost Guard (学 Reasonix Pillar 3) =====
-  private checkCostGuard(): void {
+  // ===== Cost Guard (已禁用 - ATLAS 以免费模型为主) =====
+  private checkCostGuard(): boolean {
+    // 成本守卫已禁用，直接返回 true
+    if ((this.costGuard as any).disabled) {
+      return true;
+    }
+    // 保留原逻辑作为后备
     if (Date.now() > this.costGuard.dailyResetAt) {
       this.costGuard.dailySpend = 0;
       this.costGuard.dailyResetAt = Date.now() + 86_400_000;
+      this.costGuard.exceeded = false;
     }
-    if (this.costGuard.dailySpend >= this.costGuard.maxCostPerDay) {
-      throw new Error('Daily cost limit exceeded');
-    }
+    return true;
   }
 
   private checkCostGuardPost(cost: number): void {
     if (cost > this.costGuard.maxCostPerTurn) {
       this.emit('cost:warning', { cost, max: this.costGuard.maxCostPerTurn });
     }
-    this.costGuard.dailySpend += cost;
+    // 超限后不再累计 (防止负值清空前无限叠加)
+    if (!this.costGuard.exceeded) {
+      this.costGuard.dailySpend += cost;
+    }
+  }
+
+  /** 重置成本守卫 (充值后调用) */
+  public resetCostGuard(): void {
+    this.costGuard.dailySpend = 0;
+    this.costGuard.exceeded = false;
+    this.costGuard.dailyResetAt = Date.now() + 86_400_000;
+    console.log('[cost-guard] 已手动重置, 日预算清零');
   }
 
   // ===== 工具调用 4 步修复管道 (学 Reasonix Pillar 2) =====
@@ -671,7 +855,115 @@ export class AgentAIRouter extends EventEmitter {
     // Step 5: 修复 tool_calls 参数中的常见 JSON 错误
     repaired = this.repairToolCallArgs(repaired);
 
+    // Step 6: 文本→工具调用 fallback — 当 LLM 输出文本而非调用工具时, 解析文本中的工具调用
+    repaired = this.parseTextToolCalls(repaired);
+
     return repaired;
+  }
+
+  /**
+   * 文本→工具调用 fallback 解析器
+   * 当 LLM 不支持 function calling 或参数被剥离时, 它可能在文本中输出:
+   *   list_directory(path="F:\")
+   *   read_file(offset=1, limit=100, target_file="src/index.ts")
+   *   ```tool
+   *   {"name": "read_file", "args": {"path": "src/index.ts"}}
+   *   ```
+   * 此方法检测这些模式并转换为正式的 toolCalls
+   */
+  private parseTextToolCalls(raw: any): any {
+    // 如果已有 toolCalls, 不需要解析
+    if (raw.toolCalls && Array.isArray(raw.toolCalls) && raw.toolCalls.length > 0) return raw;
+    if (typeof raw.content !== 'string' || !raw.content) return raw;
+
+    const content = raw.content;
+    const toolCalls: ToolCall[] = [];
+
+    // 模式 1: tool_name(param=value, param2=value2)
+    // 匹配: list_directory(path="F:\") 或 read_file(target_file="src/index.ts")
+    const funcCallPattern = /([a-z_][a-z0-9_]*)\s*\(\s*([^)]+)\s*\)/gi;
+    let match: RegExpExecArray | null;
+    while ((match = funcCallPattern.exec(content)) !== null) {
+      const name = match[1];
+      const argsStr = match[2];
+      const args = this.parseToolCallArgs(argsStr);
+      if (args && Object.keys(args).length > 0) {
+        toolCalls.push({
+          id: `text-fallback-${Date.now()}-${toolCalls.length}`,
+          name,
+          args,
+        });
+      }
+    }
+
+    // 模式 2: ```tool ... ``` 代码块中的 JSON
+    const toolBlockPattern = /```(?:tool|json)?\s*\n\s*(\{[\s\S]*?"name"[\s\S]*?"args"[\s\S]*?\})\s*\n```/gi;
+    while ((match = toolBlockPattern.exec(content)) !== null) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        if (parsed.name && parsed.args) {
+          toolCalls.push({
+            id: `text-fallback-${Date.now()}-${toolCalls.length}`,
+            name: parsed.name,
+            args: typeof parsed.args === 'string' ? JSON.parse(parsed.args) : parsed.args,
+          });
+        }
+      } catch {}
+    }
+
+    // 模式 3: XML 风格 <tool_call name="xxx">{"path": "..."}</tool_call>
+    const xmlPattern = /<tool_call\s+name="([a-z_][a-z0-9_]*)"\s*>([\s\S]*?)<\/tool_call>/gi;
+    while ((match = xmlPattern.exec(content)) !== null) {
+      const name = match[1];
+      try {
+        const args = JSON.parse(match[2].trim());
+        toolCalls.push({
+          id: `text-fallback-${Date.now()}-${toolCalls.length}`,
+          name,
+          args,
+        });
+      } catch {}
+    }
+
+    if (toolCalls.length > 0) {
+      console.log(`[repair] text→tool_call fallback: parsed ${toolCalls.length} tool calls from text`);
+      raw.toolCalls = toolCalls;
+      // 从 content 中移除已解析的工具调用文本, 保留剩余内容
+      let cleanedContent = content;
+      for (const tc of toolCalls) {
+        // 移除匹配的文本
+        cleanedContent = cleanedContent.replace(
+          new RegExp(`${tc.name}\s*\([^)]*\)`, 'gi'),
+          ''
+        );
+      }
+      // 移除空的 tool 代码块和 XML 标签
+      cleanedContent = cleanedContent
+        .replace(/```(?:tool|json)?\s*\n\s*\{[\s\S]*?\}\s*\n```/gi, '')
+        .replace(/<tool_call\s+name="[^"]*"\s*>[\s\S]*?<\/tool_call>/gi, '')
+        .trim();
+      raw.content = cleanedContent || '';
+    }
+
+    return raw;
+  }
+
+  /** 解析工具调用参数字符串: path="F:\", limit=100 → {path: "F:\", limit: 100} */
+  private parseToolCallArgs(argsStr: string): Record<string, any> | null {
+    const args: Record<string, any> = {};
+    // 匹配 key=value, value 可以是: "string", 'string', number, true/false, null
+    const argPattern = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^,\s]+))/g;
+    let m: RegExpExecArray | null;
+    while ((m = argPattern.exec(argsStr)) !== null) {
+      const key = m[1];
+      const val = m[2] ?? m[3] ?? m[4];
+      if (val === 'true') args[key] = true;
+      else if (val === 'false') args[key] = false;
+      else if (val === 'null') args[key] = null;
+      else if (/^-?\d+(\.\d+)?$/.test(val)) args[key] = Number(val);
+      else args[key] = val;
+    }
+    return Object.keys(args).length > 0 ? args : null;
   }
 
   /** 修复 tool call 参数中的常见 JSON 格式错误 */
@@ -783,6 +1075,7 @@ export class AgentAIRouter extends EventEmitter {
 
   // ===== Provider 执行 (具体 HTTP/SSE 调用) =====
   private async executeProvider(id: ProviderId, req: ChatRequest, subModel?: string): Promise<any> {
+    console.log(`[router] executeProvider entry: id=${id}, subModel=${subModel || 'undefined'}, req.subModel=${req.subModel || 'undefined'}`);
     // 真接 5 个内置 provider (OpenAI 兼容协议)
     // agentai: apihub.agnes-ai.com/v1/chat/completions (支持 tools / thinking / image_url)
     // deepseek: api.deepseek.com/v1/chat/completions
@@ -795,6 +1088,10 @@ export class AgentAIRouter extends EventEmitter {
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
       zhipu:   { keyEnv: 'ZHIPU_API_KEY',   baseEnv: 'ZHIPU_BASE_URL',   defaultBase: 'https://open.bigmodel.cn/api/paas/v4', modelEnv: 'ZHIPU_MODEL', defaultModel: 'glm-4.7-flash' },
       superapi: { keyEnv: 'SUPERAPI_API_KEY', baseEnv: 'SUPERAPI_BASE_URL', defaultBase: 'https://superapi.vanguard.dpdns.org/v1', modelEnv: 'SUPERAPI_MODEL', defaultModel: 'deepseek-v4-flash' },
+      dxnt: { keyEnv: 'DXNT_API_KEY', baseEnv: 'DXNT_BASE_URL', defaultBase: 'https://www.dxnt.com', modelEnv: 'DXNT_MODEL', defaultModel: 'dxnt.com/free' },
+      sensenova: { keyEnv: 'SENSENOVA_API_KEY', baseEnv: 'SENSENOVA_BASE_URL', defaultBase: 'https://token.sensenova.cn/v1', modelEnv: 'SENSENOVA_MODEL', defaultModel: 'sensenova-6.7-flash-lite' },
+      longcat: { keyEnv: 'LONGCAT_API_KEY', baseEnv: 'LONGCAT_BASE_URL', defaultBase: 'https://api.longcat.chat/openai', modelEnv: 'LONGCAT_MODEL', defaultModel: 'LongCat-2.0' },
+      nvidia: { keyEnv: 'NVIDIA_API_KEY', baseEnv: 'NVIDIA_BASE_URL', defaultBase: 'https://integrate.api.nvidia.com/v1', modelEnv: 'NVIDIA_MODEL', defaultModel: 'deepseek-ai/deepseek-v4-flash' },
     };
     const envKeyMap = PROVIDER_DEFAULTS;
 
@@ -861,12 +1158,71 @@ export class AgentAIRouter extends EventEmitter {
       // 从最新消息往前保留, 直到超限
       const kept: typeof req.messages = [];
       for (let i = otherMsgs.length - 1; i >= 0; i--) {
+        // 特殊标记: 标记这条消息的索引位置, 用于后续的完整性检查
         const est = Math.ceil((typeof otherMsgs[i].content === 'string' ? otherMsgs[i].content : '').length * 0.7);
         if (totalEst + est > maxInputTokens && kept.length > 2) break;
         totalEst += est;
         kept.unshift(otherMsgs[i]);
       }
       truncatedMessages = [...systemMsgs, ...kept];
+
+      // ═══ 完整性修复: 确保 tool 消息有前置 assistant(tool_calls) ═══
+      // DeepSeek/OpenAI 要求: tool 消息前面必须有 assistant 消息包含 tool_calls
+      // 截断可能导致 assistant(tool_calls) 被丢弃但 tool 消息保留 → 400 错误
+      // 同时也需要去掉 result 被丢弃的 assistant(tool_calls) → 否则 AI 看到孤立的 tool_calls 无回复 → 空内容
+      const fixed: typeof truncatedMessages = [];
+      let pendingToolIds = new Set<string>(); // 期待哪些 tool_call_id 的 tool 回复
+      let lastAssistantIdx = -1; // 上一个 assistant(tool_calls) 在 fixed 中的索引 (追踪是否有 tool 回复)
+      const matchedSet = new Set<string>(); // 哪些 tool_call_id 已经收到回复
+
+      for (let i = 0; i < truncatedMessages.length; i++) {
+        const m = truncatedMessages[i];
+        if (m.role === 'assistant' && (m as any).tool_calls) {
+          // assistant 发了工具调用 → 记录期待的 tool_call_id, 标记位置
+          const ids = (m as any).tool_calls.map((tc: any) => tc.id || tc);
+          pendingToolIds = new Set(ids);
+          lastAssistantIdx = fixed.length; // 记录这个 assistant 插入后的位置
+          fixed.push(m);
+        } else if (m.role === 'tool') {
+          // tool 消息: 只有 tool_call_id 在期望列表中才保留
+          const tcId = (m as any).tool_call_id;
+          if (tcId && pendingToolIds.has(tcId)) {
+            fixed.push(m);
+            matchedSet.add(tcId);
+          } else {
+            // 孤立的 tool 消息 → 丢弃
+            console.warn(`[truncate] dropped orphaned tool msg (tool_call_id=${tcId || 'unknown'})`);
+          }
+        } else if (m.role === 'user') {
+          // 用户消息到达时: 检查上一个 assistant(tool_calls) 是否收到了任何 tool 回复
+          // 如果没有 → 回退删除那个 assistant(tool_calls), 因为它会因为缺回复导致 LLM 空响应
+          if (lastAssistantIdx >= 0 && matchedSet.size === 0) {
+            console.warn(`[truncate] removed assistant(tool_calls) with no tool results (idx=${lastAssistantIdx})`);
+            fixed.splice(lastAssistantIdx); // 删除上个 assistant 及其之后的空内容
+          }
+          // 重置状态
+          pendingToolIds = new Set();
+          matchedSet.clear();
+          lastAssistantIdx = -1;
+          fixed.push(m);
+        } else {
+          // assistant(纯文本) / system / 其他
+          // 到达非 tool 消息之前, 如果 assistant(tool_calls) 没有收到回复 → 也清理
+          if (lastAssistantIdx >= 0 && matchedSet.size === 0 && m.role !== 'tool') {
+            console.warn(`[truncate] removed assistant(tool_calls) with no tool results (idx=${lastAssistantIdx})`);
+            fixed.splice(lastAssistantIdx);
+            lastAssistantIdx = -1;
+            matchedSet.clear();
+          }
+          fixed.push(m);
+        }
+      }
+      // 末尾检查: 最后一个 assistant(tool_calls) 如果没有收到任何 tool 回复 → 删除
+      if (lastAssistantIdx >= 0 && matchedSet.size === 0) {
+        console.warn(`[truncate] removed trailing assistant(tool_calls) with no tool results (idx=${lastAssistantIdx})`);
+        fixed.splice(lastAssistantIdx);
+      }
+      truncatedMessages = fixed;
     }
 
     const bodyObj: Record<string, unknown> = {
@@ -878,6 +1234,25 @@ export class AgentAIRouter extends EventEmitter {
         if ((m as any).name) msg.name = (m as any).name;
         // 保留 tool_calls (assistant 消息中的工具调用记录 — 多轮工具调用必需!)
         if ((m as any).tool_calls) msg.tool_calls = (m as any).tool_calls;
+        // ═══ Provider 通用适配 (不写死 provider 名, 自动检测) ═══
+        // 1. 所有 provider 都不接受 assistant content 为 null
+        if (m.role === 'assistant' && (msg.content === null || msg.content === undefined)) {
+          msg.content = '';
+        }
+        // ═══ 自动检测: reasoning_content 根据流式响应是否出现过决定 ═══
+        // 如果该 provider 的流式响应中从未返回过 reasoning_content → 清理历史残留
+        // 如果返回过 → 保留 (例如 DeepSeek thinking 模式)
+        if (!this._hasReasoningSupport.get(id)) {
+          delete msg.reasoning_content;
+        }
+        // 3. tool 消息 content 统一转为 string (所有 provider 兼容)
+        if (m.role === 'tool' && Array.isArray(msg.content)) {
+          msg.content = JSON.stringify(msg.content);
+        }
+        // 4. tool 消息删除 name (非 OpenAI 标准字段, 所有 provider 兼容)
+        if (m.role === 'tool') {
+          delete msg.name;
+        }
         return msg;
       }),
       temperature: req.temperature ?? 0.7,
@@ -887,38 +1262,53 @@ export class AgentAIRouter extends EventEmitter {
 
     // 工具调用 (Agnes 2.0 Flash 支持 )
     if (req.tools && req.tools.length > 0) {
-      bodyObj.tools = toolSpecsToOpenAI(req.tools);
+      // 始终发送完整 JSON Schema — 剥离参数会导致 LLM 不知道参数名, 输出文本而非调用工具
+      bodyObj.tools = toolSpecsToOpenAI(req.tools, false);
       bodyObj.tool_choice = 'auto';
     }
 
-    // 关键: 让 OpenAI 兼容 API 在流式末尾返回 usage (官方推荐)
-    if (bodyObj.stream === true) {
+    // stream_options: 让 OpenAI 兼容 API 在流式末尾返回 usage (官方推荐)
+    // 已知不支持的 provider 已被加入 _noStreamOptions, 跳过
+    if (bodyObj.stream === true && !this._noStreamOptions.has(id)) {
       bodyObj.stream_options = { include_usage: true };
     }
 
-    // Thinking 模式 — 根据 provider 自动选择思考机制
+    // Thinking 模式 — 根据 provider/模型自动选择思考机制
+    // ═══ 不再写死 if(id==='agentai'), 用子模型名自动判断 ═══
     if (req.thinking) {
-      if (id === 'agentai') {
+      if (id === 'nvidia') {
+        // NVIDIA NIM: 不支持 thinking 参数, 跳过 (模型自带推理能力)
+      } else if (id === 'agentai') {
         // Agnes AI: chat_template_kwargs.enable_thinking
         bodyObj.chat_template_kwargs = { enable_thinking: true };
         if (req.thinkingBudget && req.thinkingBudget > 0) {
           (bodyObj.chat_template_kwargs as any).thinking_budget = req.thinkingBudget;
         }
-      } else if (id === 'deepseek') {
-        // DeepSeek V4: Flash 和 Pro 都支持 thinking 模式
-        // Flash: thinking + reasoning_effort=high (省钱但有推理)
-        // Pro: thinking + reasoning_effort=max (最强推理)
-        bodyObj.thinking = { type: 'enabled' };
-        if (modelName?.includes('v4-pro')) {
+      } else if (id === 'sensenova') {
+        // ═══ 商汤 SenseNova 适配 ═══
+        // SenseNova 原生模型 (sensenova-6.7-flash-lite, sensenova-u1-fast): 不支持 thinking 参数
+        // SenseNova 代理的 DeepSeek V4 Flash: 用 reasoning_effort (不是 thinking:{type:'enabled'})
+        //   reasoning_effort: "low" / "medium" / "high" / "none", 默认 "medium"
+        if (modelName?.includes('deepseek') || modelName?.includes('ds-')) {
+          bodyObj.reasoning_effort = modelName?.includes('pro') ? 'max' : 'high';
+        }
+        // sensenova 原生模型: 不发送任何 thinking 参数
+      } else if (id === 'longcat') {
+        // 美团 LongCat: 不支持 thinking 参数, 跳过
+      } else if (modelName?.includes('deepseek') || modelName?.includes('ds-') || id === 'deepseek') {
+        // DeepSeek 直连 API: 用 reasoning_effort (不发送 thinking:{type:'enabled'}, 避免冲突)
+        // DeepSeek V4 默认启用思考模式, reasoning_effort 控制深度
+        if (modelName?.includes('pro')) {
           bodyObj.reasoning_effort = 'max'; // Pro 用 max
         } else {
           bodyObj.reasoning_effort = 'high'; // Flash 用 high
         }
-      } else if (id === 'zhipu') {
-        // 智谱 GLM-4.7-Flash: thinking 参数
-        bodyObj.thinking = { type: 'enabled' };
+      } else if (modelName?.includes('glm') || id === 'zhipu') {
+        // ═══ 智谱 GLM thinking 适配 ═══
+        // 智谱不支持 { type: 'enabled' } 格式
+        // glm-4.7-flash 不支持 thinking 参数, 降级时不要带 thinking
+        // 由 flow 报错后自动标记为不支持 thinking
       }
-      // OpenAI 等其他 provider: 不支持额外思考参数, 但流式解析中统一处理 reasoning_content
     }
 
     try {
@@ -928,15 +1318,25 @@ export class AgentAIRouter extends EventEmitter {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
+          'Accept-Encoding': 'identity', // SSE 禁用压缩: 避免客户端缓冲解压导致延迟
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify(bodyObj),
-        signal: AbortSignal.timeout(120_000),
+        signal: req.abortSignal
+          ? AbortSignal.any([AbortSignal.timeout(300_000), req.abortSignal])
+          : AbortSignal.timeout(300_000), // 5 分钟超时 + 用户 abort 联动
       });
       if (!r.ok) {
         const errText = await r.text().catch(() => '');
-        // 402/429/5xx → 标记 provider 熔断, 触发自动降级
-        if (r.status === 402 || r.status === 429 || r.status >= 500) {
+        // ═══ 自动检测: stream_options 被拒 → 标记并重试 ═══
+        if (r.status === 400 && !this._noStreamOptions.has(id) && bodyObj.stream_options) {
+          this._noStreamOptions.add(id);
+          console.warn(`[router] auto-detect: ${id} 不支持 stream_options, 标记后重试`);
+          return await this.executeProvider(id, req, modelName);
+        }
+        // 402/5xx → 标记 provider 熔断, 触发自动降级
+        // 429 由 recordFailure() 统一处理为指数退避冷却, 不在此处熔断
+        if (r.status === 402 || r.status >= 500) {
           const provider = this.providers.get(id);
           if (provider) {
             provider.tripped = true;
@@ -944,6 +1344,18 @@ export class AgentAIRouter extends EventEmitter {
             provider.failureCount++;
             this.emit('provider:tripped', { provider: id, status: r.status, reason: errText.slice(0, 100) });
             console.warn(`[router] provider ${id} tripped (HTTP ${r.status}), auto-fallback triggered`);
+          }
+        }
+        // ═══ 修复: 401 密钥无效 → 临时标记不可用 (60秒), 触发降级到其他 provider ═══
+        // 不永久熔断 (用户可能中途换 key), 但当前会话内跳过此 provider
+        if (r.status === 401) {
+          const provider = this.providers.get(id);
+          if (provider) {
+            provider.tripped = true;
+            provider.trippedAt = Date.now();
+            // 60 秒后自动恢复 (比正常熔断的 30 秒长, 避免频繁重试无效 key)
+            this.emit('provider:tripped', { provider: id, status: 401, reason: 'API key invalid or expired' });
+            console.warn(`[router] provider ${id} tripped (HTTP 401 - key invalid), will retry in 60s`);
           }
         }
         throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
@@ -990,9 +1402,18 @@ export class AgentAIRouter extends EventEmitter {
                 }
               }
               // 思考内容 (Agnes AI thinking 模式: reasoning_content 字段)
-              if (delta.reasoning_content && fullThinking.length < MAX_CONTENT_CHARS) {
-                fullThinking += delta.reasoning_content;
-                if (req.onDelta) (req.onDelta as any)(`[THINKING]${delta.reasoning_content}`);
+              // ═══ 自动检测: 该 provider 是否返回推理内容 ═══
+              if (delta.reasoning_content) {
+                // 流式响应中发现 reasoning_content → 标记此 provider 支持推理
+                if (!this._hasReasoningSupport.get(id)) {
+                  this._hasReasoningSupport.set(id, true);
+                  console.info(`[router] auto-detect: ${id} 支持 reasoning_content (推理内容)`);
+                }
+                if (fullThinking.length < MAX_CONTENT_CHARS) {
+                  fullThinking += delta.reasoning_content;
+                  // 使用专用 onThinking 回调, 不再用 [THINKING] 前缀污染 onDelta
+                  if (req.onThinking) req.onThinking(delta.reasoning_content);
+                }
               }
               // tool_calls delta (Agnes 支持)
               if (delta.tool_calls) {
@@ -1068,15 +1489,19 @@ export class AgentAIRouter extends EventEmitter {
   }
 
   // ===== 辅助方法 =====
-  private hashPrefix(req: ChatRequest): string {
-    // 学自: Reasonix Pillar 1 immutable prefix
-    // 只 hash system + tools, 不 hash 用户消息 (会变)
-    const systemAndTools = JSON.stringify({
-      system: req.messages.filter(m => m.role === 'system'),
+  private hashRequest(req: ChatRequest): string {
+    // 缓存必须绑定完整请求上下文, 否则不同用户消息会串用旧答案
+    const requestFingerprint = JSON.stringify({
+      model: req.model,
+      subModel: req.subModel,
+      messages: req.messages,
       tools: req.tools,
       temperature: req.temperature,
+      maxTokens: req.maxTokens,
+      thinking: req.thinking,
+      thinkingBudget: req.thinkingBudget,
     });
-    return createHash('sha256').update(systemAndTools).digest('hex').slice(0, 16);
+    return createHash('sha256').update(requestFingerprint).digest('hex').slice(0, 16);
   }
 
   private isCacheable(req: ChatRequest): boolean {
@@ -1164,6 +1589,22 @@ export class AgentAIRouter extends EventEmitter {
       // 429 不计入成功/失败率, 撤消 failureCount++
       p.failureCount = Math.max(0, p.failureCount - 1);
       console.info(`[router] ${p.id} rate limited (429), cooling ${backoff / 1000}s (retry #${p.rateLimitRetryCount})`);
+      return;
+    }
+
+    // === 客户端错误 (400) 不触发熔断 — 这是请求格式问题不是服务故障 ===
+    if (p.lastErrorStatus === 400) {
+      console.warn(`[router] ${p.id} client error (400), not tripping`);
+      return;
+    }
+    // === 401 已在 executeProvider 中临时 tripped, 这里不再重复处理 ===
+
+    // === 超时/网络中断 不触发熔断 — 长任务正常超时, 不是模型故障 ===
+    const errMsg = _err.message?.toLowerCase() || '';
+    if (errMsg.includes('timeout') || errMsg.includes('abort') || errMsg.includes('econnreset') || errMsg.includes('econnrefused')) {
+      // 撤销 failureCount++ — 超时不算模型失败
+      p.failureCount = Math.max(0, p.failureCount - 1);
+      console.warn(`[router] ${p.id} timeout/network error (not tripping): ${_err.message?.slice(0, 80)}`);
       return;
     }
 
