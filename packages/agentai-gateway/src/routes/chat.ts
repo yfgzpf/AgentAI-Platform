@@ -18,10 +18,8 @@ import { RateLimiter } from '../rate-limit.js';
 // [灰度测试] 新模型选择器 - 通过 FEATURE_FLAGS 控制启用
 import * as modelSelector from '../model-selector.js';
 import { FEATURE_FLAGS, shouldUseNewModelSelector } from '../feature-flags.js';
-// [诊断优先] ALTES | 岐黄 诊断链路
-import { perceiveTask } from '../diagnosis/task-perception.js';
-import { diagnoseTask } from '../diagnosis/diagnosis-engine.js';
-import { TreatmentPlan, DiagnosisState } from '../types/diagnosis.js';
+// [诊断优先] ALTES | 岐黄 快速诊断
+import { quickDiagnose } from '../diagnosis/quick-diagnose.js';
 
 // 速率限制器: 动态区分内部/外部调用
 const limiter = new RateLimiter();
@@ -283,65 +281,36 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       }
 
       // ═══════════════════════════════════════════════════════════
-      // [诊断优先] ALTES | 岐黄 诊断链路 - 插入点 1: 任务感知
+      // [诊断优先] ALTES | 岐黄 - 快速诊断，决定执行策略
       // ═══════════════════════════════════════════════════════════
-      let diagnosisState: DiagnosisState | undefined;
-      let treatmentPlan: TreatmentPlan | undefined;
+      let diagnosisResult: any;
       
       if (FEATURE_FLAGS.enableDiagnosisPipeline) {
         try {
-          const messages = [{ role: 'user', content: message }];
-          const context = { sessionId: userId, userId, projectPath: workspace };
+          console.log(`[diagnosis] 🔍 快速诊断 | message=${(message || '').slice(0, 50)}...`);
+          diagnosisResult = await quickDiagnose(message || '', { history: [] });
+          console.log(`[diagnosis] ✅ 诊断完成 | strategy=${diagnosisResult.strategy} confidence=${diagnosisResult.confidence.toFixed(2)}`);
           
-          // 1. 任务感知（望闻问）
-          console.log(`[diagnosis] 🔍 开始任务感知 | userId=${userId}`);
-          const perception = await perceiveTask(messages, context);
-          console.log(`[diagnosis] ✅ 任务感知完成 | type=${perception.taskType} complexity=${perception.complexity} ambiguity=${perception.ambiguity.toFixed(2)}`);
-          
-          // 如果歧义高，需要澄清
-          if (perception.suggestedAction === 'ask' && perception.gapList.length > 0) {
-            console.log(`[diagnosis] ⚠️ 需要澄清 | gaps=${perception.gapList.length}`);
-            // 返回澄清请求（非流式）
+          // 策略：先澄清
+          if (diagnosisResult.strategy === 'clarify' && diagnosisResult.clarificationQuestions) {
+            console.log(`[diagnosis] ⚠️ 需要澄清 | questions=${diagnosisResult.clarificationQuestions.length}`);
             if (!stream) {
               return res.json({
                 type: 'clarification_needed',
-                message: '需要更多信息',
-                gaps: perception.gapList,
-                perception: {
-                  taskType: perception.taskType,
-                  complexity: perception.complexity,
-                  intentSummary: perception.intentSummary,
-                },
+                questions: diagnosisResult.clarificationQuestions,
+                reason: diagnosisResult.reason,
               });
             }
+            // 流式模式下发送澄清事件
+            sendEvent('clarification_needed', {
+              questions: diagnosisResult.clarificationQuestions,
+              reason: diagnosisResult.reason,
+            });
           }
-          
-          // 2. 结构化诊断（切）
-          console.log(`[diagnosis] 🔬 开始诊断`);
-          const diagnosis = await diagnoseTask(perception, context);
-          console.log(`[diagnosis] ✅ 诊断完成 | confidence=${diagnosis.confidence.toFixed(2)} risk=${diagnosis.riskLevel} approach=${diagnosis.recommendedApproach}`);
-          
-          // 3. 生成治疗计划（治）
-          if (diagnosis.recommendedApproach !== 'direct') {
-            const { assemblePlan } = await import('../diagnosis/plan-assembler.js');
-            treatmentPlan = assemblePlan(diagnosis, perception, context);
-            console.log(`[diagnosis] 📋 治疗计划已生成 | steps=${treatmentPlan.steps.length} approach=${diagnosis.recommendedApproach}`);
-          }
-          
-          // 初始化诊断状态
-          diagnosisState = {
-            perception,
-            diagnosis,
-            currentStepIndex: 0,
-            verificationHistory: [],
-            adjustmentHistory: [],
-            isCompleted: false,
-            hasError: false,
-          };
           
         } catch (err: any) {
           console.error(`[diagnosis] ❌ 诊断失败: ${err.message}`);
-          // 诊断失败不影响主流程，继续执行
+          // 诊断失败不影响主流程
         }
       }
       // ═══════════════════════════════════════════════════════════
@@ -360,40 +329,6 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           res.write(`event: ${event}\n`);
           res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
-
-        // ═══════════════════════════════════════════════════════════
-        // [诊断优先] ALTES | 岐黄 - 发送诊断事件到前端
-        // ═══════════════════════════════════════════════════════════
-        if (FEATURE_FLAGS.enableDiagnosisPipeline && diagnosisState) {
-          // 发送任务感知事件
-          if (diagnosisState.perception) {
-            sendEvent('diagnosis', {
-              type: 'task_perception_completed',
-              data: {
-                taskType: diagnosisState.perception.taskType,
-                complexity: diagnosisState.perception.complexity,
-                ambiguity: diagnosisState.perception.ambiguity,
-                intentSummary: diagnosisState.perception.intentSummary,
-                gapCount: diagnosisState.perception.gapList.length,
-              },
-            });
-          }
-          
-          // 发送诊断报告事件
-          if (diagnosisState.diagnosis) {
-            sendEvent('diagnosis', {
-              type: 'diagnosis_completed',
-              data: {
-                confidence: diagnosisState.diagnosis.confidence,
-                riskLevel: diagnosisState.diagnosis.riskLevel,
-                approach: diagnosisState.diagnosis.recommendedApproach,
-                estimatedSteps: diagnosisState.diagnosis.estimatedSteps,
-                successProbability: diagnosisState.diagnosis.successProbability,
-              },
-            });
-          }
-        }
-        // ═══════════════════════════════════════════════════════════
 
         // ====== SSE keep-alive ======
         // 5 秒心跳: 防止 Nginx/防火墙/浏览器在长 LLM 调用时断连
