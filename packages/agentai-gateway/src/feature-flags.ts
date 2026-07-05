@@ -45,8 +45,8 @@ export const FEATURE_FLAGS: FeatureFlags = {
   // 灰度流量百分比，默认 0% (全量旧逻辑)
   newModelSelectorTrafficPercent: getEnvNumber('NEW_MODEL_SELECTOR_TRAFFIC_PERCENT', 0),
   
-  // [ALTES | 岐黄] 诊断优先主链路，默认 false (开发中)
-  enableDiagnosisPipeline: getEnvBool('ENABLE_DIAGNOSIS_PIPELINE', false),
+  // [ALTES | 岐黄] 诊断优先主链路，默认 true (已启用)
+  enableDiagnosisPipeline: getEnvBool('ENABLE_DIAGNOSIS_PIPELINE', true),
 };
 
 /** 判断是否对新模型选择器启用 */
@@ -73,6 +73,7 @@ export function logFeatureFlags(): void {
   console.log(`  useNewModelSelector: ${FEATURE_FLAGS.useNewModelSelector}`);
   console.log(`  enableModelSelectorDiff: ${FEATURE_FLAGS.enableModelSelectorDiff}`);
   console.log(`  newModelSelectorTrafficPercent: ${FEATURE_FLAGS.newModelSelectorTrafficPercent}%`);
+  console.log(`  enableDiagnosisPipeline: ${FEATURE_FLAGS.enableDiagnosisPipeline} [ALTES|岐黄]`);
 }
 
 // 启动时打印配置
