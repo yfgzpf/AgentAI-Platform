@@ -22,6 +22,8 @@ import { FEATURE_FLAGS, shouldUseNewModelSelector } from '../feature-flags.js';
 import { quickDiagnose } from '../diagnosis/quick-diagnose.js';
 // [成本控制] ALTES | 岐黄 成本追踪
 import { getCostTracker, CostTracker } from '../cost/index.js';
+// [闻阶段] ALTES | 岐黄 缺口分析
+import { analyzeGaps } from '../diagnosis/gap-analyzer-llm.js';
 
 // 速率限制器: 动态区分内部/外部调用
 const limiter = new RateLimiter();
@@ -313,6 +315,41 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             confidence: diagnosisResult.confidence,
             duration: Date.now() - diagnoseStart,
           });
+          
+          // ═══════════════════════════════════════════════════════════
+          // [闻阶段] ALTES | 岐黄 - 缺口分析（免费轻量模型）
+          // ═══════════════════════════════════════════════════════════
+          if (diagnosisResult.strategy !== 'direct') {
+            try {
+              const wenStart = Date.now();
+              console.log(`[diagnosis] 👂 闻阶段：缺口分析`);
+              
+              const gapResult = await analyzeGaps(message || '', router, { useLLM: true });
+              
+              // 记录闻阶段成本
+              costTracker.recordPhase(taskId, 'wen', gapResult.tokensUsed, 'agentai-free', 'free_lightweight', {
+                hasGaps: gapResult.hasGaps,
+                gapCount: gapResult.gaps.length,
+                duration: Date.now() - wenStart,
+              });
+              
+              console.log(`[diagnosis] ✅ 缺口分析完成 | gaps=${gapResult.gaps.length} tokens=${gapResult.tokensUsed}`);
+              
+              // 如果LLM发现更多缺口，补充到诊断结果
+              if (gapResult.hasGaps && gapResult.clarificationQuestions.length > 0) {
+                diagnosisResult.clarificationQuestions = [
+                  ...(diagnosisResult.clarificationQuestions || []),
+                  ...gapResult.clarificationQuestions,
+                ];
+                diagnosisResult.strategy = 'clarify';
+              }
+              
+            } catch (err: any) {
+              console.warn(`[diagnosis] ⚠️ 缺口分析失败: ${err.message}`);
+              // 失败不影响主流程
+            }
+          }
+          // ═══════════════════════════════════════════════════════════
           
           // 策略：先澄清
           if (diagnosisResult.strategy === 'clarify' && diagnosisResult.clarificationQuestions) {
