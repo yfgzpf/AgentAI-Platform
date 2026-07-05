@@ -321,6 +321,13 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           const diagnosis = await diagnoseTask(perception, context);
           console.log(`[diagnosis] ✅ 诊断完成 | confidence=${diagnosis.confidence.toFixed(2)} risk=${diagnosis.riskLevel} approach=${diagnosis.recommendedApproach}`);
           
+          // 3. 生成治疗计划（治）
+          if (diagnosis.recommendedApproach !== 'direct') {
+            const { assemblePlan } = await import('../diagnosis/plan-assembler.js');
+            treatmentPlan = assemblePlan(diagnosis, perception, context);
+            console.log(`[diagnosis] 📋 治疗计划已生成 | steps=${treatmentPlan.steps.length} approach=${diagnosis.recommendedApproach}`);
+          }
+          
           // 初始化诊断状态
           diagnosisState = {
             perception,
@@ -353,6 +360,40 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           res.write(`event: ${event}\n`);
           res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
+
+        // ═══════════════════════════════════════════════════════════
+        // [诊断优先] ALTES | 岐黄 - 发送诊断事件到前端
+        // ═══════════════════════════════════════════════════════════
+        if (FEATURE_FLAGS.enableDiagnosisPipeline && diagnosisState) {
+          // 发送任务感知事件
+          if (diagnosisState.perception) {
+            sendEvent('diagnosis', {
+              type: 'task_perception_completed',
+              data: {
+                taskType: diagnosisState.perception.taskType,
+                complexity: diagnosisState.perception.complexity,
+                ambiguity: diagnosisState.perception.ambiguity,
+                intentSummary: diagnosisState.perception.intentSummary,
+                gapCount: diagnosisState.perception.gapList.length,
+              },
+            });
+          }
+          
+          // 发送诊断报告事件
+          if (diagnosisState.diagnosis) {
+            sendEvent('diagnosis', {
+              type: 'diagnosis_completed',
+              data: {
+                confidence: diagnosisState.diagnosis.confidence,
+                riskLevel: diagnosisState.diagnosis.riskLevel,
+                approach: diagnosisState.diagnosis.recommendedApproach,
+                estimatedSteps: diagnosisState.diagnosis.estimatedSteps,
+                successProbability: diagnosisState.diagnosis.successProbability,
+              },
+            });
+          }
+        }
+        // ═══════════════════════════════════════════════════════════
 
         // ====== SSE keep-alive ======
         // 5 秒心跳: 防止 Nginx/防火墙/浏览器在长 LLM 调用时断连
