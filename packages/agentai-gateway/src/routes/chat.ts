@@ -20,6 +20,8 @@ import * as modelSelector from '../model-selector.js';
 import { FEATURE_FLAGS, shouldUseNewModelSelector } from '../feature-flags.js';
 // [诊断优先] ALTES | 岐黄 快速诊断
 import { quickDiagnose } from '../diagnosis/quick-diagnose.js';
+// [成本控制] ALTES | 岐黄 成本追踪
+import { getCostTracker, CostTracker } from '../cost/index.js';
 
 // 速率限制器: 动态区分内部/外部调用
 const limiter = new RateLimiter();
@@ -281,24 +283,52 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       }
 
       // ═══════════════════════════════════════════════════════════
+      // [成本控制] ALTES | 岐黄 - 初始化成本追踪
+      // ═══════════════════════════════════════════════════════════
+      const costTracker = getCostTracker();
+      const taskId = `${userId}-${Date.now()}`;
+      costTracker.startTask(taskId, userId, userId, 'chat', 'simple');
+      
+      // 监听成本告警
+      costTracker.on('alert', (alert) => {
+        console.warn(`[cost-alert] ${alert.severity}: ${alert.message}`);
+      });
+      // ═══════════════════════════════════════════════════════════
+      
+      // ═══════════════════════════════════════════════════════════
       // [诊断优先] ALTES | 岐黄 - 快速诊断，决定执行策略
       // ═══════════════════════════════════════════════════════════
       let diagnosisResult: any;
       
       if (FEATURE_FLAGS.enableDiagnosisPipeline) {
         try {
+          const diagnoseStart = Date.now();
           console.log(`[diagnosis] 🔍 快速诊断 | message=${(message || '').slice(0, 50)}...`);
           diagnosisResult = await quickDiagnose(message || '', { history: [] });
           console.log(`[diagnosis] ✅ 诊断完成 | strategy=${diagnosisResult.strategy} confidence=${diagnosisResult.confidence.toFixed(2)}`);
           
+          // 记录诊断成本（望阶段 - 纯规则，0 token）
+          costTracker.recordPhase(taskId, 'wang', 0, 'rule-based', 'rule_based', {
+            strategy: diagnosisResult.strategy,
+            confidence: diagnosisResult.confidence,
+            duration: Date.now() - diagnoseStart,
+          });
+          
           // 策略：先澄清
           if (diagnosisResult.strategy === 'clarify' && diagnosisResult.clarificationQuestions) {
             console.log(`[diagnosis] ⚠️ 需要澄清 | questions=${diagnosisResult.clarificationQuestions.length}`);
+            
+            // 记录问阶段成本
+            costTracker.recordPhase(taskId, 'ask', 0, 'template', 'rule_based');
+            
             if (!stream) {
+              // 结束任务并返回
+              const summary = costTracker.endTask(taskId);
               return res.json({
                 type: 'clarification_needed',
                 questions: diagnosisResult.clarificationQuestions,
                 reason: diagnosisResult.reason,
+                costSummary: summary,
               });
             }
             // 流式模式下发送澄清事件
