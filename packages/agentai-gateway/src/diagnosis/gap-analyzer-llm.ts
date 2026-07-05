@@ -68,7 +68,7 @@ export async function analyzeGapsWithLLM(
         { role: 'user', content: prompt },
       ],
       temperature: 0.3, // 低温度，稳定输出
-      max_tokens: 200, // 限制输出长度
+      maxTokens: 200, // 限制输出长度（注意：使用 camelCase）
     });
 
     const content = response.choices[0]?.message?.content || '';
@@ -163,7 +163,7 @@ function analyzeGapsWithRules(message: string): GapAnalysisResult {
  */
 export async function analyzeGaps(
   message: string,
-  router: AgentAIRoader,
+  router: AgentAIRouter,
   options?: { useLLM?: boolean }
 ): Promise<GapAnalysisResult> {
   // 先用规则快速检测
