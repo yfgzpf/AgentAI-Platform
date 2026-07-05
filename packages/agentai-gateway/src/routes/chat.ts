@@ -12,8 +12,16 @@ import { MasterController } from '../master-controller.js';
 import { writeMemory, readMemory } from '../memory.js';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { WorkspaceManager } from '../workspace-manager.js';
 import { RateLimiter } from '../rate-limit.js';
+// [灰度测试] 新模型选择器 - 通过 FEATURE_FLAGS 控制启用
+import * as modelSelector from '../model-selector.js';
+import { FEATURE_FLAGS, shouldUseNewModelSelector } from '../feature-flags.js';
+// [诊断优先] ALTES | 岐黄 诊断链路
+import { perceiveTask } from '../diagnosis/task-perception.js';
+import { diagnoseTask } from '../diagnosis/diagnosis-engine.js';
+import { TreatmentPlan, DiagnosisState } from '../types/diagnosis.js';
 
 // 速率限制器: 动态区分内部/外部调用
 const limiter = new RateLimiter();
@@ -161,7 +169,17 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           registry.register({
             name: skill.name,
             description: skill.description,
-            parameters: { type: 'object', properties: { filePath: { type: 'string' } }, additionalProperties: true },
+            parameters: {
+              type: 'object',
+              properties: {
+                args: {
+                  type: 'object',
+                  description: skill.description,
+                  additionalProperties: true,
+                },
+              },
+              additionalProperties: true,
+            },
             parallelSafe: true,
             riskLevel: 'low',
             handler: skill.handler,
@@ -189,6 +207,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
 
   r.post('/v1/chat', async (req: Request, res: Response) => {
     const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile } = req.body;
+
+    console.log(`[chat] ➡️ POST /v1/chat | userId=${userId} stream=${stream} model=${requestModel || 'default'} msgLen=${(message || '').length}`);
 
     // 速率限制检查 (内部调用使用更高限制)
     const isInternalReq = !!_internal;
@@ -226,7 +246,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       // 更新用户身份 (从 profile 读取完整数据: 姓名/行业/用例/技能)
       if (userModel && profile) {
         if (profile.name) {
-          userModel.setIdentity({
+          userModel.setIdentity(userId, {
             name: profile.name,
             industry: profile.industry,
             role: profile.useCase,
@@ -237,7 +257,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         // 持久化问卷答案到 ~/.agentai/questionnaire.json
         if (profile.questionnaire && typeof profile.questionnaire === 'object' && Object.keys(profile.questionnaire).length > 0) {
           try {
-            const qPath = path.join(require('os').homedir(), '.agentai', 'questionnaire.json');
+            const qPath = path.join(os.homedir(), '.agentai', 'questionnaire.json');
             const qDir = path.dirname(qPath);
             if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
             fs.writeFileSync(qPath, JSON.stringify({
@@ -245,10 +265,14 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
               answers: profile.questionnaire,
               updatedAt: Date.now(),
             }, null, 2), 'utf-8');
-            // 同步问卷到 UserModel identity (用于 system prompt)
-            userModel.setIdentity({ questionnaire: profile.questionnaire });
           } catch (e: any) {
-            console.warn('[chat] questionnaire persist failed:', e?.message);
+            console.warn('[chat] questionnaire file write failed:', e?.message);
+          }
+          // 同步问卷到 UserModel identity (独立 try-catch, 避免 userModel 内部异常影响文件写入)
+          try {
+            userModel.setIdentity(userId, { questionnaire: profile.questionnaire });
+          } catch (e: any) {
+            console.warn('[chat] questionnaire userModel sync failed:', e?.message);
           }
         }
       }
@@ -258,8 +282,67 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         fts5Memory.recordMessage({ sessionId: userId, userId, workspace, role: 'user', content: message }).catch(() => {});
       }
 
+      // ═══════════════════════════════════════════════════════════
+      // [诊断优先] ALTES | 岐黄 诊断链路 - 插入点 1: 任务感知
+      // ═══════════════════════════════════════════════════════════
+      let diagnosisState: DiagnosisState | undefined;
+      let treatmentPlan: TreatmentPlan | undefined;
+      
+      if (FEATURE_FLAGS.enableDiagnosisPipeline) {
+        try {
+          const messages = [{ role: 'user', content: message }];
+          const context = { sessionId: userId, userId, projectPath: workspace };
+          
+          // 1. 任务感知（望闻问）
+          console.log(`[diagnosis] 🔍 开始任务感知 | userId=${userId}`);
+          const perception = await perceiveTask(messages, context);
+          console.log(`[diagnosis] ✅ 任务感知完成 | type=${perception.taskType} complexity=${perception.complexity} ambiguity=${perception.ambiguity.toFixed(2)}`);
+          
+          // 如果歧义高，需要澄清
+          if (perception.suggestedAction === 'ask' && perception.gapList.length > 0) {
+            console.log(`[diagnosis] ⚠️ 需要澄清 | gaps=${perception.gapList.length}`);
+            // 返回澄清请求（非流式）
+            if (!stream) {
+              return res.json({
+                type: 'clarification_needed',
+                message: '需要更多信息',
+                gaps: perception.gapList,
+                perception: {
+                  taskType: perception.taskType,
+                  complexity: perception.complexity,
+                  intentSummary: perception.intentSummary,
+                },
+              });
+            }
+          }
+          
+          // 2. 结构化诊断（切）
+          console.log(`[diagnosis] 🔬 开始诊断`);
+          const diagnosis = await diagnoseTask(perception, context);
+          console.log(`[diagnosis] ✅ 诊断完成 | confidence=${diagnosis.confidence.toFixed(2)} risk=${diagnosis.riskLevel} approach=${diagnosis.recommendedApproach}`);
+          
+          // 初始化诊断状态
+          diagnosisState = {
+            perception,
+            diagnosis,
+            currentStepIndex: 0,
+            verificationHistory: [],
+            adjustmentHistory: [],
+            isCompleted: false,
+            hasError: false,
+          };
+          
+        } catch (err: any) {
+          console.error(`[diagnosis] ❌ 诊断失败: ${err.message}`);
+          // 诊断失败不影响主流程，继续执行
+        }
+      }
+      // ═══════════════════════════════════════════════════════════
+
       // ====== SSE 流式 ======
       if (stream === true) {
+        // 禁用 Nagle 算法: 每个 SSE 数据包立即发送, 不因 TCP 缓冲而延迟
+        req.socket?.setNoDelay?.();
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
         res.setHeader('Cache-Control', 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
@@ -271,26 +354,44 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
 
-        // ====== SSE keep-alive: 每 15 秒发一次心跳, 防止浏览器/代理超时断开 ======
+        // ====== SSE keep-alive ======
+        // 5 秒心跳: 防止 Nginx/防火墙/浏览器在长 LLM 调用时断连
         const keepAliveTimer = setInterval(() => {
           try { res.write(': heartbeat\n\n'); } catch { /* conn already closed */ }
-        }, 15_000);
-        // 客户端断开时清理
-        req.on('close', () => { clearInterval(keepAliveTimer); });
+        }, 5_000);
 
-        // ====== 请求队列: 同 session 串行, 防止并发覆盖 ======
+        // ====== 新消息压制旧对话: 不再排队等待, 直接终止前一个任务 ======
+        const sessionKey = `${userId}:${workspace}`;
+        const prevEntry = activeLoops.get(sessionKey);
+        if (prevEntry) {
+          console.log(`[chat] 🛑 压制前一个未完成的对话 | session=${sessionKey}`);
+          try { prevEntry.abort(); } catch {}
+          activeLoops.delete(sessionKey);
+        }
+        // 释放前一个队列 (如果有), 让本次请求立即通过
         const queueKey = `queue:${userId}:${workspace}`;
-        if (!(global as any).__msgQueues) (global as any).__msgQueues = new Map<string, Promise<any>>();
-        const queues = (global as any).__msgQueues;
-        const prev = queues.get(queueKey) || Promise.resolve();
-        let queueResolve: () => void;
-        const next = new Promise<void>(r => { queueResolve = r; });
-        queues.set(queueKey, prev.then(() => next));
-        await prev; // 等前面的消息处理完
+        if ((global as any).__msgQueues) {
+          const prevResolve = (global as any).__msgQueues.get(queueKey + '_resolve');
+          if (typeof prevResolve === 'function') { try { prevResolve(); } catch {} }
+        }
+
+        // 建立本请求的队列占位 (供下一个请求压制用)
+        let queueReleased = false;
+        const releaseQueue = () => { if (!queueReleased) { queueReleased = true; try { (global as any).__msgQueues?.set(queueKey + '_resolve', null); } catch {} } };
+        if (!(global as any).__msgQueues) (global as any).__msgQueues = new Map();
+        (global as any).__msgQueues.set(queueKey + '_resolve', releaseQueue);
+
+        // 客户端断开时: 清心跳 + 释放队列
+        req.on('close', () => {
+          clearInterval(keepAliveTimer);
+          releaseQueue();
+        });
+
+        console.log(`[chat] ✅ queue passed (supersede mode), starting model selection`);
 
         // ====== 模型映射: 前端 ID → provider + subModel ======
         const MODEL_MAP: Record<string, { provider: string; subModel?: string; label: string; baseURL?: string }> = {
-          'agentai': { provider: 'agentai', label: 'Agnes AI Flash' },
+          'agentai': { provider: 'agentai', label: 'Atlas Free (Flash)' },
           'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
           'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
           'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
@@ -302,6 +403,13 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           'baichuan': { provider: 'baichuan', label: '百川智能' },
           'minimax': { provider: 'minimax', label: 'MiniMax' },
           'anthropic': { provider: 'anthropic', label: 'Anthropic Claude' },
+          // 商汤 SenseNova (免费额度)
+          'sensenova-6.7-flash-lite': { provider: 'sensenova', subModel: 'sensenova-6.7-flash-lite', label: 'SenseNova 6.7 Flash-Lite' },
+          'sensenova-u1-fast': { provider: 'sensenova', subModel: 'sensenova-u1-fast', label: 'SenseNova U1 Fast' },
+          'sensenova-deepseek-v4-flash': { provider: 'sensenova', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (SenseNova)' },
+          'sensenova-glm-5.2': { provider: 'sensenova', subModel: 'glm-5.2', label: 'GLM-5.2 (SenseNova)' },
+          // 美团 LongCat (免费额度)
+          'longcat-2.0': { provider: 'longcat', subModel: 'LongCat-2.0', label: 'LongCat-2.0' },
           // SuperAPI 模型工厂 (子模型独立展示, 统一使用 SUPERAPI_API_KEY)
           'superapi-deepseek-v4-flash': { provider: 'superapi', subModel: 'deepseek-v4-flash', label: 'SuperAPI · DeepSeek V4 Flash' },
           'superapi-deepseek-v4-pro':  { provider: 'superapi', subModel: 'deepseek-v4-pro',  label: 'SuperAPI · DeepSeek V4 Pro' },
@@ -315,13 +423,17 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           'superapi-step-3.7-flash':   { provider: 'superapi', subModel: 'step-3.7-flash',    label: 'SuperAPI · Step 3.7 Flash' },
           'superapi-mimo-v2.5-pro':    { provider: 'superapi', subModel: 'mimo-v2.5-pro',     label: 'SuperAPI · Mimo V2.5 Pro' },
           'superapi-minimax-m3':       { provider: 'superapi', subModel: 'MiniMax-M3',         label: 'SuperAPI · MiniMax M3' },
-          // 传统独立商业模型 (备选, 不与 SuperAPI 冲突)
-          'qwen': { provider: 'qwen', label: '通义千问 (阿里云)' },
-          'moonshot': { provider: 'moonshot', label: '月之暗面 Moonshot' },
-          'yi': { provider: 'yi', label: '零一万物 Yi' },
-          'baichuan': { provider: 'baichuan', label: '百川智能' },
-          'minimax': { provider: 'minimax', label: 'MiniMax' },
-          'anthropic': { provider: 'anthropic', label: 'Anthropic Claude' },
+          // NVIDIA NIM 模型工厂 (单一密钥 NVIDIA_API_KEY)
+          'nvidia-auto':              { provider: 'nvidia', subModel: 'z-ai/glm-5.2', label: 'NVIDIA Auto (智能择优)' },
+          'nvidia-deepseek-v4-flash': { provider: 'nvidia', subModel: 'deepseek-ai/deepseek-v4-flash', label: 'DeepSeek V4 Flash (NVIDIA)' },
+          'nvidia-deepseek-v4-pro':   { provider: 'nvidia', subModel: 'deepseek-ai/deepseek-v4-pro', label: 'DeepSeek V4 Pro (NVIDIA)' },
+          'nvidia-glm-5.2':           { provider: 'nvidia', subModel: 'z-ai/glm-5.2', label: 'GLM-5.2 (NVIDIA)' },
+          'nvidia-kimi-k2.6':         { provider: 'nvidia', subModel: 'moonshotai/kimi-k2.6', label: 'Kimi K2.6 (NVIDIA)' },
+          'nvidia-mistral-medium':    { provider: 'nvidia', subModel: 'mistralai/mistral-medium-3.5-128b', label: 'Mistral Medium 3.5 (NVIDIA)' },
+          'nvidia-minimax-m3':        { provider: 'nvidia', subModel: 'minimaxai/minimax-m3', label: 'MiniMax M3 (NVIDIA)' },
+          'nvidia-nemotron-ultra':    { provider: 'nvidia', subModel: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra (NVIDIA)' },
+          'nvidia-nemotron-nano-omni': { provider: 'nvidia', subModel: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', label: 'Nemotron Nano Omni (NVIDIA)' },
+          'nvidia-step-3.7-flash':   { provider: 'nvidia', subModel: 'stepfun-ai/step-3.7-flash', label: 'Step 3.7 Flash (NVIDIA)' },
         };
 
         // 动态注册自定义模型 (前端通过 modelConfig 传递)
@@ -335,36 +447,54 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         }
 
         // ====== 智能模型选择: 检查 provider 是否可用 (欠费/无Key → 自动降级) ======
+        // [灰度测试] 支持新旧逻辑切换
         function selectAvailableModel(requestedModel?: string): { provider: string; subModel?: string; label: string; fallback?: boolean; baseURL?: string } {
+          const useNew = shouldUseNewModelSelector(userId);
+          
+          if (useNew) {
+            // 新逻辑: 使用统一模型选择器
+            const result = modelSelector.selectAvailableModel(requestedModel, router);
+            if (FEATURE_FLAGS.enableModelSelectorDiff) {
+              console.log(`[chat][灰度] 新模型选择器: ${result.provider}/${result.subModel || 'default'} (fallback=${result.fallback})`);
+            }
+            return result;
+          }
+          
+          // 旧逻辑: 保持原有实现 (验证稳定后删除)
           const mapped = MODEL_MAP[requestedModel || ''] || MODEL_MAP['agentai'];
-          // 检查请求的 provider 是否有 API Key
+          console.log(`[chat] selectAvailableModel: requested=${requestedModel}, mapped=${mapped.provider}/${mapped.subModel || 'default'}, inMap=${!!(requestedModel && MODEL_MAP[requestedModel])}`);
           const keyMap: Record<string, string> = {
             agentai: 'AGENTAI_API_KEY',
             deepseek: 'DEEPSEEK_API_KEY',
             openai: 'OPENAI_API_KEY',
             zhipu: 'ZHIPU_API_KEY',
+            superapi: 'SUPERAPI_API_KEY',
+            sensenova: 'SENSENOVA_API_KEY',
+            longcat: 'LONGCAT_API_KEY',
+            nvidia: 'NVIDIA_API_KEY',
           };
           const envKey = keyMap[mapped.provider] || `${mapped.provider.toUpperCase()}_API_KEY`;
           const hasKey = !!process.env[envKey];
-          // 检查 provider 是否被熔断
           const providerStats = router['providers']?.get(mapped.provider);
           const isTripped = providerStats?.tripped === true;
+
+          console.log(`[chat] model check: provider=${mapped.provider}, envKey=${envKey}, hasKey=${hasKey}, tripped=${isTripped}`);
 
           if (hasKey && !isTripped) {
             return { ...mapped, fallback: false };
           }
 
-          // 降级: 按优先级尝试免费模型
-          const fallbackOrder = ['agentai'];
+          console.warn(`[chat] model ${mapped.provider} unavailable (key=${hasKey}, tripped=${isTripped}), falling back`);
+
+          const fallbackOrder = ['agentai', 'zhipu', 'deepseek'];
           for (const fb of fallbackOrder) {
             if (fb !== mapped.provider && process.env[keyMap[fb]] && !router['providers']?.get(fb)?.tripped) {
               const fbMapped = MODEL_MAP[fb];
               console.warn(`[chat] model ${mapped.provider} unavailable (key=${hasKey}, tripped=${isTripped}), falling back to ${fb}`);
-              return { ...fbMapped, fallback: true };
+              return { ...fbMapped, fallback: true, baseURL: undefined };
             }
           }
-          // 最终回退到 agentai (即使没key也会返回no-key消息)
-          return { ...MODEL_MAP['agentai'], fallback: mapped.provider !== 'agentai' };
+          return { ...MODEL_MAP['agentai'], fallback: mapped.provider !== 'agentai', baseURL: undefined };
         }
 
       try {
@@ -385,6 +515,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             thinking: !!thinking,
             thinkingBudget: thinking ? 4096 : undefined,
             modelConfig: selected.baseURL ? { baseURL: selected.baseURL, modelName: selected.subModel || '', provider: selected.provider } : modelConfig,
+            activeFile,
           });
           const master = new MasterController({
             router, registry, userId, workspace,
@@ -405,6 +536,9 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         } else {
           loop = sessionData.loop;
           sessionId = loop.getContext().sessionId;
+          // 递增 callCount, 确保 "只在首轮注入历史" 的检查生效
+          (sessionData as any).callCount = ((sessionData as any).callCount || 0) + 1;
+          sessionManager.set(sessionKey, sessionData);
           // 模型切换: 用户手动选择了不同模型时更新
           if (requestModel && requestModel in MODEL_MAP) {
             const mapped = MODEL_MAP[requestModel];
@@ -416,14 +550,15 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
                 loop.opts.model = mapped.provider;
                 loop.opts.modelName = mapped.subModel || '';
                 loop.opts.displayModelLabel = mapped.label;
-                loop.opts.modelConfig = mapped.baseURL ? { baseURL: mapped.baseURL, modelName: mapped.subModel || '', provider: mapped.provider } : modelConfig;
+                // 切换时: 如果目标模型有 baseURL, 用其; 否则清空 modelConfig, 避免继续用旧 custom 模型地址
+                loop.opts.modelConfig = mapped.baseURL ? { baseURL: mapped.baseURL, modelName: mapped.subModel || '', provider: mapped.provider } : undefined;
               }
             }
           }
         }
         const resSessionId = sessionId;
         // 使用的模型显示名
-        const displayModel = MODEL_MAP[requestModel]?.label || (requestModel || 'Agnes AI');
+        const displayModel = MODEL_MAP[requestModel]?.label || (requestModel || 'Atlas');
 
         // 立即发送 thinking 事件 (消除空白等待感)
         sendEvent('thinking', { msg: '正在思考...' });
@@ -438,15 +573,16 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
               const lastMsgs = persistentMemory.getMessages(sessionId);
               if (lastMsgs?.length) {
                 const recent = lastMsgs.slice(-10); // 最近 10 条(5 轮对话)
-                const summary = recent
-                  .filter((m:any) => m.role === 'user' || m.role === 'assistant')
-                  .map((m:any) => `[${m.role}]: ${(typeof m.content === 'string' ? m.content : '').slice(0, 200)}`)
-                  .join('\n');
-                if (summary) {
+                // 只提取 assistant 的操作摘要, 不注入旧 user 消息 (防止 AI 回复旧问题)
+                const assistantSummaries = recent
+                  .filter((m:any) => m.role === 'assistant')
+                  .map((m:any) => `- ${(typeof m.content === 'string' ? m.content : '').slice(0, 150)}`)
+                  .slice(-3); // 最多 3 条 AI 操作记录
+                if (assistantSummaries.length > 0) {
                   const isContinuation = /^(继续|接着|接着做|上次|之前|刚才|那个|go on|continue)/i.test(message.trim());
                   loop.context?.appendOnlyLog?.push({
                     role: 'system',
-                    content: `[会话历史 — 最近对话]\n${summary}\n\n${isContinuation ? '用户说"继续"，请基于以上上下文继续执行未完成的任务。' : '以上是本会话的最近对话记录，请保持上下文连贯。'}`,
+                    content: `[上次会话摘要 — 这些是历史记录, 不是当前消息]\n${assistantSummaries.join('\n')}\n\n${isContinuation ? '用户说"继续"，请基于以上上下文继续执行未完成的任务。' : '以上是上一轮会话的AI操作摘要，仅供参考。请只回复当前用户的新消息。'}`,
                   });
                 }
               }
@@ -520,6 +656,32 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
               { id: 'continue_free', title: '继续使用免费模型', description: '可能会慢或失败' },
             ],
           });
+        });
+        
+        // ═══ 2026-06-27 修复: widget 渲染通道 ═══
+        loop.on('widget:show', (info: any) => {
+          sendEvent('widget_show', {
+            title: info.title,
+            contentType: info.contentType,
+            content: info.content,
+            width: info.width,
+            height: info.height,
+          });
+        });
+
+        // ═══ 2026-07-02 新增: 意图澄清事件转发 ═══
+        loop.on('clarify:required', (info: any) => {
+          sendEvent('clarify_required', {
+            id: info.id,
+            originalMessage: info.originalMessage,
+            questions: info.questions,
+            ambiguities: info.ambiguities,
+          });
+        });
+
+        // 2026-06-24 新增: 透明进度转发
+        loop.on('progress', (info: any) => {
+          sendEvent('progress', info);
         });
 
         // ====== 统一注入附件到上下文 (所有执行路径: loop.run / MasterController subtasks) ======
@@ -627,7 +789,10 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             needsApproval: true, // 标记需要用户确认
           });
           // 发送规划结果, 不执行
-          const planSummary = `📋 任务规划完成 (规划模式 — 需确认后执行)\n\n目标: ${execPlan.goal}\n复杂度: ${execPlan.intent?.complexity || 'unknown'}\n\n子任务:\n${execPlan.subtasks.map((s, i) => `${i + 1}. [${s.agentType}] ${s.title}\n   ${s.description.slice(0, 100)}`).join('\n')}\n\n请确认是否执行, 或修改任务后执行。`;
+          const subtaskLines = (execPlan.subtasks || []).map((s, i) => {
+            return `${i + 1}. [${s.agentType || '?'}] ${s.title || '?'}\n   ${(s.description || '').slice(0, 100)}`;
+          });
+          const planSummary = `📋 任务规划完成 (规划模式 — 需确认后执行)\n\n目标: ${execPlan.goal}\n复杂度: ${execPlan.intent?.complexity || 'unknown'}\n\n子任务:\n${subtaskLines.join('\n')}\n\n请确认是否执行, 或修改任务后执行。`;
           sendEvent('delta', { delta: planSummary });
           sendEvent('done', { provider: 'master-controller', displayModel, content: planSummary, usage: {}, needsApproval: true });
           finalContent = planSummary;
@@ -764,10 +929,11 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           loop.on('tool:start', onToolStart);
           loop.on('tool:end', onToolEnd);
 
-          // 注册loop到活跃追踪 (可被abort端点中断)
+          // 注册loop到活跃追踪 (可被abort端点中断 + 新消息压制)
           let loopAborted = false;
           const abortHandler = () => { loopAborted = true; loop.abort(); };
           activeLoops.set(sessionId || 'default', { loop, abort: abortHandler });
+          activeLoops.set(sessionKey, { loop, abort: abortHandler }); // 供新消息压制用
 
           // 注入前端系统规则 (文件时间线/版本回退/浏览器元素识别等)
           if (systemRules && loop.context?.immutablePrefix) {
@@ -781,6 +947,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
 
           // 注销loop追踪
           activeLoops.delete(sessionId || 'default');
+          activeLoops.delete(sessionKey);
 
           if (loopAborted) {
             sendEvent('done', { provider: 'aborted', displayModel, content: '[任务已中断]', usage: {} });
@@ -828,12 +995,12 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         }
         if (userModel && finalContent) {
           const toolNames = (finalToolCalls || []).map((t: any) => t.name || t.function?.name).filter(Boolean);
-          userModel.recordInteraction({ toolsUsed: toolNames, messageCount: 1, model: finalProvider || 'unknown' });
-          userModel.addHistorySnapshot({ summary: finalContent.slice(0, 200), sessionId: resSessionId, keyOutcomes: toolNames.length > 0 ? [`Used: ${toolNames.join(', ')}`] : [] });
+          userModel.recordInteraction(userId, { toolsUsed: toolNames, messageCount: 1, model: finalProvider || 'unknown' });
+          userModel.addHistorySnapshot(userId, { summary: String(finalContent || '').slice(0, 200), sessionId: resSessionId, keyOutcomes: toolNames.length > 0 ? [`Used: ${toolNames.join(', ')}`] : [] });
         }
 
         res.end();
-        queueResolve!();
+        releaseQueue();
         } catch (e: any) {
           const errMsg = String(e?.message || e);
           console.error(`[chat-stream] error: ${errMsg}`);
@@ -841,7 +1008,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           sendEvent('delta', { delta: `\n\n\`\`\`error\n${errMsg}\n\`\`\`` });
           sendEvent('error', { error: errMsg });
           res.end();
-          queueResolve!();
+          releaseQueue();
         }
         return;
       }
@@ -868,7 +1035,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
 
       // ====== 模型映射 (非流式路径共用) ======
       const nss_MODEL_MAP: Record<string, { provider: string; subModel?: string; label: string }> = {
-        'agentai': { provider: 'agentai', label: 'Agnes AI Flash' },
+        'agentai': { provider: 'agentai', label: 'Atlas Free (Flash)' },
         'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
         'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
         'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
@@ -886,6 +1053,17 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         'superapi-step-3.7-flash':   { provider: 'superapi', subModel: 'step-3.7-flash',    label: 'SuperAPI · Step 3.7 Flash' },
         'superapi-mimo-v2.5-pro':    { provider: 'superapi', subModel: 'mimo-v2.5-pro',     label: 'SuperAPI · Mimo V2.5 Pro' },
         'superapi-minimax-m3':       { provider: 'superapi', subModel: 'MiniMax-M3',         label: 'SuperAPI · MiniMax M3' },
+        // NVIDIA NIM 模型工厂 (非流式路径)
+        'nvidia-auto':              { provider: 'nvidia', subModel: 'z-ai/glm-5.2', label: 'NVIDIA Auto (智能择优)' },
+        'nvidia-deepseek-v4-flash': { provider: 'nvidia', subModel: 'deepseek-ai/deepseek-v4-flash', label: 'DeepSeek V4 Flash (NVIDIA)' },
+        'nvidia-deepseek-v4-pro':   { provider: 'nvidia', subModel: 'deepseek-ai/deepseek-v4-pro', label: 'DeepSeek V4 Pro (NVIDIA)' },
+        'nvidia-glm-5.2':           { provider: 'nvidia', subModel: 'z-ai/glm-5.2', label: 'GLM-5.2 (NVIDIA)' },
+        'nvidia-kimi-k2.6':         { provider: 'nvidia', subModel: 'moonshotai/kimi-k2.6', label: 'Kimi K2.6 (NVIDIA)' },
+        'nvidia-mistral-medium':    { provider: 'nvidia', subModel: 'mistralai/mistral-medium-3.5-128b', label: 'Mistral Medium 3.5 (NVIDIA)' },
+        'nvidia-minimax-m3':        { provider: 'nvidia', subModel: 'minimaxai/minimax-m3', label: 'MiniMax M3 (NVIDIA)' },
+        'nvidia-nemotron-ultra':    { provider: 'nvidia', subModel: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra (NVIDIA)' },
+        'nvidia-nemotron-nano-omni': { provider: 'nvidia', subModel: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', label: 'Nemotron Nano Omni (NVIDIA)' },
+        'nvidia-step-3.7-flash':   { provider: 'nvidia', subModel: 'stepfun-ai/step-3.7-flash', label: 'Step 3.7 Flash (NVIDIA)' },
         // 传统独立商业模型 (备选, 不与 SuperAPI 冲突)
         'qwen': { provider: 'qwen', label: '通义千问 (阿里云)' },
         'moonshot': { provider: 'moonshot', label: '月之暗面 Moonshot' },
@@ -918,17 +1096,23 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             emotion,
             thinking: !!thinking,
             thinkingBudget: thinking ? 4096 : undefined,
+            activeFile,
           });
         } else {
+          // 未指定模型或模型不在 MODEL_MAP 中: 优先读取用户偏好, 默认 agentai (免费)
           const msg = (message || '').toLowerCase();
-          const isSimple = msg.length < 15 && !/代码|审查|分析|重构|改|修|建|查|找|debug|review|refactor|implement|analyze|create|fix/.test(msg);
           const isDeepReason = /架构|设计模式|性能优化|并发|安全|漏洞|内存泄漏|重构|复杂|体系|设计|security|vulnerability|memory leak|race|deadlock/i.test(msg);
-          const usePro = (mode === 'auto' || mode === 'planning' || mode === 'review') && isDeepReason;
-          const useFlash = (mode === "auto" || mode === 'planning' || mode === 'review') && !isSimple && !isDeepReason;
-          let chatModel = 'agentai';
+          // 从 userModel 读取用户偏好模型 (GUI 切换同步过来的值)
+          const userPref = userModel?.get(userId)?.preferences?.preferredModel || 'agentai';
+          // 只有用户明确选了 deepseek/openai 等商业模型时才用, 否则默认免费 agentai
+          let chatModel = userPref;
           let modelName = '';
-          if (usePro) { chatModel = 'deepseek'; modelName = 'deepseek-v4-pro'; }
-          else if (useFlash) { chatModel = 'deepseek'; modelName = 'deepseek-v4-flash'; }
+          if (userPref === 'deepseek') { modelName = 'deepseek-v4-flash'; }
+          else if (userPref === 'deepseek-pro') { modelName = 'deepseek-v4-pro'; }
+          else if (userPref === 'zhipu') { modelName = 'glm-4.7-flash'; }
+          // 如果用户偏好是 deepseek 但消息需要深度推理, 自动升到 pro
+          if (chatModel === 'deepseek' && isDeepReason) { modelName = 'deepseek-v4-pro'; }
+          console.log(`[chat:non-stream] no explicit model, using user preference: ${chatModel}/${modelName || '(default)'}`);
           loop = new AgentAILoop(router, registry, [], {
             maxIterations: 10, userId, workspace, mode, model: chatModel, modelName, persistentMemory, emotion,
             thinking: !!thinking,
@@ -1147,6 +1331,123 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       throw err;
     }
   }
+
+  // ====== POST /v1/goal — Goal 模式 HTTP 入口 (2026-06-26) ======
+  // Goal 模式: 给定宏大目标, AI 自动分阶段迭代验收, 直到满足验收标准
+  r.post('/v1/goal', async (req: Request, res: Response) => {
+    try {
+      const { goal, userId = 'default', workspace, model } = req.body || {};
+      if (!goal || typeof goal !== 'string') {
+        return res.status(400).json({ error: 'goal 字段不能为空' });
+      }
+
+      const ws = workspace || WorkspaceManager.getInstance().root;
+      const loop = new AgentAILoop(router, registry, {
+        userId,
+        workspace: ws,
+        model,
+        maxIterations: 30,  // Goal 模式允许更多迭代
+        reflectEvery: 5,
+        includeSkillsIndex: true,
+      });
+
+      const result = await loop.runWithGoal(goal);
+      return res.json({
+        ok: true,
+        goalStatus: result.status,
+        phases: result.phases,
+        summary: result.summary,
+        iterationsTotal: result.iterationsTotal,
+      });
+    } catch (e: any) {
+      console.error('[goal] error:', e?.message);
+      return res.status(500).json({ error: e?.message || 'Goal mode failed' });
+    }
+  });
+
+  // ====== POST /v1/cost-guard/reset — 充值后重置成本守卫 (2026-06-27) ======
+  r.post('/v1/cost-guard/reset', (_req: Request, res: Response) => {
+    try {
+      deps.router.resetCostGuard();
+      return res.json({ ok: true, message: '成本守卫已重置' });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // ====== GET /v1/automations — 自动化任务列表 (2026-06-26) ======
+  r.get('/v1/automations', async (_req: Request, res: Response) => {
+    try {
+      const { getAutomationStore } = await import('../automation-store.js');
+      const store = await getAutomationStore();
+      const records = await store.list();
+      return res.json({ ok: true, count: records.length, automations: records });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // ====== POST /v1/automations — 创建自动化任务 (2026-06-26) ======
+  r.post('/v1/automations', async (req: Request, res: Response) => {
+    try {
+      const { getAutomationStore } = await import('../automation-store.js');
+      const store = await getAutomationStore();
+      const record = await store.create({
+        ...req.body,
+        userId: req.body.userId || 'default',
+        cwd: req.body.cwd || WorkspaceManager.getInstance().root,
+      });
+      return res.status(201).json({ ok: true, automation: record });
+    } catch (e: any) {
+      return res.status(400).json({ error: e?.message });
+    }
+  });
+
+  // ====== DELETE /v1/automations/:id — 删除自动化任务 (2026-06-26) ======
+  r.delete('/v1/automations/:id', async (req: Request, res: Response) => {
+    try {
+      const { getAutomationStore } = await import('../automation-store.js');
+      const store = await getAutomationStore();
+      const ok = await store.delete(req.params['id'] || '');
+      if (!ok) return res.status(404).json({ error: '任务不存在' });
+      return res.json({ ok: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // ═══ 2026-07-02 新增: 意图澄清响应端点 ═══
+  // 前端 ClarificationCard 提交用户答案后调用此端点
+  // 端点通过 activeLoops 找到对应的 loop 并调用 resolveClarification
+  r.post('/v1/clarify/respond', (req: Request, res: Response) => {
+    try {
+      const { clarificationId, answers, sessionId } = req.body || {};
+      if (!clarificationId) {
+        return res.status(400).json({ ok: false, error: 'clarificationId required' });
+      }
+
+      // 优先通过 sessionId 查找
+      let entry = activeLoops.get(sessionId || 'default');
+      // 兜底: 遍历所有活跃 loop 尝试 resolve
+      if (!entry) {
+        for (const [, e] of activeLoops) {
+          if (e.loop?.resolveClarification?.(clarificationId, answers || {})) {
+            return res.json({ ok: true, message: '澄清已提交' });
+          }
+        }
+        return res.status(404).json({ ok: false, error: '未找到对应的澄清请求 (可能已超时)' });
+      }
+
+      const ok = entry.loop?.resolveClarification?.(clarificationId, answers || {});
+      if (ok) {
+        res.json({ ok: true, message: '澄清已提交' });
+      } else {
+        res.status(404).json({ ok: false, error: '澄清ID不存在或已过期' });
+      }
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || '澄清处理失败' });
+    }
+  });
 
   return r;
 }
