@@ -1123,6 +1123,18 @@ const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', '
       apiKey = process.env[cfg.keyEnv];
       baseUrl = (process.env[cfg.baseEnv] || cfg.defaultBase).replace(/\/+$/, '');
       modelName = subModel || process.env[cfg.modelEnv] || cfg.defaultModel;
+      
+      // 调试日志：显示配置详情（隐藏密钥）
+      if (id === 'nvidia' || id === 'sensenova') {
+        console.log(`[router] 🔍 ${id} 配置详情:`);
+        console.log(`  - keyEnv: ${cfg.keyEnv}`);
+        console.log(`  - hasKey: ${!!apiKey}`);
+        console.log(`  - keyPrefix: ${apiKey ? apiKey.substring(0, 10) + '...' : 'N/A'}`);
+        console.log(`  - baseEnv: ${cfg.baseEnv}`);
+        console.log(`  - baseUrl: ${baseUrl}`);
+        console.log(`  - modelEnv: ${cfg.modelEnv}`);
+        console.log(`  - modelName: ${modelName}`);
+      }
     }
 
     if (!apiKey) {
@@ -1357,6 +1369,15 @@ const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', '
             this.emit('provider:tripped', { provider: id, status: 401, reason: 'API key invalid or expired' });
             console.warn(`[router] provider ${id} tripped (HTTP 401 - key invalid), will retry in 60s`);
           }
+        }
+        // 针对 NVIDIA 和商汤的详细错误日志
+        if (id === 'nvidia' || id === 'sensenova') {
+          console.error(`[router] ❌ ${id} 请求失败:`);
+          console.error(`  - HTTP状态: ${r.status}`);
+          console.error(`  - 错误详情: ${errText.slice(0, 300)}`);
+          console.error(`  - 请求URL: ${baseUrl}/chat/completions`);
+          console.error(`  - 模型名称: ${modelName}`);
+          console.error(`  - 请求体: ${JSON.stringify({...bodyObj, messages: `[${bodyObj.messages.length} messages]`}).slice(0, 500)}`);
         }
         throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
       }
