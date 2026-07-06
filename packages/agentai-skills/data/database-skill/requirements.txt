@@ -1,0 +1,8 @@
+# Database Skill Dependencies
+# Note: sqlite3 is part of Python standard library
+
+# For MySQL support (future)
+# pymysql>=1.0.0
+
+# For PostgreSQL support (future)
+# psycopg2-binary>=2.9.0
