@@ -165,35 +165,75 @@ export class SkillOrchestrator extends EventEmitter {
   /**
    * smart_dispatch: 根据用户消息自动匹配最合适的技能
    * 返回技能名称列表，按匹配度排序
+   * 
+   * 改进：支持 metadata.triggers 中的正则匹配
    */
-  smartDispatch(userMessage: string, limit = 3): Array<{ name: string; score: number; description: string }> {
+  smartDispatch(userMessage: string, limit = 3): Array<{ name: string; score: number; description: string; triggers?: string[] }> {
     const lower = userMessage.toLowerCase();
-    const scores = new Map<string, number>();
+    const scores = new Map<string, { score: number; triggers: string[] }>();
 
     for (const [name, skill] of this.skills) {
       let score = 0;
-      // 名称匹配
-      if (lower.includes(skill.name.toLowerCase())) score += 10;
-      // 描述关键词匹配
+      const matchedTriggers: string[] = [];
+
+      // 1. 检查 metadata.triggers（最高优先级）
+      if ((skill as any).triggers && Array.isArray((skill as any).triggers)) {
+        for (const trigger of (skill as any).triggers) {
+          try {
+            const regex = new RegExp(trigger, 'i');
+            if (regex.test(userMessage)) {
+              score += 20; // 触发词匹配给高分
+              matchedTriggers.push(trigger);
+            }
+          } catch {
+            // 无效正则，忽略
+          }
+        }
+      }
+
+      // 2. 名称匹配
+      if (lower.includes(skill.name.toLowerCase())) {
+        score += 10;
+      }
+
+      // 3. 标签匹配
       for (const tag of skill.tags) {
-        if (lower.includes(tag.toLowerCase())) score += 5;
+        if (lower.includes(tag.toLowerCase())) {
+          score += 5;
+        }
       }
-      // 描述匹配
-      const descWords = skill.description.toLowerCase().split(/\s+/);
+
+      // 4. 描述关键词匹配
+      const descWords = skill.description.toLowerCase().split(/[\s,，、]+/);
       for (const w of descWords) {
-        if (w.length >= 2 && lower.includes(w)) score += 1;
+        if (w.length >= 2 && lower.includes(w)) {
+          score += 1;
+        }
       }
-      if (score > 0) scores.set(name, score);
+
+      if (score > 0) {
+        scores.set(name, { score, triggers: matchedTriggers });
+      }
     }
 
     return [...scores.entries()]
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => b[1].score - a[1].score)
       .slice(0, limit)
-      .map(([name, score]) => ({
+      .map(([name, data]) => ({
         name,
-        score,
+        score: data.score,
         description: this.skills.get(name)?.description || '',
+        triggers: data.triggers,
       }));
+  }
+
+  /**
+   * 获取技能的触发词（用于 System Prompt）
+   */
+  getSkillTriggers(skillName: string): string[] {
+    const skill = this.skills.get(skillName);
+    if (!skill) return [];
+    return (skill as any).triggers || [];
   }
 
   /** 按名称查找技能 */

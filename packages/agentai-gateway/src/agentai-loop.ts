@@ -1150,9 +1150,20 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           const cat = s.skillMeta?.source || s.riskLevel || 'general';
           return `- ${name} [${cat}]: ${desc}`;
         });
+        // 构建带触发词的技能列表
+        const skillLinesWithTriggers = skills.map(s => {
+          const name = s.name || 'unknown';
+          const desc = (s.description || '').slice(0, 100);
+          const cat = s.skillMeta?.source || s.riskLevel || 'general';
+          // 获取触发词
+          const triggers = (s as any).triggers || [];
+          const triggerStr = triggers.length > 0 ? ` [触发: ${triggers.slice(0, 2).join(', ')}]` : '';
+          return `- ${name} [${cat}]: ${desc}${triggerStr}`;
+        });
+
         systemMsgs.push({
           role: 'system',
-          content: `# Available Skills (${skills.length} 个)\n以下是你当前可用的技能列表:\n${skillLines.join('\n')}\n\n**何时使用技能**:\n- 当用户请求涉及特定领域（装修/营销/写作/图像/视频等）时，优先使用对应领域技能\n- 当内置工具无法满足需求时，尝试使用技能\n- 技能比通用工具更专业、更高效\n\n**如何使用技能**:\n- 直接调用技能名称作为工具，例如: {"name": "email-skill", "args": {...}}\n- 如果需要的技能不存在，调用 discover_or_create_skill 创建\n\n**绝不说"我没有这个能力"** —— 要么使用现有技能，要么创建新技能。`,
+          content: `# Available Skills (${skills.length} 个)\n以下是你当前可用的技能列表:\n${skillLinesWithTriggers.join('\n')}\n\n**何时自动使用技能**:\n- 用户提到触发词时（如"图表"→chart-generator，"GitHub"→github-skill）\n- 特定领域任务（装修/营销/数据分析等）\n- 内置工具无法满足需求时\n\n**如何使用技能**:\n- 直接调用技能名称作为工具: {"name": "skill-name", "args": {...}}\n- 技能会自动处理数据并返回结果\n- 如果技能不存在，调用 discover_or_create_skill 创建\n\n**绝不说"我没有这个能力"** —— 要么使用现有技能，要么创建新技能。`,
         });
       } else {
         // 没有技能时也要告知 AI
