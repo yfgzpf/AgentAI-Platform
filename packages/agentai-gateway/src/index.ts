@@ -11,8 +11,7 @@ import fs from 'fs';
 import { createApp, createServerHandle, startBackgroundJobs } from './app.js';
 import { AgentAIRouter } from './llm-router.js';
 import { ToolRegistry } from './tool-registry.js';
-import { initGlobalSandbox } from './sandbox/index.js';
-import { createSandboxRouter } from './sandbox/router.js';
+import { initGlobalSandbox, getGlobalSandbox } from './sandbox/index.js';
 import { scanProjectSkills, scanUserSkills } from './skills/loader.js';
 import { EXTRA_TOOLS, EXTRA_HANDLERS } from './tools.js';
 import { startSkillWatcher } from './skills/watcher.js';
@@ -26,10 +25,8 @@ import { getPersistentMemory } from './persistent-memory.js';
 import { getPromptEngine } from './prompts/engine.js';
 import { getKnowledgeCache } from './knowledge-cache.js';
 import { getSkillEvolver } from './skill-evolver.js';
-import { RouterOptimizer } from './router-optimizer.js';
+// Deleted 2026-06-26: RouterOptimizer, UserBehaviorPredictor, DataPredictor (死代码清理)
 import { fts5Memory } from './fts5-memory.js';
-import { UserBehaviorPredictor } from './user-behavior-predictor.js';
-import { DataPredictor } from './data-predictor.js';
 import { SmartModelSwitcher } from './smart-model-switcher.js';
 import { builtInToolsManager } from './builtin-tools-manager.js';
 import { globalRateLimiter } from './rate-limiter.js';
@@ -40,6 +37,9 @@ import { skillOrchestrator } from './skill-orchestrator.js';
 import { createQQRouter, setQQIO } from './routes/qq.js';
 import { setWechatIO } from './routes/wechat.js';
 import { WorkspaceManager } from './workspace-manager.js';
+import { createVoiceRouter } from './routes/voice.js';
+import { memoryRouter } from './routes/sessions.js';
+import { mossTtsService } from './moss-tts-service.js';
 
 // ===== 启动时自动读 .env =====
 function loadEnv() {
@@ -137,6 +137,46 @@ for (const spec of EXTRA_TOOLS) {
 }
 console.log(`[tools] ${registry.list().length} tools registered`);
 
+// ===== 加载 AI 自创工具 (.agentai/custom-tools/) =====
+// create_tool 工具创建的脚本保存在此, 启动时自动加载注册, 闭环!
+try {
+  const customToolsDir = path.join(process.cwd(), '.agentai', 'custom-tools');
+  const registryFile = path.join(customToolsDir, 'registry.json');
+  if (fs.existsSync(registryFile)) {
+    const customRegistry = JSON.parse(fs.readFileSync(registryFile, 'utf-8'));
+    let loaded = 0;
+    for (const [toolName, spec] of Object.entries(customRegistry)) {
+      const ts = spec as any;
+      const scriptPath = path.join(customToolsDir, ts.scriptFile);
+      if (!fs.existsSync(scriptPath)) continue;
+      registry.register({
+        name: toolName,
+        description: ts.description || `Custom tool: ${toolName}`,
+        parameters: ts.parameters || { type: 'object', properties: {} },
+        parallelSafe: false,
+        riskLevel: 'medium',
+        handler: async (args: Record<string, any>) => {
+          try {
+            const mod = await import(scriptPath);
+            const run = mod.run || mod.default?.run || mod.default;
+            if (typeof run === 'function') {
+              const result = await run(args);
+              return { success: true, output: typeof result === 'string' ? result : JSON.stringify(result) };
+            }
+            return { success: false, output: `Custom tool "${toolName}" has no run() export` };
+          } catch (e: any) {
+            return { success: false, output: `Custom tool error: ${e.message}` };
+          }
+        },
+      });
+      loaded++;
+    }
+    if (loaded > 0) console.log(`[custom-tools] ${loaded} 个自创工具已加载`);
+  }
+} catch (e: any) {
+  console.warn('[custom-tools] 加载失败:', e?.message);
+}
+
 const sessionManager = getSessionManager();
 
 // ===== 持久记忆系统 =====
@@ -149,32 +189,10 @@ const knowledgeCache = getKnowledgeCache();
 console.log(`[prompts] 模板引擎已初始化 (${promptEngine.listTemplates().length} templates)`);
 console.log(`[knowledge-cache] 知识缓存已加载 (${knowledgeCache.list().length} entries)`);
 
-// ===== Sprint 3: Skill 进化 + 路由优化 =====
+// ===== Sprint 3: Skill 进化 =====
 const skillEvolver = getSkillEvolver();
-const routerOptimizer = new RouterOptimizer();
 console.log('[skill-evolver] Skill 进化引擎已初始化');
-console.log('[router-optimizer] 智能路由优化器已初始化');
-
-// ===== 用户行为预判 + 数据预判（安全保护） =====
-// ⚠️ 状态说明 (2026-06-18 审查):
-//   - UserBehaviorPredictor: 逻辑真实可用 (顺序模式识别+敏感数据过滤), 但缺消费方
-//     (buildImmutablePrefix 未接预测结果). 保留实例化以维持 import 关系, 待会话级
-//     预测场景明确后接入. 见 user-behavior-predictor.ts 顶部 @deprecated 说明.
-//   - DataPredictor: _fetchData 返回模拟数据 ("模拟数据-xxx"), 接入会向上下文灌假数据.
-//     暂注释实例化, 避免启动日志 "数据预判系统已初始化" 误导诊断. 代码本体保留.
-const userBehaviorPredictor = new UserBehaviorPredictor({
-  enabled: true,
-  analyzeSensitiveData: false,
-  sendToExternalServer: false,
-});
-console.log('[user-behavior-predictor] 已初始化 (⚠️ 待消费方接入, 当前无产出消费)');
-// const dataPredictor = new DataPredictor({
-//   enabled: true,
-//   predictSensitiveData: false,
-//   sendToExternalServer: false,
-//   enableRateLimitProtection: true,
-// });
-// console.log('[data-predictor] 实例化已跳过 (_fetchData 为模拟实现, 接入会灌假数据)');
+// [2026-06-26] router-optimizer 已删除: 是死代码, 无任何消费方
 
 // ===== 智能模型切换机制（AI自主决策） =====
 const smartModelSwitcher = new SmartModelSwitcher();
@@ -194,7 +212,7 @@ if (traeSkills.length > 0) {
       parameters: {
         type: 'object',
         properties: {
-          task: { type: 'string', description: `使用 ${skill.name} 技能执行的任务描述` },
+          task: { type: 'string', description: `使用 ${skill.name} 技能的任务描述` },
           format: { type: 'string', description: '输出格式 (如需要)' },
         },
         additionalProperties: true,
@@ -213,7 +231,7 @@ if (traeSkills.length > 0) {
           const mainPy = path.join(scriptsDir, '__init__.py');
           return await callPython(mainPy, args);
         } catch {
-          return { success: true, output: `Skill "${skill.name}" scripts at: ${scriptsDir}。Use run_command to execute.` };
+          return { success: true, output: `Skill "${skill.name}" scripts at: ${scriptsDir}。Use run_command.` };
         }
       },
     });
@@ -258,53 +276,176 @@ console.log(`[workspace] AI work dir: ${wm.aiWorkDir}`);
 console.log(`[workspace] project dir: ${wm.projectDir}`);
 
 // ===== 创建 Express app + HTTP server =====
-const deps: Record<string, any> = { router, registry, sessionManager, frameworkSwitcher, sandbox: null, persistentMemory, promptEngine, knowledgeCache, skillEvolver, routerOptimizer, fts5Memory, userModel, industryEngine, skillOrchestrator, workspaceManager: wm };
+
+// 沙箱初始化: 在 createApp 之前同步启动, 确保 app.ts 中 getGlobalSandbox() 可用
+try {
+  const sb = await initGlobalSandbox({
+    audit: (e: any) => console.log(`[sandbox] ${e.type} ${e.verdict || ''} ${e.path || ''} ${e.reason || ''}`),
+  });
+  console.log(`[sandbox] ready (rules: ${sb.getRulesPath()}, enabled: ${sb.isEnabled()})`);
+} catch (e: any) {
+  console.warn('[sandbox] init failed:', e.message);
+}
+
+const deps: Record<string, any> = { router, registry, sessionManager, frameworkSwitcher, sandbox: getGlobalSandbox(), persistentMemory, promptEngine, knowledgeCache, skillEvolver, fts5Memory, userModel, industryEngine, skillOrchestrator, workspaceManager: wm };
 const app = createApp(deps);
+// 健康检查端点 (不依赖任何服务)
+app.get('/v1/health', (_req: any, res: any) => {
+  res.json({ ok: true, pid: process.pid, uptime: process.uptime(), port: PORT });
+});
 const { httpServer, io } = createServerHandle(app);
 deps.io = io;  // 注入 io 到 deps, 使路由可访问
 setQQIO(io);    // 后置注入 io 到 QQ 路由 (socket.io 桥接 + 自动重连)
 setWechatIO(io); // 后置注入 io 到微信路由 (socket.io 桥接)
 
+// ===== 全局异常处理 =====
+process.on('uncaughtException', (err: Error) => {
+  logCrash(`uncaughtException: ${err.message}\n${err.stack?.slice(0, 500)}`);
+  // 不退出进程，让 Gateway 继续运行
+});
+process.on('unhandledRejection', (reason: any) => {
+  logCrash(`unhandledRejection: ${reason instanceof Error ? reason.message : String(reason)}`);
+  // 不退出进程，让 Gateway 继续运行
+});
+
 // ===== 启动 =====
+
+// 端口自动清理：如果 old PID 还在，先杀
+function killProcessOnPort(port: number): void {
+  try {
+    const { execSync } = require('child_process');
+    // 去掉 | findstr LISTENING：TIME_WAIT / CLOSE_WAIT 状态下端口仍被占用，
+    // 但 netstat 不再显示 LISTENING，导致旧进程漏网引发 EADDRINUSE
+    const stdout = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', timeout: 5000 });
+    const lines = stdout.trim().split('\n').filter(Boolean);
+    const seen = new Set<string>();
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[parts.length - 1];
+      // 排除自身进程 PID + 去重
+      if (pid && pid !== '0' && pid !== String(process.pid) && !seen.has(pid)) {
+        seen.add(pid);
+        try {
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+          console.log(`[agentai-gateway] killed old PID ${pid} on port ${port}`);
+        } catch {
+          console.log(`[agentai-gateway] port ${port} was held by dead PID ${pid}, cleaned`);
+        }
+      }
+    }
+  } catch {
+    // netstat 没找到或命令失败 = 端口空闲（或仅剩无 PID 的 TIME_WAIT，等操作系统释放）
+  }
+}
+killProcessOnPort(PORT);
+
+// 崩溃日志写入文件
+const CRASH_LOG = path.join(
+  process.env.USERPROFILE || process.cwd(),
+  '.agentai', 'gateway-crash.log'
+);
+const crashLogStream = fs.createWriteStream(CRASH_LOG, { flags: 'a' });
+function logCrash(msg: string) {
+  const ts = new Date().toISOString();
+  const line = `[${ts}] ${msg}\n`;
+  crashLogStream.write(line);
+  console.error(`[FATAL] ${msg}`);
+}
+
 // 初始化 FTS5 深层记忆
 fts5Memory.init().catch((e: any) => console.warn('[fts5-memory] init failed:', e.message));
 
 // 加载用户模型 (Honcho 4维度)
-console.log('[user-model] loaded', userModel.get().identity.name);
+console.log('[user-model] loaded', userModel.get().identity.name, `(${userModel.listUserIds().length + 1} users)`);
 
-// 初始化通用技能调度器
+// 初始化通用技能调度器 — 扫描多个可能的技能目录
 try {
-  const skillsDir = path.join(import.meta.dirname || process.cwd(), '..', '..', '..', 'skills');
-  const scanned = skillOrchestrator.scanDirectory(skillsDir);
-  if (scanned > 0) {
-    console.log(`[orchestrator] loaded ${scanned} skills (scanning: ${skillsDir})`);
+  const possiblePaths = [
+    // 开发环境路径
+    path.join(import.meta.dirname || '', '..', '..', '..', 'skills'),
+    path.join(process.cwd(), 'skills'),
+    path.join(process.cwd(), '..', '..', 'packages', 'agentai-skills'),
+    path.join(process.cwd(), '..', 'agentai-skills'),
+    // 生产环境路径
+    path.join(process.cwd(), 'packages', 'agentai-skills'),
+    path.join(__dirname, '..', '..', 'agentai-skills'),
+    path.join(__dirname, '..', 'agentai-skills'),
+  ];
+  
+  let totalScanned = 0;
+  for (const dir of possiblePaths) {
+    if (fs.existsSync(dir)) {
+      const scanned = skillOrchestrator.scanDirectory(dir);
+      if (scanned > 0) {
+        console.log(`[orchestrator] ✅ 从 ${dir} 加载了 ${scanned} 个技能`);
+        totalScanned += scanned;
+      }
+    }
   }
-  // 也扫 package skills
-  const pkgSkills = path.join(process.cwd(), '..', '..', 'packages', 'agentai-skills');
-  skillOrchestrator.scanDirectory(pkgSkills);
+  
+  if (totalScanned === 0) {
+    console.warn('[orchestrator] ⚠️ 未找到任何技能目录，技能功能不可用');
+  } else {
+    console.log(`[orchestrator] ✅ 总共加载了 ${totalScanned} 个技能`);
+  }
 } catch (e: any) {
-  console.warn('[orchestrator] scan failed:', e?.message || e);
+  console.warn('[orchestrator] ❌ 技能扫描失败:', e?.message || e);
 }
 
-httpServer.listen(PORT, HOST, async () => {
-  console.log(`[agentai-gateway] listening on http://${HOST}:${PORT}`);
-  console.log(`[agentai-gateway] ${registry.list().length} tools registered`);
+httpServer.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    logCrash(`port ${PORT} in use after kill attempt (retry ${eaddrRetryCount + 1}/${EADDR_MAX_RETRY})`);
+    // 精确清理: 只杀占用本端口的进程, 绝不 taskkill /IM node.exe (会误杀守护进程/dev.mjs)
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync(`netstat -ano | findstr :${PORT}`, { encoding: 'utf8', timeout: 5000 });
+      const seen = new Set<string>();
+      for (const line of out.trim().split('\n').filter(Boolean)) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && pid !== '0' && pid !== String(process.pid) && !seen.has(pid)) {
+          seen.add(pid);
+          try {
+            // /T 杀进程树, /F 强制
+            execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+            console.log(`[agentai-gateway] killed PID ${pid} (tree) on port ${PORT}`);
+          } catch {
+            console.log(`[agentai-gateway] port ${PORT} held by PID ${pid}, could not kill`);
+          }
+        }
+      }
+    } catch {
+      // netstat 未找到占用 = 端口处于纯 TIME_WAIT，等待即可
+    }
+    eaddrRetryCount++;
+    if (eaddrRetryCount < EADDR_MAX_RETRY) {
+      // 重试间隔递增: 3s, 5s, 8s, 12s — 给操作系统充分时间释放 TIME_WAIT
+      const delay = 3000 + eaddrRetryCount * 3000;
+      console.log(`[agentai-gateway] retry ${eaddrRetryCount}/${EADDR_MAX_RETRY} in ${delay / 1000}s...`);
+      setTimeout(() => tryListenWithRetry(), delay);
+    } else {
+      logCrash(`port ${PORT} still in use after ${EADDR_MAX_RETRY} retries, exiting`);
+      setTimeout(() => process.exit(1), 1000);
+    }
+  } else {
+    logCrash(`server error: ${err.message}`);
+  }
+});
 
-  // Sandbox 路由
-  let sandboxInstance: any = null;
-  try {
-    initGlobalSandbox({
-      audit: (e: any) => console.log(`[sandbox] ${e.type} ${e.verdict || ''} ${e.path || ''} ${e.reason || ''}`),
-    }).then((sb: any) => {
-      sandboxInstance = sb;
-      deps.sandbox = sb;
-      app.use('/v1/sandbox', createSandboxRouter(sb));
-      console.log(`[sandbox] ready (rules: ${sb.getRulesPath()})`);
-    }).catch((err: any) => {
-      console.warn('[sandbox] init failed:', err.message);
-    });
-  } catch (e: any) {
-    console.warn('[sandbox] init failed:', e.message);
+// 端口占用重试机制: 精确杀掉占用进程 (不误杀自身/守护进程), 失败则重试 listen
+let eaddrRetryCount = 0;
+const EADDR_MAX_RETRY = 8; // 修复: 从5增加到8, 递增间隔总计约2分钟, 覆盖Windows TIME_WAIT周期
+function tryListenWithRetry(): void {
+  httpServer.listen(PORT, HOST, async () => {
+    console.log(`[agentai-gateway] listening on http://${HOST}:${PORT}`);
+    console.log(`[agentai-gateway] ${registry.list().length} tools registered`);
+    eaddrRetryCount = 0; // 重置计数
+
+  // 沙箱已在 createApp 之前初始化, 此处仅注入 deps
+  const sb = getGlobalSandbox();
+  if (sb) {
+    deps.sandbox = sb;
+    console.log('[sandbox] linked to deps');
   }
 
   // MCP: 连接外部服务器
@@ -312,6 +453,15 @@ httpServer.listen(PORT, HOST, async () => {
   for (const cfg of MCP_HOSTS) {
     if (cfg.enabled !== false) mcpHost.connect(cfg).catch((e: any) => console.warn(`[mcp] ${cfg.name}: ${e.message}`));
   }
+
+  // TTS 路由: MOSS-TTS-Nano (本地语音克隆) + OpenAI/Edge 后端
+  app.use('/v1', createVoiceRouter());
+
+  // 记忆统计 API
+  app.use('/api/memory', memoryRouter);
+
+  // MOSS-TTS-Nano sidecar 改为惰性启动 — 首次使用时才启动, 避免启动时权限错误和阻塞
+  // mossTtsService.start() 现在在 voice.ts 路由器中按需调用
 
   // 初始化 framework switcher
   await frameworkSwitcher.initActive({
@@ -328,7 +478,11 @@ httpServer.listen(PORT, HOST, async () => {
   } catch (e: any) {
     console.warn('[background] jobs failed to start:', e?.message);
   }
-});
+  }); // end httpServer.listen callback
+}
+
+// 启动网关 (首次 listen, EADDRINUSE 时由 error handler 重试)
+tryListenWithRetry();
 
 // ===== 优雅关闭 =====
 process.on('SIGTERM', async () => {
@@ -336,7 +490,8 @@ process.on('SIGTERM', async () => {
   persistentMemory.flushAll();  // 持久化所有 dirty session
   persistentMemory.stop();
   knowledgeCache.flush();  // 持久化知识缓存
-  sandboxInstance?.stop();
+  getGlobalSandbox()?.stop();
+  mossTtsService.stop();  // 停止 MOSS-TTS sidecar
   await registry.stop();
   httpServer.close();
   process.exit(0);
