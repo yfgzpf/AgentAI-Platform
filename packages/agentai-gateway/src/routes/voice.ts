@@ -28,11 +28,11 @@ interface TtsConfig {
 
 function getTtsConfig(): TtsConfig {
   return {
-    provider: (process.env.TTS_PROVIDER as TtsConfig['provider']) || 'agnes', // 默认使用 Agnes（多音色）
-    apiKey: process.env.TTS_API_KEY || process.env.AGENTAI_API_KEY || '',
-    baseUrl: process.env.TTS_BASE_URL || 'https://apihub.agnes-ai.com/v1',
+    provider: (process.env.TTS_PROVIDER as TtsConfig['provider']) || 'edge', // 默认使用 Edge（多音色，免费）
+    apiKey: process.env.TTS_API_KEY || '',
+    baseUrl: process.env.TTS_BASE_URL || '',
     voice: process.env.TTS_VOICE || 'zh-CN-XiaoxiaoNeural', // 默认中文女声
-    model: process.env.TTS_MODEL || 'tts-1',
+    model: process.env.TTS_MODEL || 'edge',
   };
 }
 
