@@ -79,7 +79,7 @@ export async function speak(text: string, options?: { rate?: number; pitch?: num
 
   if (!cleanText) return;
 
-  // 读取用户选择的 TTS 引擎
+  // 读取用户选择的 TTS 引擎（默认 Agnes，支持多音色）
   let engine = 'agnes';
   try {
     const saved = localStorage.getItem('agentai.tts.settings');
@@ -87,7 +87,10 @@ export async function speak(text: string, options?: { rate?: number; pitch?: num
       const s = JSON.parse(saved);
       if (s.engine) engine = s.engine;
     }
-  } catch {}
+  } catch {
+    // 默认使用 Agnes，支持 40+ 音色
+    engine = 'agnes';
+  }
 
   // 浏览器引擎 → 直接用 SpeechSynthesis
   if (engine === 'browser') {
