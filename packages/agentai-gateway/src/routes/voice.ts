@@ -14,6 +14,7 @@
  */
 import { Router, type Request, type Response } from 'express';
 import { mossTtsService } from '../moss-tts-service.js';
+import { synthesizeWithEdgeTTS, getEdgeTtsVoices, checkEdgeTtsAvailable } from '../edge-tts-service.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -289,36 +290,39 @@ export function createVoiceRouter(): Router {
         return;
       }
 
-      // ====== Edge TTS (Microsoft) ======
+      // ====== Edge TTS (使用 edge-tts Python 库，免费，40+音色) ======
       if (effectiveProvider === 'edge') {
-        const lang = /[\u4e00-\u9fff]/.test(text) ? 'zh-CN' : 'en-US';
-        const ssml = buildEdgeSsml(text, lang, voice || 'zh-CN-XiaoxiaoNeural', speed);
+        try {
+          // 检查 edge-tts 是否可用
+          const isAvailable = await checkEdgeTtsAvailable();
+          if (!isAvailable) {
+            throw new Error('edge-tts not installed. Run: pip install edge-tts');
+          }
 
-        const resp = await fetch(
-          `https://${lang === 'zh-CN' ? 'chinaeast2' : 'eastus'}.tts.speech.microsoft.com/cognitiveservices/v1`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/ssml+xml',
-              'X-Microsoft-OutputFormat': 'riff-16khz-16bit-mono-pcm',
-              'Ocp-Apim-Subscription-Key': config.apiKey || '',
-              'User-Agent': 'AgentAI',
-            },
-            body: ssml,
-          },
-        );
+          // 使用 edge-tts 合成
+          const rateStr = speed ? `${Math.round((speed - 1) * 100)}%` : '+0%';
+          const audioBuffer = await synthesizeWithEdgeTTS(
+            text,
+            voice || 'zh-CN-XiaoxiaoNeural',
+            rateStr
+          );
 
-        if (!resp.ok) {
-          const errText = await resp.text();
-          res.status(resp.status).json({ error: 'Edge TTS error', detail: errText });
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('X-Voice-Used', voice || 'zh-CN-XiaoxiaoNeural');
+          res.setHeader('X-Duration-Ms', String(Date.now() - startTime));
+          res.send(audioBuffer);
+          return;
+        } catch (edgeErr: any) {
+          console.error(`[edge-tts] 失败: ${edgeErr.message}`);
+          // 降级到浏览器 TTS
+          res.json({
+            fallback: 'browser-api',
+            note: `Edge TTS 失败: ${edgeErr.message}，已降级到浏览器 TTS`,
+            text,
+            duration: Date.now() - startTime,
+          });
           return;
         }
-
-        const audioBuffer = Buffer.from(await resp.arrayBuffer());
-        res.setHeader('Content-Type', 'audio/wav');
-        res.setHeader('X-Duration-Ms', String(Date.now() - startTime));
-        res.send(audioBuffer);
-        return;
       }
 
       res.status(501).json({ error: `TTS provider not implemented: ${effectiveProvider}` });
@@ -334,48 +338,11 @@ export function createVoiceRouter(): Router {
   r.get('/v1/tts/voices', async (_req: Request, res: Response) => {
     const voices: Array<{ id: string; name: string; gender: string; provider: string; locale?: string; style?: string }> = [];
 
-    // Agnes/Azure TTS 音色 (40+ 高品质音色，支持情感/风格)
-    // 中文音色
-    voices.push(
-      { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-YunxiNeural', name: '云希', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-YunjianNeural', name: '云健', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'news' },
-      { id: 'zh-CN-XiaoyiNeural', name: '晓伊', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'gentle' },
-      { id: 'zh-CN-YunyangNeural', name: '云扬', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'professional' },
-      { id: 'zh-CN-XiaochenNeural', name: '晓辰', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'lively' },
-      { id: 'zh-CN-XiaohanNeural', name: '晓涵', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-XiaomengNeural', name: '晓梦', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-XiaomoNeural', name: '晓墨', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-XiaoqiuNeural', name: '晓秋', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-XiaoruiNeural', name: '晓睿', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-XiaoshuangNeural', name: '晓双', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-XiaoxuanNeural', name: '晓萱', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-XiaoyanNeural', name: '晓颜', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-XiaoyouNeural', name: '晓悠', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-YunfengNeural', name: '云枫', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-YunhaoNeural', name: '云皓', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-YunxiaNeural', name: '云夏', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-YunyeNeural', name: '云野', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      { id: 'zh-CN-YunzeNeural', name: '云泽', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-      // 粤语
-      { id: 'zh-HK-HiuMaanNeural', name: '晓曼(粤语)', gender: 'female', provider: 'agnes', locale: 'zh-HK', style: 'general' },
-      { id: 'zh-HK-WanLungNeural', name: '云龙(粤语)', gender: 'male', provider: 'agnes', locale: 'zh-HK', style: 'general' },
-      // 台湾腔
-      { id: 'zh-TW-HsiaoChenNeural', name: '晓臻(台湾)', gender: 'female', provider: 'agnes', locale: 'zh-TW', style: 'general' },
-      { id: 'zh-TW-YunJheNeural', name: '云哲(台湾)', gender: 'male', provider: 'agnes', locale: 'zh-TW', style: 'general' },
-      // 英文
-      { id: 'en-US-AriaNeural', name: 'Aria (EN)', gender: 'female', provider: 'agnes', locale: 'en-US', style: 'general' },
-      { id: 'en-US-GuyNeural', name: 'Guy (EN)', gender: 'male', provider: 'agnes', locale: 'en-US', style: 'general' },
-      { id: 'en-US-JennyNeural', name: 'Jenny (EN)', gender: 'female', provider: 'agnes', locale: 'en-US', style: 'general' },
-      { id: 'en-GB-SoniaNeural', name: 'Sonia (UK)', gender: 'female', provider: 'agnes', locale: 'en-GB', style: 'general' },
-      { id: 'en-GB-RyanNeural', name: 'Ryan (UK)', gender: 'male', provider: 'agnes', locale: 'en-GB', style: 'general' },
-      // 日文
-      { id: 'ja-JP-NanamiNeural', name: '七海 (JP)', gender: 'female', provider: 'agnes', locale: 'ja-JP', style: 'general' },
-      { id: 'ja-JP-KeitaNeural', name: '圭太 (JP)', gender: 'male', provider: 'agnes', locale: 'ja-JP', style: 'general' },
-      // 韩文
-      { id: 'ko-KR-SunHiNeural', name: '善熙 (KR)', gender: 'female', provider: 'agnes', locale: 'ko-KR', style: 'general' },
-      { id: 'ko-KR-InJoonNeural', name: '仁俊 (KR)', gender: 'male', provider: 'agnes', locale: 'ko-KR', style: 'general' },
-    );
+    // Edge TTS 音色 (40+ 免费音色，通过 edge-tts Python 库)
+    const edgeVoices = getEdgeTtsVoices();
+    for (const v of edgeVoices) {
+      voices.push({ ...v, provider: 'edge' });
+    }
 
     // MOSS 音色（内置预设 + 服务就绪时额外音色克隆）
     try {
