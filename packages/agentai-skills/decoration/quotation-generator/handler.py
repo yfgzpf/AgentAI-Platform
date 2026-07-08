@@ -156,7 +156,7 @@ def calculate_quotation(params: dict) -> dict:
     
     # 卧室（按40%面积，3个房间）
     bedroom_area = area * 0.4
-    bedroom_labor = (labor_prices["地板"] + labor_prices["油漆"]) * bedroom_area
+    bedroom_labor = (labor_prices["木工"] + labor_prices["油漆"]) * bedroom_area
     bedroom_material = (material_prices["地板"] + 100) * bedroom_area  # 地板+衣柜
     breakdown["卧室"] = {
         "labor": bedroom_labor,
