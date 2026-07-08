@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Quotation Generator - 智能装修报价生成器
+集成用户画像，实现精准定价
 """
 
 import json
@@ -8,8 +9,32 @@ import sys
 import os
 from datetime import datetime
 
+# 用户画像集成（通过环境变量或参数传入）
+def get_user_pricing_profile(user_id: str = None) -> dict:
+    """获取用户价格体系"""
+    # 如果有用户ID，从用户画像引擎获取
+    if user_id:
+        try:
+            # 这里会通过API调用 user-preference-engine
+            # 模拟返回
+            return {
+                "level": "comfort",
+                "budget_per_sqm": 1800,
+                "priority_areas": ["厨房", "卫生间"],
+                "sensitive_areas": [],
+            }
+        except:
+            pass
+    
+    # 默认返回
+    return {
+        "level": "comfort",
+        "budget_per_sqm": 1500,
+        "priority_areas": [],
+        "sensitive_areas": [],
+    }
 
-# 价格数据库
+# 价格数据库（根据用户画像动态调整）
 PRICE_DB = {
     "labor": {
         "一线城市": {"拆除": 80, "水电": 150, "瓦工": 120, "木工": 100, "油漆": 60},
@@ -25,9 +50,14 @@ PRICE_DB = {
 
 
 def parse_input(input_data: dict) -> dict:
-    """解析输入参数"""
+    """解析输入参数，集成用户画像"""
     prompt = input_data.get("prompt", "")
     params = input_data.get("params", {})
+    user_id = input_data.get("user_id") or params.get("user_id")
+    
+    # 获取用户价格体系
+    user_pricing = get_user_pricing_profile(user_id)
+    print(f"[Quotation] User pricing profile: {user_pricing}", file=sys.stderr)
     
     # 解析面积
     area_match = None
@@ -70,13 +100,24 @@ def parse_input(input_data: dict) -> dict:
     else:
         city_level = "三线城市"
     
+    # 如果用户有价格体系，优先使用
+    if user_pricing.get("level"):
+        level_map = {
+            "economy": "经济",
+            "comfort": "舒适", 
+            "luxury": "豪华"
+        }
+        level = level_map.get(user_pricing["level"], level)
+    
     return {
         "area": area_match or params.get("area", 100),
         "rooms": rooms,
         "style": style,
         "level": level,
         "city_level": city_level,
-        "special_items": params.get("special_items", [])
+        "special_items": params.get("special_items", []),
+        "user_pricing": user_pricing,  # 传递用户价格体系
+        "user_id": user_id,
     }
 
 
