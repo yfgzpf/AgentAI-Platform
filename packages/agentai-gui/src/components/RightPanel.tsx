@@ -3,7 +3,6 @@
  *   默认展开「上下文」, 点击切换记忆/规范/页面元素
  */
 import React, { useState } from 'react';
-import { Card } from 'antd';
 import { AimOutlined, HistoryOutlined, FileTextOutlined, ScanOutlined } from '@ant-design/icons';
 import { AIContextPanel } from './AIContextPanel';
 import { AIInjectContextPanel } from './AIInjectContextPanel';
@@ -13,6 +12,8 @@ import { AutoIdentifyPanel } from './AutoIdentifyPanel';
 import { ProjectRulesPanel } from './ProjectRulesPanel';
 import { GeneratedFilesPanel } from './GeneratedFilesPanel';
 import { TaskPlanPanel } from './TaskPlanPanel';
+import { CustomerWidget } from './CustomerWidget';
+import { CommentInterceptionWidget } from './CommentInterceptionWidget';
 
 const TABS = [
   { key: 'context', label: '上下文', icon: <AimOutlined /> },
@@ -27,11 +28,11 @@ export const RightPanel: React.FC = () => {
   const [active, setActive] = useState<TabKey>('context');
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#0f0f0f' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--panel)' }}>
       {/* Tab 切换栏 */}
       <div style={{
         display: 'flex', padding: '8px 8px 0 0',
-        borderBottom: '1px solid #1f1f1f',
+        borderBottom: '1px solid var(--border)',
       }}>
         {TABS.map(t => (
           <button
@@ -40,9 +41,9 @@ export const RightPanel: React.FC = () => {
             style={{
               flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
               padding: '6px 8px', fontSize: 11, fontWeight: 600,
-              border: 'none', borderBottom: active === t.key ? '2px solid #6366f1' : '2px solid transparent',
+              border: 'none', borderBottom: active === t.key ? '2px solid var(--accent)' : '2px solid transparent',
               background: 'transparent',
-              color: active === t.key ? '#6366f1' : '#666',
+              color: active === t.key ? 'var(--accent)' : 'var(--muted-2)',
               cursor: 'pointer',
               transition: 'color 0.15s, border-color 0.15s',
             }}
@@ -56,8 +57,10 @@ export const RightPanel: React.FC = () => {
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 12px 0' }}>
         {active === 'context' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <CommentInterceptionWidget />
             <AIInjectContextPanel />
             <TaskPlanPanel />
+            <CustomerWidget />
             <AIContextPanel />
             <GeneratedFilesPanel />
             <AIToolCallPanel />
