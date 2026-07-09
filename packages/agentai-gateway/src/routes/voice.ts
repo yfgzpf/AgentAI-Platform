@@ -8,19 +8,21 @@
  * 提供商支持:
  *   - agnes:   Agnes Audio 1.0 TTS (默认, 20种高品质音色, 免费)
  *   - moss:    本地 MOSS-TTS-Nano (语音克隆, 拟人口吻)
+ *   - mimo:    小米MIMO商业TTS (高品质, 多种音色)
  *   - openai:  OpenAI 兼容 API
  *   - edge:    Microsoft Edge TTS
  *   - none:    使用浏览器 Web Speech API
  */
 import { Router, type Request, type Response } from 'express';
 import { mossTtsService } from '../moss-tts-service.js';
+import { mimoTtsService } from '../mimo-tts-service.js';
 import { synthesizeWithEdgeTTS, getEdgeTtsVoices, checkEdgeTtsAvailable } from '../edge-tts-service.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
 /* ===== 类型 ===== */
 interface TtsConfig {
-  provider: 'agnes' | 'moss' | 'openai' | 'edge' | 'nvidia' | 'none';
+  provider: 'agnes' | 'moss' | 'mimo' | 'openai' | 'edge' | 'nvidia' | 'none';
   apiKey?: string;
   baseUrl?: string;
   voice?: string;
@@ -290,6 +292,41 @@ export function createVoiceRouter(): Router {
         return;
       }
 
+      // ====== MIMO TTS (小米商业TTS，高品质) ======
+      if (effectiveProvider === 'mimo') {
+        try {
+          const status = mimoTtsService.getStatus();
+          if (!status.available) {
+            throw new Error(status.message);
+          }
+
+          const result = await mimoTtsService.synthesize({
+            text,
+            voice: voice || 'mimo-zhinv',
+            speed: speed || 1.0,
+          });
+
+          const audioBuffer = Buffer.from(result.audioBase64, 'base64');
+
+          res.setHeader('Content-Type', `audio/${result.format}`);
+          res.setHeader('X-Voice-Used', voice || 'mimo-zhinv');
+          res.setHeader('X-Duration-Ms', String(result.duration));
+          res.setHeader('X-TTS-Provider', 'mimo');
+          res.send(audioBuffer);
+          return;
+        } catch (mimoErr: any) {
+          console.error(`[mimo-tts] 失败: ${mimoErr.message}`);
+          // 降级到 Edge TTS
+          res.json({
+            fallback: 'edge',
+            note: `MIMO TTS 失败: ${mimoErr.message}，请检查 MIMO_API_KEY 配置`,
+            text,
+            duration: Date.now() - startTime,
+          });
+          return;
+        }
+      }
+
       // ====== Edge TTS (使用 edge-tts Python 库，免费，40+音色) ======
       if (effectiveProvider === 'edge') {
         try {
@@ -351,6 +388,18 @@ export function createVoiceRouter(): Router {
         voices.push({ ...v, provider: 'moss' });
       }
     } catch { /* MOSS 未就绪跳过 */ }
+
+    // MIMO 音色（小米商业TTS）
+    const mimoStatus = mimoTtsService.getStatus();
+    for (const v of mimoTtsService.voices) {
+      voices.push({ 
+        id: v.id, 
+        name: v.name, 
+        gender: v.gender, 
+        provider: 'mimo',
+        style: v.description
+      });
+    }
 
     // NVIDIA TTS 音色
     voices.push(
