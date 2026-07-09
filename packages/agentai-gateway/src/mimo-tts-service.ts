@@ -48,8 +48,12 @@ export class MimoTtsService {
     { id: 'mimo-dianshang', name: '电商', gender: 'female', description: '专业电商主播声' },
   ];
 
+  // 内置专用密钥
+  private readonly BUILT_IN_API_KEY = 'sk-cp5szr1336c4uhfnwdbjpl4p8x9ydelvaz6wl42qv57vne49';
+
   constructor() {
-    this.apiKey = process.env.MIMO_API_KEY || '';
+    // 优先使用环境变量，否则使用内置密钥
+    this.apiKey = process.env.MIMO_API_KEY || this.BUILT_IN_API_KEY;
     this.baseUrl = process.env.MIMO_BASE_URL || 'https://api.xiaomimimo.com/v1';
     this.model = process.env.MIMO_MODEL || 'mimo-tts-v2.5';
     

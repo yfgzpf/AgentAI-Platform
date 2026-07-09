@@ -16,7 +16,14 @@ interface Voice {
 }
 
 const DEFAULT_VOICES: Voice[] = [
-  // 推荐音色（中文）
+  // MIMO 音色（小米商业TTS - 推荐）
+  { id: 'mimo-zhinv', name: '米女', gender: 'female', provider: 'mimo', locale: 'zh-CN', style: '温柔知性女声' },
+  { id: 'mimo-zhinan', name: '米男', gender: 'male', provider: 'mimo', locale: 'zh-CN', style: '成熟稳重男声' },
+  { id: 'mimo-yujie', name: '御姐', gender: 'female', provider: 'mimo', locale: 'zh-CN', style: '成熟魅力女声' },
+  { id: 'mimo-qingnian', name: '青年', gender: 'male', provider: 'mimo', locale: 'zh-CN', style: '阳光活力男声' },
+  { id: 'mimo-shaonv', name: '少女', gender: 'female', provider: 'mimo', locale: 'zh-CN', style: '甜美可爱女声' },
+  { id: 'mimo-dianshang', name: '电商', gender: 'female', provider: 'mimo', locale: 'zh-CN', style: '专业电商主播声' },
+  // Agnes 音色
   { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
   { id: 'zh-CN-YunxiNeural', name: '云希', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'general' },
   { id: 'zh-CN-YunjianNeural', name: '云健', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'news' },
@@ -45,7 +52,7 @@ const TEST_TEXT = '你好，我是你的 AI 助手，很高兴为你服务。';
 export const VoiceSelector: React.FC = () => {
   const [voices, setVoices] = useState<Voice[]>(DEFAULT_VOICES);
   const [selectedVoice, setSelectedVoice] = useState<string>(() => {
-    return localStorage.getItem('agentai.tts.voice') || 'zh-CN-XiaoxiaoNeural';
+    return localStorage.getItem('agentai.tts.voice') || 'mimo-zhinv';
   });
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -79,18 +86,26 @@ export const VoiceSelector: React.FC = () => {
     message.success('音色已保存');
   };
 
+  // 根据音色ID获取provider
+  const getProvider = (voiceId: string): string => {
+    if (voiceId.startsWith('mimo-')) return 'mimo';
+    if (voiceId.includes('Neural')) return 'agnes';
+    return 'agnes';
+  };
+
   const testVoice = async () => {
     if (playing) return;
     
     setPlaying(true);
     try {
+      const provider = getProvider(selectedVoice);
       const resp = await fetch('/v1/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: TEST_TEXT,
           voice: selectedVoice,
-          provider: 'agnes',
+          provider,
         }),
       });
 
