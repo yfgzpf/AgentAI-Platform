@@ -18,12 +18,17 @@ import { RateLimiter } from '../rate-limit.js';
 // [灰度测试] 新模型选择器 - 通过 FEATURE_FLAGS 控制启用
 import * as modelSelector from '../model-selector.js';
 import { FEATURE_FLAGS, shouldUseNewModelSelector } from '../feature-flags.js';
-// [诊断优先] ALTES | 岐黄 快速诊断
-import { quickDiagnose } from '../diagnosis/quick-diagnose.js';
-// [成本控制] ALTES | 岐黄 成本追踪
+// [诊断优先] PulseFlow Xuanji 认知框架
+import { Xuanji } from '../xuanji/index.js';
 import { getCostTracker, CostTracker } from '../cost/index.js';
-// [闻阶段] ALTES | 岐黄 缺口分析
 import { analyzeGaps } from '../diagnosis/gap-analyzer-llm.js';
+
+// Xuanji 实例
+const xuanji = new Xuanji({
+  enableMedicalCase: true,
+  enableSimilarCaseSearch: true,
+  enableAutoEvaluation: true,
+});
 
 // 速率限制器: 动态区分内部/外部调用
 const limiter = new RateLimiter();
@@ -284,11 +289,14 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         fts5Memory.recordMessage({ sessionId: userId, userId, workspace, role: 'user', content: message }).catch(() => {});
       }
 
+      // 记录任务开始时间
+      const startTime = Date.now();
+      
       // ═══════════════════════════════════════════════════════════
-      // [成本控制] ALTES | 岐黄 - 初始化成本追踪
+      // [成本控制] PulseFlow - 初始化成本追踪
       // ═══════════════════════════════════════════════════════════
       const costTracker = getCostTracker();
-      const taskId = `${userId}-${Date.now()}`;
+      const taskId = `${userId}-${startTime}`;
       costTracker.startTask(taskId, userId, userId, 'chat', 'simple');
       
       // 监听成本告警
@@ -298,21 +306,49 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       // ═══════════════════════════════════════════════════════════
       
       // ═══════════════════════════════════════════════════════════
-      // [诊断优先] ALTES | 岐黄 - 快速诊断，决定执行策略
+      // [诊断优先] PulseFlow Xuanji - 四诊合参，辨证论治
       // ═══════════════════════════════════════════════════════════
       let diagnosisResult: any;
+      let xuanjiCaseId: string | undefined;
       
       if (FEATURE_FLAGS.enableDiagnosisPipeline) {
         try {
           const diagnoseStart = Date.now();
-          console.log(`[diagnosis] 🔍 快速诊断 | message=${(message || '').slice(0, 50)}...`);
-          diagnosisResult = await quickDiagnose(message || '', { history: [] });
-          console.log(`[diagnosis] ✅ 诊断完成 | strategy=${diagnosisResult.strategy} confidence=${diagnosisResult.confidence.toFixed(2)}`);
+          console.log(`[xuanji] 🔍 四诊合参 | message=${(message || '').slice(0, 50)}...`);
           
-          // 记录诊断成本（望阶段 - 纯规则，0 token）
-          costTracker.recordPhase(taskId, 'wang', 0, 'rule-based', 'rule_based', {
-            strategy: diagnosisResult.strategy,
-            confidence: diagnosisResult.confidence,
+          // 使用 Xuanji 进行完整诊断
+          const xuanjiResult = await xuanji.processTask(
+            [{ role: 'user', content: message }],
+            { projectPath: workspace }
+          );
+          
+          xuanjiCaseId = xuanjiResult.caseId;
+          
+          // 转换 Xuanji 结果为原有格式（保持兼容）
+          diagnosisResult = {
+            strategy: xuanjiResult.diagnosis.recommendedApproach === 'direct' ? 'direct' : 
+                     xuanjiResult.diagnosis.recommendedApproach === 'comprehensive' ? 'deep' : 'step_by_step',
+            confidence: xuanjiResult.diagnosis.confidence,
+            riskLevel: xuanjiResult.diagnosis.riskLevel,
+            estimatedSteps: xuanjiResult.diagnosis.estimatedSteps,
+            potentialBlockers: xuanjiResult.diagnosis.potentialBlockers,
+            clarificationQuestions: [],
+            // Xuanji 特有数据
+            xuanji: {
+              caseId: xuanjiResult.caseId,
+              perception: xuanjiResult.perception,
+              prescription: xuanjiResult.prescription,
+              similarCases: xuanjiResult.similarCases,
+            },
+          };
+          
+          console.log(`[xuanji] ✅ 辨证完成 | approach=${xuanjiResult.diagnosis.recommendedApproach} confidence=${xuanjiResult.diagnosis.confidence.toFixed(2)} caseId=${xuanjiResult.caseId}`);
+          
+          // 记录诊断成本（望闻问切 - 四诊合参）
+          costTracker.recordPhase(taskId, 'xuanji', 0, 'pulseflow', 'xuanji_framework', {
+            approach: xuanjiResult.diagnosis.recommendedApproach,
+            confidence: xuanjiResult.diagnosis.confidence,
+            caseId: xuanjiResult.caseId,
             duration: Date.now() - diagnoseStart,
           });
           
@@ -1243,6 +1279,20 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       loop.off('tool:start' as any, onToolStart);
       loop.off('tool:result' as any, onToolResult);
 
+      // 完成 Xuanji 医案记录
+      if (xuanjiCaseId) {
+        try {
+          await xuanji.completeTreatment(xuanjiCaseId, {
+            status: 'success',
+            result: response.content || '',
+            duration: Date.now() - startTime,
+          });
+          console.log(`[xuanji] ✅ 医案完成 | caseId=${xuanjiCaseId}`);
+        } catch (err: any) {
+          console.warn(`[xuanji] ⚠️ 记录医案失败: ${err.message}`);
+        }
+      }
+
       res.json({
         content: response.content || '',
         toolCalls: response.toolCalls,
@@ -1250,12 +1300,25 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         usage: response.usage || {},
         toolEvents,
         sessionId: loop.getContext().sessionId,
+        xuanjiCaseId,  // 返回医案ID供前端追踪
       });
     } catch (e: any) {
       // 非流式: 返回详细错误信息
       const errMsg = e?.message || String(e);
       const errStack = e?.stack?.slice(0, 300) || '';
       console.error(`[chat] 500: ${errMsg}\n${errStack}`);
+      
+      // 记录失败到医案
+      if (xuanjiCaseId) {
+        try {
+          await xuanji.completeTreatment(xuanjiCaseId, {
+            status: 'failure',
+            result: errMsg,
+            duration: Date.now() - startTime,
+          });
+        } catch { /* ignore */ }
+      }
+      
       res.status(500).json({
         error: errMsg,
         detail: errStack,
