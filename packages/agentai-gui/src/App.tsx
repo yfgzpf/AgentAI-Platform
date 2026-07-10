@@ -18,7 +18,7 @@ import {
   ExperimentOutlined, PartitionOutlined, SmileOutlined, GithubOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, InfoCircleOutlined, BulbOutlined,
   LeftOutlined, RightOutlined, SunOutlined, MoonOutlined, BookOutlined,
-  WechatOutlined, ClockCircleOutlined, BellOutlined,
+  WechatOutlined, ClockCircleOutlined, BellOutlined, MedicineBoxOutlined,
   DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined,
 } from '@ant-design/icons';
 /* P0-4: 代码分割 — 12 个页面组件延迟加载, 首屏只加载 chat */
@@ -38,6 +38,7 @@ const SchedulePanel = lazy(() => import('./components/SchedulePanel').then(m => 
 const NotificationPanel = lazy(() => import('./components/NotificationPanel').then(m => ({ default: m.NotificationPanel })));
 const WorkflowPanel = lazy(() => import('./components/WorkflowPanel').then(m => ({ default: m.WorkflowPanel })));
 const ProactiveSuggestionsPanel = lazy(() => import('./components/ProactiveSuggestionsPanel').then(m => ({ default: m.default })));
+const XuanjiPanel = lazy(() => import('./components/XuanjiPanel').then(m => ({ default: m.XuanjiPanel })));
 import { RightPanel } from './components/RightPanel';
 import { SessionSidebar } from './components/SessionSidebar';
 import { GuideModal } from './components/GuideModal';
@@ -57,8 +58,8 @@ import { useSuggestionSSE } from './hooks/useSuggestionSSE';
 import { useSuggestionStore } from './store/suggestionStore';
 import { Splash } from './components/Splash';
 
-/* ════════════════ 9 个 PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor';
+/* ════════════════ PAGES (图标 + 标签 + 渲染) ════════════════ */
+type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji';
 
 interface PageMeta {
   key: PageKey;
@@ -78,6 +79,7 @@ const GovernorPanel = lazy(() => import('./components/GovernorPanel').then(m => 
 const PAGES: PageMeta[] = [
   { key: 'chat',     label: '对话',     icon: <MessageOutlined />,    comp: ChatView,      group: 'core',   desc: '智能对话 · 多模型 · 工具调用' },
   { key: 'editor',   label: '编辑器',   icon: <CodeOutlined />,       comp: Editor,        group: 'core',   desc: '代码编辑 · 改写 · 文件管理' },
+  { key: 'xuanji',   label: '医案',     icon: <MedicineBoxOutlined />, comp: XuanjiPanel,   group: 'core',   desc: '四诊合参 · 辨证论治 · 经验积累', badge: 'NEW' },
   { key: 'image',    label: '生图',     icon: <PictureOutlined />,    comp: ImageGen,      group: 'media',  desc: '文生图 · 多风格 · 多尺寸' },
   { key: 'video',    label: '生视频',   icon: <VideoCameraOutlined />,comp: VideoGen,      group: 'media',  desc: '文生视频 · 图生视频 · 首尾帧' },
   { key: '3d',       label: '3D建模',   icon: <AppstoreOutlined />,   comp: Model3DGen,    group: 'media',  desc: '文/图生3D · 混元 · 豆包' },
