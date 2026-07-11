@@ -127,7 +127,7 @@ export class PrescriptionEngine {
     
     // 参考相似医案（如果有成功的）
     const successfulCases = similarCases?.filter(c => c.outcome.status === 'success');
-    if (successfulCases && successfulCases.length > 0) {
+    if (successfulCases && successfulCases.length > 0 && successfulCases[0]) {
       // 复用相似案例的治疗方案
       return this.adaptPrescription(successfulCases[0], diagnosis);
     }
@@ -146,11 +146,11 @@ export class PrescriptionEngine {
     switch (approach) {
       case 'direct':
         return this.generateDirectPrescription(diagnosis);
-      case 'step_by_step':
+      case 'multi_step':
         return this.generateStepByStepPrescription(diagnosis);
-      case 'comprehensive':
+      case 'planning':
         return this.generateComprehensivePrescription(diagnosis);
-      case 'conservative':
+      case 'exploratory':
         return this.generateConservativePrescription(diagnosis);
       default:
         return this.generateDirectPrescription(diagnosis);
@@ -390,6 +390,11 @@ export class PrescriptionEngine {
   ): Prescription {
     // 基于相似医案的治疗方案，根据当前情况调整
     const originalPrescription = similarCase.treatment.prescription[0];
+    
+    if (!originalPrescription) {
+      // 如果没有原方案，生成默认方案
+      return this.generateDirectPrescription(currentDiagnosis);
+    }
     
     return {
       approach: `化裁（基于医案 ${similarCase.id.slice(0, 8)}）`,

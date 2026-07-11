@@ -1,2 +1,26 @@
-pnpm lint
-pnpm typecheck
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+echo "🔍 Running pre-commit checks..."
+
+# TypeScript type check (gateway)
+echo "📦 Checking gateway types..."
+cd packages/agentai-gateway
+npx tsc --noEmit
+if [ $? -ne 0 ]; then
+  echo "❌ Gateway type check failed"
+  exit 1
+fi
+cd ../..
+
+# TypeScript type check (gui)
+echo "🎨 Checking GUI types..."
+cd packages/agentai-gui
+npx tsc --noEmit
+if [ $? -ne 0 ]; then
+  echo "❌ GUI type check failed"
+  exit 1
+fi
+cd ../..
+
+echo "✅ All checks passed!"

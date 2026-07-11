@@ -180,8 +180,8 @@ export const CommentInterceptionWidget: React.FC = () => {
     setKeywords(keywords.filter(k => k !== keyword));
   };
 
-  const copyMessage = (message: string) => {
-    navigator.clipboard.writeText(message);
+  const copyMessage = (msg: string) => {
+    navigator.clipboard.writeText(msg);
     message.success('话术已复制');
   };
 
@@ -223,7 +223,7 @@ export const CommentInterceptionWidget: React.FC = () => {
             value={platform}
             onChange={setPlatform}
             style={{ width: '100%' }}
-            size="small"
+            
             disabled={isRunning}
           >
             {PLATFORMS.map(p => (
@@ -241,7 +241,7 @@ export const CommentInterceptionWidget: React.FC = () => {
             placeholder="如：北京、上海"
             value={city}
             onChange={e => setCity(e.target.value)}
-            size="small"
+            
             disabled={isRunning}
           />
         </div>
@@ -255,7 +255,6 @@ export const CommentInterceptionWidget: React.FC = () => {
                 key={k}
                 closable={!isRunning}
                 onClose={() => removeKeyword(k)}
-                size="small"
                 style={{ fontSize: 11 }}
               >
                 {k}
@@ -269,10 +268,10 @@ export const CommentInterceptionWidget: React.FC = () => {
                 value={newKeyword}
                 onChange={e => setNewKeyword(e.target.value)}
                 onPressEnter={addKeyword}
-                size="small"
+                
                 style={{ flex: 1 }}
               />
-              <Button size="small" onClick={addKeyword}>添加</Button>
+              <Button  onClick={addKeyword}>添加</Button>
             </div>
           )}
         </div>
@@ -283,7 +282,7 @@ export const CommentInterceptionWidget: React.FC = () => {
           icon={isRunning ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
           onClick={isRunning ? stopMonitoring : startMonitoring}
           loading={loading}
-          size="small"
+          
           block
           danger={isRunning}
           style={{ 
@@ -347,7 +346,7 @@ export const CommentInterceptionWidget: React.FC = () => {
               高意向用户 ({users.length})
             </span>
             <Button 
-              size="small" 
+               
               icon={<ReloadOutlined />}
               onClick={() => setUsers([])}
               style={{ fontSize: 10 }}
@@ -357,7 +356,7 @@ export const CommentInterceptionWidget: React.FC = () => {
           </div>
 
           <List
-            size="small"
+            
             dataSource={users.slice(0, 5)}
             renderItem={user => (
               <List.Item
@@ -381,7 +380,7 @@ export const CommentInterceptionWidget: React.FC = () => {
                     </span>
                     <Tag 
                       color={user.intentScore >= 9 ? 'red' : user.intentScore >= 7 ? 'orange' : 'blue'}
-                      size="small"
+                      
                       style={{ fontSize: 10 }}
                     >
                       意向分 {user.intentScore}
@@ -400,7 +399,7 @@ export const CommentInterceptionWidget: React.FC = () => {
                   <div style={{ display: 'flex', gap: 4 }}>
                     <Tooltip title="复制话术">
                       <Button
-                        size="small"
+                        
                         icon={<MessageOutlined />}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -413,7 +412,7 @@ export const CommentInterceptionWidget: React.FC = () => {
                     </Tooltip>
                     {user.status === 'new' && (
                       <Button
-                        size="small"
+                        
                         type="primary"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -425,7 +424,7 @@ export const CommentInterceptionWidget: React.FC = () => {
                       </Button>
                     )}
                     {user.status === 'contacted' && (
-                      <Tag size="small" style={{ fontSize: 10 }}>已联系</Tag>
+                      <Tag  style={{ fontSize: 10 }}>已联系</Tag>
                     )}
                   </div>
                 </div>

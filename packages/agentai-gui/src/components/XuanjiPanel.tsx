@@ -265,7 +265,7 @@ export const XuanjiPanel: React.FC = () => {
                   </Text>
                   <div style={{ marginTop: 4 }}>
                     {item.lessons.tags.map(tag => (
-                      <Tag key={tag} size="small">{tag}</Tag>
+                      <Tag key={tag}>{tag}</Tag>
                     ))}
                   </div>
                 </div>

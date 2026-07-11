@@ -38,7 +38,7 @@ export function parseSSE(raw: string): SSEEvent[] {
     if (eventType && dataStr) {
       const type = typeMap[eventType] || (eventType as SSEType);
       // 跳过 HTML 错误页等非 JSON 响应 (gateway 502/503 时可能返回 nginx 默认页面)
-      if (dataStr.trimStartsWith('<') || dataStr.trimStartsWith('<!')) {
+      if (dataStr.trim().startsWith('<') || dataStr.trim().startsWith('<!')) {
         console.warn('[sse] 跳过非 JSON 数据:', dataStr.slice(0, 80));
         continue;
       }

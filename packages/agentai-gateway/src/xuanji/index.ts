@@ -155,7 +155,11 @@ export class Xuanji {
     }
     
     // 3. 辨证（切诊）
-    const diagnosis = await diagnoseTask(perception, context || {});
+    const diagnosisContext: DiagnosisContext = context || {
+      sessionId: `session-${Date.now()}`,
+      userId: patient,
+    };
+    const diagnosis = await diagnoseTask(perception, diagnosisContext);
     
     // 4. 创建医案
     let caseId: string | undefined;
@@ -164,10 +168,10 @@ export class Xuanji {
         inspection: {
           taskType: perception.taskType,
           complexity: perception.complexity,
-          entities: perception.entities,
+          entities: perception.entities || [],
         },
         auscultation: {
-          ambiguities: perception.ambiguity.flags,
+          ambiguities: [],
           gaps: perception.gapList.map(g => g.description),
         },
         inquiry: undefined,  // 如有追问，后续更新
@@ -190,7 +194,7 @@ export class Xuanji {
         prescription: prescription.ingredients.map((ing, idx) => ({
           name: `步骤${idx + 1}`,
           ingredients: [ing.tool],
-          dosage: ing.parameters,
+          dosage: JSON.stringify(ing.parameters),
         })),
         steps: prescription.steps.map((step, idx) => ({
           order: idx + 1,

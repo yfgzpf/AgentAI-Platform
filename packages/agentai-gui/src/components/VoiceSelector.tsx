@@ -207,11 +207,11 @@ export const VoiceSelector: React.FC = () => {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span>{voice.name}</span>
-                    <Tag size="small" color={voice.gender === 'female' ? 'pink' : 'blue'}>
+                    <Tag  color={voice.gender === 'female' ? 'pink' : 'blue'}>
                       {voice.gender === 'female' ? '女' : '男'}
                     </Tag>
                     {voice.style && (
-                      <Tag size="small" color="default">{getStyleLabel(voice.style)}</Tag>
+                      <Tag  color="default">{getStyleLabel(voice.style)}</Tag>
                     )}
                   </div>
                 </Select.Option>
@@ -226,7 +226,7 @@ export const VoiceSelector: React.FC = () => {
           icon={<PlayCircleOutlined />}
           onClick={testVoice}
           loading={playing}
-          size="small"
+          
           type="primary"
         >
           试听
