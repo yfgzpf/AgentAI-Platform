@@ -1,5 +1,5 @@
 /**
- * Editor - AgentAI 文件编辑器
+ * Editor - Atlas 文件编辑器
  * ----------------------------------------------------
  * - 左侧文件树 (懒加载, 盘符级 Open Folder)
  * - 右侧多标签编辑器 (脏标记 / 保存 / AI 改写)
@@ -11,7 +11,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useChatStore } from '../store/chatStore';
 import {
   Tree, Input, Button, Space, message, Spin, Dropdown, Modal, Empty, Tooltip,
-  Breadcrumb, Tabs, Tag, Segmented, App,
+  Tabs, Tag, Segmented, App,
 } from 'antd';
 import {
   FolderOutlined, FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined,
@@ -21,12 +21,14 @@ import {
   FolderOpenOutlined as OpenFolderIcon, GlobalOutlined, RobotOutlined,
 } from '@ant-design/icons';
 import { useProfileStore } from '../store';
-import { EmbeddedBrowser } from './EmbeddedBrowser';
 import { EditorChatPanel } from './EditorChatPanel';
 import { MonacoEditorComponent as MonacoEditor, detectLangFromPath, type AICodeDecoration } from './MonacoEditor';
 import { useTaskOrchestrator } from '../store/taskOrchestratorStore';
 import { FileTimeline } from '../services/FileTimeline';
 import { gatewayFallback } from '../services/GatewayFallback';
+import { UnifiedWorkspace } from './UnifiedWorkspace';
+import { useWorkspaceStore } from '../store/workspaceStore';
+import { BrowserAutomationPanel } from './BrowserAutomationPanel';
 
 interface FsEntry {
   name: string;
@@ -110,7 +112,7 @@ export const Editor: React.FC = () => {
   // 包装 setActiveKey: 同时存到 localStorage 让 ChatView 读取
   const setActiveKey = useCallback((key: string) => {
     setActiveKeyRaw(key);
-    if (key && key !== '__browser__') {
+    if (key) {
       localStorage.setItem('agentai.editor.activeFile', key);
     }
   }, []);
@@ -122,15 +124,16 @@ export const Editor: React.FC = () => {
   const [customPath, setCustomPath] = useState('');
   const [pathInput, setPathInput] = useState('');
   const [autoSave, setAutoSave] = useState(false);
-  const [showAiPanel, setShowAiPanel] = useState(false);
-  const [showBrowser, setShowBrowser] = useState(false);
-  const [showFileTree, setShowFileTree] = useState(true);
-  const [showBottomPanel, setShowBottomPanel] = useState(true);
-  const [bottomPanelTab, setBottomPanelTab] = useState<'terminal' | 'logs'>('terminal');
+  const [showAiPanel, setShowAiPanel] = useState(true); // 默认开启 AI 对话面板
+  const [showFileTree, setShowFileTree] = useState(false); // 默认折叠文件树, 给浏览器更多空间
+  const [showBottomPanel, setShowBottomPanel] = useState(false); // 默认关闭，保持浏览器清爽
+  const [bottomPanelTab, setBottomPanelTab] = useState<'terminal' | 'logs' | 'browser'>('terminal');
   const bottomPanelHeight = 180;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const [bpHeight, setBpHeight] = useState(180);
+  const [aiPanelWidth, setAiPanelWidth] = useState(320); // AI 面板宽度（可拖拽）
+  const aiDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   // 底部面板拖拽分隔线
   const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
@@ -149,6 +152,24 @@ export const Editor: React.FC = () => {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   }, [bpHeight]);
+
+  // AI 面板水平拖拽分隔线
+  const onAiDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    aiDragRef.current = { startX: e.clientX, startWidth: aiPanelWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!aiDragRef.current) return;
+      const delta = aiDragRef.current.startX - ev.clientX; // drag left = bigger
+      setAiPanelWidth(Math.max(200, Math.min(600, aiDragRef.current.startWidth + delta)));
+    };
+    const onUp = () => {
+      aiDragRef.current = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [aiPanelWidth]);
 
   // ===== 加载工作区根 =====
   const loadWorkspace = useCallback(async (dir: string) => {
@@ -179,8 +200,10 @@ export const Editor: React.FC = () => {
     }
   }, [msgApi]);
 
-  // 启动时: 有缓存就恢复, 否则从 Gateway 获取项目根目录
+  // 启动时: 浏览器为默认中屏, 有缓存就恢复文件树
   useEffect(() => {
+    // 默认设为浏览器模式
+    useWorkspaceStore.getState().setMode('browser');
     if (workspace) {
       loadWorkspace(workspace);
     } else {
@@ -277,14 +300,22 @@ export const Editor: React.FC = () => {
     const existing = openFiles.find(f => f.path === filePath);
     if (existing) {
       setActiveKey(filePath);
+      // 同步到 workspaceStore (让 UnifiedWorkspace 切到编辑器模式)
+      useWorkspaceStore.getState().openEditor({
+        path: filePath,
+        name: existing.name,
+        type: 'file',
+        ext: existing.name.includes('.') ? '.' + existing.name.split('.').pop()!.toLowerCase() : '',
+      });
       return;
     }
     try {
       const data = await API.read(filePath);
       if (data.error) { msgApi.error('打开失败: ' + data.error); return; }
+      const fileName = filePath.split(/[\\/]/).pop() || filePath;
       const f: OpenFile = {
         path: filePath,
-        name: filePath.split(/[\\/]/).pop() || filePath,
+        name: fileName,
         content: data.content || '',
         dirty: false,
         language: detectLang(filePath),
@@ -292,6 +323,13 @@ export const Editor: React.FC = () => {
       };
       setOpenFiles([...openFiles, f]);
       setActiveKey(filePath);
+      // 同步到 workspaceStore
+      useWorkspaceStore.getState().openEditor({
+        path: filePath,
+        name: fileName,
+        type: 'file',
+        ext: fileName.includes('.') ? '.' + fileName.split('.').pop()!.toLowerCase() : '',
+      });
     } catch (e: any) {
       msgApi.error('读文件失败: ' + e.message);
     }
@@ -364,7 +402,7 @@ export const Editor: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: `请改写这段 ${f.name} 代码, 需求: ${aiPrompt}\n\n原代码:\n\`\`\`\n${f.content.slice(0, 6000)}\n\`\`\`\n\n只输出改写后的完整代码, 不要解释, 不要 markdown 围栏。`,
+          message: `请改写这段 ${f.name} 代码, 需求: ${aiPrompt}\n\n原代码:\n\`\`\`\n${String(f.content || '').slice(0, 6000)}\n\`\`\`\n\n只输出改写后的完整代码, 不要解释, 不要 markdown 围栏。`,
           userId: 'editor',
           workspace: workspace || '',
         }),
@@ -492,22 +530,6 @@ export const Editor: React.FC = () => {
     setDrivesInfo(d);
   };
 
-  // ===== 面包屑 =====
-  const breadcrumbItems = workspace
-    ? workspace.split(/[\\/]/).filter(Boolean).map((seg, i, arr) => {
-        const path = arr.slice(0, i + 1).join(workspace.includes('\\') ? '\\' : '/');
-        const isLast = i === arr.length - 1;
-        const fullPath = workspace.includes('\\')
-          ? (i === 0 ? `${seg}\\` : (i === arr.length - 1 ? `${arr.slice(0, i + 1).join('\\')}` : `${arr.slice(0, i + 1).join('\\')}\\`))
-          : `/${arr.slice(0, i + 1).join('/')}`;
-        return {
-          title: isLast
-            ? <span style={{ color: '#facc15' }}>{seg}</span>
-            : <a onClick={() => i === 0 ? null : loadWorkspace(fullPath)} style={{ color: '#93c5fd' }}>{seg}</a>,
-        };
-      })
-    : [];
-
   // ===== 状态栏数据 =====
   const active = openFiles.find(f => f.path === activeKey);
   const dirtyCount = openFiles.filter(f => f.dirty).length;
@@ -567,17 +589,22 @@ export const Editor: React.FC = () => {
             AI
           </Button>
         </Tooltip>
-        <Tooltip title="内嵌浏览器 (中屏打开)">
-          <Button
-            size="small"
-            type={showBrowser ? 'primary' : 'default'}
-            icon={<GlobalOutlined />}
-            onClick={() => { setShowBrowser(v => !v); if (!showBrowser) { setActiveKey('__browser__'); } }}
-            style={{ fontSize: 10 }}
-          >
-            浏览器
-          </Button>
-        </Tooltip>
+        {/* 模式切换: 编辑器 / 浏览器 / 预览 */}
+        <Segmented
+          size="small"
+          defaultValue="browser"
+          onChange={(v) => {
+            const mode = v as 'editor' | 'browser' | 'preview' | 'auto';
+            useWorkspaceStore.getState().setMode(mode);
+            if (mode === 'browser') setShowFileTree(false);
+          }}
+          options={[
+            { label: '编辑器', value: 'editor' },
+            { label: '浏览器', value: 'browser' },
+            { label: '预览', value: 'preview' },
+          ]}
+          style={{ background: 'rgba(255,255,255,0.06)' }}
+        />
         <Tag color={autoSave ? 'green' : 'default'} style={{ cursor: 'pointer' }} onClick={() => setAutoSave(!autoSave)}>
           {autoSave ? '✓ 自动保存' : '自动保存'}
         </Tag>
@@ -589,264 +616,144 @@ export const Editor: React.FC = () => {
         />
       </div>
 
-      {/* ===== 面包屑 ===== */}
-      {workspace && (
-        <div style={{ padding: '4px 12px', background: '#141414', borderBottom: '1px solid #222' }}>
-          <Breadcrumb items={breadcrumbItems} style={{ fontSize: 12 }} />
-        </div>
-      )}
-
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* ===== 左侧文件树 (可折叠) ===== */}
-        <div style={{ display: 'flex', width: showFileTree ? 300 : 0, transition: 'width 0.2s' }}>
-          <div style={{ flex: 1, background: '#0a0a0a', borderRight: showFileTree ? '1px solid #333' : 'none', overflow: 'auto', padding: showFileTree ? 4 : 0, minWidth: 0 }}>
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: 20 }}><Spin /></div>
-            ) : tree.length > 0 ? (
-              <Tree
-                showLine={{ showLeafIcon: false }}
-                blockNode
-                treeData={tree}
-                loadData={onLoadData}
-                onSelect={(keys, info) => {
-                  onTreeSelect(keys, info);
-                  if (showBrowser && showFileTree) setShowFileTree(false);
-                }}
-                defaultExpandAll={false}
-                defaultExpandedKeys={[workspace]}
-                titleRender={(node: any) => {
-                  const tn = node as TreeNode;
-                  return (
-                    <Dropdown menu={{ items: renderContextMenu(tn) }} trigger={['contextMenu']}>
-                      <span style={{ display: 'inline-block', width: '100%' }}>{tn.title}</span>
-                    </Dropdown>
-                  );
-                }}
-              />
-            ) : (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={
-                  <div style={{ color: '#888', padding: 16, textAlign: 'center' }}>
-                    <div style={{ fontSize: 32, marginBottom: 12 }}>📂</div>
-                    <div style={{ fontSize: 14, color: '#ccc' }}>还没打开文件夹</div>
-                    <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-                      点上面 <b style={{ color: '#4F46E5' }}>「打开文件夹」</b> 选个目录
-                    </div>
-                    <Button
-                      type="primary"
-                      size="small"
-                      style={{ marginTop: 16 }}
-                      icon={<FolderOpenOutlined />}
-                      onClick={openDrivesModal}
-                    >
-                      Open Folder
-                    </Button>
-                  </div>
-                }
-              />
-            )}
-          </div>
-          {/* 折叠按钮 */}
-          <div
-            onClick={() => setShowFileTree(v => !v)}
-            style={{
-              width: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: '#0a0a0a', borderRight: '1px solid #333', userSelect: 'none',
-              color: '#555', fontSize: 10,
-            }}
-            title={showFileTree ? '折叠文件树' : '展开文件树'}
-          >
-            <span style={{ writingMode: 'vertical-rl', letterSpacing: 2 }}>
-              {showFileTree ? '◀' : '▶'}
-            </span>
-          </div>
-        </div>
-
-        {/* ===== 右侧编辑区 ===== */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* ---- 上区: Tab 编辑 ---- */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
-            {openFiles.length > 0 ? (
-              <>
-                <Tabs
-                  type="editable-card"
-                  activeKey={activeKey}
-                  onChange={setActiveKey}
-                  onEdit={(targetKey, action) => {
-                    if (action === 'remove') {
-                      if (targetKey === '__browser__') { setShowBrowser(false); return; }
-                      closeTab(targetKey as string);
-                    }
-                  }}
-                  hideAdd
-                  size="small"
-                  items={[
-                    ...(showBrowser ? [{
-                      key: '__browser__',
-                      closable: true,
-                      label: <span style={{ color: '#4ade80' }}><GlobalOutlined style={{ marginRight: 4 }} />浏览器</span>,
-                      children: (
-                        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#0f0f0f' }}>
-                          <EmbeddedBrowser compact={false} initialUrl="https://www.google.com" aiControlled={true} autoScan={true}
-                            onElementsDetected={(els, url) => {
-                              const interactive = els.filter(e => e.interactivity >= 70).slice(0, 30);
-                              const summary = interactive.map(e =>
-                                `[${e.tag}]${e.text ? ` "${e.text.slice(0, 30)}"` : ''} → ${e.selector}`
-                              ).join('\n');
-                              useChatStore.getState().appendMessage({
-                                id: `sys-editor-browser-${Date.now()}`,
-                                role: 'system',
-                                segments: [{ kind: 'text', text: `[页面元素扫描] 当前页面: ${url}\n已识别 ${els.length} 个可交互元素:\n${summary}\n\nAI 可使用 CSS Selector 操作这些元素。` }],
-                                ts: Date.now(),
-                                status: 'done',
-                              });
-                            }}
-                          />
-                        </div>
-                      ),
-                    }] : []),
-                    ...openFiles.map(f => ({
-                    key: f.path,
-                    closable: true,
-                    label: (
-                      <span style={{ color: f.dirty ? '#facc15' : '#ddd' }}>
-                        {f.dirty ? '● ' : ''}{f.name}
-                      </span>
-                    ),
-                    children: (
-                      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                        {/* 工具栏 */}
-                        <div style={{ padding: 6, background: '#141414', borderBottom: '1px solid #333', display: 'flex', gap: 6, alignItems: 'center' }}>
-                          <Button
-                            size="small"
-                            type="primary"
-                            icon={<SaveOutlined />}
-                            onClick={saveActive}
-                            disabled={!active?.dirty || active?.readonly}
-                          >
-                            保存 (Ctrl+S)
-                          </Button>
-                          <Tag color="blue">{active?.language}</Tag>
-                          {active?.readonly && <Tag color="orange">只读</Tag>}
-                          <div style={{ flex: 1 }} />
-                          <Input
-                            size="small"
-                            placeholder="改写指令, 例: 加错误处理"
-                            value={aiPrompt}
-                            onChange={e => setAiPrompt(e.target.value)}
-                            onPressEnter={aiEdit}
-                            style={{ width: 260 }}
-                            disabled={aiBusy}
-                          />
-                          <Button
-                            size="small"
-                            icon={<SendOutlined />}
-                          loading={aiBusy}
-                          onClick={aiEdit}
-                          disabled={!aiPrompt.trim() || active?.readonly}
-                        >
-                          改写
-                          </Button>
-                        </div>
-                        {/* 编辑区 — Monaco (VSCode 内核) */}
-                        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                          <MonacoEditorWithAI
-                            value={active?.content || ''}
-                            language={active?.language}
-                            path={active?.path}
-                            readOnly={active?.readonly}
-                            onChange={editContent}
-                            onSave={saveActive}
-                            minimap={openFiles.length <= 3}
-                          />
-                        </div>
-                    </div>
-                    )
-                  }))
-                ]}
-                />
-              </>
-            ) : (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#666' }}>
-                <div style={{ fontSize: 18, color: '#aaa', marginBottom: 8 }}>{profile?.name || '你'}, 欢迎来到 AgentAI 编辑器</div>
-                <div style={{ fontSize: 13, color: '#666', marginBottom: 24, textAlign: 'center', maxWidth: 480 }}>
-                  打开本地文件夹 → 树状浏览 → 点击文件编辑 → Ctrl+S 保存<br/>
-                  右键节点: 新建/重命名/删除 · 点改写按钮来修改代码
-                </div>
-                <Button
-                  type="primary"
-                  size="large"
-                  icon={<FolderOpenOutlined />}
-                  onClick={openDrivesModal}
-                >
-                  打开文件夹
-                </Button>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* ===== 主工作区：文件树(左) + 内容区(右) 同一行 ===== */}
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+          {/* 左侧文件树（紧凑型，与内容区同行） */}
+          {showFileTree && (
+            <div style={{
+              width: 220, minWidth: 0, flexShrink: 0,
+              background: '#0a0a0a', borderRight: '1px solid #333',
+              overflow: 'auto', display: 'flex', flexDirection: 'column',
+            }}>
+              {/* 文件树标题栏 */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '4px 8px', background: '#111', borderBottom: '1px solid #222',
+                fontSize: 11, color: '#888', flexShrink: 0,
+              }}>
+                <span>📁 文件</span>
+                <Button size="small" type="text" icon={<FolderOutlined />} onClick={() => setShowFileTree(false)}
+                  style={{ fontSize: 9, height: 18, color: '#555' }} title="收起文件树" />
               </div>
-            )}
-          </div>
+              {/* 文件树内容 */}
+              <div style={{ flex: 1, overflow: 'auto', padding: 4 }}>
+                {loading ? (
+                  <div style={{ textAlign: 'center', padding: 20 }}><Spin /></div>
+                ) : tree.length > 0 ? (
+                  <Tree
+                    showLine={{ showLeafIcon: false }}
+                    blockNode
+                    treeData={tree}
+                    loadData={onLoadData}
+                    onSelect={(keys, info) => { onTreeSelect(keys, info); }}
+                    defaultExpandAll={false}
+                    defaultExpandedKeys={[workspace]}
+                    titleRender={(node: any) => {
+                      const tn = node as TreeNode;
+                      return (
+                        <Dropdown menu={{ items: renderContextMenu(tn) }} trigger={['contextMenu']}>
+                          <span style={{ display: 'inline-block', width: '100%', fontSize: 12 }}>{tn.title}</span>
+                        </Dropdown>
+                      );
+                    }}
+                  />
+                ) : (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={<div style={{ color: '#666', fontSize: 11 }}>还没打开文件夹</div>}
+                  />
+                )}
+              </div>
+            </div>
+          )}
 
-          {/* ---- 可拖拽分隔线 ---- */}
-          <div
-            onMouseDown={onDividerMouseDown}
-            style={{
-              height: 5, cursor: 'row-resize', background: '#1a1a1a', borderTop: '1px solid #333',
-              borderBottom: '1px solid #333', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0, userSelect: 'none',
-            }}
-            title="拖拽调整大小"
-          >
-            <div style={{ width: 60, height: 3, borderRadius: 2, background: '#3a3a3a' }} />
-          </div>
+          {/* 右侧内容区: UnifiedWorkspace (编辑器/浏览器/预览三模式) */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+            <UnifiedWorkspace />
 
-          {/* ---- 下区: 终端/日志 ---- */}
-          <div style={{ height: showBottomPanel ? bpHeight : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-            {/* 底部 Tab 栏 */}
-            <div style={{ height: 28, display: 'flex', alignItems: 'center', background: '#141414', borderBottom: '1px solid #333', padding: '0 8px', gap: 4, flexShrink: 0 }}>
-              {(['terminal', 'logs'] as const).map(tab => (
+            {/* ---- 可拖拽分隔线 ---- */}
+            <div
+              onMouseDown={onDividerMouseDown}
+              style={{
+                height: 5, cursor: 'row-resize', background: '#1a1a1a', borderTop: '1px solid #333',
+                borderBottom: '1px solid #333', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0, userSelect: 'none',
+              }}
+              title="拖拽调整大小"
+            >
+              <div style={{ width: 60, height: 3, borderRadius: 2, background: '#3a3a3a' }} />
+            </div>
+
+            {/* ---- 下区: 终端/日志 ---- */}
+            <div style={{ height: showBottomPanel ? bpHeight : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+              {/* 底部 Tab 栏 */}
+              <div style={{ height: 28, display: 'flex', alignItems: 'center', background: '#141414', borderBottom: '1px solid #333', padding: '0 8px', gap: 4, flexShrink: 0 }}>
+                {(['terminal', 'logs', 'browser'] as const).map(tab => (
+                  <div
+                    key={tab}
+                    onClick={() => setBottomPanelTab(tab)}
+                    style={{
+                      padding: '2px 12px', cursor: 'pointer', borderRadius: 3, fontSize: 12,
+                      color: bottomPanelTab === tab ? '#4ade80' : '#888',
+                      background: bottomPanelTab === tab ? '#1a3a1a' : 'transparent',
+                    }}
+                  >
+                    {tab === 'terminal' ? '◉ 终端' : tab === 'logs' ? '◎ 日志' : '▣ 获客'}
+                  </div>
+                ))}
+                <div style={{ flex: 1 }} />
                 <div
-                  key={tab}
-                  onClick={() => setBottomPanelTab(tab)}
-                  style={{
-                    padding: '2px 12px', cursor: 'pointer', borderRadius: 3, fontSize: 12,
-                    color: bottomPanelTab === tab ? '#4ade80' : '#888',
-                    background: bottomPanelTab === tab ? '#1a3a1a' : 'transparent',
-                  }}
+                  onClick={() => setShowBottomPanel(v => !v)}
+                  style={{ cursor: 'pointer', color: '#666', fontSize: 11, padding: '0 4px' }}
+                  title="关闭面板"
                 >
-                  {tab === 'terminal' ? '◉ 终端' : '◎ 日志'}
+                  ✕
                 </div>
-              ))}
-              <div style={{ flex: 1 }} />
-              <div
-                onClick={() => setShowBottomPanel(v => !v)}
-                style={{ cursor: 'pointer', color: '#666', fontSize: 11, padding: '0 4px' }}
-                title="关闭面板"
-              >
-                ✕
+              </div>
+              {/* 底部内容 */}
+              <div style={{ flex: 1, overflow: 'auto', background: '#0a0a0a', fontSize: 12, color: '#aaa' }}>
+                {bottomPanelTab === 'logs' ? (
+                  <div style={{ padding: 8, color: '#888' }}>日志输出区 — Gateway 日志将在此显示</div>
+                ) : bottomPanelTab === 'browser' ? (
+                  <BrowserAutomationPanel />
+                ) : (
+                  <div style={{ padding: 8, color: '#888' }}>
+                    <div style={{ color: '#4ade80', marginBottom: 4 }}>$ 终端 (模拟)</div>
+                    <div>输入命令 (例如: dir)</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                      <span style={{ color: '#4ade80' }}>$</span>
+                      <span style={{ color: '#666' }}>等待实现...</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-            {/* 底部内容 */}
-            <div style={{ flex: 1, overflow: 'auto', background: '#0a0a0a', padding: 8, fontSize: 12, fontFamily: 'Consolas, monospace', color: '#aaa' }}>
-              {bottomPanelTab === 'logs' ? (
-                <div style={{ color: '#888' }}>日志输出区 — Gateway 日志将在此显示</div>
-              ) : (
-                <div style={{ color: '#888' }}>
-                  <div style={{ color: '#4ade80', marginBottom: 4 }}>$ 终端 (模拟)</div>
-                  <div>输入命令 (例如: dir)</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                    <span style={{ color: '#4ade80' }}>$</span>
-                    <span style={{ color: '#666' }}>等待实现...</span>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
-        </div>
 
-        {/* ===== 右侧 AI 对话面板 ===== */}
-        {showAiPanel && (
-          <EditorChatPanel workspaceDir={workspace} />
-        )}
+          {/* ===== 右侧 AI 对话面板（与内容区并排，可拖拽调宽） ===== */}
+          {showAiPanel && (
+            <>
+              {/* 垂直拖拽分隔线 */}
+              <div
+                onMouseDown={onAiDividerMouseDown}
+                style={{
+                  width: 4, cursor: 'col-resize', background: '#1a1a1a',
+                  borderLeft: '1px solid #333', borderRight: '1px solid #333',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0, userSelect: 'none',
+                }}
+                title="拖拽调整 AI 面板宽度"
+              >
+                <div style={{ width: 2, height: 20, borderRadius: 1, background: '#3a3a3a' }} />
+              </div>
+              {/* AI 面板容器 */}
+              <div style={{ width: aiPanelWidth, minWidth: 0, flexShrink: 0, overflow: 'hidden' }}>
+                <EditorChatPanel workspaceDir={workspace} />
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* ===== 状态栏 ===== */}
