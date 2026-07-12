@@ -174,9 +174,11 @@ export class CronDispatcher extends EventEmitter {
           const { writeEvolution } = await import('./evolution.js');
           await writeEvolution({
             type: 'self-eval-insight',
-            insights: report.insights,
-            recommendations: report.recommendations,
-            stats: report.stats,
+            content: JSON.stringify({
+              insights: report.insights,
+              recommendations: report.recommendations,
+              stats: report.stats,
+            }),
           });
         }
         

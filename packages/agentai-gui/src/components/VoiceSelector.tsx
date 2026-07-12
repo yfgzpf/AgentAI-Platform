@@ -176,10 +176,11 @@ export const VoiceSelector: React.FC = () => {
   };
 
   // 分组显示
-  const groupedVoices = {
-    '推荐': voices.filter(v => ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunjianNeural', 'zh-CN-XiaoyiNeural', 'zh-CN-YunyangNeural', 'zh-CN-XiaochenNeural'].includes(v.id)),
-    '中文女声': voices.filter(v => v.locale === 'zh-CN' && v.gender === 'female' && !groupedVoices['推荐']?.find(r => r.id === v.id)),
-    '中文男声': voices.filter(v => v.locale === 'zh-CN' && v.gender === 'male' && !groupedVoices['推荐']?.find(r => r.id === v.id)),
+  const recommendedVoices = voices.filter(v => ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunjianNeural', 'zh-CN-XiaoyiNeural', 'zh-CN-YunyangNeural', 'zh-CN-XiaochenNeural'].includes(v.id));
+  const groupedVoices: Record<string, Voice[]> = {
+    '推荐': recommendedVoices,
+    '中文女声': voices.filter(v => v.locale === 'zh-CN' && v.gender === 'female' && !recommendedVoices.find(r => r.id === v.id)),
+    '中文男声': voices.filter(v => v.locale === 'zh-CN' && v.gender === 'male' && !recommendedVoices.find(r => r.id === v.id)),
     '方言': voices.filter(v => v.locale?.startsWith('zh-') && v.locale !== 'zh-CN'),
     '外语': voices.filter(v => !v.locale?.startsWith('zh-')),
   };
