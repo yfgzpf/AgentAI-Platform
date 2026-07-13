@@ -34,6 +34,7 @@ import { parseFileRouter } from './routes/parse-file.js';
 import { createCleanerRouter } from './routes/cleaner.js';
 import { createKnowledgeRouter } from './routes/knowledge.js';
 import { createGoalRouter } from './routes/goal.js';
+import { createTaskSchedulerRouter } from './routes/task-scheduler.js';
 import { createImageRouter } from './routes/image.js';
 import { createVideoRouter } from './routes/video.js';
 import { register3DRoutes } from './routes/3d-generate.js';
@@ -419,6 +420,7 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
   }
 });
   app.use(createGoalRouter({ router: deps.router, registry: deps.registry, sessionManager: deps.sessionManager, persistentMemory: deps.persistentMemory }));
+  app.use(createTaskSchedulerRouter());  // 定时任务调度器API
   app.use(createSettingsRouter({ router: deps.router }));
   app.use(createCleanerRouter());
   app.use('/v1/commercial-models', commercialModelsRouter);
@@ -451,11 +453,14 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
   // ===== 主动建议引擎 =====
   app.get('/v1/suggestions', async (req, res) => {
     try {
-      const { getProactiveEngine } = await import('./proactive-engine.js');
-      const engine = getProactiveEngine();
+      const { proactiveEngine } = await import('./proactive-suggestion-engine.js');
       const workspace = (req.query.workspace as string) || process.cwd();
       const industry = (req.query.industry as string) || 'general';
-      const suggestions = await engine.scan(workspace, industry, req.query.force === '1');
+      const suggestions = (proactiveEngine as any).buildSuggestions
+        ? await (proactiveEngine as any).buildSuggestions(workspace, industry)
+        : (proactiveEngine as any).getSuggestions
+          ? (proactiveEngine as any).getSuggestions(workspace)
+          : [];
       res.json({ suggestions });
     } catch (e: any) {
       res.json({ suggestions: [] });
@@ -573,7 +578,30 @@ return { httpServer, io };
  * - session manager (内部已自动)
  * - 真定时反思 (cron dispatcher)
  */
-export function startBackgroundJobs(_skillsDir: string) {
+export function startBackgroundJobs(skillsDir: string) {
+  // 扫描并注册所有技能
+  if (skillsDir && fs.existsSync(skillsDir)) {
+    import('./skill-orchestrator.js').then(({ getSkillOrchestrator }) => {
+      const orchestrator = getSkillOrchestrator();
+      const count = orchestrator.scanDirectory(skillsDir);
+      console.log(`[skills] 已扫描并注册 ${count} 个技能 from ${skillsDir}`);
+      
+      // 同时扫描装饰行业技能
+      const decorationDir = path.join(skillsDir, 'decoration');
+      if (fs.existsSync(decorationDir)) {
+        const decoCount = orchestrator.scanDirectory(decorationDir);
+        console.log(`[skills] 已扫描 ${decoCount} 个装饰行业技能`);
+      }
+      
+      // 扫描营销获客技能
+      const marketingDir = path.join(skillsDir, 'marketing');
+      if (fs.existsSync(marketingDir)) {
+        const marketingCount = orchestrator.scanDirectory(marketingDir);
+        console.log(`[skills] 已扫描 ${marketingCount} 个营销获客技能`);
+      }
+    }).catch((e: any) => console.warn('[skills] scan failed:', e?.message));
+  }
+
   startEvolutionCleanupLoop();
   getSessionManager();
 

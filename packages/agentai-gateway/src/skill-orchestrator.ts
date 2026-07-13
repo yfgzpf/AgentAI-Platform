@@ -154,6 +154,8 @@ export class SkillOrchestrator extends EventEmitter {
           parameters: meta.parameters,
           parallelSafe: true,
           riskLevel: 'low',
+          // @ts-ignore - 扩展字段
+          triggers: meta.triggers || [],
         });
         count++;
       }
@@ -277,14 +279,17 @@ export class SkillOrchestrator extends EventEmitter {
     return [...words];
   }
 
-  private parseSkillMd(filePath: string): Partial<SkillDescriptor> {
+  private parseSkillMd(filePath: string): Partial<SkillDescriptor & { triggers?: string[] }> {
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
       const frontMatter = content.match(/^---\n([\s\S]*?)\n---/);
-      const result: Partial<SkillDescriptor & { tags?: string[] }> = {};
+      const result: Partial<SkillDescriptor & { tags?: string[]; triggers?: string[] }> = {};
 
       if (frontMatter) {
-        for (const line of frontMatter[1]!.split('\n')) {
+        const fmContent = frontMatter[1]!;
+        
+        // 解析简单字段
+        for (const line of fmContent.split('\n')) {
           const [key, ...rest] = line.split(':');
           if (!key || rest.length === 0) continue;
           const val = rest.join(':').trim();
@@ -296,6 +301,18 @@ export class SkillOrchestrator extends EventEmitter {
               result.tags = val.replace(/[\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
               break;
           }
+        }
+        
+        // 解析 metadata.triggers
+        const triggersMatch = fmContent.match(/triggers:\s*([\s\S]*?)(?=\n\w|$)/);
+        if (triggersMatch) {
+          const triggersText = triggersMatch[1];
+          result.triggers = triggersText
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line.startsWith('- '))
+            .map(line => line.substring(2).trim().replace(/["']/g, ''))
+            .filter(Boolean);
         }
       }
       return result;
@@ -330,10 +347,7 @@ async executeSkill(skillName: string, params: any): Promise<{ success: boolean; 
     console.error(`[skill] ❌ 技能执行失败: ${skillName}, 耗时: ${duration}ms, 错误: ${err.message}`);
     return { success: false, output: `技能执行失败: ${err.message}` };
   }
-    } catch (e: any) {
-      return { success: false, output: `技能执行失败: ${e.message}` };
-    }
-  }
+}
 }
 
 export const skillOrchestrator = new SkillOrchestrator();
