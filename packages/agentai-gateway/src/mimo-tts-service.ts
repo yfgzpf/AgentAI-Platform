@@ -9,6 +9,7 @@
  * API文档：https://api.xiaomimimo.com/v1
  */
 
+// @ts-ignore - openai 模块可选依赖
 import { OpenAI } from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -48,12 +49,9 @@ export class MimoTtsService {
     { id: 'mimo-dianshang', name: '电商', gender: 'female', description: '专业电商主播声' },
   ];
 
-  // 内置专用密钥
-  private readonly BUILT_IN_API_KEY = 'sk-cp5szr1336c4uhfnwdbjpl4p8x9ydelvaz6wl42qv57vne49';
-
   constructor() {
-    // 优先使用环境变量，否则使用内置密钥
-    this.apiKey = process.env.MIMO_API_KEY || this.BUILT_IN_API_KEY;
+    // 强制使用环境变量, 不再内置密钥 (安全: 旧密钥 sk-cp5s... 已进git历史需吊销轮换)
+    this.apiKey = process.env.MIMO_API_KEY || '';
     this.baseUrl = process.env.MIMO_BASE_URL || 'https://api.xiaomimimo.com/v1';
     this.model = process.env.MIMO_MODEL || 'mimo-tts-v2.5';
     
@@ -120,6 +118,7 @@ export class MimoTtsService {
             content: truncatedText,
           }
         ],
+        // @ts-ignore - MIMO TTS specific options
         extra_body: {
           tts_options: {
             voice: voice,
@@ -205,7 +204,7 @@ export class MimoTtsService {
     
     let currentSegment = '';
     for (let i = 0; i < sentences.length; i++) {
-      const sentence = sentences[i];
+      const sentence = sentences[i]!;
       if ((currentSegment + sentence).length > maxLength && currentSegment.length > 0) {
         segments.push(currentSegment.trim());
         currentSegment = sentence;
