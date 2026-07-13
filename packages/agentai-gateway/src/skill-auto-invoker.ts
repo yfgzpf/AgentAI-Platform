@@ -117,7 +117,7 @@ export class SkillAutoInvoker extends EventEmitter {
     const skill = orchestrator.getSkill(match.skillName);
     
     if (!skill) {
-      return `【检测到技能匹配】\n建议创建技能: ${match.skillName}\n原因: ${match.reason}\n\n**立即执行**: 调用 discover_or_create_skill 创建并执行此技能。`;
+      return `【检测到技能匹配】\n建议创建技能: ${match.skillName}\n原因: ${match.reason}\n\n**立即执行**: 调用 discover_or_create_skill 工具创建此技能!\n\n参数示例: {\n  "skillName": "${match.skillName}",\n  "description": "${match.reason}",\n  "triggers": ["${match.skillName.split('-').join('", "')}"]\n}\n\n禁止只思考不执行，立即调用工具!`;
     }
 
     return `【检测到技能匹配】\n技能: ${skill.name}\n描述: ${skill.description}\n匹配度: ${(match.confidence * 100).toFixed(0)}%\n原因: ${match.reason}\n\n**立即执行**: 调用技能工具 '${match.skillName}' 完成任务，参数: ${JSON.stringify(match.params)}\n\n禁止在内部反复思考"是否调用技能"，立即执行!`;

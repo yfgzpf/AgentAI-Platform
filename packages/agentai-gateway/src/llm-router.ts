@@ -178,14 +178,14 @@ export class AgentAIRouter extends EventEmitter {
   private static readonly RL_BACKOFF_FACTOR = 2;
   /** 主动调速: 两次请求之间的最小间隔 (3 秒, 避免免费模型突发限流) */
   private static readonly REQUEST_PACING_MS = 3_000;
-  /** 成本守卫 - 已禁用 (ATLAS 以免费模型为主，商业模型由用户自主决定) */
+  /** 成本守卫 - PulseFlow 默认启用 (免费模型不累积成本, 商业模型受预算保护) */
   private costGuard = {
-    maxCostPerTurn: 100.00,   // USD - 放宽限制
-    maxCostPerDay: 1000.00,   // USD - 放宽限制
+    maxCostPerTurn: 5.00,     // USD - 单次调用上限
+    maxCostPerDay: 50.00,     // USD - 每日预算上限
     dailySpend: 0,
     dailyResetAt: Date.now() + 86_400_000,
     exceeded: false,
-    disabled: true,           // 标记为禁用
+    disabled: false,
   };
 
   /** 每个 provider 是否支持 reasoning_content (流式响应急时检测, 不写死) */
@@ -193,7 +193,7 @@ export class AgentAIRouter extends EventEmitter {
   /** 已知不支持 stream_options 的 provider (响应 400 后自动加入) */
   private _noStreamOptions = new Set<ProviderId>();
   /** 当前正在调用的 provider (流式解析时用) */
-  private _currentProviderId: ProviderId | null = null;
+  // private _currentProviderId: ProviderId | null = null; // DEAD CODE: never read/written
 
   constructor() {
     super();
@@ -445,7 +445,8 @@ const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', '
       }
     }
 
-    // === Step 4: 5 维评分选模型 (替换旧的 rankProviders) ===
+    // === Step 4: 5 维评分选模型 (替换旧的 rankProviders + scoreProvider) ===
+  // --- DEPRECATED: 以下两个函数已被上面的 step 4 取代 ---
     // 如果指定模型已失败, 放开 forceProvider 让 ranking 尝试所有可用 provider
     const forceProvider = specifiedModelFailed ? undefined : req.model;
 
@@ -732,34 +733,7 @@ const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', '
     }
   }
 
-  // ===== Provider 评分/熔断 =====
-  private rankProviders(): ProviderStats[] {
-    return [...this.providers.values()].sort((a, b) => {
-      const scoreA = this.scoreProvider(a);
-      const scoreB = this.scoreProvider(b);
-      return scoreB - scoreA;
-    });
-  }
-
-  /**
-   * 自创: 三维评分 (成功率 50% + 成本 30% + 延迟 20%)
-   * 学自: Hermes smart_model_routing.py (按 cost/quality/speed 排序)
-   * 学自: Reasonix Pillar 3 (cost 优先)
-   */
-  private scoreProvider(p: ProviderStats): number {
-    const successRate = p.totalCalls > 0 ? p.successCount / p.totalCalls : 1.0;
-    const avgCost = (p.costPer1kInput + p.costPer1kOutput) / 2;
-    const avgLatency = p.recentLatencyMs.length > 0
-      ? p.recentLatencyMs.reduce((a, b) => a + b, 0) / p.recentLatencyMs.length
-      : 1000;
-
-    const successScore = successRate * 50;
-    const costScore = (1 / (1 + avgCost * 1000)) * 30;
-    const latencyScore = (1 / (1 + avgLatency / 1000)) * 20;
-
-    return successScore + costScore + latencyScore;
-  }
-
+  /** 判断 circuit breaker 是否开启 (熔断) */
   private isCircuitOpen(p: ProviderStats): boolean {
     if (!p.tripped) return false;
     // tripped = true 时先尝试恢复
@@ -805,28 +779,34 @@ const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', '
     console.info(`[router] circuit recovered: ${p.id} (cooldown elapsed)`);
   }
 
-  // ===== Cost Guard (已禁用 - ATLAS 以免费模型为主) =====
+  // ===== Cost Guard =====
   private checkCostGuard(): boolean {
-    // 成本守卫已禁用，直接返回 true
-    if ((this.costGuard as any).disabled) {
+    if (this.costGuard.disabled) {
       return true;
     }
-    // 保留原逻辑作为后备
     if (Date.now() > this.costGuard.dailyResetAt) {
       this.costGuard.dailySpend = 0;
       this.costGuard.dailyResetAt = Date.now() + 86_400_000;
       this.costGuard.exceeded = false;
     }
+    if (this.costGuard.exceeded) {
+      return false;
+    }
     return true;
   }
 
   private checkCostGuardPost(cost: number): void {
+    this.costGuard.dailySpend += cost;
     if (cost > this.costGuard.maxCostPerTurn) {
       this.emit('cost:warning', { cost, max: this.costGuard.maxCostPerTurn });
     }
-    // 超限后不再累计 (防止负值清空前无限叠加)
-    if (!this.costGuard.exceeded) {
-      this.costGuard.dailySpend += cost;
+    if (this.costGuard.dailySpend > this.costGuard.maxCostPerDay) {
+      this.costGuard.exceeded = true;
+      this.emit('cost:exceeded', {
+        spend: this.costGuard.dailySpend,
+        max: this.costGuard.maxCostPerDay,
+      });
+      console.warn(`[cost-guard] 日预算超限: $${this.costGuard.dailySpend.toFixed(2)} / $${this.costGuard.maxCostPerDay}`);
     }
   }
 
@@ -923,6 +903,35 @@ const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', '
           args,
         });
       } catch {}
+    }
+
+    // 模式 4: DSML 伪 XML 格式 <｜DSML｜invoke name="xxx">...<｜DSML｜/invoke>
+    const dsmlPattern = /<｜DSML｜invoke\s+name="([a-z_][a-z0-9_]*)"\s*>([\s\S]*?)<｜DSML｜\/invoke>/gi;
+    while ((match = dsmlPattern.exec(content)) !== null) {
+      const name = match[1];
+      try {
+        // 解析参数
+        const paramPattern = /<｜DSML｜parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<｜DSML｜\/parameter>/gi;
+        const args: any = {};
+        let paramMatch;
+        while ((paramMatch = paramPattern.exec(match[2])) !== null) {
+          const paramName = paramMatch[1];
+          const paramValue = paramMatch[2].trim();
+          // 尝试解析JSON，失败则作为字符串
+          try {
+            args[paramName] = JSON.parse(paramValue);
+          } catch {
+            args[paramName] = paramValue;
+          }
+        }
+        toolCalls.push({
+          id: `dsml-fallback-${Date.now()}-${toolCalls.length}`,
+          name,
+          args,
+        });
+      } catch (e) {
+        console.warn('[repair] DSML parse error:', e);
+      }
     }
 
     if (toolCalls.length > 0) {
@@ -1643,26 +1652,8 @@ const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', '
     }
   }
 
-  // ===== 反思门 (自创, 学 WorkBuddy) =====
-  private lastReflectAt = 0;
-  private reflectEvery = 10; // 每 10 轮反思一次
-
-  private shouldReflect(): boolean {
-    if (this.appendOnlyLog.length % this.reflectEvery !== 0) return false;
-    if (this.appendOnlyLog.length === 0) return false;
-    if (Date.now() - this.lastReflectAt < 60_000) return false; // 至少 1 分钟 1 次
-    this.lastReflectAt = Date.now();
-    return true;
-  }
-
-  private async reflect(): Promise<void> {
-    // 简化: 总结最近 10 轮的失败模式
-    const recent = this.appendOnlyLog.slice(-this.reflectEvery);
-    const failures = recent.filter(r => r.res.usage.cost > this.costGuard.maxCostPerTurn);
-    this.emit('reflect:done', {
-      window: this.reflectEvery,
-      avgCost: recent.reduce((s, r) => s + r.res.usage.cost, 0) / recent.length,
-      failureCount: failures.length,
-    });
-  }
+  // ===== 反思门 (已废弃 - P2-2 清理) =====
+  // _lastReflectAt, _reflectEvery, shouldReflect(), reflect() 已在 P2-2 删除
+  // isCircuitOpen() 保留在第 736 行
+  // 类在此关闭
 }

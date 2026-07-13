@@ -39,6 +39,7 @@ const NotificationPanel = lazy(() => import('./components/NotificationPanel').th
 const WorkflowPanel = lazy(() => import('./components/WorkflowPanel').then(m => ({ default: m.WorkflowPanel })));
 const ProactiveSuggestionsPanel = lazy(() => import('./components/ProactiveSuggestionsPanel').then(m => ({ default: m.default })));
 const XuanjiPanel = lazy(() => import('./components/XuanjiPanel').then(m => ({ default: m.XuanjiPanel })));
+const AutomationPanel = lazy(() => import('./components/AutomationPanel').then(m => ({ default: m.AutomationPanel })));
 import { RightPanel } from './components/RightPanel';
 import { SessionSidebar } from './components/SessionSidebar';
 import { GuideModal } from './components/GuideModal';
@@ -59,7 +60,7 @@ import { useSuggestionStore } from './store/suggestionStore';
 import { Splash } from './components/Splash';
 
 /* ════════════════ PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji';
+type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation';
 
 interface PageMeta {
   key: PageKey;
@@ -90,6 +91,7 @@ const PAGES: PageMeta[] = [
   { key: 'wechat',   label: '微信',     icon: <SmileOutlined />,      comp: WechatSetup,   group: 'system', desc: 'ClawBot 插件 · 扫码绑定' },
   { key: 'knowledge', label: '知识库', icon: <BookOutlined />,       comp: KnowledgeBasePanel, group: 'system', desc: '行业知识库 · 文档上传 · BM25 检索' },
   { key: 'schedule',     label: '定时任务', icon: <ClockCircleOutlined />, comp: SchedulePanel,     group: 'system', desc: 'Cron 调度 · RPA 定时回放 · AI 任务自动化' },
+  { key: 'automation',   label: '自动化',   icon: <ThunderboltOutlined />, comp: AutomationPanel, group: 'system', desc: '定时任务管理 · 成功率统计 · 执行监控', badge: 'NEW' },
   { key: 'workflow',     label: '工作流',   icon: <PartitionOutlined />,   comp: WorkflowPanel,     group: 'system', desc: 'DAG 多步骤自动化 · 行业模板 · 变量管道' },
   { key: 'notification', label: '通知中心', icon: <BellOutlined />,        comp: NotificationPanel, group: 'system', desc: 'SSE · Webhook · 邮件 · 桌面弹窗' },
   { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system',   desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持' },
@@ -190,14 +192,16 @@ export const App: React.FC = () => {
     root.style.fontSize = fontCfg.cssBase;
   }, [themeStyle, fontSize]);
 
-  /* --- 启动网关健康检测 + 同步工作目录 --- */
+  /* --- 启动网关健康检测 + 同步工作目录 + 加载模型密钥 --- */
   useEffect(() => {
     gatewayFallback.start();
 
-    // 从网关同步工作目录
+    // 从网关同步工作目录和模型密钥
     (async () => {
       try {
         const base = gatewayFallback.url;
+        
+        // 同步工作目录
         const resp = await fetch(base + '/v1/health');
         if (resp.ok) {
           const data = await resp.json();
@@ -208,6 +212,25 @@ export const App: React.FC = () => {
               localStorage.setItem('agentai.workspace', data.cwd);
               console.log('[workspace] synced from gateway:', data.cwd);
             }
+          }
+        }
+        
+        // 加载所有模型密钥状态
+        const providers = ['agentai', 'deepseek', 'openai', 'zhipu', 'yi', 'baichuan', 'minimax', 'anthropic'];
+        for (const provider of providers) {
+          try {
+            const keyResp = await fetch(`${base}/v1/settings/keys?provider=${provider}`);
+            if (keyResp.ok) {
+              const keyData = await keyResp.json();
+              if (keyData.ok && keyData.envVar) {
+                // 同步到 modelStore
+                const { useModelStore } = await import('./store/modelStore');
+                useModelStore.getState().setCommercialKey(keyData.envVar, 'configured');
+                console.log(`[keys] loaded ${provider}: ${keyData.envVar}`);
+              }
+            }
+          } catch (e) {
+            console.warn(`[keys] failed to load ${provider}:`, e);
           }
         }
       } catch {}
@@ -398,7 +421,7 @@ export const App: React.FC = () => {
         <div className="app-titlebar">
           {/* 品牌 */}
           <div className="app-brand">
-            <img src="/favicon-32.png" alt="Atlas"
+            <img src="/favicon-32.png" alt="PulseFlow"
               style={{ width: 36, height: 36, borderRadius: 8, marginRight: 8 }} />
             <div className="app-brand-text">
               <span className="app-brand-name">PulseFlow</span>
