@@ -76,11 +76,15 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 ### 第二阶段: 规划 (调研+方案)
 1. 查身份: 用户是什么行业? (装修/电商/教育/...), 之前聊过什么?
 2. 找技能: 有没有已安装的 skills 可以用? (docx/pdf/xlsx/web-dev/...)
+   - **强制规则**: 如果system prompt中提示了"【检测到技能匹配】", 必须立即调用该技能工具!
+   - 匹配到技能 → **立即调用技能工具**, 不要自己从零实现
+   - **绝对禁止**: 收到技能匹配提示后还在内部思考"是否调用技能"而不执行
 3. 看上下文: 工作区有哪些文件? 有没有相关项目?
 4. 定方案: 拆成几步? 需要调哪些工具? 是否要问用户确认?
    - **复杂任务(>3步)**: 先调用 \`plan_task\` 创建执行计划, 然后逐步执行, 每完成一步用 \`update_plan\` 更新进度
-   - **如果信息不足**: 先调用 \`ask_user\` 追问, 不要猜测!
-     - \`ask_user\` 工具会弹出问卷卡片让用户填写, 不是简单的文字追问
+- **如果信息不足**: 先调用 \`ask_user\` 追问, 不要猜测!
+- \`ask_user\` 工具会弹出问卷卡片让用户填写, 不是简单的文字追问
+- **绝对禁止**: 在内部反复思考"需要追问"但不执行。要么立即调用ask_user，要么直接回答。
      - 用法示例: ask_user({question:"您需要什么风格?", options:[{id:"modern",title:"现代简约"},{id:"classic",title:"经典复古"},{id:"minimal",title:"极简风格"}]})
      - 用户选择后答案会自动发送给你, 你可以继续执行任务
 
@@ -487,4 +491,177 @@ export function buildFullSystemPrompt(opts: {
   }
 
   return parts.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════
+// 分层 System Prompt v2.0 — 按需注入, 减少 token 浪费
+// ═══════════════════════════════════════════════════════════
+// 设计原则: L0 永远发(身份+安全) / L1 按意图选工具 / L2 按场景注入
+// 安全保证: AGENT_SYSTEM_IDENTITY 保持不变, 新增函数为独立路径
+
+/** 从 AGENT_SYSTEM_IDENTITY 中提取指定 XML section 的内容 */
+function extractSection(name: string): string {
+  const open = `<${name}`;
+  const close = `</${name}>`;
+  const startIdx = AGENT_SYSTEM_IDENTITY.indexOf(open);
+  const endIdx = AGENT_SYSTEM_IDENTITY.indexOf(close);
+  if (startIdx === -1 || endIdx === -1) return '';
+  return AGENT_SYSTEM_IDENTITY.slice(startIdx, endIdx + close.length);
+}
+
+/** L0: 核心层 — 永远发送 (身份 + 最高规则 + 安全守护 + 回复风格 + 记忆) */
+export const L0_CORE_PROMPT = [
+  '# You are PulseFlow — AI Task & Logic Agent System\n',
+  extractSection('identity'),
+  extractSection('critical-rules'),
+  extractSection('reply-style'),
+  extractSection('memory-persistence'),
+  extractSection('security-guard'),
+].filter(s => s.length > 0).join('\n\n');
+
+/** L1: 工具层 — 当有工具可用时发送 (工具使用规则 + 能力清单) */
+export const L1_TOOLS_PROMPT = extractSection('tool-calling');
+
+/** L2: 场景层 — 按任务复杂度条件注入 */
+export const L2_CONTEXT_PROMPT = [
+  extractSection('idle-chats'),
+  extractSection('workflow'),
+  extractSection('auto-mode'),
+  extractSection('autonomy'),
+  extractSection('anti-lazing'),
+  extractSection('prd-approach'),
+  extractSection('incremental-constraints'),
+  extractSection('doubt-driven'),
+  extractSection('industry-perception'),
+  extractSection('resource-autocomplete'),
+  extractSection('music-control'),
+].filter(s => s.length > 0).join('\n\n');
+
+/** 意图分类 — 用于决定发送哪些 L2 section */
+export type MessageIntent = 'simple_chat' | 'code_task' | 'research' | 'creative' | 'complex_task';
+
+/** 根据用户消息分类意图 */
+export function classifyIntent(message: string): MessageIntent {
+  const lower = message.toLowerCase();
+  // 闲聊: 打招呼/简单问答/情绪表达
+  if (/^(你好|嗨|在吗|在不在|hi|hello|hey|早|晚安|谢谢|辛苦了|再见)/i.test(lower.trim())) return 'simple_chat';
+  if (/^(能不能|会不会|是什么|什么是|怎么用|怎么实现)/i.test(lower) && lower.length < 30) return 'simple_chat';
+  // 代码任务
+  if (/(代码|函数|bug|错误|编译|报错|修复|重构|文件|write_file|read_file|edit|\.ts|\.js|\.py|\.tsx)/i.test(lower)) return 'code_task';
+  // 研究/搜索
+  if (/(搜索|查找|调研|研究|对比|分析|web_search|search|文档|论文)/i.test(lower)) return 'research';
+  // 创意/生成
+  if (/(生成|创建|画|图片|视频|音乐|播放|generate_image|generate_video|diagram)/i.test(lower)) return 'creative';
+  // 默认: 复杂任务
+  return 'complex_task';
+}
+
+/** 根据意图选择需要注入的 L2 section 名称 */
+function getL2SectionsForIntent(intent: MessageIntent): string[] {
+  switch (intent) {
+    case 'simple_chat':
+      // 闲聊: 只需 idle-chats + music-control, 不发 workflow/anti-lazing/prd 等
+      return ['idle-chats', 'music-control'];
+    case 'code_task':
+      // 代码: workflow + autonomy + anti-lazing + doubt-driven + incremental + auto-mode
+      return ['workflow', 'auto-mode', 'autonomy', 'anti-lazing', 'incremental-constraints', 'doubt-driven'];
+    case 'research':
+      // 研究: workflow + autonomy + anti-lazing
+      return ['workflow', 'auto-mode', 'autonomy', 'anti-lazing'];
+    case 'creative':
+      // 创意: workflow + autonomy + music-control + industry-perception
+      return ['workflow', 'auto-mode', 'autonomy', 'music-control', 'industry-perception'];
+    case 'complex_task':
+    default:
+      // 复杂任务: 全部注入
+      return [
+        'idle-chats', 'workflow', 'auto-mode', 'autonomy', 'anti-lazing',
+        'prd-approach', 'incremental-constraints', 'doubt-driven',
+        'industry-perception', 'resource-autocomplete', 'music-control',
+      ];
+  }
+}
+
+/** 根据意图构建 L2 上下文层 */
+export function buildL2Context(intent: MessageIntent): string {
+  const sectionNames = getL2SectionsForIntent(intent);
+  return sectionNames
+    .map(name => extractSection(name))
+    .filter(s => s.length > 0)
+    .join('\n\n');
+}
+
+/**
+ * 分层 System Prompt 构建器 v2.0
+ * - L0 永远发送 (身份+安全+记忆, ~120行)
+ * - L1 当有工具时发送 (工具规则, ~80行)
+ * - L2 按意图条件发送 (场景上下文, 0~280行)
+ *
+ * Token 节省: 闲聊 ~60% / 代码任务 ~15% / 复杂任务 0%
+ */
+export function buildLayeredSystemPrompt(opts: {
+  workspace?: string;
+  industryId?: string;
+  industrySkills?: string[];
+  memories?: Array<{ name: string; content: string }>;
+  skillsXml?: string;
+  emotion?: { emotion: string; intensity: number; label: string };
+  intent?: MessageIntent;
+  hasTools?: boolean;
+}): string {
+  const intent = opts.intent || classifyIntent(opts.workspace || '');
+  const hasTools = opts.hasTools !== false; // 默认有工具
+
+  const parts: string[] = [L0_CORE_PROMPT];
+
+  // L1: 工具层 (有工具时才发)
+  if (hasTools && L1_TOOLS_PROMPT) {
+    parts.push(L1_TOOLS_PROMPT);
+  }
+
+  // L2: 场景层 (按意图选 section)
+  const l2 = buildL2Context(intent);
+  if (l2) {
+    parts.push(l2);
+  }
+
+  // 动态上下文 (同 buildFullSystemPrompt)
+  if (opts.industryId && opts.industryId !== 'general') {
+    parts.push(`# 用户行业: ${opts.industryId}\n该用户属于此行业, 请根据行业特点提供专业服务.`);
+    if (opts.industrySkills?.length) {
+      parts.push(`行业相关技能: ${opts.industrySkills.join(', ')}`);
+    }
+  }
+
+  if (opts.memories && opts.memories.length > 0) {
+    const memText = opts.memories.map(m =>
+      `- **${m.name}**: ${m.content}`
+    ).join('\n');
+    parts.push(`# 用户记忆\n${memText}`);
+  }
+
+  if (opts.workspace) {
+    parts.push(`# 当前工作区: ${opts.workspace}\n所有文件操作默认在此目录下. 先用 \`list_directory\` 了解目录结构.`);
+  }
+
+  if (opts.skillsXml) {
+    parts.push(`${opts.skillsXml}\n\n你可以通过工具调用使用以上 skills.`);
+  }
+
+  if (opts.emotion && opts.emotion.emotion !== 'neutral') {
+    const e = opts.emotion;
+    const tips: Record<string, string> = {
+      anxious: '用户当前焦虑不安, 请耐心安抚, 给出明确可执行的方案, 避免模糊回答',
+      angry: '用户当前愤怒不满, 请先共情理解, 再提供解决方案, 语气要温和专业',
+      sad: '用户当前情绪低落, 请温和鼓励, 提供积极的建设性建议',
+      surprised: '用户当前感到惊讶, 请解释清楚原因, 消除疑虑',
+      negative: '用户当前情绪消极, 请积极引导, 提供可行的改进方案',
+      positive: '用户当前情绪积极, 可以更自信地推进任务',
+      joyful: '用户当前心情愉快, 可以保持轻松的交流氛围',
+    };
+    const tip = tips[e.emotion] || '';
+    parts.push(`# 用户当前情绪: ${e.label} (强度: ${Math.round(e.intensity * 100)}%)\n${tip}`);
+  }
+
+  return parts.join('\n\n');
 }

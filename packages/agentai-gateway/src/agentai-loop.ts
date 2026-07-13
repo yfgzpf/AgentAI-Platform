@@ -283,29 +283,8 @@ import { maskCredentials } from './credential-extractor.js';
 import { GoalResult } from './goal-runner.js';
 import { revertBridge } from './revert-bridge.js';
 
-// 全局缓存 (同 session 内复用)
-let _globalCache: any = null;
-let _globalCacheReady = false;
-
-async function getOrCreateCache(registry: any): Promise<any> {
-  if (_globalCache) return _globalCache;
-  if (_globalCacheReady) return _globalCache; // already tried
-  try {
-    const mod = await import('./deepseek-cache-strategy.js');
-    _globalCache = new mod.DeepSeekCacheStrategy({
-      system: AGENT_SYSTEM_IDENTITY,
-      toolDefs: registry?.list?.().map((t: any) => ({
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      })) || [],
-    });
-  } catch {
-    _globalCache = null;
-  }
-  _globalCacheReady = true;
-  return _globalCache;
-}
+// ========== DEAD CODE: _globalCache/DeepSeekCacheStrategy 永久跳过 ==========
+// 项目无 deepseek-cache-strategy 模块，registry 非 deepseek 配置，永远返回 null
 
 export interface LoopOptions {
   maxIterations: number;
@@ -388,6 +367,9 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   /** 当前任务类型和行业 (由 buildImmutablePrefix 检测, 主循环中使用) */
   private _taskType: 'coding' | 'research' | 'general' | 'industry' = 'general';
   private _userIndustry: string = 'general';
+  
+  /** 强制调用的技能 (由 skillAutoInvoker 设置) */
+  private _forceSkill: string | null = null;
 
   /** 模型能力分层: autonomous(自主) / guided(引导) / supervised(监督) */
   private _capabilityTier: 'autonomous' | 'guided' | 'supervised' = 'supervised';
@@ -588,6 +570,30 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     const userName = userModel.get(this.opts.userId).identity.name || this.opts.userId || '用户';
     const keywords = extractKeywords(typeof userMessage === 'string' ? userMessage : '');
 
+    // === 0.5 技能自动检测和注入（解决AI不主动调用技能的问题）
+    let skillInvocationBlock = '';
+    try {
+      const { skillAutoInvoker } = await import('./skill-auto-invoker.js');
+      const skillMatch = skillAutoInvoker.analyzeIntent(typeof userMessage === 'string' ? userMessage : '');
+      if (skillMatch) {
+        skillInvocationBlock = skillAutoInvoker.generateInvocationPrompt(skillMatch);
+        console.log(`[loop] 🎯 检测到技能匹配: ${skillMatch.skillName} (置信度: ${(skillMatch.confidence * 100).toFixed(0)}%)`);
+        
+        // 高置信度时强制设置工具
+        if (skillAutoInvoker.shouldForceTrigger(skillMatch)) {
+          this._forceSkill = skillMatch.skillName;
+        }
+      }
+      
+      // 注入可用技能列表
+      const availableSkillsPrompt = skillAutoInvoker.getAvailableSkillsPrompt();
+      if (availableSkillsPrompt) {
+        skillInvocationBlock += '\n\n' + availableSkillsPrompt;
+      }
+    } catch (e) {
+      console.warn('[loop] 技能自动检测失败:', e);
+    }
+
     // === 1. AI 身份 + 核心规则（精简版或完整版） ===
     // 模型能力分层: autonomous/guided 用精简版 (原则驱动, 无 PUA, ~50行)
     //               supervised 用完整版 (规则驱动, 含 PUA/元认知引导, ~200行)
@@ -647,6 +653,11 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     } else {
       // 完整版 system prompt（保留原有逻辑）
       systemMsgs.push({ role: 'system', content: AGENT_SYSTEM_IDENTITY });
+    }
+
+    // 技能调用指令注入（高优先级，位于身份之后）
+    if (skillInvocationBlock) {
+      systemMsgs.push({ role: 'system', content: skillInvocationBlock });
     }
 
     // 进化记忆注入（两种 prompt 模式均注入，位于身份之后）
@@ -2809,11 +2820,14 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           this.emit('meta:decision', { action: 'stop', confidence: metaOutput.decision.confidence, reason: metaOutput.decision.reasoning });
           break;
         }
-        // 元认知决策: ask_human → 延迟到任务后处理 (不中断当前回复)
+        // 元认知决策: ask_human → 立即执行追问，不延迟
         if (metaOutput.decision.action === 'ask_human') {
           this.emit('meta:decision', { action: 'ask_human', question: metaOutput.decision.reasoning });
-          this.directives.add('meta_ask', `[SYSTEM] 你需要向用户追问才能继续。原因: ${metaOutput.decision.reasoning}\n请立即调用 ask_user 工具提问。`, 'medium');
-          // 不 continue — 让循环自然 break, 延迟指令在任务后处理
+          // 强制注入最高优先级追问指令
+          this.directives.add('meta_ask', `[SYSTEM] 信息不足，必须追问用户！\n原因: ${metaOutput.decision.reasoning}\n\n**立即执行**: 调用 ask_user 工具提问，禁止在内部反复思考而不执行。`, 'critical');
+          // 强制工具列表只保留ask_user，确保AI只能执行追问
+          this.context.forceTool = 'ask_user';
+          break; // 立即退出循环，让AI执行追问
         }
         // 元认知决策: retry_with_pua → 延迟, 不在执行中施压
         if (metaOutput.decision.action === 'retry_with_pua' && (metaOutput as any).decision.puaPrompt) {
