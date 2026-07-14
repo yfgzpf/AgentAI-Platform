@@ -163,7 +163,7 @@ export class SkillManager extends EventEmitter {
         return null;
       }
 
-      const fm = this.parseFrontMatter(frontMatter[1]);
+      const fm = this.parseFrontMatter(frontMatter[1] || '');
 
       // 查找handler
       const handlerPath = this.findHandler(dir);
@@ -215,7 +215,7 @@ export class SkillManager extends EventEmitter {
 
         const [key, ...valueParts] = trimmed.split(':');
         const value = valueParts.join(':').trim();
-        currentKey = key.trim();
+        currentKey = key?.trim() || '';
 
         if (value) {
           // 有值的字段
@@ -354,7 +354,7 @@ export class SkillManager extends EventEmitter {
     // 提取关键词
     const keywordMatch = message.match(/关键词[是为]?\s*[:：]?\s*([^，,。]+)/);
     if (keywordMatch) {
-      params.keywords = [keywordMatch[1].trim()];
+      params.keywords = [keywordMatch[1]?.trim() || '装修'];
     }
 
     // 提取城市
@@ -424,7 +424,7 @@ export class SkillManager extends EventEmitter {
   generateInvocationPrompt(match: SkillMatch): string {
     return `【强制技能调用】
 检测到用户需求匹配技能: ${match.skill.name}
-描述: ${match.description}
+ 描述: ${match.skill.description}
 匹配度: ${(match.confidence * 100).toFixed(0)}%
 原因: ${match.reason}
 
