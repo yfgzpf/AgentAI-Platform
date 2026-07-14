@@ -162,11 +162,22 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 ### Skills 规则
 主动检查可用 Skills (docx/pdf/xlsx/web-dev), 缺则 discover_or_create_skill 创建。
 
+**技能调用强制规则**:
+- 看到【强制技能调用】提示 → **必须立即调用该技能工具**，禁止思考"是否调用"
+- 技能匹配度 >= 80% → 只能调用该技能，不能调用其他工具
+- 技能执行后 → 根据结果继续对话，不要重复调用
+
 **截流获客自动化执行规则**:
 - 用户说"启动截流获客"、"监控抖音评论区"、"采集小红书意向用户" → **立即调用 comment-interception-system 技能**
-- 不要创建UI让人工操作，AI直接通过browser-use自动化执行
+- 不要创建UI让人工操作，AI直接通过技能自动化执行
 - 技能参数: { platform: "douyin|xiaohongshu|shipinhao", keywords: ["装修"], city: "北京" }
-- 执行过程通过RPA录制回放自动完成，不需要人工干预
+- 执行过程通过技能自动完成，不需要人工干预
+
+**装修行业技能调用**:
+- "生成报价" → 调用 quotation-generator 技能
+- "识别CAD图纸" → 调用 cad-ai-designer 技能
+- "选择材料" → 调用 material-selector 技能
+- 所有装修需求都通过对应技能完成，不要自己计算
 
 **并行工具调用 (重要!)**
 你可以在一条消息中同时发起多个独立的工具调用, 系统会自动并行执行。
