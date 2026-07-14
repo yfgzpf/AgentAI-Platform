@@ -1,5 +1,5 @@
 /**
- * Editor - Atlas 文件编辑器
+ * Editor - PulseFlow 文件编辑器
  * ----------------------------------------------------
  * - 左侧文件树 (懒加载, 盘符级 Open Folder)
  * - 右侧多标签编辑器 (脏标记 / 保存 / AI 改写)
@@ -28,7 +28,6 @@ import { FileTimeline } from '../services/FileTimeline';
 import { gatewayFallback } from '../services/GatewayFallback';
 import { UnifiedWorkspace } from './UnifiedWorkspace';
 import { useWorkspaceStore } from '../store/workspaceStore';
-import { BrowserAutomationPanel } from './BrowserAutomationPanel';
 
 interface FsEntry {
   name: string;
@@ -716,7 +715,7 @@ export const Editor: React.FC = () => {
                 {bottomPanelTab === 'logs' ? (
                   <div style={{ padding: 8, color: '#888' }}>日志输出区 — Gateway 日志将在此显示</div>
                 ) : bottomPanelTab === 'browser' ? (
-                  <BrowserAutomationPanel />
+                  <div style={{ padding: 8, color: '#888' }}>浏览器自动化 — 通过AI技能调用执行</div>
                 ) : (
                   <div style={{ padding: 8, color: '#888' }}>
                     <div style={{ color: '#4ade80', marginBottom: 4 }}>$ 终端 (模拟)</div>

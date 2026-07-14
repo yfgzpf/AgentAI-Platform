@@ -13,7 +13,6 @@ import { ProjectRulesPanel } from './ProjectRulesPanel';
 import { GeneratedFilesPanel } from './GeneratedFilesPanel';
 import { TaskPlanPanel } from './TaskPlanPanel';
 import { CustomerWidget } from './CustomerWidget';
-import { CommentInterceptionWidget } from './CommentInterceptionWidget';
 
 const TABS = [
   { key: 'context', label: '上下文', icon: <AimOutlined /> },
@@ -55,10 +54,9 @@ export const RightPanel: React.FC = () => {
 
       {/* 内容区 */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 12px 0' }}>
-        {active === 'context' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <CommentInterceptionWidget />
-            <AIInjectContextPanel />
+          {active === 'context' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <AIInjectContextPanel />
             <TaskPlanPanel />
             <CustomerWidget />
             <AIContextPanel />

@@ -13,7 +13,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { getSkillOrchestrator } from './skill-orchestrator.js';
+import { skillOrchestrator } from './skill-orchestrator.js';
 
 interface IntentMatch {
   skillName: string;
@@ -61,6 +61,23 @@ const SKILL_TRIGGERS: SkillTrigger[] = [
   {
     keywords: ['SEO', '关键词', '排名', '优化'],
     skillName: 'seo-optimizer',
+  },
+  // 截流获客技能 - 通过AI自动化执行，不是人工操作UI
+  {
+    keywords: ['截流', '评论区', '监控', '私信', '抖音获客', '小红书截流'],
+    skillName: 'comment-interception-system',
+    paramExtractors: {
+      platform: (msg) => {
+        if (msg.includes('抖音')) return 'douyin';
+        if (msg.includes('小红书')) return 'xiaohongshu';
+        if (msg.includes('视频号')) return 'shipinhao';
+        return 'douyin';
+      },
+      keywords: (msg) => {
+        const match = msg.match(/关键词[是为]?\s*[:：]?\s*([^，,。]+)/);
+        return match ? [match[1]!.trim()] : ['装修'];
+      },
+    },
   },
 ];
 
@@ -113,8 +130,8 @@ export class SkillAutoInvoker extends EventEmitter {
    * 生成技能调用指令
    */
   generateInvocationPrompt(match: IntentMatch): string {
-    const orchestrator = getSkillOrchestrator();
-    const skill = orchestrator.getSkill(match.skillName);
+    const orchestrator = skillOrchestrator;
+    const skill = orchestrator.get(match.skillName);
     
     if (!skill) {
       return `【检测到技能匹配】\n建议创建技能: ${match.skillName}\n原因: ${match.reason}\n\n**立即执行**: 调用 discover_or_create_skill 工具创建此技能!\n\n参数示例: {\n  "skillName": "${match.skillName}",\n  "description": "${match.reason}",\n  "triggers": ["${match.skillName.split('-').join('", "')}"]\n}\n\n禁止只思考不执行，立即调用工具!`;
@@ -142,14 +159,14 @@ export class SkillAutoInvoker extends EventEmitter {
    * 获取所有可用技能列表（用于prompt注入）
    */
   getAvailableSkillsPrompt(): string {
-    const orchestrator = getSkillOrchestrator();
-    const skills = orchestrator.listSkills();
+    const orchestrator = skillOrchestrator;
+    const skills = orchestrator.list();
     
     if (skills.length === 0) {
       return '';
     }
 
-    const skillList = skills.map(s => `- ${s.name}: ${s.description}`).join('\n');
+    const skillList = skills.map((s: any) => `- ${s.name}: ${s.description}`).join('\n');
     
     return `【可用技能】\n${skillList}\n\n**重要**: 当用户需求匹配某个技能时，立即调用该技能工具完成，不要自己从零实现!`;
   }

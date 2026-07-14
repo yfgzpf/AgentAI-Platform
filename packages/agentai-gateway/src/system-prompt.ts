@@ -162,6 +162,12 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 ### Skills 规则
 主动检查可用 Skills (docx/pdf/xlsx/web-dev), 缺则 discover_or_create_skill 创建。
 
+**截流获客自动化执行规则**:
+- 用户说"启动截流获客"、"监控抖音评论区"、"采集小红书意向用户" → **立即调用 comment-interception-system 技能**
+- 不要创建UI让人工操作，AI直接通过browser-use自动化执行
+- 技能参数: { platform: "douyin|xiaohongshu|shipinhao", keywords: ["装修"], city: "北京" }
+- 执行过程通过RPA录制回放自动完成，不需要人工干预
+
 **并行工具调用 (重要!)**
 你可以在一条消息中同时发起多个独立的工具调用, 系统会自动并行执行。
 - 读多个文件 → 一条消息中同时发起多个 read_file 调用 (不要串行一个一个读)
