@@ -5,6 +5,7 @@
 import express from 'express';
 import cors from 'cors';
 import * as path from 'path';
+import * as fs from 'fs';
 import { createServer } from 'http';
 import { Server as IOServer } from 'socket.io';
 
@@ -15,6 +16,8 @@ import { createProfileRouter, setIndustryEngine } from './routes/profile.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createGovernorRouter } from './routes/governor.js';
 import { execSync } from 'child_process';
+import { validateCommand } from './safety/command-whitelist.js';
+import { authMiddleware } from './middleware/auth.js';
 
 // ===== CORS 配置 =====
 const CORS_ORIGINS = (process.env.AGENTAI_CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5176,http://127.0.0.1:5176,http://localhost:1420,http://127.0.0.1:1420,http://127.0.0.1,http://localhost,tauri://localhost').split(',').map(o => o.trim());
@@ -70,6 +73,8 @@ export function createApp(deps: AppDeps) {
     credentials: true,
   }));
   app.use(express.json({ limit: '50mb' }));
+  // 全局 token 认证（默认 disabled，通过 AGENTAI_AUTH_ENABLED=true 开启）
+  app.use(authMiddleware);
 
   // ===== 静态资源 =====
   app.use('/media', express.static(path.resolve(process.cwd(), '../../packages/agentai-skills/out')));
@@ -117,9 +122,14 @@ app.use(createGovernorRouter());
 
 // ===== 系统依赖检测 (SetupWizard 使用) =====
 app.get('/v1/system/check-dep', (req, res) => {
-  const { execSync: _unused } = { execSync }; // already imported at top
   const cmd = req.query.cmd as string;
   if (!cmd) return res.status(400).json({ error: 'cmd required' });
+
+  // 安全: 命令白名单校验
+  const validation = validateCommand(cmd);
+  if (!validation.ok) {
+    return res.status(400).json({ error: validation.reason });
+  }
 
   try {
     const output = execSync(cmd + ' --version 2>&1', { encoding: 'utf8', timeout: 5000 }).trim();
@@ -579,27 +589,31 @@ return { httpServer, io };
  * - 真定时反思 (cron dispatcher)
  */
 export function startBackgroundJobs(skillsDir: string) {
-  // 扫描并注册所有技能
+  // 使用新的SkillManager扫描并注册所有技能
   if (skillsDir && fs.existsSync(skillsDir)) {
-    import('./skill-orchestrator.js').then(({ getSkillOrchestrator }) => {
-      const orchestrator = getSkillOrchestrator();
-      const count = orchestrator.scanDirectory(skillsDir);
-      console.log(`[skills] 已扫描并注册 ${count} 个技能 from ${skillsDir}`);
+    import('./skill-manager.js').then(({ skillManager }) => {
+      // 扫描主目录
+      const count = skillManager.scanDirectory(skillsDir);
+      console.log(`[SkillManager] 已扫描并注册 ${count} 个技能 from ${skillsDir}`);
       
-      // 同时扫描装饰行业技能
+      // 扫描装饰行业技能
       const decorationDir = path.join(skillsDir, 'decoration');
       if (fs.existsSync(decorationDir)) {
-        const decoCount = orchestrator.scanDirectory(decorationDir);
-        console.log(`[skills] 已扫描 ${decoCount} 个装饰行业技能`);
+        const decoCount = skillManager.scanDirectory(decorationDir);
+        console.log(`[SkillManager] 已扫描 ${decoCount} 个装饰行业技能`);
       }
       
       // 扫描营销获客技能
       const marketingDir = path.join(skillsDir, 'marketing');
       if (fs.existsSync(marketingDir)) {
-        const marketingCount = orchestrator.scanDirectory(marketingDir);
-        console.log(`[skills] 已扫描 ${marketingCount} 个营销获客技能`);
+        const marketingCount = skillManager.scanDirectory(marketingDir);
+        console.log(`[SkillManager] 已扫描 ${marketingCount} 个营销获客技能`);
       }
-    }).catch((e: any) => console.warn('[skills] scan failed:', e?.message));
+      
+      // 打印统计
+      const stats = skillManager.getStats();
+      console.log(`[SkillManager] 总计: ${stats.total} 个技能`, stats.byCategory);
+    }).catch((e: any) => console.warn('[SkillManager] scan failed:', e?.message));
   }
 
   startEvolutionCleanupLoop();

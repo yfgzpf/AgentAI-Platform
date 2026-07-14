@@ -570,25 +570,30 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     const userName = userModel.get(this.opts.userId).identity.name || this.opts.userId || '用户';
     const keywords = extractKeywords(typeof userMessage === 'string' ? userMessage : '');
 
-    // === 0.5 技能自动检测和注入（解决AI不主动调用技能的问题）
+    // === 0.5 技能自动检测和强制调用（使用新的SkillManager）
     let skillInvocationBlock = '';
+    let forcedSkillMatch: any = null;
     try {
-      const { skillAutoInvoker } = await import('./skill-auto-invoker.js');
-      const skillMatch = skillAutoInvoker.analyzeIntent(typeof userMessage === 'string' ? userMessage : '');
-      if (skillMatch) {
-        skillInvocationBlock = skillAutoInvoker.generateInvocationPrompt(skillMatch);
-        console.log(`[loop] 🎯 检测到技能匹配: ${skillMatch.skillName} (置信度: ${(skillMatch.confidence * 100).toFixed(0)}%)`);
+      const { skillManager } = await import('./skill-manager.js');
+      const skillMatch = skillManager.matchIntent(typeof userMessage === 'string' ? userMessage : '');
+      
+      if (skillMatch && skillMatch.confidence >= 0.6) {
+        skillInvocationBlock = skillManager.generateInvocationPrompt(skillMatch);
+        console.log(`[loop] 🎯 检测到技能匹配: ${skillMatch.skill.name} (置信度: ${(skillMatch.confidence * 100).toFixed(0)}%)`);
         
-        // 高置信度时强制设置工具
-        if (skillAutoInvoker.shouldForceTrigger(skillMatch)) {
-          this._forceSkill = skillMatch.skillName;
+        // 高置信度时强制调用（>=0.8）
+        if (skillMatch.confidence >= 0.8) {
+          this._forceSkill = skillMatch.skill.name;
+          forcedSkillMatch = skillMatch;
+          console.log(`[loop] 🔒 强制技能调用: ${skillMatch.skill.name}`);
         }
       }
       
       // 注入可用技能列表
-      const availableSkillsPrompt = skillAutoInvoker.getAvailableSkillsPrompt();
-      if (availableSkillsPrompt) {
-        skillInvocationBlock += '\n\n' + availableSkillsPrompt;
+      const stats = skillManager.getStats();
+      if (stats.total > 0) {
+        const skillList = skillManager.list().slice(0, 10).map(s => `- ${s.name}: ${s.description}`).join('\n');
+        skillInvocationBlock += `\n\n【可用技能】\n${skillList}\n\n**重要**: 当用户需求匹配技能时，立即调用该技能完成！`;
       }
     } catch (e) {
       console.warn('[loop] 技能自动检测失败:', e);
@@ -2820,14 +2825,33 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           this.emit('meta:decision', { action: 'stop', confidence: metaOutput.decision.confidence, reason: metaOutput.decision.reasoning });
           break;
         }
-        // 元认知决策: ask_human → 立即执行追问，不延迟
+        // 元认知决策: ask_human → 阻塞等待用户回答（修复死代码问题）
         if (metaOutput.decision.action === 'ask_human') {
-          this.emit('meta:decision', { action: 'ask_human', question: metaOutput.decision.reasoning });
-          // 强制注入最高优先级追问指令
-          this.directives.add('meta_ask', `[SYSTEM] 信息不足，必须追问用户！\n原因: ${metaOutput.decision.reasoning}\n\n**立即执行**: 调用 ask_user 工具提问，禁止在内部反复思考而不执行。`, 'critical');
-          // 强制工具列表只保留ask_user，确保AI只能执行追问
-          this.context.forceTool = 'ask_user';
-          break; // 立即退出循环，让AI执行追问
+          const askId = `ask-${Date.now()}`;
+          const question = metaOutput.decision.reasoning || '请提供更多信息';
+
+          // 发送追问事件，前端显示追问卡片
+          this.emit('clarify:required', {
+            id: askId,
+            originalMessage: messageText,
+            questions: [{ question, type: 'text' }],
+            source: 'meta_cognitive'
+          });
+
+          // 阻塞等待用户回答（复用已有的 waitForClarification 机制）
+          const answers = await this.waitForClarification(askId, [{ question, type: 'text' }]);
+
+          // 用户回答后注入到上下文，继续执行
+          const userAnswer = answers[question] || answers['default'] || '';
+          if (userAnswer) {
+            this.context.appendOnlyLog.push({
+              role: 'user',
+              content: `[追问回答] ${userAnswer}`
+            });
+          }
+
+          // 继续循环处理用户回答，不 break
+          continue;
         }
         // 元认知决策: retry_with_pua → 延迟, 不在执行中施压
         if (metaOutput.decision.action === 'retry_with_pua' && (metaOutput as any).decision.puaPrompt) {
