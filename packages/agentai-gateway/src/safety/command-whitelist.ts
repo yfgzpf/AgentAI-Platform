@@ -23,7 +23,7 @@ export function validateCommand(
   if (!cmd || typeof cmd !== 'string') {
     return { ok: false, reason: 'Empty or invalid command' };
   }
-  const base = cmd.trim().split(/\s+/)[0] || '';
+  const base = cmd.trim().split(/\s+/)[0];
   if (!ALLOWED_COMMANDS.has(base)) {
     return { ok: false, reason: `Command '${base}' not in whitelist` };
   }
@@ -42,8 +42,7 @@ export function validateCommand(
   // 校验参数: 禁止危险的代码执行标志
   const tokens = cmd.trim().split(/\s+/);
   for (let i = 1; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (token && DANGEROUS_FLAGS.has(token)) {
+    if (DANGEROUS_FLAGS.has(tokens[i])) {
       return { ok: false, reason: `Dangerous flag '${tokens[i]}' not allowed` };
     }
   }
