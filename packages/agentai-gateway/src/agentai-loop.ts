@@ -31,6 +31,11 @@ import { recommendModel, getProModelKeyInfo, MODELS } from './model-classifier.j
 import { WorkflowOrchestrator, BUILTIN_WORKFLOWS } from './workflow-orchestrator.js';
 import { getIntentClarifier, Clarification, ResolvedIntent } from './meta/intent-clarifier.js';
 import { ProactiveSuggestionEngine } from './proactive-suggestion-engine.js';
+import { getOrCreateSnapshot, formatResumeContext, findResumableTasks, type TaskSnapshotManager } from './task-snapshot.js';
+import { buildIdeContext } from './ide-state.js';
+import { buildMemoryContext, initProjectMemory, readProjectMemory } from './project-memory.js';
+import { MemoryManager } from './memory-manager.js';
+import { recordCall } from './usage-stats.js';
 
 /* ═══════════ 审批白名单: 用户信任的命令模式 ═══════════
  * 当用户在审批卡片中点击"信任此命令"后，相同工具+路径模式将自动跳过审批
@@ -206,6 +211,14 @@ class SystemDirectiveManager {
     return top.content;
   }
 
+  /** v3.2 修复: 按 source 读取最新一条指令 (含延迟队列) */
+  get(source: string): string | null {
+    const inPending = this.pending.find(d => d.source === source);
+    if (inPending) return inPending.content;
+    const inDeferred = this.deferred.find(d => d.source === source);
+    return inDeferred?.content || null;
+  }
+
   /** 刷新延迟队列: 返回所有缓冲指令 (任务完成后调用) */
   flushDeferred(): PendingDirective[] {
     const result = [...this.deferred];
@@ -290,6 +303,7 @@ export interface LoopOptions {
   maxIterations: number;
   userId: string;
   workspace: string;
+  sessionId?: string;
   abortSignal?: AbortSignal;
   parallelMax?: number;
   reflectEvery?: number;
@@ -316,6 +330,8 @@ export interface LoopOptions {
   modelConfig?: { baseURL: string; modelName: string; provider: string };
   /** 用户当前在编辑器中打开的文件 (用于指代消解) */
   activeFile?: string;
+  /** 长任务快照 ID (跨会话恢复任务时由前端传入) */
+  taskId?: string;
 }
 
 /**
@@ -343,6 +359,8 @@ export class AgentAILoop extends EventEmitter {
 private _aborted = false;
 private _startupGitInjected = false;
 private _startupSessionInjected = false;
+private _hardStopNext = false;  // v3.1 死循环硬停标志: 下一轮 LLM 响应后立即退出
+private _hardStopCount = 0;     // v3.1 硬停次数: 超过 2 次直接 force break (防 AI 忽视指令)
 
   /** ═══ 代际计数器: 解决中断后竞态条件 ═══
    * 每次 run() 分配唯一 generation ID, abort() 记录被中断的 generation。
@@ -473,12 +491,35 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
    */
   waitForClarification(id: string, questions: any[], timeoutMs = 60_000): Promise<Record<string, string>> {
     return new Promise<Record<string, string>>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let settled = false;
+      const settle = (val: Record<string, string>) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (abortHandler) {
+          this.opts?.abortSignal?.removeEventListener('abort', abortHandler);
+        }
         this.pendingClarifications.delete(id);
+        resolve(val);
+      };
+      const timer = setTimeout(() => {
         console.warn(`[loop] clarification ${id} 超时, 继续执行`);
-        resolve({}); // 超时返回空答案，继续执行
+        settle({}); // 超时返回空答案，继续执行
       }, timeoutMs);
-      this.pendingClarifications.set(id, { resolve, reject, timer });
+      // 安全: 监听 abort 信号，会话被压制时立即结束等待
+      let abortHandler: (() => void) | null = null;
+      if (this.opts?.abortSignal) {
+        abortHandler = () => {
+          console.warn(`[loop] clarification ${id} aborted`);
+          settle({});
+        };
+        if (this.opts.abortSignal.aborted) {
+          settle({});
+          return;
+        }
+        this.opts.abortSignal.addEventListener('abort', abortHandler, { once: true });
+      }
+      this.pendingClarifications.set(id, { resolve: settle, reject, timer });
     });
   }
 
@@ -515,6 +556,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       maxIterations: opts.maxIterations ?? 90,
       userId: opts.userId,
       workspace: opts.workspace,
+      sessionId: opts.sessionId ?? '',  // v3.2 修复: Required<LoopOptions> 缺少此字段
       abortSignal: opts.abortSignal ?? new AbortController().signal,
       parallelMax: opts.parallelMax ?? 3,
       reflectEvery: opts.reflectEvery ?? 10,
@@ -530,6 +572,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       mode: opts.mode ?? 'auto',
       modelConfig: opts.modelConfig ?? { baseURL: '', modelName: '', provider: '' },
       activeFile: opts.activeFile ?? '',
+      taskId: opts.taskId ?? '',  // 长任务快照 ID (跨会话恢复)
       _autoResumed: false,
     };
 
@@ -684,6 +727,19 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       }
     }
 
+    // === 1.6 IDE 编辑器上下文 (对标 Cursor/Copilot 的编辑器感知) ===
+    const ideCtx = buildIdeContext();
+    if (ideCtx) {
+      systemMsgs.push({ role: 'system', content: ideCtx });
+    }
+
+    // === 1.7 项目记忆 (统一 MemoryManager, 合并 5→1) ===
+    const mm = MemoryManager.getInstance(this.opts.workspace || process.cwd());
+    const memCtx = await mm.buildContext();
+    if (memCtx) {
+      systemMsgs.push({ role: 'system', content: memCtx });
+    }
+
     // === 2. 用户上下文 (姓名 + 情绪 + 开发偏好 合并为一条) ===
     try {
       const ctxParts: string[] = [];
@@ -756,7 +812,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       if (ctxParts.length > 0) {
         systemMsgs.push({ role: 'system', content: `# 用户上下文\n${ctxParts.join('\n')}` });
       }
-    } catch (e: any) { /* user context optional */ }
+    } catch (e: any) { console.warn('[loop] user context optional failed:', e?.message || e); }
 
     // === 2.5 客户档案上下文 (B3: AI 对话时自动注入客户信息) ===
     try {
@@ -843,7 +899,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         // 注入 IndustryEngine 的 System Prompt 片段
         const frag = industryEngine.buildSystemPromptFragment();
         if (frag) systemMsgs.push({ role: 'system', content: frag });
-      } catch (e: any) { /* industry engine optional */ }
+      } catch (e: any) { console.warn('[loop] industry engine optional failed:', e?.message || e); }
       // 回退到环境变量
       if (!industryId) {
         industryId = process.env['AGENTAI_INDUSTRY'] || '';
@@ -893,10 +949,10 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             if (insightFrag) {
               systemMsgs.push({ role: 'system', content: insightFrag });
             }
-          } catch (e: any) { /* insight prompt optional */ }
+          } catch (e: any) { console.warn('[loop]', e?.message || e); }
         }
       }
-    } catch (e: any) { /* workspace context optional */ }
+    } catch (e: any) { console.warn('[loop]', e?.message || e); }
 
     // === 3. 用户模型 (Honcho 4维度) ===
     try {
@@ -904,7 +960,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       if (profile && !profile.includes('0,')) {
         systemMsgs.push({ role: 'system', content: profile });
       }
-    } catch (e: any) { /* user model optional */ }
+    } catch (e: any) { console.warn('[loop] user model optional:', e?.message || e); }
 
     // === 3.5 行业知识库检索 (RAG) ===
     try {
@@ -925,7 +981,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           }
         }
       }
-    } catch (e: any) { /* knowledge base optional */ }
+    } catch (e: any) { console.warn('[loop] knowledge base optional:', e?.message || e); }
 
     // === 4. 持久记忆注入 (智能排序: 行业加权 + 时效衰减) ===
     try {
@@ -946,7 +1002,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           content: `\n# Persistent Memory\n${memEntries.join('\n')}\n使用 recall_memory 查看详情, remember 保存, forget 删除。`,
         });
       }
-    } catch (e: any) { /* persistent memory optional */ }
+    } catch (e: any) { console.warn('[loop] persistent memory optional:', e?.message || e); }
 
     // === 4.5 自进化记忆 (已整合到 §1.1, 此处已废弃) ===
     // 进化记忆在 §1.1 统一召回并注入 evolutionSystemBlock，无需在此重复读取。
@@ -954,8 +1010,8 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
 
     // === 4.6 IDE 状态感知: 注入当前编辑器状态 ===
     try {
-      const { format_ide_context } = await import('./ide-state.js');
-      const ideCtx = format_ide_context();
+      const { buildIdeContext } = await import('./ide-state.js');  // v3.2 修复: 改用实际导出的函数
+      const ideCtx = buildIdeContext();
       if (ideCtx) {
         systemMsgs.push({ role: 'system', content: ideCtx });
       }
@@ -1056,7 +1112,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             if (mem) {
               systemMsgs.push({ role: 'system', content: `\n${mem}\n\n使用 \`read_file\` 查看完整规则。` });
             }
-          } catch (e: any) { /* sub-memory read optional */ }
+          } catch (e: any) { console.warn('[loop] sub-memory read optional:', e?.message || e); }
 
           // === 最近生成文件感知: 扫描工作区最近 24h 内创建/修改的产出文件 ===
           try {
@@ -1094,7 +1150,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             }
           } catch { /* recent files scan optional */ }
         }
-      } catch (e: any) { /* workspace context optional */ }
+      } catch (e: any) { console.warn('[loop]', e?.message || e); }
     }
 
     // === 6.3 项目规则文件自动加载/生成 (跨会话项目规范) ===
@@ -1110,7 +1166,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             content: `\n# 项目规则 (来自 .trae/rules/project_rules.md)\n${rules}`,
           });
         }
-      } catch (e: any) { /* project rules init optional */ }
+      } catch (e: any) { console.warn('[loop] project rules init optional:', e?.message || e); }
     }
 
     // === 6.5 自主能力 + 成本意识 ===
@@ -1196,7 +1252,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       if (prefs) {
         systemMsgs.push({ role: 'system', content: prefs });
       }
-    } catch (e: any) { /* RevertBridge preferences optional */ }
+    } catch (e: any) { console.warn('[loop] RevertBridge preferences optional:', e?.message || e); }
 
     // === 5. 用户传入的额外 system messages ===
     const userSystemMsgs = messages.filter(m => m.role === 'system');
@@ -1242,6 +1298,8 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     await this.ensureContext();
     this.iteration = 0;
     this.context.volatileScratch = '';
+    // 安全守护: H5 修复 — 每次 run() 重置 metaLoop，防止 stepCount 跨消息累积导致元认知失效
+    this.metaLoop = null;
 
     // ═══ 模型能力分层: 6维评分 → 自治等级 + 运行时参数适配 ═══
     // 核心理念: 不是所有模型都需要手把手管。根据模型元数据自动计算 6 维能力评分
@@ -1328,10 +1386,58 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10分钟无工具活动才超时 (慢 LLM 友好)
     const ABSOLUTE_MAX_MS = 60 * 60 * 1000; // 60分钟绝对上限
 
-    // 1. 用户消息进 append-only log (支持结构化 content, 含 image_url)
+    // v3.2 修复: 提前声明 messageText/messageContent, 供下面的 task-snapshot 块使用
+    // 之前 messageText 在 1426 才声明, 但 1390 就被使用 → TS 报错
     const messageContent: MessageContent = typeof userMessage === 'string' ? userMessage : userMessage.content;
     const messageText = typeof messageContent === 'string' ? messageContent
       : messageContent.find(b => b.type === 'text')?.text || '';
+
+    // ═══ 2026-07-15 新增: 长任务快照 (task-snapshot) ═══
+    // 每次新任务/新会话 → 初始化 task-snapshot, 用于跨会话恢复
+    // 任务超时/异常时自动持久化进度, 启动时可恢复
+    let taskSnap: TaskSnapshotManager | null = null;
+    const taskId = (this.opts as any).taskId || `task-${this.opts.sessionId || 'anon'}-${Date.now()}`;
+    try {
+      taskSnap = getOrCreateSnapshot(taskId, {
+        sessionId: this.opts.sessionId || 'unknown',
+        userId: this.opts.userId || 'anonymous',
+        workspace: this.opts.workspace || process.cwd(),
+        goal: messageText.slice(0, 500),
+      });
+      // 启动时检测可恢复任务 (仅在用户消息是非空且没有显式新任务时提示)
+      if (messageText && !messageText.startsWith('/') && this.iteration === 0) {
+        const resumable = findResumableTasks(this.opts.userId);
+        const mine = resumable.filter(t => t.userId === (this.opts.userId || 'anonymous'));
+        if (mine.length > 0) {
+          // 注入恢复提示 (不强制, 给 AI 决定是否提示用户)
+          const ctxSnaps = mine.slice(0, 3).map(t => formatResumeContext({
+            taskId: t.taskId,
+            sessionId: '',
+            userId: t.userId,
+            workspace: t.workspace,
+            goal: t.goal,
+            status: t.status,
+            currentStage: 'plan',
+            iteration: 0,
+            totalToolCalls: 0,
+            startedAt: t.createdAt,
+            lastUpdatedAt: t.lastUpdatedAt,
+            progress: { completedSteps: [], pendingSteps: [], keyDecisions: [] },
+            contextSummary: t.summary || '',
+            resumeHints: {},
+            filesTouched: [],
+            checkpoints: [],
+            recentErrors: [],
+          })).join('\n---\n');
+          this.directives.add('resume', `[SYSTEM] 检测到 ${mine.length} 个未完成任务:\n${ctxSnaps}\n请在回复开头提示用户选择: 1) 继续某任务 2) 开启新任务 (忽略此提示)`, 'low');
+        }
+      }
+    } catch (e) {
+      console.warn('[task-snapshot] init failed:', e);
+    }
+
+    // 1. 用户消息进 append-only log (支持结构化 content, 含 image_url)
+    // messageContent和messageText已在上面声明
     this.context.appendOnlyLog.push({ role: 'user', content: messageContent });
     this.emit('log:appended', { role: 'user', content: messageText });
 
@@ -1562,7 +1668,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
                 latency_ms: 0,
                 timestamp: new Date().toISOString(),
               });
-            } catch (e: any) { /* skill dispatch log optional */ }
+            } catch (e: any) { console.warn('[loop] skill dispatch log optional:', e?.message || e); }
           }
         }
         if (injected.length > 0) {
@@ -1572,7 +1678,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           });
         }
       }
-    } catch (e: any) { /* skill orchestrator optional */ }
+    } catch (e: any) { console.warn('[loop] skill orchestrator optional:', e?.message || e); }
 
     // 2.5 智能模型推荐 + 商用密钥主动检测
     let modelRecommendation: string | null = null;
@@ -1629,7 +1735,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           console.log(`[commercial-key] task needs pro model but no commercial keys configured, asking user`);
         }
       }
-    } catch (e: any) { /* model recommendation optional */ }
+    } catch (e: any) { console.warn('[loop] model recommendation optional:', e?.message || e); }
 
     // ═══ Layer 5: 意图深挖 (Goal Engine) ═══
     // 不只看用户字面说了什么, 更要分析用户真正想要什么
@@ -1739,6 +1845,14 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       this.iteration++;
       this.emit('loop:iteration', { n: this.iteration });
 
+      // ═══ v3.1 死循环硬停执行: 上轮检测到死循环, 注入 SYSTEM 后立即退出 ═══
+      if (this._hardStopNext) {
+        console.log(`[loop] 🛑 硬停触发: 在 iteration ${this.iteration} 退出循环 (避免 AI 死循环)`);
+        this._hardStopNext = false;
+        this.directives.add('dead_loop_done', '[SYSTEM] 已根据死循环保护策略终止循环。请直接给出最终回答。', 'high');
+        // 不再 continue, 走完当前轮后正常结束
+      }
+
       // ═══ 2026-06-24 新增: 透明进度推送 ═══
       // 每轮迭代发射进度事件
       const progressPercent = Math.min(100, Math.round((this.iteration / this.opts.maxIterations) * 100));
@@ -1788,6 +1902,17 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         const reason = totalTime > ABSOLUTE_MAX_MS ? '60分钟绝对上限' : '10分钟无工具活动';
         // 不强制结束 — 让 AI 自己决定是总结还是继续
         this.directives.add('timeout', `[SYSTEM] 已运行 ${Math.round(totalTime / 60000)} 分钟 (${reason})。如果长任务仍在执行中, 请检查进度后继续; 如果确实无法继续, 请总结当前进展。`, 'high');
+        // ═══ 2026-07-15: 超时前强制持久化 task-snapshot (供跨会话恢复) ═══
+        if (taskSnap) {
+          try {
+            taskSnap.setResumeHints({
+              nextAction: this.directives.get('timeout') || '需要继续或总结',
+              warnings: ['任务超时中断, 恢复时需要评估当前进度'],
+            });
+            taskSnap?.flush(); // 强制同步写盘
+            taskSnap?.appendLog('warn', 'timeout-reached', { reason, iteration: this.iteration, totalMs: totalTime });
+          } catch (e) { /* best-effort */ }
+        }
         // 再给 2 轮机会让 AI 决定
         if (this.iteration > this.opts.maxIterations - 2) break;
       }
@@ -1961,7 +2086,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           // 叠加 tool-groups 按需过滤: 根据任务类型只保留相关工具组
           const relevantToolNames = new Set(getRelevantTools(this._taskType, this._userIndustry, this.registry));
           // 始终保留核心工具 (ask_user, plan_task 等决策工具任何任务都需要)
-          const CORE_ALWAYS = new Set(['ask_user', 'plan_task', 'update_plan', 'remember', 'recall_memory', 'evolve_prompt', 'create_tool', 'spawn_subagent', 'explore_project', 'generate_image', 'generate_video', 'query_video', 'generate_diagram', 'discover_or_create_skill', 'skill_forge']);
+          const CORE_ALWAYS = new Set(['ask_user', 'plan_task', 'update_plan', 'remember', 'recall_memory', 'evolve_prompt', 'create_tool', 'spawn_subagent', 'explore_project', 'generate_image', 'generate_video', 'query_video', 'generate_diagram', 'discover_or_create_skill', 'skill_forge', 'capture_screen', 'capture_and_read', 'ocr_image', 'list_windows', 'window_control']);
           const beforeGroup = requestTools.length;
           requestTools = requestTools.filter((t: any) => {
             const name = t.name || t.function?.name || '';
@@ -2355,7 +2480,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
               taskChain.advance('solve', { output: '开始执行工具调用' });
               this.emit('plan:stage', { chainId: taskChain.chainId, stage: 'solve', status: 'running' });
             }
-          } catch (e: any) { /* TaskChain advance optional */ }
+          } catch (e: any) { console.warn('[loop] TaskChain advance optional:', e?.message || e); }
         }
         // 子Agent 检测: spawn_subagent 调用 → 创建独立 AgentAILoop 执行
         // 模型策略: 免费模型(agentai/zhipu)禁用子智能体并行(配额有限), 商业模型以本体为主
@@ -2417,6 +2542,41 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         
         const rawResults = await this.dispatchToolCalls(res.toolCalls);
         lastToolActivityAt = Date.now(); // 工具执行完成, 重置超时计时器
+
+        // ═══ 2026-07-15: 用量统计 (工具调用记录) ═══
+        try {
+          for (const r of rawResults) {
+            recordCall(this.opts.workspace || process.cwd(), {
+              timestamp: Date.now(),
+              tool: r.name,
+              success: r.output && !r.output.startsWith('Error:'),
+              durationMs: 0,
+              userId: this.opts.userId,
+            });
+          }
+        } catch { /* 不影响主流程 */ }
+
+        // ═══ 2026-07-15: 更新 task-snapshot (工具调用进度) ═══
+        if (taskSnap) {
+          try {
+            for (const r of rawResults) {
+              const tc = res.toolCalls?.find((t: any) => t.id === r.id);
+              const isOk = r.output && !r.output.startsWith('Error:') && !r.output.startsWith('[ERROR]');
+              taskSnap.completeStep(
+                `${r.name}#${(tc?.id || '').slice(-4)}`,
+                isOk ? 'success' : (r.output?.slice(0, 100) || 'failed'),
+                [r.name],
+              );
+              if (!isOk) taskSnap.recordError(r.name, r.output?.slice(0, 300) || 'unknown error');
+              // 记录文件接触
+              const args = tc?.args || {};
+              if (args.file_path || args.path) {
+                taskSnap.recordFileTouch(args.file_path || args.path, 'modified');
+              }
+            }
+            taskSnap.bumpIteration();
+          } catch (e) { /* best-effort */ }
+        }
         
         // ═══ 2026-06-24 新增: 透明进度推送 ═══
         // 工具调用完成后发射进度事件
@@ -2476,6 +2636,49 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           });
           this.emit('log:appended', { role: 'tool', content: r.output });
           this.emit('tool:result', { callId: r.id, name: r.name, result: r.output, ok: !(r.output && r.output.startsWith('Error:')), durationMs: 0 }); // 前端可监听
+
+          // ═══ v3.1 实时会话摘要: 关键工具产生内容后, 立即更新 last-session.json ═══
+          // 解决 "第二轮 AI 不记得上轮做了什么" 问题
+          // 触发场景: generate_image / file_write / create_chart / send_message 等
+          if (!isToolFailed) {
+            const contentProducingTools = new Set([
+              'generate_image', 'file_write', 'edit_file', 'create_file',
+              'create_chart', 'write_file', 'write_text_file', 'append_file',
+              'send_email', 'create_presentation', 'create_document',
+              'image_generation', 'write_to_file',
+            ]);
+            if (contentProducingTools.has(r.name) && this.opts.workspace) {
+              try {
+                const { getPersistentMemory } = await import('./persistent-memory.js');
+                const pm = getPersistentMemory();
+                // 从 appendOnlyLog 提取已完成的工具调用
+                const recentTools = this.context.appendOnlyLog
+                  .filter((m: any) => m.role === 'tool' && !String(m.content || '').startsWith('[ERROR]'))
+                  .map((m: any) => m.name)
+                  .filter((n: string, i: number, arr: string[]) => arr.indexOf(n) === i)
+                  .slice(0, 10);
+                // 从最近 assistant 消息提取用户目标
+                const lastAssistant = [...this.context.appendOnlyLog]
+                  .reverse()
+                  .find((m: any) => m.role === 'assistant' && typeof m.content === 'string');
+                // 从最近 user 消息提取目标
+                const lastUser = [...this.context.appendOnlyLog]
+                  .reverse()
+                  .find((m: any) => m.role === 'user' && typeof m.content === 'string');
+                const userGoal = (lastUser?.content || '').slice(0, 200);
+                const summary = (lastAssistant?.content || '').slice(0, 500);
+                if (userGoal || summary) {
+                  pm.saveSessionSummary(this.opts.workspace, {
+                    userGoal,
+                    toolsUsed: recentTools,
+                    filesModified: [], // 实时模式先不抓, 最后再总结
+                    summary: `[实时] 最近工具: ${recentTools.slice(0, 5).join(', ')} | ${summary}`,
+                    taskType: detectTaskType(userGoal),
+                  });
+                }
+              } catch { /* live save optional */ }
+            }
+          }
 
           // ═══ 系统管控员: 记录工具调用结果到动态能力矩阵 ═══
           try {
@@ -2744,29 +2947,94 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           break;
         }
 
-        // ═══ 操作感知: 每3轮注入一次, 而非每轮 ═══
-        // 避免每轮注入噪音, 仅在关键节点提醒
-        if (this.iteration >= 2 && this.iteration % 3 === 0) {
+        // ═══ 工具调用检测: 提取工具消息 (v3.1 修复作用域 bug) ═══
+        // 之前 toolMsgs 在 if 块内定义, 出块后 undefined, 导致 ReferenceError
+        // v3.2 防御: 整个块包 try-catch, 即使再有变量作用域问题也不影响主循环
+        try {
           const toolMsgs = this.context.appendOnlyLog.filter(m => m.role === 'tool');
-          if (toolMsgs.length >= 3) {
-            const toolSummary = toolMsgs.slice(-8).map(m => {
-              const name = (m as any).name || 'unknown';
-              const content = typeof m.content === 'string' ? m.content.slice(0, 40) : '';
-              const ok = !(typeof m.content === 'string' && m.content.startsWith('[ERROR]'));
-              return `${ok ? '✓' : '✗'} ${name}: ${content}`;
-            }).join('\n');
-            // 检测重复操作
-            const toolCounts = new Map<string, number>();
-            for (const m of toolMsgs) {
-              const name = (m as any).name || 'unknown';
-              toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
+          // ═══ 操作感知: 每3轮注入一次, 而非每轮 ═══
+          // 避免每轮注入噪音, 仅在关键节点提醒
+          if (this.iteration >= 2 && this.iteration % 3 === 0) {
+            if (toolMsgs.length >= 3) {
+              const toolSummary = toolMsgs.slice(-8).map(m => {
+                const name = (m as any).name || 'unknown';
+                const content = typeof m.content === 'string' ? m.content.slice(0, 40) : '';
+                const ok = !(typeof m.content === 'string' && m.content.startsWith('[ERROR]'));
+                return `${ok ? '✓' : '✗'} ${name}: ${content}`;
+              }).join('\n');
+              // 检测重复操作
+              const toolCounts = new Map<string, number>();
+              for (const m of toolMsgs) {
+                const name = (m as any).name || 'unknown';
+                toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
+              }
+              const repeated = [...toolCounts.entries()].filter(([_, c]) => c >= 3);
+              if (repeated.length > 0) {
+                this.directives.add('op_awareness', `[SYSTEM] 重复操作: ${repeated.map(([n, c]) => `${n}(${c}次)`).join(', ')} — 如果已完成请直接总结, 不要重复执行。`, 'high');
+              }
+              // 操作感知只在有重复时注入, 不每轮注入摘要
             }
-            const repeated = [...toolCounts.entries()].filter(([_, c]) => c >= 3);
-            if (repeated.length > 0) {
-              this.directives.add('op_awareness', `[SYSTEM] 重复操作: ${repeated.map(([n, c]) => `${n}(${c}次)`).join(', ')} — 如果已完成请直接总结, 不要重复执行。`, 'high');
-            }
-            // 操作感知只在有重复时注入, 不每轮注入摘要
           }
+
+          // ═══ v3.1 死循环硬停: 连续 3 次相同工具 + 相同参数 + 相似结果 → 强制退出 ═══
+          // 解决 AI 死循环: web_search 反复调用 / browser_click 反复失败等
+          // 关键场景: 工具持续返回低质量/错误/相似结果, AI 不换思路
+          if (toolMsgs.length >= 3) {
+            const last3 = toolMsgs.slice(-3);
+            const sig = (m: any) => {
+              const name = m.name || 'unknown';
+              const args = typeof m.content === 'string' ? m.content.slice(0, 60) : '';
+              return `${name}::${args}`;
+            };
+            const sigs = last3.map(sig);
+            const allSame = sigs[0] === sigs[1] && sigs[1] === sigs[2];
+            if (allSame) {
+              const repeatName = (last3[0] as any).name || 'unknown';
+              const errResults = last3.filter(m => typeof m.content === 'string' && (m.content.startsWith('[ERROR]') || m.content.includes('未启动') || m.content.includes('失败')));
+              const isErrorLoop = errResults.length >= 2;
+
+            console.warn(`[loop] 🛑 死循环硬停: ${repeatName} 连续 3 次返回相同/错误结果, 强制终止`);
+            taskSnap?.appendLog('warn', 'dead-loop-hard-stop', { tool: repeatName, signatures: sigs, errLoop: isErrorLoop });
+
+            // 注入强引导 + 硬停
+            this.directives.add('dead_loop_stop',
+              `[SYSTEM] ⚠️ 工具 "${repeatName}" 连续 3 次返回相同结果${isErrorLoop ? '且包含错误' : ''}。
+不要再调用任何工具！请立即:
+1) 总结目前已知的信息
+2) 解释为什么这个工具没工作${isErrorLoop ? '（很可能是浏览器/服务未启动，提示用户检查）' : ''}
+3) 给出基于现有信息的最终答案`,
+              'high'
+            );
+
+            // 标记硬停, 下一轮注入 SYSTEM 后立即退出
+            this._hardStopNext = true;
+            this._hardStopCount++;
+            // 如果已经硬停过 2 次, AI 仍在忽略 → 强制 force break
+            if (this._hardStopCount >= 2) {
+              console.warn(`[loop] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break`);
+              taskSnap?.appendLog('warn', 'dead-loop-force-break', { tool: repeatName, hardStopCount: this._hardStopCount });
+              this.directives.add('force_break',
+                `[SYSTEM] ⚠️ 硬停失败, 强制退出循环。最终回答基于已知信息。`,
+                'critical'
+              );
+              lastResponse = {
+                content: this.context.appendOnlyLog
+                  .filter(m => m.role === 'tool')
+                  .slice(-3)
+                  .map(m => typeof m.content === 'string' ? m.content.slice(0, 200) : '')
+                  .join('\n---\n') || `[已强制退出循环] 工具 ${repeatName} 连续返回相同结果。`,
+                provider: 'forced' as any,
+                usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+                durationMs: 0,  // v3.2 修复: ChatResponse 要求此字段
+              };
+              break;  // 直接跳出整个 while 循环
+            }
+            continue;
+          }
+          }  // 关闭 if (toolMsgs.length >= 3) — v3.2 修复漏闭合
+        } catch (loopDetectErr: any) {
+          // v3.2 防御: 即使死循环检测内部出错, 也不影响主循环
+          console.warn('[loop] ⚠️ 死循环检测块异常 (已吞掉, 不影响主流程):', loopDetectErr?.message);
         }
 
         continue;
@@ -2863,6 +3131,8 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         if (metaOutput.decision.action === 'continue' || metaOutput.decision.action === 'switch_strategy') {
           this.emit('meta:decision', { action: metaOutput.decision.action, strategy: metaOutput.strategy.name, confidence: metaOutput.confidence.overall });
         }
+        // 安全守护: H4 修复 — 记录 meta 决策，confidence 评估时会读这个标志避免冲突
+        (this as any)._lastMetaDecision = metaOutput.decision.action;
       } catch (metaErr: any) {
         // 元认知模块不可用时，降级到硬编码规则，不影响主流程
         console.warn('[meta-cognitive] fallback to hardcoded rules:', metaErr?.message);
@@ -2876,7 +3146,10 @@ if (this._capabilityTier !== 'autonomous') {
         // ═══ 跳过条件: 简单问候/闲聊不需要置信度检查 ═══
       const isGreetingChat = /^(你好|嗨|hi|hello|好的|谢谢|没问题|ok|嗯|对|是|不|行|可以|在吗|你在|在不在|在的在的|怎么样)/i.test(messageText.trim())
         || messageText.trim().length < 15;
-      if (!isGreetingChat && !isSimpleChat) {
+      // 安全守护: H4 修复 — 如果 meta 已决策 stop/ask_human/retry_with_pua，confidence 不再注入 directive（避免冲突指令）
+      const metaHasDecided = (this as any)._lastMetaDecision &&
+        ['stop', 'ask_human', 'retry_with_pua'].includes((this as any)._lastMetaDecision);
+      if (!isGreetingChat && !isSimpleChat && !metaHasDecided) {
       try {
         const { ConfidenceEstimator } = await import('./meta/confidence-estimator.js');
         const estimator = new ConfidenceEstimator();
@@ -3233,6 +3506,16 @@ if (this._capabilityTier !== 'autonomous') {
 
     this.emit('loop:done', { iterations: this.iteration, response: lastResponse });
 
+    // ═══ 2026-07-15: 任务完成/失败时更新 task-snapshot ═══
+    if (taskSnap) {
+      try {
+        taskSnap.setStage('done');
+        taskSnap.setContextSummary(lastResponse.content?.slice(0, 500) || '');
+        taskSnap?.complete(lastResponse.content?.slice(0, 500) || '任务完成');
+        taskSnap?.appendLog('info', 'task-completed-success', { iteration: this.iteration, durationMs: Date.now() - startedAt });
+      } catch (e) { /* best-effort */ }
+    }
+
     // ============== 系统管控员: 记录 loop 完成到动态能力矩阵 ==============
     try {
       const { getTracker } = await import('./governor/runtime-capability-tracker.js');
@@ -3278,7 +3561,7 @@ if (this._capabilityTier !== 'autonomous') {
       if (decisions.length > 0) {
         console.log(`[evolution] ${decisions.length} evolution decisions made`);
       }
-    } catch (e: any) { /* evolution optional */ }
+    } catch (e: any) { console.warn('[loop] evolution optional:', e?.message || e); }
 
     // ============== 行业洞察自动提取 (授人以渔: 让AI自主积累行业知识) ==============
     try {
@@ -3289,7 +3572,7 @@ if (this._capabilityTier !== 'autonomous') {
         console.log(`[insight] extracted: [${insight.category}] ${insight.content.slice(0, 60)}... (industry: ${insight.industryName})`);
         this.emit('insight:extracted', insight);
       }
-    } catch (e: any) { /* insight extraction optional */ }
+    } catch (e: any) { console.warn('[loop] insight extraction optional:', e?.message || e); }
     
     // ============== 2026-06-24 新增: 临时文件自动清理 ==============
     // 任务完成后，自动清理AI创建的临时文件（测试脚本、临时文件等）
@@ -3431,7 +3714,7 @@ if (this._capabilityTier !== 'autonomous') {
           if (promptFragment.trim()) systemPromptOverride = promptFragment;
         }
       }
-    } catch (e) { /* distilled patterns optional */ }
+    } catch (e) { console.warn('[loop] distilled patterns optional:', (e as any)?.message || e); }
 
     // ═══ 2026-06-26 新增: Model Distiller 自动蒸馏 ═══
     // 每次 loop 结束后，异步提取成功模式 → 固化经验
@@ -3598,6 +3881,10 @@ if (this._capabilityTier !== 'autonomous') {
       { pattern: /视频|video|动画|短片/i, tools: ['generate_video', 'query_video'] },
       // 图表
       { pattern: /图表|流程|架构|diagram|chart/i, tools: ['generate_diagram'] },
+      // 屏幕视觉 (新增 — AI 自己能看)
+      { pattern: /截屏|截图|看屏幕|屏幕上|看到|screen.*shot|capture/i, tools: ['capture_screen', 'capture_and_read', 'ocr_image'] },
+      // 窗口控制
+      { pattern: /窗口|最小化|最大化|置顶|window/i, tools: ['list_windows', 'window_control'] },
       // 记忆
       { pattern: /记忆|记住|remember|recall|偏好/i, tools: ['remember', 'recall_memory', 'forget'] },
       // 任务规划

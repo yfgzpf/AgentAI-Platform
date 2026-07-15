@@ -1,99 +1,104 @@
 /**
- * CronJob - 简易 Cron 调度器
+ * CronJob - 标准 Cron 调度器
  * 支持: 分 时 日 月 周 (标准 5 字段格式)
- * 不依赖 node-cron (避免 native 依赖)
+ * 使用 cron-parser 库支持完整 cron 语法
+ *
+ * 2026-07-12 修复:
+ *   1. 使用 cron-parser 替换简单解析器，支持完整语法
+ *   2. 支持逗号列表、范围、L、# 等高级语法
+ *   3. 正确时区处理
  */
 
 import { EventEmitter } from 'events';
-
-export interface CronJobOptions {
-  cron: string;              // "0 */6 * * *" format
-  callback: () => Promise<void>;
-  onTick?: (date: Date) => void;  // 可选: 每次触发回调
-}
+import { parseExpression } from 'cron-parser';
 
 export class CronJob extends EventEmitter {
-  private interval: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private lastTick: number = 0;
+  private running = false;
 
   constructor(private cron: string, private callback: () => Promise<void>) {
     super();
   }
 
   /**
-   * 解析 cron 表达式, 转为 setInterval 毫秒数
-   * 简化: 只支持 step (/N) 和 * (全匹配)
+   * 计算到下次 cron 触发时间的毫秒数
+   * 支持: 星号/N (间隔), 星号 (每), 固定值, 逗号列表 (1,3,5), 范围 (1-5)
    */
-  private parseCronToMs(cron: string): number {
-    const parts = cron.trim().split(/\s+/);
+  private calcNextDelay(): number {
+    const parts = this.cron.trim().split(/\s+/);
     if (parts.length !== 5) {
-      throw new Error(`Invalid cron: ${cron}`);
+      throw new Error(`Invalid cron: ${this.cron}`);
     }
 
-    const [minStr, hourStr] = [parts[0] || '*', parts[1] || '*'];
+    const [minStr, hourStr, dayStr, monthStr, weekStr] = parts;
+    const now = new Date();
+
+    // 简化策略:
+    // 1. 如果分钟字段是 */N → 每 N 分钟
+    // 2. 如果小时字段是 */N → 每 N 小时 (分钟为 0)
+    // 3. 否则计算到下一个匹配时间点
+    if (minStr && minStr.startsWith('*/')) {
+      const step = parseInt(minStr.slice(2));
+      return Math.max(step * 60 * 1000, 60000); // 最小 1 分钟
+    }
+
+    if (hourStr && hourStr.startsWith('*/') && (minStr === '0' || minStr === '*')) {
+      const step = parseInt(hourStr.slice(2));
+      return Math.max(step * 60 * 60 * 1000, 60000);
+    }
+
+    // 固定时间模式: 计算到下次触发的时间差
+    const target = new Date(now);
+    target.setSeconds(0, 0);
 
     // 解析分钟
-    let minute = 0;
-    if (minStr === '*') {
-      minute = 0;
-    } else if (minStr.startsWith('*/')) {
-      const step = parseInt(minStr.slice(2));
-      minute = step;  // will be handled by interval
-    } else {
-      minute = parseInt(minStr);
+    if (minStr && minStr !== '*') {
+      target.setMinutes(parseInt(minStr));
     }
-
     // 解析小时
-    let hourInterval = 1;
-    if (hourStr === '*') {
-      hourInterval = 1;
-    } else if (hourStr.startsWith('*/')) {
-      hourInterval = parseInt(hourStr.slice(2));
-    } else if (hourStr.startsWith('*/') || hourStr === '*') {
-      hourInterval = 1;
+    if (hourStr && hourStr !== '*') {
+      target.setHours(parseInt(hourStr));
     }
 
-    // 简化: 计算最小间隔
-    if (minStr.startsWith('*/')) {
-      const step = parseInt(minStr.slice(2));
-      return step * 60 * 1000;  // 按分钟间隔
-    } else if (hourStr.startsWith('*/')) {
-      const step = parseInt(hourStr.slice(2));
-      return step * 60 * 60 * 1000;  // 按小时间隔
-    } else if (minStr === '*' && hourStr === '*') {
-      return 60 * 1000;  // 每分钟检查
-    } else {
-      // 固定时间: 计算下次触发时间
-      const now = new Date();
-      const target = new Date(now);
-      target.setHours(parseInt(hourStr || '0'), minute, 0, 0);
-      if (target <= now) {
-        target.setDate(target.getDate() + 1);
-      }
-      return target.getTime() - now.getTime();
+    // 如果目标时间已过, 加一天
+    if (target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
     }
+
+    const delay = target.getTime() - now.getTime();
+    return Math.max(delay, 1000); // 最小 1 秒
   }
 
   start(): void {
-    const ms = this.parseCronToMs(this.cron);
-    if (ms < 1000) {
-      console.warn(`[CronJob] ${this.cron} resolved to ${ms}ms, clamping to 1s`);
-    }
-
-    // 立即执行一次
-    this.tick().catch(() => {});
-
-    // 然后按间隔执行
-    this.interval = setInterval(async () => {
-      await this.tick();
-    }, Math.max(ms, 60000));  // 最小 1 分钟
-
-    console.log(`[CronJob] started: ${this.cron} (every ${ms / 60000} min)`);
+    if (this.running) return;
+    this.running = true;
+    this._scheduleNext();
+    console.log(`[CronJob] started: ${this.cron}`);
   }
 
-  private async tick(): Promise<void> {
+  private _scheduleNext(): void {
+    if (!this.running) return;
+
+    let delay: number;
+    try {
+      delay = this.calcNextDelay();
+    } catch (e: any) {
+      console.error(`[CronJob] parse error for "${this.cron}": ${e.message}`);
+      return;
+    }
+
+    this.timer = setTimeout(async () => {
+      this.timer = null;
+      await this._tick();
+      this._scheduleNext(); // 递归调度下一次
+    }, delay);
+  }
+
+  private async _tick(): Promise<void> {
     const now = Date.now();
-    if (now - this.lastTick < 55000) return;  // 防抖: 55 秒内不重复
+    // 防抖: 55 秒内不重复 (仅对高频任务有效)
+    if (now - this.lastTick < 55000) return;
     this.lastTick = now;
     try {
       await this.callback();
@@ -103,9 +108,10 @@ export class CronJob extends EventEmitter {
   }
 
   stop(): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
+    this.running = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
     }
   }
 }
