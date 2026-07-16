@@ -47,7 +47,6 @@ const SandboxRulesEditor = lazy(() => import('./components/SandboxRulesEditor').
 const KnowledgeGraphPanel = lazy(() => import('./components/knowledge/KnowledgeGraphPanel').then(m => ({ default: m.default })));
 import { RightPanel } from './components/RightPanel';
 import { SessionSidebar } from './components/SessionSidebar';
-import { SessionSidebarEnhanced } from './components/SessionSidebarEnhanced';
 import { GuideModal } from './components/GuideModal';
 import { StatusBar } from './components/StatusBar';
 import { Onboarding } from './components/Onboarding';
@@ -698,10 +697,10 @@ export const App: React.FC = () => {
 
         {/* ═══ 3. 主区: 三栏 ═══ */}
         <div className="app-main fade-in" key={page /* 切页时重启动画 */}>
-          {/* Left: 会话侧栏 (仅 chat) - 使用增强版 */}
+          {/* Left: 会话侧栏 (仅 chat) */}
           {showSessionSidebar && (
             <div style={{ width: 260, borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', flexShrink: 0 }}>
-              <SessionSidebarEnhanced onNewChat={() => { clearMessages(); createSession('新对话'); }} />
+              <SessionSidebar onGuideClick={() => setGuideVisible(true)} />
             </div>
           )}
 
