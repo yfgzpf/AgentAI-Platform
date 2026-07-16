@@ -1,22 +1,25 @@
 // @ts-nocheck
 // ===== 批量工具定义和处理器 =====
 /**
- * ⚠️ 工具系统重构说明 (2026-07-13)
+ * ⚠️ 工具系统说明 (2026-07-17)
  * ----------------------------------------------------------------
  * 此文件包含 53 个内置工具的定义 (EXTRA_TOOLS) 和实现 (EXTRA_HANDLERS)。
- * 通过 `src/index.ts:125-138` 注册到 `ToolRegistry`。
- *
- * 问题：
- *  - 全文件禁用类型检查（@ts-nocheck），潜在类型错误未被发现
- *  - 与新系统 `tool-registry.ts` 存在并行/重复
- *
- * 未来重构方向（不在本次范围）：
- *  - 逐个工具迁移到 `tool-registry.ts`，启用类型检查
- *  - 拆分大文件为 `tools/*.ts`，按域分组
- *
- * 安全守护：
- *  - 本次未修改任何业务逻辑
- *  - 仅添加本说明，不影响 tsc 编译结果
+ * 
+ * 【当前状态】
+ *  - 全文件禁用类型检查（@ts-nocheck），这是已知技术债务
+ *  - 功能完整可用，但缺乏类型保护
+ *  - 修改需谨慎，避免引入新bug
+ * 
+ * 【修改原则】
+ *  - ✅ 可以添加新工具（复制现有模式）
+ *  - ✅ 可以修复严重bug（需完整测试）
+ *  - ❌ 不要大规模重构（风险过高）
+ *  - ❌ 不要移除@ts-nocheck（除非完整测试覆盖）
+ * 
+ * 【安全提示】
+ *  - 此文件为遗留核心代码，稳定性优先
+ *  - 任何修改建议先创建分支，充分测试后再合并
+ *  - 生产环境问题请立即回滚到稳定版本
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -3521,7 +3524,11 @@ Write-Output 'OK'`;
     } catch (e: any) { return { success: false, output: `run_code error: ${e.message}` }; }
   },
 
-  // ====== 技能自创建 ======
+  // ====== 技能辅助创建 ======
+  // ⚠️ 重要说明: 此功能为辅助工具，非全自动代码生成
+  // - 生成SKILL.md描述文件和基础代码框架
+  // - 生成的代码为占位符，需要开发者完善实现
+  // - 技能需要注册到系统后才能使用
   discover_or_create_skill: async (args: any, ctx?: any) => {
     try {
       const { name, description, category = 'code', code, parameters } = args;
@@ -3554,7 +3561,46 @@ Write-Output 'OK'`;
       fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(skillMeta, null, 2), 'utf-8');
 
       // 写入实现代码
-      const implCode = code || `// Auto-generated skill: ${name}\n// ${description}\nmodule.exports = async function(args) {\n  // TODO: 实现技能逻辑\n  return { success: true, output: 'Skill ${name} executed with: ' + JSON.stringify(args) };\n};`;
+      let implCode: string;
+      
+      if (code) {
+        // 用户提供了代码
+        implCode = code;
+      } else {
+        // 使用AI生成代码
+        try {
+          const { getSkillCodeGenerator } = await import('./skill-code-generator.js');
+          const { getAgentAIRouter } = await import('./llm-router.js');
+          const router = getAgentAIRouter();
+          const generator = getSkillCodeGenerator(router);
+          
+          const result = await generator.generate({
+            name,
+            description,
+            category,
+            parameters: skillMeta.parameters,
+          });
+          
+          if (result.success) {
+            // 验证生成的代码
+            const validation = await generator.validate(result.code);
+            if (validation.valid) {
+              implCode = result.code;
+              console.log(`[create_skill] AI生成代码成功: ${name}`);
+            } else {
+              console.warn(`[create_skill] 代码验证失败: ${validation.error}，使用占位符`);
+              implCode = `// Auto-generated skill: ${name}\n// ${description}\n// ⚠️ AI代码生成失败，使用占位符\nmodule.exports = async function(args) {\n  return { success: false, output: '技能代码生成失败，请手动实现' };\n};`;
+            }
+          } else {
+            console.warn(`[create_skill] AI代码生成失败: ${result.error}`);
+            implCode = `// Auto-generated skill: ${name}\n// ${description}\nmodule.exports = async function(args) {\n  return { success: false, output: '技能代码生成失败: ${result.error}' };\n};`;
+          }
+        } catch (e: any) {
+          console.warn(`[create_skill] AI代码生成异常: ${e.message}`);
+          implCode = `// Auto-generated skill: ${name}\n// ${description}\nmodule.exports = async function(args) {\n  return { success: false, output: '技能代码生成异常' };\n};`;
+        }
+      }
+      
       fs.writeFileSync(path.join(skillDir, 'index.js'), implCode, 'utf-8');
 
       // 3. 注册到 skillOrchestrator

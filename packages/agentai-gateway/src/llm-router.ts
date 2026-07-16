@@ -1657,3 +1657,16 @@ const FREE_POOL = new Set(['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', '
   // isCircuitOpen() 保留在第 736 行
   // 类在此关闭
 }
+
+// 单例实例
+let agentAIRouterInstance: AgentAIRouter | null = null;
+
+/**
+ * 获取AgentAIRouter单例
+ */
+export function getAgentAIRouter(): AgentAIRouter {
+  if (!agentAIRouterInstance) {
+    agentAIRouterInstance = new AgentAIRouter();
+  }
+  return agentAIRouterInstance;
+}
