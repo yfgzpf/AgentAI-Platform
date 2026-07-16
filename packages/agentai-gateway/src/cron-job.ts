@@ -23,51 +23,59 @@ export class CronJob extends EventEmitter {
 
   /**
    * 计算到下次 cron 触发时间的毫秒数
-   * 支持: 星号/N (间隔), 星号 (每), 固定值, 逗号列表 (1,3,5), 范围 (1-5)
+   * 使用 cron-parser 库支持完整 cron 语法
    */
   private calcNextDelay(): number {
+    try {
+      // 使用标准 cron-parser 库
+      const interval = parseExpression(this.cron, {
+        currentDate: new Date(),
+      });
+      const next = interval.next();
+      const delay = next.getTime() - Date.now();
+      return Math.max(delay, 1000); // 最小 1 秒
+    } catch (e: any) {
+      console.error(`[CronJob] 解析失败 "${this.cron}": ${e.message}`);
+      // 降级到简单解析
+      return this.calcSimpleDelay();
+    }
+  }
+
+  /**
+   * 简单解析降级方案
+   */
+  private calcSimpleDelay(): number {
     const parts = this.cron.trim().split(/\s+/);
     if (parts.length !== 5) {
-      throw new Error(`Invalid cron: ${this.cron}`);
+      console.error(`[CronJob] 无效cron: ${this.cron}`);
+      return 60000; // 默认1分钟
     }
 
-    const [minStr, hourStr, dayStr, monthStr, weekStr] = parts;
+    const [minStr, hourStr] = parts;
     const now = new Date();
 
-    // 简化策略:
-    // 1. 如果分钟字段是 */N → 每 N 分钟
-    // 2. 如果小时字段是 */N → 每 N 小时 (分钟为 0)
-    // 3. 否则计算到下一个匹配时间点
+    // */N → 每 N 分钟
     if (minStr && minStr.startsWith('*/')) {
-      const step = parseInt(minStr.slice(2));
-      return Math.max(step * 60 * 1000, 60000); // 最小 1 分钟
+      const step = parseInt(minStr.slice(2)) || 1;
+      return Math.max(step * 60 * 1000, 60000);
     }
 
-    if (hourStr && hourStr.startsWith('*/') && (minStr === '0' || minStr === '*')) {
-      const step = parseInt(hourStr.slice(2));
-      return Math.max(step * 60 * 60 * 1000, 60000);
-    }
-
-    // 固定时间模式: 计算到下次触发的时间差
+    // 固定时间
     const target = new Date(now);
     target.setSeconds(0, 0);
 
-    // 解析分钟
     if (minStr && minStr !== '*') {
       target.setMinutes(parseInt(minStr));
     }
-    // 解析小时
     if (hourStr && hourStr !== '*') {
       target.setHours(parseInt(hourStr));
     }
 
-    // 如果目标时间已过, 加一天
     if (target.getTime() <= now.getTime()) {
       target.setDate(target.getDate() + 1);
     }
 
-    const delay = target.getTime() - now.getTime();
-    return Math.max(delay, 1000); // 最小 1 秒
+    return Math.max(target.getTime() - now.getTime(), 1000);
   }
 
   start(): void {
@@ -84,26 +92,29 @@ export class CronJob extends EventEmitter {
     try {
       delay = this.calcNextDelay();
     } catch (e: any) {
-      console.error(`[CronJob] parse error for "${this.cron}": ${e.message}`);
+      console.error(`[CronJob] 调度错误: ${e.message}`);
       return;
     }
 
     this.timer = setTimeout(async () => {
       this.timer = null;
       await this._tick();
-      this._scheduleNext(); // 递归调度下一次
+      this._scheduleNext();
     }, delay);
   }
 
   private async _tick(): Promise<void> {
     const now = Date.now();
-    // 防抖: 55 秒内不重复 (仅对高频任务有效)
+    // 防抖: 55 秒内不重复
     if (now - this.lastTick < 55000) return;
     this.lastTick = now;
+
     try {
       await this.callback();
+      this.emit('completed');
     } catch (e: any) {
-      console.error(`[CronJob] ${this.cron} failed:`, e.message);
+      console.error(`[CronJob] 执行错误: ${e.message}`);
+      this.emit('error', e);
     }
   }
 
@@ -113,5 +124,14 @@ export class CronJob extends EventEmitter {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    console.log(`[CronJob] stopped: ${this.cron}`);
+  }
+
+  getCron(): string {
+    return this.cron;
+  }
+
+  isRunning(): boolean {
+    return this.running;
   }
 }
