@@ -19,7 +19,8 @@ import {
   MenuFoldOutlined, MenuUnfoldOutlined, InfoCircleOutlined, BulbOutlined,
   LeftOutlined, RightOutlined, SunOutlined, MoonOutlined, BookOutlined,
   WechatOutlined, ClockCircleOutlined, BellOutlined, MedicineBoxOutlined,
-  DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined,
+  DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined, SyncOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 /* P0-4: 代码分割 — 12 个页面组件延迟加载, 首屏只加载 chat */
 const ChatView = lazy(() => import('./components/ChatView').then(m => ({ default: m.ChatView })));
@@ -40,8 +41,13 @@ const WorkflowPanel = lazy(() => import('./components/WorkflowPanel').then(m => 
 const ProactiveSuggestionsPanel = lazy(() => import('./components/ProactiveSuggestionsPanel').then(m => ({ default: m.default })));
 const XuanjiPanel = lazy(() => import('./components/XuanjiPanel').then(m => ({ default: m.XuanjiPanel })));
 const AutomationPanel = lazy(() => import('./components/AutomationPanel').then(m => ({ default: m.AutomationPanel })));
+const TaskCenterPanel = lazy(() => import('./components/TaskCenterPanel').then(m => ({ default: m.TaskCenterPanel })));
+const EvolutionPanel = lazy(() => import('./components/EvolutionPanel').then(m => ({ default: m.EvolutionPanel })));
+const SandboxRulesEditor = lazy(() => import('./components/SandboxRulesEditor').then(m => ({ default: m.SandboxRulesEditor })));
+const KnowledgeGraphPanel = lazy(() => import('./components/knowledge/KnowledgeGraphPanel').then(m => ({ default: m.default })));
 import { RightPanel } from './components/RightPanel';
 import { SessionSidebar } from './components/SessionSidebar';
+import { SessionSidebarEnhanced } from './components/SessionSidebarEnhanced';
 import { GuideModal } from './components/GuideModal';
 import { StatusBar } from './components/StatusBar';
 import { Onboarding } from './components/Onboarding';
@@ -58,9 +64,17 @@ import FloatingSuggestionToast from './components/FloatingSuggestionToast';
 import { useSuggestionSSE } from './hooks/useSuggestionSSE';
 import { useSuggestionStore } from './store/suggestionStore';
 import { Splash } from './components/Splash';
+import { ReuseIdentityPrompt } from './components/ReuseIdentityPrompt';
+import { GlobalBrowserDrawer, openGlobalBrowser } from './components/GlobalBrowserDrawer';
+import { useIdeState } from './hooks/useIdeState';
+
+// 暴露到 window, 顶部导航按钮可调用
+if (typeof window !== 'undefined') {
+  (window as any).openGlobalBrowser = openGlobalBrowser;
+}
 
 /* ════════════════ PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation';
+type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'sandbox' | 'knowledge-graph';
 
 interface PageMeta {
   key: PageKey;
@@ -76,6 +90,7 @@ interface PageMeta {
 }
 
 const GovernorPanel = lazy(() => import('./components/GovernorPanel').then(m => ({ default: m.GovernorPanel })));
+const StatsPanel = lazy(() => import('./components/StatsPanel').then(m => ({ default: m.StatsPanel })));
 
 const PAGES: PageMeta[] = [
   { key: 'chat',     label: '对话',     icon: <MessageOutlined />,    comp: ChatView,      group: 'core',   desc: '智能对话 · 多模型 · 工具调用' },
@@ -96,6 +111,11 @@ const PAGES: PageMeta[] = [
   { key: 'notification', label: '通知中心', icon: <BellOutlined />,        comp: NotificationPanel, group: 'system', desc: 'SSE · Webhook · 邮件 · 桌面弹窗' },
   { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system',   desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持' },
   { key: 'governor', label: '管控员',   icon: <DashboardOutlined />,  comp: GovernorPanel, group: 'system', desc: '动态能力矩阵 · 系统健康 · 模型治理' },
+  { key: 'stats',    label: '用量',     icon: <ThunderboltOutlined />, comp: StatsPanel,    group: 'system', desc: '工具调用统计 · 成功率 · 省时报告', badge: 'NEW' },
+  { key: 'tasks',    label: '任务中心', icon: <SyncOutlined />,       comp: TaskCenterPanel, group: 'system', desc: '长任务快照 · 跨会话恢复 · 进度跟踪', badge: 'NEW' },
+  { key: 'evolution', label: '自进化',  icon: <ExperimentOutlined />, comp: EvolutionPanel,  group: 'system', desc: '跨会话规则自修改 · 技能自动创建 · 行为优化', badge: 'NEW' },
+  { key: 'sandbox',   label: '沙箱规则', icon: <PartitionOutlined />, comp: SandboxRulesEditor, group: 'system', desc: '可视化编辑沙箱规则的 deny/prompt/allow' },
+  { key: 'knowledge-graph', label: '知识图谱', icon: <BulbOutlined />, comp: KnowledgeGraphPanel, group: 'system', desc: '知识关系可视化 · 实体链接 · 概念网络' },
   { key: 'settings', label: '设置',     icon: <SettingOutlined />,    comp: Settings,      group: 'system', desc: '密钥 · 框架 · 模型 · 主题' },
 ];
 
@@ -170,6 +190,7 @@ export const App: React.FC = () => {
 
   /* ✨ 全局建议 SSE 连接 + 未读计数 */
   useSuggestionSSE();
+  useIdeState();  // 编辑器上下文感知: 推送当前文件/光标到 Gateway
   const unreadSuggestionCount = useSuggestionStore(s => s.unreadCount);
   const markSuggestionsRead = useSuggestionStore(s => s.markAllRead);
 
@@ -369,7 +390,9 @@ export const App: React.FC = () => {
       useSessionStore.getState().setCurrentUserId(profileToRestore.name);
 
       // 同步到 gateway (非阻塞, 确保后端也用缓存的行业/身份)
-      const GATEWAY_HTTP = (window as any).__GATEWAY_HTTP__ || 'http://localhost:3001';
+      // 安全守护: H11 修复 — 端口改为 18789（gateway 默认端口），不再硬编码错误端口
+      const GATEWAY_HTTP = (window as any).__GATEWAY_HTTP__
+        || `http://${window.location.hostname}:18789`;
       fetch(`${GATEWAY_HTTP}/v1/profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -442,6 +465,19 @@ export const App: React.FC = () => {
                 <span>{p.label}</span>
               </span>
             ))}
+
+            {/* 浏览器按钮 (唤起 Drawer, 不切换页面) */}
+            <Tooltip title="智能体浏览器 (Ctrl+B) — 任意页面可用">
+              <span
+                className="app-tab browser-tab"
+                data-testid="open-browser"
+                onClick={() => (window as any).openGlobalBrowser?.()}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <GlobalOutlined style={{ color: '#CD7A3A' }} />
+                <span>浏览器</span>
+              </span>
+            </Tooltip>
 
             {/* Media 组: 下拉菜单 */}
             <Dropdown
@@ -662,10 +698,10 @@ export const App: React.FC = () => {
 
         {/* ═══ 3. 主区: 三栏 ═══ */}
         <div className="app-main fade-in" key={page /* 切页时重启动画 */}>
-          {/* Left: 会话侧栏 (仅 chat) */}
+          {/* Left: 会话侧栏 (仅 chat) - 使用增强版 */}
           {showSessionSidebar && (
-            <div style={{ width: 244, borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', flexShrink: 0 }}>
-              <SessionSidebar onGuideClick={() => setGuideVisible(true)} />
+            <div style={{ width: 260, borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', flexShrink: 0 }}>
+              <SessionSidebarEnhanced onNewChat={() => { clearMessages(); createSession('新对话'); }} />
             </div>
           )}
 
@@ -756,10 +792,13 @@ export const App: React.FC = () => {
         }}
       />
 
-      {/* Splash 启动欢迎页 */}
+      {/* Splash 启动欢迎页 (PulseFlow v2, 3600ms 多阶段动画) */}
       {splashVisible && (
-        <Splash onFinish={() => setSplashVisible(false)} duration={1500} />
+        <Splash onFinish={() => setSplashVisible(false)} duration={3600} />
       )}
+
+      {/* 全局浏览器侧栏 — 任何页面可用, AI 自动化核心能力 */}
+      <GlobalBrowserDrawer />
 
       </AntApp>
     </ConfigProvider>
@@ -776,100 +815,4 @@ const OnboardingWrapper: React.FC<{ onFinish: (name: string) => void }> = ({ onF
   );
 };
 
-/* ════════════════ 沿用身份确认 ════════════════
- * 检测到已有用户身份时，询问是否沿用
- * 支持选择多个历史用户身份
- */
-const ReuseIdentityPrompt: React.FC<{
-  profile: any;
-  onReuse: (userName?: string) => void;
-  onReset: () => void;
-}> = ({ profile: propProfile, onReuse, onReset }) => {
-  // 使用 localStorage 数据作为 fallback (zustand profile 可能未 hydration)
-  const displayProfile = (propProfile?.name && propProfile?.industry) ? propProfile : getLocalProfile();
-  const industryLabel = displayProfile?.industry || '通用';
-  const name = displayProfile?.name || '用户';
 
-  // 获取所有历史用户
-  const allUsers = getAllUserProfiles();
-  // 排除当前用户，显示其他用户
-  const otherUsers = allUsers.filter(u => u.name !== name);
-
-  return (
-    <Modal
-      open={true}
-      closable={false}
-      maskClosable={false}
-      footer={null}
-      centered
-      width={480}
-      styles={{ body: { padding: 0 } }}
-    >
-      <div style={{ padding: 32, textAlign: 'center' }}>
-        <div style={{
-          width: 56, height: 56, borderRadius: 14, margin: '0 auto',
-          background: 'var(--card)', border: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <UserOutlined style={{ fontSize: 24, color: 'var(--accent)' }} />
-        </div>
-        <div style={{ marginTop: 16, fontSize: 16, fontWeight: 600, color: 'var(--fg)' }}>
-          欢迎回来, {name}
-        </div>
-        <div style={{ marginTop: 8, fontSize: 13, color: 'var(--muted-2)', lineHeight: 1.6 }}>
-          检测到你的身份信息:<br />
-          <span style={{ color: 'var(--fg)' }}>{name}</span> · <span style={{ color: 'var(--accent)' }}>{industryLabel}</span>
-        </div>
-
-        {/* 显示其他历史用户 */}
-        {otherUsers.length > 0 && (
-          <div style={{ marginTop: 20, textAlign: 'left' }}>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>其他用户:</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {otherUsers.map(u => (
-                <button
-                  key={u.name}
-                  onClick={() => onReuse(u.name)}
-                  style={{
-                    padding: '8px 16px', borderRadius: 8, fontSize: 13,
-                    border: '1px solid var(--border)', background: 'var(--card)',
-                    color: 'var(--fg)', cursor: 'pointer',
-                    transition: 'all 0.15s',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'var(--card-hover)';
-                    e.currentTarget.style.borderColor = 'var(--accent)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'var(--card)';
-                    e.currentTarget.style.borderColor = 'var(--border)';
-                  }}
-                >
-                  {u.name} {u.industry ? `· ${u.industry}` : ''}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div style={{ marginTop: 24, display: 'flex', gap: 10, justifyContent: 'center' }}>
-          <Button
-            size="large"
-            onClick={onReset}
-            style={{ borderRadius: 8, minWidth: 120 }}
-          >
-            重新设置
-          </Button>
-          <Button
-            type="primary"
-            size="large"
-            onClick={() => onReuse()}
-            style={{ borderRadius: 8, minWidth: 120, background: 'var(--accent)', borderColor: 'var(--accent)' }}
-          >
-            沿用原有身份
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-};
