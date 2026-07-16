@@ -185,10 +185,10 @@ export class AutonomousExplorer extends EventEmitter {
     const projectLabel = matched?.label || '未知项目类型';
 
     // 3. 入口文件定位
-    const entryPoints = await this.findEntryPoints(workspace, matched);
+    const entryPoints = await this.findEntryPoints(workspace, matched!);
 
     // 4. 关键目录分析
-    const keyDirs = await this.analyzeKeyDirs(workspace, topDirs, matched);
+    const keyDirs = await this.analyzeKeyDirs(workspace, topDirs, matched!);
 
     // 5. 子目录文件类型统计 (递归一层)
     await this.countFileTypesRecursive(workspace, topDirs, fileTypes, 2);

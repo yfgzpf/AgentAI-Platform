@@ -337,7 +337,7 @@ export async function verifySteps(
   const verifications: StepVerificationResult[] = [];
   
   for (let i = 0; i < steps.length; i++) {
-    const verification = await verifyStep(steps[i], results[i], context);
+    const verification = await verifyStep(steps[i]!, results[i], context);
     verifications.push(verification);
     
     // 如果某一步失败，后续步骤标记为跳过

@@ -80,7 +80,7 @@ export {
 import { perceiveTask, TaskPerceptionReport } from '../diagnosis/task-perception.js';
 import { diagnoseTask, DiagnosisReport, DiagnosisContext } from '../diagnosis/diagnosis-engine.js';
 import { medicalCaseManager, MedicalCase, createMedicalCase, completeMedicalCase } from './medical-case.js';
-import { PrescriptionEngine } from './prescription-engine.js';
+import { prescriptionEngine, PrescriptionEngine } from './prescription-engine.js';
 
 export interface XuanjiConfig {
   /** 是否启用医案记录 */
@@ -132,7 +132,7 @@ export class Xuanji {
       enableAutoEvaluation: true,
       ...config,
     };
-    this.prescriptionEngine = new PrescriptionEngine();
+    this.prescriptionEngine = prescriptionEngine;
   }
   
   /**

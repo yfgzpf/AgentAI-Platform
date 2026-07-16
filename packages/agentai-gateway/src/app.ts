@@ -11,13 +11,15 @@ import { Server as IOServer } from 'socket.io';
 
 import { createChatRouter, ChatRouterDeps } from './routes/chat.js';
 import { createAdminRouter } from './routes/admin.js';
-import { createSessionsRouter } from './routes/sessions.js';
+import { createSessionsRouter, memoryRouter } from './routes/sessions.js';
 import { createProfileRouter, setIndustryEngine } from './routes/profile.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createGovernorRouter } from './routes/governor.js';
 import { execSync } from 'child_process';
 import { validateCommand } from './safety/command-whitelist.js';
 import { authMiddleware } from './middleware/auth.js';
+import { MemoryManager } from './memory-manager.js';
+import { MCP_HOSTS } from './mcp/config.js';
 
 // ===== CORS 配置 =====
 const CORS_ORIGINS = (process.env.AGENTAI_CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5176,http://127.0.0.1:5176,http://localhost:1420,http://127.0.0.1:1420,http://127.0.0.1,http://localhost,tauri://localhost').split(',').map(o => o.trim());
@@ -26,11 +28,15 @@ import { createQQRouter } from './routes/qq.js';
 import { createChannelRouter } from './routes/channel.js';
 import { createCustomerRouter } from './routes/customer.js';
 import { createVoiceRouter } from './routes/voice.js';
+import { ideRouter } from './routes/ide.js';
+import { statsRouter } from './routes/stats.js';
 import { createHealthRouter, HealthRouterDeps } from './routes/health.js';
 import { wechatRouter } from './routes/wechat.js';
 import { getGlobalSandbox, type Sandbox } from './sandbox/index.js';
 import { createSandboxRouter } from './sandbox/router.js';
-import { createSkillsRouter } from './skills/router.js';
+// 注意: skills/router.js (旧版) 与 routes/skills.js (新版) 提供同名 createSkillsRouter
+// 当前统一使用 routes/skills.js, 因为它包含 /v1/skills/:name/execute 端点
+// import { createSkillsRouter } from './skills/router.js';
 import { createBrowserRouter } from './routes/browser.js';
 import { createBrowserEngineRouter, registerBrowserStreamSocket } from './routes/browser-engine-api.js';
 import { parseFileRouter } from './routes/parse-file.js';
@@ -45,6 +51,8 @@ import { commercialModelsRouter } from './routes/commercial-models.js';
 import { musicProxyRouter } from './routes/music-proxy.js';
 import suggestionsRouter from './routes/suggestions.js';
 import { createXuanjiRouter } from './routes/xuanji.js';
+import { createTasksRouter } from './routes/tasks.js';
+import { createSkillsRouter } from './routes/skills.js';
 import { startSkillWatcher } from './skills/watcher.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
 import { getSessionManager } from './session-manager.js';
@@ -92,7 +100,7 @@ export function createApp(deps: AppDeps) {
   } else {
     console.warn('[sandbox] not initialized, sandbox routes unavailable');
   }
-  app.use(createSkillsRouter());
+  // 技能执行API 移到下方 (line ~410) 一次性挂载, 避免重复
   // 注入行业引擎到 profile 路由 (支持行业切换时自动激活)
   if (deps.industryEngine) setIndustryEngine(deps.industryEngine);
   app.use('/v1/profile', createProfileRouter());
@@ -101,9 +109,38 @@ export function createApp(deps: AppDeps) {
   app.use(createChannelRouter()); // A5: 渠道桥接 + 外发消息 API
   app.use(createCustomerRouter()); // B2: 客户管理 API
   app.use(createVoiceRouter());
+  app.use('/v1', ideRouter);  // IDE 状态推送 (编辑器上下文感知)
+  app.use('/v1', statsRouter);  // 用量统计 API
   app.use(createHealthRouter(deps as HealthRouterDeps));
   app.use('/api/wechat', wechatRouter);
   app.use('/api/sessions', createSessionsRouter(deps.persistentMemory));
+  app.use('/api/memory', memoryRouter);  // v3.1 跨会话记忆统计 (GUI 注入面板用)
+  // 记忆可视化 API
+  app.get('/v1/memory/list', (_req, res) => {
+    try {
+      const mm = MemoryManager.getInstance();
+      mm.list().then((facts: any[]) => {
+        res.json({ ok: true, facts: facts.map((f: any) => ({ key: f.key, value: f.value, scope: f.scope, createdAt: f.createdAt, updatedAt: f.updatedAt })) });
+      }).catch(() => res.json({ ok: true, facts: [] }));
+    } catch { res.json({ ok: true, facts: [] }); }
+  });
+  // MCP 配置 API
+  app.get('/v1/mcp/config', (_req, res) => {
+    try {
+      const hosts = MCP_HOSTS.map((h: any) => ({ name: h.name, transport: h.transport, command: h.command, args: h.args, enabled: h.enabled, connected: h.connected || false }));
+      res.json({ ok: true, servers: hosts });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+  app.patch('/v1/mcp/config/:name', (req, res) => {
+    try {
+      const { name } = req.params;
+      const { enabled } = req.body;
+      const host = MCP_HOSTS.find((h: any) => h.name === name);
+      if (!host) return res.status(404).json({ ok: false, error: 'not found' });
+      host.enabled = enabled;
+      res.json({ ok: true, name, enabled });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+  });
   app.use(createImageRouter());
   app.use(createVideoRouter());
   register3DRoutes(app);
@@ -243,74 +280,11 @@ app.get('/v1/notifications/config', async (_req, res) => {
   }
 });
 
-// 定时任务调度 API
-app.get('/v1/schedules', async (req, res) => {
-  try {
-    const { getTaskScheduler } = await import('./task-scheduler.js');
-    const scheduler = getTaskScheduler();
-    const status = req.query.status as string | undefined;
-    res.json({ schedules: scheduler.list(status as any) });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/v1/schedules/:id', async (req, res) => {
-  try {
-    const { getTaskScheduler } = await import('./task-scheduler.js');
-    const scheduler = getTaskScheduler();
-    const s = scheduler.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'not found' });
-    res.json({ schedule: s });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/v1/schedules', async (req, res) => {
-  try {
-    const { getTaskScheduler } = await import('./task-scheduler.js');
-    const scheduler = getTaskScheduler();
-    const schedule = scheduler.create(req.body);
-    res.json({ success: true, schedule });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/v1/schedules/:id/run', async (req, res) => {
-  try {
-    const { getTaskScheduler } = await import('./task-scheduler.js');
-    const scheduler = getTaskScheduler();
-    const result = await scheduler.runOnce(req.params.id);
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.patch('/v1/schedules/:id', async (req, res) => {
-  try {
-    const { getTaskScheduler } = await import('./task-scheduler.js');
-    const scheduler = getTaskScheduler();
-    const updated = scheduler.update(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ error: 'not found' });
-    res.json({ success: true, schedule: updated });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/v1/schedules/:id', async (req, res) => {
-  try {
-    const { getTaskScheduler } = await import('./task-scheduler.js');
-    const scheduler = getTaskScheduler();
-    const ok = scheduler.delete(req.params.id);
-    res.json({ success: ok });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// ===== 定时任务调度 API =====
+// 安全守护: H7 修复 — 旧 inline 路由已被 createTaskSchedulerRouter() 完全遮蔽
+// 旧 inline 版本无 /stats /pause /resume，前端调用会 404
+// 委托给 router（router 在 line 432 之后才挂载，所以这里用 next() 透传）
+// 实际生效靠 router 接管，inline 已被删除
 
 // 行业工作流模板 API
 app.get('/v1/workflows/templates', async (req, res) => {
@@ -431,6 +405,7 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
 });
   app.use(createGoalRouter({ router: deps.router, registry: deps.registry, sessionManager: deps.sessionManager, persistentMemory: deps.persistentMemory }));
   app.use(createTaskSchedulerRouter());  // 定时任务调度器API
+  app.use(createSkillsRouter());        // 技能执行API (LLM/外部系统调用)
   app.use(createSettingsRouter({ router: deps.router }));
   app.use(createCleanerRouter());
   app.use('/v1/commercial-models', commercialModelsRouter);
@@ -438,6 +413,7 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
   app.use(musicProxyRouter);
   app.use('/v1/suggestions', suggestionsRouter);
   app.use(createXuanjiRouter());  // PulseFlow Xuanji 核心认知框架
+  app.use('/v1/tasks', createTasksRouter());  // 长任务快照与恢复 API
 
   // ===== IDE 状态感知 =====
   app.post('/v1/ide-state', (req, res) => {
@@ -461,21 +437,8 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
   });
 
   // ===== 主动建议引擎 =====
-  app.get('/v1/suggestions', async (req, res) => {
-    try {
-      const { proactiveEngine } = await import('./proactive-suggestion-engine.js');
-      const workspace = (req.query.workspace as string) || process.cwd();
-      const industry = (req.query.industry as string) || 'general';
-      const suggestions = (proactiveEngine as any).buildSuggestions
-        ? await (proactiveEngine as any).buildSuggestions(workspace, industry)
-        : (proactiveEngine as any).getSuggestions
-          ? (proactiveEngine as any).getSuggestions(workspace)
-          : [];
-      res.json({ suggestions });
-    } catch (e: any) {
-      res.json({ suggestions: [] });
-    }
-  });
+  // 安全守护: H8 修复 — 旧 inline /v1/suggestions 已被 suggestionsRouter 遮蔽
+  // 实际生效靠 suggestionsRouter (line 432 后挂载)
 
   // ===== 高风险操作审批 =====
   app.post('/v1/approve/:callId', async (req, res) => {
@@ -530,6 +493,24 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
     } catch (e: any) {
       res.json({ error: e.message });
     }
+  });
+
+  // Feature flags API (灰度开关)
+  let _ff: any = null;
+  const getFF = async () => { if (!_ff) _ff = await import('./feature-flags.js'); return _ff.FEATURE_FLAGS; };
+  app.get('/v1/feature-flags', async (_req, res) => {
+    const flags = await getFF();
+    res.json({ ok: true, ...flags });
+  });
+  app.post('/v1/feature-flags', async (req, res) => {
+    try {
+      const flags = await getFF();
+      const { useNewModelSelector, enableDiagnosisPipeline, newModelSelectorTrafficPercent } = req.body;
+      if (typeof useNewModelSelector === 'boolean') flags.useNewModelSelector = useNewModelSelector;
+      if (typeof enableDiagnosisPipeline === 'boolean') flags.enableDiagnosisPipeline = enableDiagnosisPipeline;
+      if (typeof newModelSelectorTrafficPercent === 'number') flags.newModelSelectorTrafficPercent = newModelSelectorTrafficPercent;
+      res.json({ ok: true, ...flags });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
   // ===== 全局错误处理中间件 (防止未捕获异常导致进程崩溃) =====
@@ -588,7 +569,7 @@ return { httpServer, io };
  * - session manager (内部已自动)
  * - 真定时反思 (cron dispatcher)
  */
-export function startBackgroundJobs(skillsDir: string) {
+export function startBackgroundJobs(skillsDir: string, io?: IOServer) {
   // 使用新的SkillManager扫描并注册所有技能
   if (skillsDir && fs.existsSync(skillsDir)) {
     import('./skill-manager.js').then(({ skillManager }) => {
@@ -623,6 +604,23 @@ export function startBackgroundJobs(skillsDir: string) {
   import('./cron-dispatcher.js').then(({ CronDispatcher }) => {
     const cron = new CronDispatcher();
     cron.start();
+
+    // 将 CronDispatcher 事件连接到 Socket.IO 推送
+    if (io) {
+      cron.on('error-rate-alert', (data: any) => {
+        io.emit('cron:alert', { type: 'error-rate', ...data });
+      });
+      cron.on('follow-up:tasks', (data: any) => {
+        io.emit('cron:result', { type: 'follow-up', ...data });
+      });
+      // 通用 cron 执行结果推送
+      cron.on('task:completed', (data: any) => {
+        io.emit('execution:result', { source: 'cron', ...data });
+      });
+      cron.on('task:failed', (data: any) => {
+        io.emit('execution:result', { source: 'cron', ...data });
+      });
+    }
   }).catch((e: any) => console.warn('[cron] start failed:', e?.message));
 
   // 恢复所有活跃的自动化任务 (SQLite 持久化的 cron 任务)
@@ -632,6 +630,48 @@ export function startBackgroundJobs(skillsDir: string) {
     setDefaultGatewayUrl(`http://${host}:${port}`);
     getAutomationStore().then((store) => {
       store.resumeAll().catch((e: any) => console.warn('[automation] resumeAll failed:', e?.message));
+
+      // 将 AutomationStore 事件连接到 Socket.IO + NotificationEngine
+      if (io) {
+        store.on('run:start', (data: any) => {
+          io.emit('execution:result', { source: 'automation', event: 'start', ...data });
+        });
+        store.on('run:done', (data: any) => {
+          io.emit('execution:result', { source: 'automation', event: 'done', ...data });
+          io.emit('automation:result', data);  // 兼容旧事件名
+
+          // 同时推送到通知引擎
+          import('./notification-engine.js').then(({ getNotificationEngine }) => {
+            getNotificationEngine().send({
+              level: data.success ? 'success' : 'error',
+              title: `自动化任务: ${data.name}`,
+              body: data.success ? '执行成功' : `执行失败${data.error ? ': ' + data.error.slice(0, 100) : ''}`,
+              source: 'automation',
+              metadata: { taskId: data.id, durationMs: data.durationMs },
+            });
+          }).catch(() => {});
+        });
+      }
     });
   }).catch((e: any) => console.warn('[automation] init failed:', e?.message));
+
+  // P2: 将定时任务调度器 (TaskScheduler) 事件连接到 Socket.IO
+  import('./task-scheduler.js').then(({ getTaskScheduler }) => {
+    const scheduler = getTaskScheduler();
+    if (io) {
+      scheduler.on('execution:result', (data: any) => {
+        io.emit('execution:result', data);
+        // 推送到通知引擎
+        import('./notification-engine.js').then(({ getNotificationEngine }) => {
+          getNotificationEngine().send({
+            level: data.success ? 'success' : 'error',
+            title: `定时任务: ${data.name}`,
+            body: data.success ? '执行成功' : `执行失败${data.error ? ': ' + data.error.slice(0, 100) : ''}`,
+            source: 'cron',
+            metadata: { taskId: data.id, durationMs: data.durationMs },
+          });
+        }).catch(() => {});
+      });
+    }
+  }).catch((e: any) => console.warn('[task-scheduler] event connect failed:', e?.message));
 }

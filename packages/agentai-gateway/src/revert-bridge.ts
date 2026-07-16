@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+// TODO: 接入 write_file 工具的回退流程, 自动学习用户偏好 (缩进/引号风格等)
 
 interface RevertPreference {
   pattern: string;

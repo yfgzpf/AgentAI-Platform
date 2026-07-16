@@ -15,6 +15,7 @@
 import { EventEmitter } from 'events';
 import type { AgentAIRouter, ChatRequest, ChatResponse, ProviderId } from './llm-router.js';
 import type { ToolRegistry } from './tool-registry.js';
+import { INTENT_CLASSIFIER_PROMPT, TASK_PLANNER_PROMPT } from './system-prompts.js';
 
 export interface IntentResult {
   /** 用户意图分类 */
@@ -73,59 +74,7 @@ export interface MasterControllerOptions {
   workspace: string;
 }
 
-/**
- * 意图分类 System Prompt
- */
-const INTENT_CLASSIFIER_PROMPT = `You are an intent classifier. Analyze the user message and output JSON only.
-
-Categories: code(写代码), chat(闲聊), create(创建文件/项目), analyze(分析/审查), search(搜索/查找), data(数据处理), media(生图/视频), refactor(重构), review(代码审查), deploy(部署), unknown
-
-Complexity levels:
-- simple: 单步回答, 无需工具
-- medium: 需要查文件或搜索
-- complex: 需要多步操作
-- multi-step: 需要拆分为多个子任务
-
-Entities: 提取的关键词 (文件路径, 技术栈, 项目名等)
-ImpliedNeeds: 用户没明确说但可能需要的东西
-MissingInfo: 缺失的关键信息 (追问候选)
-
-Output JSON:
-{
-  "category": "...",
-  "confidence": 0.9,
-  "complexity": "...",
-  "needsSubAgents": true/false,
-  "entities": [...],
-  "impliedNeeds": [...],
-  "missingInfo": [...],
-  "summary": "一句话描述用户要什么"
-}`;
-
-/**
- * 任务规划 System Prompt
- */
-const TASK_PLANNER_PROMPT = `You are a task planner. Given user intent and context, decompose into subtasks.
-
-Rules:
-1. Each subtask should be a focused unit of work
-2. Mark dependencies (dependsOn) for sequential tasks
-3. Tasks without dependencies can run in parallel (same parallelGroup)
-4. agentType must be one of: explore(read-only search), verify(check correctness), code(write/edit code), write(create files), search(web search), data(process data), media(generate image/video)
-
-Output JSON:
-{
-  "subtasks": [
-    {
-      "id": "t1",
-      "title": "任务标题",
-      "description": "详细描述 (子Agent会收到这个作为task)",
-      "agentType": "explore",
-      "dependsOn": []
-    }
-  ],
-  "parallelGroups": [["t1","t2"], ["t3"]]
-}`;
+/** 意图分类 System Prompt 已移至 system-prompts.ts */
 
 export class MasterController extends EventEmitter {
   private router: AgentAIRouter;
@@ -141,9 +90,9 @@ export class MasterController extends EventEmitter {
     super();
     this.router = opts.router;
     this.registry = opts.registry;
-    // 主控: DeepSeek Flash (便宜, 推理能力够用)
-    this.masterModel = opts.masterModel ?? 'deepseek';
-    // 升级: DeepSeek Pro (复杂推理自动切换)
+    // 主控: agentai (免费, 我本人) — 除非用户切换到 deepseek 才会用
+    this.masterModel = opts.masterModel ?? 'agentai';
+    // 升级: deepseek (复杂推理自动切换)
     this.proModel = opts.proModel ?? 'deepseek';
     // 多模态: Agnes (免费, 支持生图/视频/视觉)
     this.multimodalModel = opts.multimodalModel ?? 'agentai';
@@ -159,12 +108,30 @@ export class MasterController extends EventEmitter {
    *   - master (DeepSeek Flash) → 意图理解 + 任务规划
    *   - 复杂推理? → 切换 deepseek Pro
    *   - 多模态子任务? → 分派 agentai 子Agent
+   *
+   *   ⚠️ 编排前检查 masterModel 可用性, 不可用时降级到 agentai (省 token, 避免编排阶段熔断)
    */
   async orchestrate(userMessage: string): Promise<{
     execPlan: ExecPlan;
     shouldAutoRun: boolean;
   }> {
     this.emit('orchestrate:start', { message: userMessage.slice(0, 100) });
+
+    // 编排前降级: 检查 masterModel 可用性 (构造函数中已设 this.masterModel)
+    const masterModelBefore = this.masterModel;
+    if (this.masterModel !== 'agentai') {
+      const msStats = (this.router as any)?.providers?.get(this.masterModel);
+      const msEnvKey = this.masterModel === 'deepseek' ? 'DEEPSEEK_API_KEY'
+        : this.masterModel === 'openai' ? 'OPENAI_API_KEY' : `${this.masterModel.toUpperCase()}_API_KEY`;
+      const msHasKey = msEnvKey ? !!process.env[msEnvKey] : true;
+      if (msStats?.tripped || !msHasKey) {
+        console.warn(`[master] orchestrate: masterModel ${this.masterModel} unavailable, falling back to agentai`);
+        this.masterModel = 'agentai';
+      }
+    }
+    if (masterModelBefore !== this.masterModel) {
+      this.emit('orchestrate:masterFallback', { from: masterModelBefore, to: 'agentai' });
+    }
 
     // Phase 1: 意图理解
     const intent = await this.classifyIntent(userMessage);
@@ -309,7 +276,15 @@ export class MasterController extends EventEmitter {
           summary: json.summary || message.slice(0, 100),
         };
       }
-    } catch {}
+    } catch (e: any) {
+      console.warn(`[master] createPlan LLM 规划失败: ${e?.message?.slice(0, 100) || e}, 降级到单步`);
+      // 重新检查 masterModel 是否不可用 — 如果不可用则降级到 agentai
+      const pStats = (this.router as any)?.providers?.get(this.masterModel);
+      if (pStats?.tripped && this.masterModel !== 'agentai') {
+        console.warn(`[master] createPlan 降级: masterModel ${this.masterModel} tripped, 切到 agentai`);
+        this.masterModel = 'agentai';
+      }
+    }
 
     // 降级: 简单启发式
     return this.heuristicIntent(message);
@@ -484,7 +459,9 @@ export class MasterController extends EventEmitter {
           stages: this.inferStages(intent, message),
         };
       }
-    } catch {}
+    } catch (e: any) {
+        console.warn(`[master] createPlan LLM 规划失败: ${e?.message?.slice(0, 100) || e}`);
+      }
 
     // 降级: 单步规划
     return {
@@ -507,6 +484,7 @@ export class MasterController extends EventEmitter {
    * 分派子Agent执行 (并行组)
    */
   async executePlan(plan: ExecPlan, parentModel?: string, parentContext?: any[]): Promise<SubTask[]> {
+    this.emit('executePlan:start', { planId: plan.id, taskCount: plan.subtasks.length, parallelGroups: plan.parallelGroups.length });
     const results: SubTask[] = [];
 
     for (const group of plan.parallelGroups) {
@@ -521,6 +499,7 @@ export class MasterController extends EventEmitter {
       results.push(...groupResults);
     }
 
+    this.emit('executePlan:done', { planId: plan.id, resultCount: results.length });
     return results;
   }
 
@@ -535,12 +514,12 @@ export class MasterController extends EventEmitter {
     task.status = 'running';
     this.emit('subtask:start', task);
 
-    // 智能模型选择 (优先使用父模型, 但检查可用性)
+    // 智能模型选择 (优先使用 agentType 指定的模型, 再考虑 parentModel)
     let subModel: string;
-    if (parentModel) {
-      subModel = parentModel;  // 继承父 Agent 的模型
-    } else if (task.agentType === 'media') {
+    if (task.agentType === 'media') {
       subModel = this.multimodalModel;
+    } else if (parentModel) {
+      subModel = parentModel;  // 继承父 Agent 的模型
     } else if (['code', 'write', 'data', 'search'].includes(task.agentType)) {
       subModel = this.masterModel;
     } else {
@@ -551,12 +530,12 @@ export class MasterController extends EventEmitter {
     const providerStats = (this.router as any)?.providers?.get(subModel);
     const keyMap: Record<string, string> = {
       agentai: 'AGENTAI_API_KEY', deepseek: 'DEEPSEEK_API_KEY',
-      openai: 'OPENAI_API_KEY', cline: 'CLINE_API_KEY',
+      openai: 'OPENAI_API_KEY',
     };
     const envKey = keyMap[subModel];
     const hasKey = !!(envKey && process.env[envKey]);
     if (providerStats?.tripped || !hasKey) {
-      const fallback = process.env.AGENTAI_API_KEY ? 'agentai' : (process.env.CLINE_API_KEY ? 'cline' : subModel);
+      const fallback = process.env.AGENTAI_API_KEY ? 'agentai' : subModel;
       if (fallback !== subModel) {
         console.warn(`[master] subtask ${task.id}: model ${subModel} unavailable, falling back to ${fallback}`);
         subModel = fallback;
@@ -564,6 +543,12 @@ export class MasterController extends EventEmitter {
     }
 
     this.emit('subtask:model', { taskId: task.id, model: subModel, agentType: task.agentType });
+    // 吸收: Fugu 思想 — 给每个子任务打 role 标签 (Thinker/Worker/Verifier)
+    // 默认 Worker，复杂任务可选 Thinker 或 Verifier
+    const role: 'Thinker' | 'Worker' | 'Verifier' =
+      task.agentType === 'verifier' ? 'Verifier' :
+      task.agentType === 'planner' ? 'Thinker' : 'Worker';
+    this.emit('orchestrate:role', { taskId: task.id, role, model: subModel });
 
     try {
       const { AgentAILoop } = await import('./agentai-loop.js');
@@ -610,12 +595,24 @@ export class MasterController extends EventEmitter {
    */
   async synthesize(goal: string, subtasks: SubTask[]): Promise<string> {
     try {
+      // 汇总前检查 masterModel 可用性 (与 orchestrate 逻辑一致)
+      let synthesizeModel = this.masterModel as ProviderId;
+      if (synthesizeModel !== 'agentai') {
+        const ssStats = (this.router as any)?.providers?.get(synthesizeModel);
+        const ssEnvKey = synthesizeModel === 'deepseek' ? 'DEEPSEEK_API_KEY'
+          : synthesizeModel === 'openai' ? 'OPENAI_API_KEY'
+          : `${synthesizeModel.toUpperCase()}_API_KEY`;
+        if (ssStats?.tripped || !process.env[ssEnvKey]) {
+          console.warn(`[master] synthesize: masterModel ${synthesizeModel} unavailable, falling back to agentai`);
+          synthesizeModel = 'agentai' as ProviderId;
+        }
+      }
       const summaries = subtasks
         .map(t => `[${t.status}] ${t.title}: ${t.result?.slice(0, 500) || ''}`)
         .join('\n\n');
 
       const res = await this.router.chat({
-        model: this.masterModel as ProviderId,
+        model: synthesizeModel,
         messages: [
           { role: 'system', content: '你是任务汇总助手。根据子任务结果，生成一份简洁的总结报告给用户。拟人口吻，先说结果。' },
           { role: 'user', content: `目标: ${goal}\n\n子任务结果:\n${summaries}\n\n请生成总结:` },
@@ -637,7 +634,9 @@ export class MasterController extends EventEmitter {
     try {
       const match = text.match(/\{[\s\S]*\}/);
       if (match) return JSON.parse(match[0]);
-    } catch {}
+    } catch (e: any) {
+      console.warn(`[master] extractJson 解析失败: ${e?.message?.slice(0, 80)}`);
+    }
     return null;
   }
 

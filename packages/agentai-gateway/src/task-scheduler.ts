@@ -116,6 +116,7 @@ class TaskScheduler extends EventEmitter {
   private gatewayUrl: string = 'http://127.0.0.1:18789';
 
   constructor() {
+    super();
     this._load();
   }
 

@@ -222,23 +222,32 @@ export class BuiltInToolsManager {
 
   /**
    * 获取工具（如果不可用，使用备用工具）
+   * @param visited 内部使用: 防止 fallback 循环回溯
    */
-  getTool(toolName: string): BuiltInTool | null {
+  getTool(toolName: string, visited?: Set<string>): BuiltInTool | null {
+    // 防止 fallback 循环 (pnpm→npm→pnpm...)
+    const visitedSet = visited || new Set<string>();
+    if (visitedSet.has(toolName)) {
+      console.warn(`[BuiltInToolsManager] 检测到 fallback 循环: ${toolName} 已访问过，停止递归`);
+      return null;
+    }
+    visitedSet.add(toolName);
+
     const tool = this.tools.get(toolName);
     if (!tool) {
       return null;
     }
 
-    // 检查工具是否可用
+    // 检查工具是否可用 (undefined = 未检查, 视为可用避免误触发 fallback)
     const isAvailable = this.availableTools.get(toolName);
-    if (isAvailable) {
+    if (isAvailable === true || isAvailable === undefined) {
       return tool;
     }
 
     // 如果工具不可用，尝试使用备用工具
     if (tool.fallback) {
       console.log(`[BuiltInToolsManager] 工具 ${toolName} 不可用，使用备用工具 ${tool.fallback}`);
-      return this.getTool(tool.fallback);
+      return this.getTool(tool.fallback, visitedSet);
     }
 
     return null;
@@ -405,23 +414,25 @@ export class BuiltInToolsManager {
    * 获取工具路径白名单（用于沙箱配置）
    */
   getToolPathWhitelist(): string[] {
+    const os = require('os') as typeof import('os');
+    const path = require('path') as typeof import('path');
+    const home = os.homedir();
+    const cwd = process.cwd();
     const whitelist: string[] = [
-      // Node.js相关路径
-      'C:\\Program Files\\nodejs\\',
-      'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\',
-      'C:\\Users\\Administrator\\AppData\\Local\\pnpm-cache\\',
-      'C:\\Users\\Administrator\\AppData\\Local\\pnpm-state\\',
+      // Node.js 相关路径 (动态获取)
+      path.join(home, 'AppData', 'Roaming', 'npm') + '\\',
+      path.join(home, 'AppData', 'Local', 'pnpm-cache') + '\\',
+      path.join(home, 'AppData', 'Local', 'pnpm-state') + '\\',
 
-      // 项目路径
-      'F:\\agentai-platform\\',
-      'F:\\agentai-platform\\node_modules\\',
-      'F:\\agentai-platform\\packages\\',
-      'F:\\agentai-platform\\packages\\agentai-gateway\\dist\\',
-      'F:\\agentai-platform\\packages\\agentai-gui\\dist\\',
+      // 项目路径 (基于 process.cwd())
+      cwd + '\\',
+      path.join(cwd, 'node_modules') + '\\',
+      path.join(cwd, 'packages') + '\\',
+      path.join(cwd, 'packages', 'agentai-gateway', 'dist') + '\\',
+      path.join(cwd, 'packages', 'agentai-gui', 'dist') + '\\',
 
-      // 临时文件路径（pnpm需要）
-      'F:\\_tmp_8204_',
-      'C:\\Users\\Administrator\\AppData\\Local\\Temp\\',
+      // 临时文件路径
+      path.join(home, 'AppData', 'Local', 'Temp') + '\\',
     ];
 
     return whitelist;

@@ -1,26 +1,24 @@
 /**
- * UserModel — Honcho 4维度用户建模
+ * UserModel — Honcho 4维度用户建模 (多用户版)
  * ----------------------------------------------------------------
- * 学自: Honcho 辩证推理 (Hermes 分析报告)
- * 
+ * 存储: ~/.agentai/user-models.json   (Map<userId, UserModel>)
+ *
  * 4 维度:
  *   - identity: 用户身份 (行业/角色/偏好)
  *   - behavior: 行为模式 (常用工具/交互频率/任务类型)
  *   - preferences: 偏好 (回复风格/模型/语言)
  *   - history: 历史摘要 (最近N次对话精华)
- * 
- * 存储: .agentai/user-model.json
  */
 
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { WorkspaceManager } from './workspace-manager.js';
 
-const USER_MODEL_FILE = (() => {
-  try { return WorkspaceManager.getInstance().userModelPath; }
-  catch { return path.join(os.homedir(), '.agentai', 'user-model.json'); }
-})();
+const USER_MODELS_FILE = path.join(os.homedir(), '.agentai', 'user-models.json');
+
+// ---------------------------------------------------------------------------
+// 类型定义
+// ---------------------------------------------------------------------------
 
 export interface UserIdentity {
   name: string;
@@ -28,7 +26,7 @@ export interface UserIdentity {
   industrySkills?: string[];
   role?: string;
   onboardedAt?: number;
-  questionnaire?: Record<string, string>;  // 行业问卷答案
+  questionnaire?: Record<string, string>;
 }
 
 export interface UserBehavior {
@@ -81,127 +79,98 @@ const DEFAULT_MODEL: UserModel = {
   updatedAt: Date.now(),
 };
 
+// ---------------------------------------------------------------------------
+// 多用户引擎
+// ---------------------------------------------------------------------------
+
 class UserModelEngine {
-  private model: UserModel;
-  private previousIndustry: string | undefined;
+  private models: Record<string, UserModel> = {};
+  private previousIndustry: Record<string, string | undefined> = {};
+  private dirty = false;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    this.model = this.load();
-    this.previousIndustry = this.model.identity.industry;
+    this.loadAll();
   }
 
-  private load(): UserModel {
+  // ---- 存储 ----
+
+  private loadAll(): void {
     try {
-      if (fs.existsSync(USER_MODEL_FILE)) {
-        return { ...DEFAULT_MODEL, ...JSON.parse(fs.readFileSync(USER_MODEL_FILE, 'utf-8')) };
+      if (fs.existsSync(USER_MODELS_FILE)) {
+        const raw = JSON.parse(fs.readFileSync(USER_MODELS_FILE, 'utf-8'));
+        this.models = raw || {};
+        // 记录所有已有用户的行业
+        for (const uid of Object.keys(this.models)) {
+          this.previousIndustry[uid] = this.models[uid]!.identity.industry;
+        }
+        return;
       }
-    } catch {}
-    return { ...DEFAULT_MODEL };
+    } catch { /* ignore */ }
+    this.models = {};
   }
 
-  private save() {
-    try {
-      const dir = path.dirname(USER_MODEL_FILE);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      this.model.updatedAt = Date.now();
-      fs.writeFileSync(USER_MODEL_FILE, JSON.stringify(this.model, null, 2), 'utf-8');
-    } catch {}
+  private _scheduleSave(): void {
+    this.dirty = true;
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      if (!this.dirty) return;
+      this.dirty = false;
+      try {
+        const dir = path.dirname(USER_MODELS_FILE);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(USER_MODELS_FILE, JSON.stringify(this.models, null, 2), 'utf-8');
+      } catch {}
+    }, 500); // 防抖 500ms
   }
+
+  // ---- 内部工具 ----
+
+  private _ensureUser(userId: string): UserModel {
+    if (!this.models[userId]) {
+      this.models[userId] = { ...DEFAULT_MODEL, identity: { ...DEFAULT_MODEL.identity } };
+    }
+    return this.models[userId];
+  }
+
+  private _resolve(userId?: string): string {
+    return userId || 'default';
+  }
+
+  // ---- 公开 API (全部接受 userId) ----
 
   /** 设置用户身份 (Onboarding 后调用) */
-  setIdentity(id: Partial<UserIdentity>) {
-    this.model.identity = { ...this.model.identity, ...id };
-    this.save();
+  setIdentity(userId: string, id: Partial<UserIdentity>): void {
+    const uid = this._resolve(userId);
+    const model = this._ensureUser(uid);
+    model.identity = { ...model.identity, ...id };
+    model.updatedAt = Date.now();
+    this._scheduleSave();
 
     // 行业变更检测 → 触发知识补全
-    const newIndustry = this.model.identity.industry;
-    if (newIndustry && newIndustry !== this.previousIndustry) {
-      this.previousIndustry = newIndustry;
+    const newIndustry = model.identity.industry;
+    if (newIndustry && newIndustry !== this.previousIndustry[uid]) {
+      this.previousIndustry[uid] = newIndustry;
       this.triggerIndustryKnowledgeEnrichment(newIndustry).catch(() => {});
     }
   }
 
-  /** 行业知识自动补全: 检查记忆 → 联网搜索 → 写入记忆 */
-  private async triggerIndustryKnowledgeEnrichment(industry: string): Promise<void> {
-    try {
-      const { readMemory, writeMemory } = await import('./memory.js');
-      // 1. 检查是否已有该行业记忆
-      const existing = await readMemory({ userId: 'system', workspace: '', limit: 50 });
-      const industryMems = existing.filter(m =>
-        m.industry === industry || (m.content && m.content.includes(industry))
-      );
-
-      // 2. 如果已有 3 条以上行业记忆，跳过联网搜索
-      if (industryMems.length >= 3) return;
-
-      // 3. 联网搜索行业知识 (Bing)
-      const searchOutput = await this.webSearchBing(`${industry}行业 核心知识 工作流程 专业术语 最新趋势`);
-
-      if (searchOutput) {
-        await writeMemory({
-          userId: 'system',
-          content: `[行业知识自动补全] ${industry}\n${searchOutput.slice(0, 800)}`,
-          industry,
-          type: 'industry_knowledge',
-        });
-      }
-
-      // 4. 搜索用户行为记忆
-      const behaviorOutput = await this.webSearchBing(`${industry}从业者 常用工具 典型工作场景 AI辅助需求`);
-
-      if (behaviorOutput) {
-        await writeMemory({
-          userId: 'system',
-          content: `[行业行为洞察] ${industry}\n${behaviorOutput.slice(0, 600)}`,
-          industry,
-          type: 'industry_behavior',
-        });
-      }
-
-      console.log(`[industry-enrichment] completed for ${industry}`);
-    } catch (e: any) {
-      console.warn(`[industry-enrichment] failed for ${industry}: ${e.message}`);
-    }
-  }
-
-  /** Bing 搜索 (轻量级, 不依赖工具注册表) */
-  private async webSearchBing(query: string): Promise<string | null> {
-    try {
-      const r = await fetch(`https://cn.bing.com/search?q=${encodeURIComponent(query)}`, {
-        signal: AbortSignal.timeout(8000),
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-      });
-      if (!r.ok) return null;
-      const html = await r.text();
-      const results: string[] = [];
-      const re = /<li class="b_algo"[^>]*>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(html)) !== null && results.length < 5) {
-        const title = (m[2] || '').replace(/<[^>]+>/g, '').trim();
-        const snippetMatch = html.slice(m.index, m.index + 400).match(/<p[^>]*>([\s\S]*?)<\/p>/);
-        const snippet = snippetMatch ? snippetMatch[1]!.replace(/<[^>]+>/g, '').trim() : '';
-        if (title) results.push(`${title}${snippet ? ' - ' + snippet : ''}`);
-      }
-      return results.length > 0 ? results.join('\n') : null;
-    } catch {
-      return null;
-    }
-  }
-
   /** 记录一次交互 */
-  recordInteraction(opts: {
+  recordInteraction(userId: string, opts: {
     toolsUsed: string[];
     taskCategory?: string;
     messageCount: number;
     model: string;
-  }) {
-    const b = this.model.behavior;
+  }): void {
+    const uid = this._resolve(userId);
+    const model = this._ensureUser(uid);
+    const b = model.behavior;
     b.totalSessions++;
     b.totalMessages += opts.messageCount;
     b.lastActive = Date.now();
     b.avgSessionLength = Math.round(b.totalMessages / b.totalSessions);
 
-    // 工具频率
     for (const tool of opts.toolsUsed) {
       const entry = b.topTools.find(t => t.name === tool);
       if (entry) entry.count++;
@@ -209,61 +178,76 @@ class UserModelEngine {
     }
     b.topTools = b.topTools.sort((a, b) => b.count - a.count).slice(0, 10);
 
-    // 任务类型频率
     if (opts.taskCategory) {
       b.taskTypeFrequency[opts.taskCategory] = (b.taskTypeFrequency[opts.taskCategory] || 0) + 1;
     }
 
-    // 活跃小时
     const hour = new Date().getHours();
     if (!b.activeHours.includes(hour)) {
       b.activeHours.push(hour);
       b.activeHours.sort();
     }
 
-    // 模型偏好更新
-    if (opts.model !== this.model.preferences.preferredModel) {
-      this.model.preferences.preferredModel = opts.model;
+    if (opts.model !== model.preferences.preferredModel) {
+      model.preferences.preferredModel = opts.model;
     }
 
-    this.save();
+    model.updatedAt = Date.now();
+    this._scheduleSave();
   }
 
   /** 记录历史快照 */
-  addHistorySnapshot(snapshot: Omit<HistorySnapshot, 'ts'>) {
-    this.model.history.unshift({ ...snapshot, ts: Date.now() });
-    // 保留最近 50 条
-    if (this.model.history.length > 50) this.model.history = this.model.history.slice(0, 50);
-    this.save();
+  addHistorySnapshot(userId: string, snapshot: Omit<HistorySnapshot, 'ts'>): void {
+    const uid = this._resolve(userId);
+    const model = this._ensureUser(uid);
+    model.history.unshift({ ...snapshot, ts: Date.now() });
+    if (model.history.length > 50) model.history = model.history.slice(0, 50);
+    model.updatedAt = Date.now();
+    this._scheduleSave();
   }
 
   /** 设置偏好 */
-  setPreference<K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) {
-    this.model.preferences[key] = value;
-    this.save();
+  setPreference<K extends keyof UserPreferences>(userId: string, key: K, value: UserPreferences[K]): void {
+    const uid = this._resolve(userId);
+    const model = this._ensureUser(uid);
+    model.preferences[key] = value;
+    model.updatedAt = Date.now();
+    this._scheduleSave();
   }
 
-  /** 获取模型 */
-  get(): UserModel { return this.model; }
+  /** 获取某个用户的完整模型 */
+  get(userId?: string): UserModel {
+    return this._ensureUser(this._resolve(userId));
+  }
 
-  /** 构建系统提示词注入 */
-  buildSystemPromptFragment(): string {
-    const id = this.model.identity;
-    const b = this.model.behavior;
-    const p = this.model.preferences;
-    const recentHistory = this.model.history.slice(0, 3);
+  /** 获取所有用户 (管理用) */
+  getAllUsers(): Record<string, UserModel> {
+    return { ...this.models };
+  }
+
+  /** 列出所有已知 userId */
+  listUserIds(): string[] {
+    return Object.keys(this.models).filter(id => id !== 'default');
+  }
+
+  /** 构建系统提示词注入 (按用户) */
+  buildSystemPromptFragment(userId?: string): string {
+    const uid = this._resolve(userId);
+    const model = this._ensureUser(uid);
+    const id = model.identity;
+    const b = model.behavior;
+    const p = model.preferences;
+    const recentHistory = model.history.slice(0, 3);
 
     let frag = `\n# User Profile (Honcho)\n`;
     frag += `User: ${id.name}${id.industry ? `, Industry: ${id.industry}` : ''}${id.role ? `, Role: ${id.role}` : ''}\n`;
     frag += `Sessions: ${b.totalSessions}, Messages: ${b.totalMessages}, Avg/Len: ${b.avgSessionLength}\n`;
     frag += `Prefers: ${p.replyStyle} style, Model: ${p.preferredModel}\n`;
 
-    // 行业技能注入
     if (id.industrySkills && id.industrySkills.length > 0) {
       frag += `Industry skills: ${id.industrySkills.join(', ')}\n`;
     }
 
-    // 行业问卷知识注入
     if (id.questionnaire && Object.keys(id.questionnaire).length > 0) {
       frag += `User background (${id.industry || 'general'}):\n`;
       for (const [key, val] of Object.entries(id.questionnaire)) {
@@ -284,8 +268,61 @@ class UserModelEngine {
         frag += `  - ${h.summary}\n`;
       }
     }
-
     return frag;
+  }
+
+  // ---- 行业知识补全 (不变) ----
+
+  private async triggerIndustryKnowledgeEnrichment(industry: string): Promise<void> {
+    try {
+      const { readMemory, writeMemory } = await import('./memory.js');
+      const existing = await readMemory({ userId: 'system', workspace: '', limit: 50 });
+      const industryMems = existing.filter(m =>
+        m.industry === industry || (m.content && m.content.includes(industry))
+      );
+      if (industryMems.length >= 3) return;
+
+      const searchOutput = await this._webSearchBing(`${industry}行业 核心知识 工作流程 专业术语 最新趋势`);
+      if (searchOutput) {
+        await writeMemory({
+          userId: 'system', workspace: '', role: 'system', source: 'auto_reflect',
+          content: `[行业知识自动补全] ${industry}\n${searchOutput.slice(0, 800)}`,
+          industry, metadata: { type: 'industry_knowledge' },
+        });
+      }
+      const behaviorOutput = await this._webSearchBing(`${industry}从业者 常用工具 典型工作场景 AI辅助需求`);
+      if (behaviorOutput) {
+        await writeMemory({
+          userId: 'system', workspace: '', role: 'system', source: 'auto_reflect',
+          content: `[行业行为洞察] ${industry}\n${behaviorOutput.slice(0, 600)}`,
+          industry, metadata: { type: 'industry_behavior' },
+        });
+      }
+      console.log(`[industry-enrichment] completed for ${industry}`);
+    } catch (e: any) {
+      console.warn(`[industry-enrichment] failed for ${industry}: ${e.message}`);
+    }
+  }
+
+  private async _webSearchBing(query: string): Promise<string | null> {
+    try {
+      const r = await fetch(`https://cn.bing.com/search?q=${encodeURIComponent(query)}`, {
+        signal: AbortSignal.timeout(8000),
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      });
+      if (!r.ok) return null;
+      const html = await r.text();
+      const results: string[] = [];
+      const re = /<li class="b_algo"[^>]*>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(html)) !== null && results.length < 5) {
+        const title = (m[2] || '').replace(/<[^>]+>/g, '').trim();
+        const snippetMatch = html.slice(m.index, m.index + 400).match(/<p[^>]*>([\s\S]*?)<\/p>/);
+        const snippet = snippetMatch ? snippetMatch[1]!.replace(/<[^>]+>/g, '').trim() : '';
+        if (title) results.push(`${title}${snippet ? ' - ' + snippet : ''}`);
+      }
+      return results.length > 0 ? results.join('\n') : null;
+    } catch { return null; }
   }
 }
 

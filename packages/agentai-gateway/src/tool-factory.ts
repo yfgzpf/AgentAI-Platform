@@ -5,17 +5,15 @@
  * 职责：当 Agent 遇到现有工具都无法完成的任务时，
  * 让它自己写一个小脚本（工具），注册回 ToolRegistry。
  *
- * 核心逻辑：
- *   1. 分析失败原因 → 生成工具描述
- *   2. 生成 handler 代码 → 沙盒预验证
- *   3. 注册为 ToolEntry
- *   4. 记录到 evolution 数据
+ * v2: 接入真正的 LLM 生成 handler 代码（非硬编码模式匹配）
+ * v1: 硬编码模式匹配（仅支持 计算/格式化/echo）
  */
 
 import { ToolRegistry, ToolEntry, ToolHandler, ToolContext } from './tool-registry.js';
 import { CodeRunner, SandboxRules } from './sandbox/executor.js';
 import { writeEvolutionAsync } from './evolution.js';
 import { SelfEvaluator, quickScore } from './judge/self-eval.js';
+import type { AgentAIRouter } from './llm-router.js';
 
 // ===== 类型 =====
 export interface ToolDefinition {
@@ -58,14 +56,17 @@ export class ToolFactory {
   private registry: ToolRegistry;
   private sandbox: CodeRunner;
   private evaluator: SelfEvaluator;
+  private router?: AgentAIRouter;
 
   constructor(
     registry: ToolRegistry,
     limits?: { timeoutMs?: number; maxOutputBytes?: number },
+    router?: AgentAIRouter,
   ) {
     this.registry = registry;
     this.sandbox = new CodeRunner(limits);
     this.evaluator = new SelfEvaluator();
+    this.router = router;
   }
 
   /**
@@ -82,8 +83,8 @@ export class ToolFactory {
     // 1. 获取现有工具列表（用于避免重复）
     const existingTools = this.registry.list().map(t => `${t.name}: ${t.description}`).join('\n') || '无';
 
-    // 2. 生成工具代码（模拟 LLM 输出）
-    const generatedCode = this._generateHandlerCode(taskDescription, existingTools, failureReason);
+    // 2. 生成工具代码（v2: LLM 驱动，v1 降级: 模式匹配）
+    const generatedCode = await this._generateHandlerCode(taskDescription, existingTools, failureReason);
 
     // 3. 安全检查
     const safetyCheck = SandboxRules.checkDanger(generatedCode);
@@ -134,15 +135,54 @@ export class ToolFactory {
   }
 
   /**
-   * 模拟 LLM 生成 handler 代码
-   * 实际项目中会调用 LLM API 生成
+   * 生成 handler 代码
+   * v2: 优先调用 LLM 生成真实代码，降级到硬编码模式匹配
    */
-  private _generateHandlerCode(
+  private async _generateHandlerCode(
     taskDescription: string,
-    _existingTools: string,
-    _failureReason: string,
-  ): string {
-    // 简化版：根据任务描述生成简单的 handler
+    existingTools: string,
+    failureReason: string,
+  ): Promise<string> {
+    // === 策略1: LLM 生成 (v2) ===
+    if (this.router) {
+      try {
+        const prompt = TOOL_GENERATION_PROMPT
+          .replace('{taskDescription}', taskDescription)
+          .replace('{existingTools}', existingTools)
+          .replace('{failureReason}', failureReason);
+
+        const response = await this.router.chat({
+          model: 'agentai',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.3,
+          maxTokens: 2000,
+        });
+
+        if (response?.content && response.content.length > 50) {
+          // 提取代码块：优先 ```js ... ``` 或 ```javascript ... ```
+          const codeMatch = response.content.match(/```(?:js|javascript)?\s*\n?([\s\S]*?)```/);
+          const code = codeMatch ? codeMatch[1].trim() : response.content.trim();
+
+          // 验证：必须包含 function 和 return
+          if (code.includes('function') && code.includes('return')) {
+            console.log('[tool-factory] LLM-generated handler for:', taskDescription.slice(0, 50));
+            return code;
+          }
+        }
+        console.warn('[tool-factory] LLM response unusable, falling back to patterns');
+      } catch (e: any) {
+        console.warn('[tool-factory] LLM call failed:', e.message, 'falling back to patterns');
+      }
+    }
+
+    // === 策略2: 降级 — 硬编码模式匹配 (原始逻辑) ===
+    return this._generateHandlerCodePatterns(taskDescription);
+  }
+
+  /**
+   * 降级策略：基于关键词匹配的模板生成 (保留作为 fallback)
+   */
+  private _generateHandlerCodePatterns(taskDescription: string): string {
     const taskLower = taskDescription.toLowerCase();
 
     if (taskLower.includes('计算') || taskLower.includes('math') || taskLower.includes('求')) {
@@ -320,6 +360,6 @@ export class ToolFactory {
 }
 
 // ===== 便捷工厂 =====
-export function createToolFactory(registry: ToolRegistry): ToolFactory {
-  return new ToolFactory(registry);
+export function createToolFactory(registry: ToolRegistry, router?: AgentAIRouter): ToolFactory {
+  return new ToolFactory(registry, undefined, router);
 }

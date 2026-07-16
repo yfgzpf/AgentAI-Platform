@@ -9,13 +9,14 @@
  * 不依赖iframe注入，直接调用CLI
  */
 
-import { execSync, exec } from 'child_process';
+import { execSync, exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // 存储路径
 const SCRIPTS_DIR = path.join(os.homedir(), '.agentai', 'browser-scripts');
@@ -46,15 +47,31 @@ interface BrowserScript {
 /**
  * 执行browser-use命令
  */
+const ALLOWED_BROWSER_COMMANDS = new Set([
+  'navigate', 'click', 'type', 'screenshot', 'scroll', 'wait',
+  'evaluate', 'extract', 'back', 'forward', 'close', 'hover', 'select', 'press',
+]);
+const SHELL_METACHARS = /[;&|`$(){}[\]<>!\n\r\\"']/;
+
 export async function executeBrowserUse(
   command: string,
   args: string[] = [],
   timeout: number = 30000
 ): Promise<{ success: boolean; output: string; error?: string }> {
-  const cmd = `browser-use ${command} ${args.join(' ')}`;
-  
+  if (!ALLOWED_BROWSER_COMMANDS.has(command)) {
+    return { success: false, output: '', error: `不允许的命令: ${command}` };
+  }
+  for (const arg of args) {
+    if (SHELL_METACHARS.test(arg)) {
+      return { success: false, output: '', error: '参数包含非法字符' };
+    }
+  }
   try {
-    const { stdout, stderr } = await execAsync(cmd, { timeout });
+    const { stdout, stderr } = await execFileAsync('browser-use', [command, ...args], {
+      timeout,
+      shell: true,
+      windowsHide: true,
+    });
     return {
       success: true,
       output: stdout || stderr,

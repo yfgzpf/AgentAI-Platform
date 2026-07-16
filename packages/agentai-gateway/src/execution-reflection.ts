@@ -321,7 +321,7 @@ ${execution.steps.map((s, i) => `${i + 1}. [${s.type}] ${s.description} (${s.dur
 }`;
 
     try {
-      const response = await this.llmRouter.route({
+      const response = await this.llmRouter.chat({
         model: 'agentai',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,

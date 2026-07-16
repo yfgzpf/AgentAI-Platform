@@ -75,7 +75,7 @@ export interface Progress {
 }
 
 export interface Risk {
-  type: 'technical' | 'resource' | 'time' | 'external';
+  type: 'technical' | 'resource' | 'time' | 'external' | 'dependency';
   description: string;
   probability: number; // 0-1
   impact: number; // 0-1
@@ -139,7 +139,7 @@ export class AutonomousGoalEngine extends EventEmitter {
 }`;
 
     try {
-      const response = await this.llmRouter.route({
+      const response = await this.llmRouter.chat({
         model: 'agentai',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
@@ -216,7 +216,7 @@ export class AutonomousGoalEngine extends EventEmitter {
 }`;
 
     try {
-      const response = await this.llmRouter.route({
+      const response = await this.llmRouter.chat({
         model: 'agentai',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
@@ -337,7 +337,7 @@ export class AutonomousGoalEngine extends EventEmitter {
 
     if (blockedTasks.length > 0) {
       risks.push({
-        type: 'dependency',
+        type: 'external',
         description: `${blockedTasks.length}个任务被阻塞`,
         probability: 0.6,
         impact: 0.6,
@@ -467,6 +467,10 @@ export class AutonomousGoalEngine extends EventEmitter {
     // 找到根任务（没有依赖的任务）
     const rootNode = Array.from(nodes.values())
       .find(n => n.dependencies.length === 0) || nodes.values().next().value;
+
+    if (!rootNode) {
+      throw new Error('无法构建任务树：没有根任务');
+    }
 
     return {
       root: rootNode,

@@ -1,73 +1,128 @@
 /**
- * IDE 状态感知 — 实时接收前端编辑器状态
- * 用于注入 AI 上下文, 让 AI 知道用户当前在看什么文件
+ * IDE 状态管理 — 实时感知用户在编辑器中的操作
+ * ================================================
+ * 对标 Cursor/Copilot 的编辑器感知能力：
+ *   - 用户打开了哪些文件
+ *   - 光标位置 + 选中文本
+ *   - 当前诊断信息
+ *
+ * 这些信息注入到 AI 的上下文中，
+ * 让 AI 知道"用户现在在看什么、在写什么、遇到了什么错误"
  */
 
+export interface OpenFileInfo {
+  path: string;           // 相对于 workspace 的路径
+  language: string;       // ts, tsx, py, etc.
+  cursorLine: number;     // 光标所在行号 (1-based)
+  cursorColumn: number;   // 光标所在列号 (1-based)
+  selectedText?: string;  // 选中文本 (如果有)
+  visibleRange?: { start: number; end: number };  // 可视范围行号
+  lastModified?: number;  // 最后修改时间戳
+}
+
 export interface IdeState {
-    /** 当前打开的文件列表 */
-    open_files: string[];
-    /** 活跃文件路径 */
-    active_file?: string;
-    /** 活跃文件光标行号 */
-    cursor_line?: number;
-    /** 选中的代码片段 */
-    selected_text?: string;
-    /** 诊断错误 */
-    diagnostics?: Array<{
-        file: string;
-        line: number;
-        severity: 'error' | 'warning' | 'info';
-        message: string;
-    }>;
-    /** 最近编辑的文件 */
-    recent_edits?: string[];
-    /** 最后更新时间 */
-    updated_at: number;
+  /** 当前打开的文件列表 */
+  openFiles: OpenFileInfo[];
+  /** 当前活动文件路径 */
+  activeFile?: string;
+  /** 最近的诊断 (errors/warnings) */
+  diagnostics?: Array<{
+    file: string;
+    line: number;
+    severity: 'error' | 'warning' | 'info';
+    message: string;
+  }>;
+  /** 最后更新时间 */
+  updatedAt: number;
+  /** 是否在编辑模式 */
+  isEditing: boolean;
 }
 
-let _state: IdeState | null = null;
+let currentState: IdeState = {
+  openFiles: [],
+  updatedAt: 0,
+  isEditing: false,
+};
 
-export function update_ide_state(state: Omit<IdeState, 'updated_at'>): void {
-    _state = { ...state, updated_at: Date.now() };
+/** 更新 IDE 状态 (由 GUI 推送) */
+export function updateIdeState(partial: Partial<IdeState>): void {
+  currentState = {
+    ...currentState,
+    ...partial,
+    updatedAt: Date.now(),
+  };
 }
 
-export function get_ide_state(): IdeState | null {
-    if (!_state) return null;
-    // 超过 30 秒的状态视为过期
-    if (Date.now() - _state.updated_at > 30000) return null;
-    return _state;
+/** 获取当前 IDE 状态 */
+export function getIdeState(): IdeState {
+  return currentState;
 }
 
-/** 格式化为 AI 上下文注入的文本 */
-export function format_ide_context(): string | null {
-    const s = get_ide_state();
-    if (!s) return null;
+/**
+ * 生成 IDE 上下文文本，注入 AI 系统提示
+ * 格式简洁，避免占用过多 token
+ */
+export function buildIdeContext(): string {
+  const s = currentState;
+  if (s.openFiles.length === 0) return '';
 
-    const parts: string[] = ['# IDE 状态 (实时)'];
+  const lines: string[] = ['<ide-context>'];
 
-    if (s.open_files.length > 0) {
-        const fileList = s.open_files.map(f => {
-            const isActive = f === s.active_file;
-            const cursor = isActive && s.cursor_line ? ` (L${s.cursor_line})` : '';
-            return isActive ? `**${f}${cursor}**` : f;
-        }).join(', ');
-        parts.push(`打开文件: ${fileList}`);
+  // 活动文件
+  if (s.activeFile) {
+    const active = s.openFiles.find(f => f.path === s.activeFile);
+    if (active) {
+      lines.push(`  当前文件: ${active.path} (${active.language})`);
+      lines.push(`  光标: L${active.cursorLine}:${active.cursorColumn}`);
+      if (active.selectedText) {
+        const truncated = active.selectedText.length > 200
+          ? active.selectedText.slice(0, 200) + '...'
+          : active.selectedText;
+        lines.push(`  选中文本: """${truncated}"""`);
+      }
     }
+  }
 
-    if (s.selected_text && s.selected_text.length > 0) {
-        parts.push(`选中代码:\n\`\`\`\n${s.selected_text.slice(0, 300)}\n\`\`\``);
+  // 已打开的其他文件
+  const otherFiles = s.openFiles.filter(f => f.path !== s.activeFile);
+  if (otherFiles.length > 0) {
+    const fileNames = otherFiles.map(f => {
+      const lang = f.language ? ` (${f.language})` : '';
+      return `${f.path}${lang}`;
+    }).slice(0, 10); // 最多显示 10 个
+    lines.push(`  其他打开的文件 (${otherFiles.length}):`);
+    for (const fn of fileNames) {
+      lines.push(`    - ${fn}`);
     }
-
-    if (s.diagnostics && s.diagnostics.length > 0) {
-        const diags = s.diagnostics.slice(0, 5).map(d =>
-            `${d.file}:${d.line} — [${d.severity}] ${d.message}`
-        ).join('\n');
-        parts.push(`诊断:\n${diags}`);
+    if (otherFiles.length > 10) {
+      lines.push(`    ... 还有 ${otherFiles.length - 10} 个文件`);
     }
+  }
 
-    if (s.recent_edits && s.recent_edits.length > 0) {
-        parts.push(`最近编辑: ${s.recent_edits.slice(0, 5).join(', ')}`);
+  // 诊断
+  if (s.diagnostics && s.diagnostics.length > 0) {
+    const errors = s.diagnostics.filter(d => d.severity === 'error');
+    const warnings = s.diagnostics.filter(d => d.severity === 'warning');
+    if (errors.length > 0) {
+      lines.push(`  ⚠️ ${errors.length} 个编译错误:`);
+      for (const e of errors.slice(0, 5)) {
+        lines.push(`    L${e.line} [${e.file.split('/').pop()}] ${e.message}`);
+      }
     }
+    if (warnings.length > 0) {
+      lines.push(`  ⚡ ${warnings.length} 个警告`);
+    }
+  }
 
-    return parts.length > 1 ? parts.join('\n') : null;
+  lines.push('</ide-context>');
+  return lines.join('\n');
+}
+
+/** 重置 IDE 状态 */
+export function resetIdeState(): void {
+  currentState = {
+    openFiles: [],
+    updatedAt: 0,
+    isEditing: false,
+  };
 }

@@ -71,8 +71,8 @@ export async function analyzeGapsWithLLM(
       maxTokens: 200, // 限制输出长度（注意：使用 camelCase）
     });
 
-    const content = response.choices[0]?.message?.content || '';
-    const tokensUsed = response.usage?.total_tokens || 100;
+    const content = response.content || '';
+    const tokensUsed = response.usage?.totalTokens || 100;
 
     // 解析JSON
     const jsonMatch = content.match(/\{[\s\S]*\}/);

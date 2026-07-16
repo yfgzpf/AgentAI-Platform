@@ -1,5 +1,6 @@
 /**
  * 多 Agent 竞争合作博弈引擎
+ * TODO: 接入 spawn_subagent 工具或 admin 路由, 实现多方案竞争选择
  * 
  * 核心逻辑：
  * 1. N 个 Agent 并行对同一任务生成方案

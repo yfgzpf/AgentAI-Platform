@@ -38,6 +38,8 @@ export interface SkillOptions {
   skillName?: string;
   /** 用户消息 */
   message: string;
+  /** v3.2 修复: 目标文件 (CLI 传, spawner-cli 用) */
+  targetFile?: string;
   /** 最大迭代次数 */
   maxIterations?: number;
   /** 超时时间 (ms) */

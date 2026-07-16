@@ -64,7 +64,7 @@ export function createVoiceRouter(): Router {
         return;
       }
 
-      const effectiveProvider = provider || config.provider;
+      let effectiveProvider = provider || config.provider;
 
       // ====== MOSS (本地语音克隆) ======
       if (effectiveProvider === 'moss') {
@@ -165,7 +165,7 @@ export function createVoiceRouter(): Router {
           }
 
           // 构建 SSML（支持情感/风格）
-          const ssml = buildAgnesSsml(text, voiceConfig.shortName, voiceConfig.locale, speed);
+          const ssml = buildAgnesSsml(text, voiceConfig!.shortName, voiceConfig!.locale, speed);
 
           // 调用 Agnes TTS API（Azure TTS 兼容接口）
           const agnesKey = process.env.AGENTAI_API_KEY || config.apiKey || '';
@@ -191,7 +191,7 @@ export function createVoiceRouter(): Router {
 
           const audioBuffer = Buffer.from(await resp.arrayBuffer());
           res.setHeader('Content-Type', 'audio/wav');
-          res.setHeader('X-Voice-Used', voiceConfig.shortName);
+          res.setHeader('X-Voice-Used', voiceConfig!.shortName);
           res.setHeader('X-Duration-Ms', String(Date.now() - startTime));
           res.send(audioBuffer);
           return;

@@ -41,9 +41,18 @@ export class MCPHost {
   }
 
   private async _connectStdio(config: McpServerConfig): Promise<void> {
-    const proc = spawn(config.command!, config.args || [], {
+    // Windows: npx/node 是 batch 脚本, spawn('npx') 找不到, 需要用 cmd.exe 启动
+    const isWin = process.platform === 'win32';
+    const isWindowsCmd = isWin && (config.command === 'npx' || config.command === 'node');
+    const cmd = isWindowsCmd ? process.env.ComSpec || 'cmd.exe' : config.command!;
+    const cmdArgs = isWindowsCmd
+      ? ['/d', '/s', '/c', `"${config.command}" ${(config.args || []).join(' ')}`]
+      : config.args || [];
+
+    const proc = spawn(cmd, cmdArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
+      windowsHide: true,
     });
 
     let buffer = '';
@@ -151,7 +160,7 @@ export class MCPHost {
       proc.stdin?.write(data);
       if (id === 0) resolve(null);
       // 超时
-      setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error('MCP timeout')); } }, 15000);
+      setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error('MCP timeout')); } }, 60000);
     });
   }
 
@@ -161,7 +170,7 @@ export class MCPHost {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(msg),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(60000),
     });
     const json = await resp.json() as JsonRpcResponse;
     if (json.error) throw new Error(json.error.message);

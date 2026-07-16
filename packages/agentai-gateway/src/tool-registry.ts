@@ -18,6 +18,8 @@ import chokidar, { FSWatcher } from 'chokidar';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { EventEmitter } from 'events';
+import { parseToolError, formatStructuredError, isFixSafe, StructuredError } from './error-parser.js';
+import { hookCapture } from './hook-capture.js';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
@@ -38,6 +40,8 @@ export interface ToolResult {
   output: string;
   data?: any;
   error?: string;
+  /** 结构化错误信息（2026-06-24 新增） */
+  structuredError?: StructuredError;
   /** 给 Reasonix 4 步修复的元数据 */
   durationMs?: number;
 }
@@ -103,10 +107,12 @@ export class ToolRegistry extends EventEmitter {
         throw new Error(`Tool name "${entry.name}" matches blacklist pattern`);
       }
     }
-    // 2. 验证参数 schema 不含危险 key
+    // 2. 验证参数 schema 不含危险 key (使用词边界匹配，避免误杀如 "code-executor")
     const paramStr = JSON.stringify(entry.parameters);
     for (const k of PARAM_KEY_BLACKLIST) {
-      if (paramStr.includes(k)) {
+      // 精确匹配键名（JSON 路径格式），而非字符串片段
+      const keyRegex = new RegExp('"' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"[\\s:]', 'g');
+      if (keyRegex.test(paramStr)) {
         throw new Error(`Tool "${entry.name}" parameter has blacklisted key: ${k}`);
       }
     }
@@ -134,8 +140,9 @@ export class ToolRegistry extends EventEmitter {
   }
 
   /**
-   * 转换为 OpenAI/Anthropic 格式 tools 数组
-   * 学自: Hermes LLM 工具描述格式
+   * 转换为 OpenAI/Anthropic 兼容格式 tools 数组
+   * 注: 返回内部 ToolSpec 格式 (扁平), llm-router.ts 的 toolSpecsToOpenAI 负责
+   * 包装为 { type: 'function', function: {...} } 格式发给 API
    */
   toLLMTools() {
     return this.list().map(t => ({
@@ -151,21 +158,12 @@ export class ToolRegistry extends EventEmitter {
    */
   toSkillsXML(): string {
     const skills = this.list();
-    const xml: string[] = ['<available_skills>'];
-    for (const t of skills) {
-      const riskTag = t.riskLevel !== 'low' ? ` risk="${t.riskLevel}"` : '';
-      const parallelTag = t.parallelSafe ? ' parallel="true"' : '';
-      xml.push(
-        `  <skill name="${t.name}"${riskTag}${parallelTag}>`,
-        `    <description>${this.escapeXml(t.description)}</description>`,
-        `    <parameters>${JSON.stringify(t.parameters)}</parameters>`,
-        t.skillMeta ? `    <source>${t.skillMeta.source}</source>` : '',
-        t.skillMeta?.tags.length ? `    <tags>${t.skillMeta.tags.join(',')}</tags>` : '',
-        `  </skill>`,
-      );
-    }
-    xml.push('</available_skills>');
-    return xml.filter(Boolean).join('\n');
+    // P1-1.4: 精简 XML — 只发名称 + 描述 (节省 ~2000 token, parameters 已在 tools API 中)
+    const lines = skills.map(t => {
+      const risk = t.riskLevel !== 'low' ? ` [${t.riskLevel}]` : '';
+      return `- ${t.name}${risk}: ${this.escapeXml(t.description.slice(0, 100))}`;
+    });
+    return `# Available Skills\n${lines.join('\n')}`;
   }
 
   /**
@@ -247,6 +245,31 @@ export class ToolRegistry extends EventEmitter {
       return { success: false, output: '', error: `Unknown tool: ${call.name}` };
     }
 
+    // Hook: PreToolUse - 执行前检查
+    let canProceed = true;
+    try {
+      // 从上下文获取会话ID（如果在上下文中可用）
+      const sessionId = (ctx as any)._sessionId || `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      canProceed = await hookCapture.onPreToolUse(
+        sessionId,
+        call.name,
+        call.args,
+        ctx
+      );
+    } catch (error) {
+      console.warn(`[tool-registry:hook] PreToolUse failed for ${call.name}:`, error);
+      canProceed = false;
+    }
+    
+    if (!canProceed) {
+      return {
+        success: false,
+        output: '[BLOCKED BY HOOK]',
+        error: 'Tool call blocked by lifecycle hooks',
+        durationMs: 0
+      };
+    }
+
     // 5. 风险门: critical 工具要二次确认
     if (tool.riskLevel === 'critical') {
       this.emit('tool:critical', { name: call.name, args: call.args });
@@ -259,28 +282,85 @@ export class ToolRegistry extends EventEmitter {
 
     // 6. 执行
     const t0 = Date.now();
+    let result: ToolResult;
     try {
-      const result = await tool.handler(call.args, ctx);
+      result = await tool.handler(call.args, ctx);
       result.durationMs = Date.now() - t0;
-      return result;
     } catch (err) {
-      return {
+      // 2026-06-24: 结构化错误处理
+      const structuredError = parseToolError(
+        err as Error,
+        'tool_execution',
+        call.name,
+        call.args
+      );
+      
+      // 检查修复建议是否安全
+      if (structuredError.suggestedFix && !isFixSafe(structuredError.suggestedFix)) {
+        structuredError.suggestedFix = '修复建议包含危险操作，请人工检查';
+        structuredError.riskLevel = 'high';
+      }
+      
+      result = {
         success: false,
         output: '',
-        error: String(err),
+        error: formatStructuredError(structuredError),
+        structuredError,
         durationMs: Date.now() - t0,
       };
     }
+
+    // Hook: PostToolUse - 执行后通知
+    try {
+      const sessionId = (ctx as any)._sessionId || `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await hookCapture.onPostToolUse(
+        sessionId,
+        call.name,
+        call.args,
+        result,
+        ctx
+      );
+    } catch (error) {
+      console.warn(`[tool-registry:hook] PostToolUse failed for ${call.name}:`, error);
+    }
+
+    return result;
   }
 
   private waitForConfirmation(
-    _call: { id: string; name: string; args: Record<string, any> },
-    _ctx: ToolContext,
-    _timeoutMs: number,
+    call: { id: string; name: string; args: Record<string, any> },
+    ctx: ToolContext,
+    timeoutMs: number,
   ): Promise<boolean> {
-    // TODO: 接 Tauri 桌面端弹窗/QQ 消息/VSCode 通知
-    // 现阶段: 自动拒绝
-    return Promise.resolve(false);
+    // 高风险操作审批: 通过 SSE 事件通知前端, 等待用户确认
+    // 前端通过 POST /v1/approve/:callId 提交审批结果
+    return new Promise((resolve) => {
+      // 1. 发出审批请求事件 (前端监听 SSE)
+      this.emit('tool:approval_needed', {
+        callId: call.id,
+        name: call.name,
+        args: call.args,
+        riskLevel: this.tools.get(call.name)?.riskLevel || 'high',
+        summary: `${call.name}: ${JSON.stringify(call.args).slice(0, 200)}`,
+      });
+
+      // 2. 注册一次性审批回调
+      const approvalKey = `approval:${call.id}`;
+      const onApproved = (data: { callId: string; approved: boolean }) => {
+        if (data.callId === call.id) {
+          this.off('tool:approval_result', onApproved);
+          clearTimeout(timer);
+          resolve(data.approved);
+        }
+      };
+      this.on('tool:approval_result', onApproved);
+
+      // 3. 超时自动拒绝
+      const timer = setTimeout(() => {
+        this.off('tool:approval_result', onApproved);
+        resolve(false);
+      }, timeoutMs);
+    });
   }
 
   // ===== Skills 热加载 (学 Hermes + ZhiY.AI) =====
@@ -312,6 +392,29 @@ export class ToolRegistry extends EventEmitter {
     const { meta, body } = this.parseFrontmatter(content);
 
     if (!meta?.name) return;
+
+    // 技能质量验证: 检查 version/dependencies/testCommand
+    const warnings: string[] = [];
+    if (!meta.version) {
+      warnings.push('missing version, defaulting to 0.0.0');
+    }
+    if (!meta.testCommand) {
+      warnings.push('no testCommand defined, skill quality unverified');
+    }
+    if (meta.dependencies) {
+      // 验证依赖是否可用
+      const deps = Array.isArray(meta.dependencies) ? meta.dependencies : String(meta.dependencies).split(',').map((d: string) => d.trim());
+      for (const dep of deps) {
+        try {
+          await import(dep);
+        } catch {
+          warnings.push(`dependency "${dep}" may not be available`);
+        }
+      }
+    }
+    if (warnings.length > 0) {
+      console.warn(`[skill] ${meta.name}: ${warnings.join('; ')}`);
+    }
 
     // 动态 require handler
     const handlerPath = path.join(path.dirname(file), 'handler.js');
@@ -348,12 +451,22 @@ export class ToolRegistry extends EventEmitter {
     if (end === -1) return { meta: {}, body: content };
     const yaml = content.slice(3, end);
     const body = content.slice(end + 4).trim();
-    // 简化: 用正则解析
-    const meta: Record<string, string> = {};
+    // 增强解析: 支持简单数组值 ([item1, item2]) 和嵌套字段
+    const meta: Record<string, any> = {};
     for (const line of yaml.split('\n')) {
       const m = line.match(/^(\w+):\s*(.+)$/);
       if (m && m[1] !== undefined && m[2] !== undefined) {
-        meta[m[1]] = m[2].replace(/^["']|["']$/g, '');
+        let val: any = m[2].replace(/^["']|["']$/g, '');
+        // 解析数组值: [item1, item2]
+        if (val.startsWith('[') && val.endsWith(']')) {
+          val = val.slice(1, -1).split(',').map((s: string) => s.trim().replace(/^["']|["']$/g, ''));
+        }
+        // 解析布尔值
+        if (val === 'true') val = true;
+        else if (val === 'false') val = false;
+        // 解析数字
+        else if (/^\d+(\.\d+)?$/.test(val)) val = parseFloat(val);
+        meta[m[1]] = val;
       }
     }
     return { meta, body };

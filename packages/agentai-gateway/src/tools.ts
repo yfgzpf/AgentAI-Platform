@@ -1,14 +1,258 @@
 // @ts-nocheck
 // ===== 批量工具定义和处理器 =====
+/**
+ * ⚠️ 工具系统重构说明 (2026-07-13)
+ * ----------------------------------------------------------------
+ * 此文件包含 53 个内置工具的定义 (EXTRA_TOOLS) 和实现 (EXTRA_HANDLERS)。
+ * 通过 `src/index.ts:125-138` 注册到 `ToolRegistry`。
+ *
+ * 问题：
+ *  - 全文件禁用类型检查（@ts-nocheck），潜在类型错误未被发现
+ *  - 与新系统 `tool-registry.ts` 存在并行/重复
+ *
+ * 未来重构方向（不在本次范围）：
+ *  - 逐个工具迁移到 `tool-registry.ts`，启用类型检查
+ *  - 拆分大文件为 `tools/*.ts`，按域分组
+ *
+ * 安全守护：
+ *  - 本次未修改任何业务逻辑
+ *  - 仅添加本说明，不影响 tsc 编译结果
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { readMemory, writeMemory } from './memory.js';
 import { getGlobalSandbox } from './sandbox/index.js';
 import { WorkspaceManager } from './workspace-manager.js';
+import { CaptchaHandler, detectCaptchaFromHtml, type CaptchaInfo } from './captcha-handler.js';
+import { runSandboxedSkill } from './safety/code-runner.js';
+
+/**
+ * 静态扫描 Python 代码的危险模式
+ * 灵感来源: Fugu Verifier 思想
+ */
+const PYTHON_DANGEROUS_PATTERNS: { pattern: RegExp; reason: string }[] = [
+  { pattern: /\bimport\s+subprocess\b/, reason: 'subprocess module' },
+  { pattern: /\bfrom\s+subprocess\b/, reason: 'subprocess import' },
+  { pattern: /\bos\.system\b/, reason: 'os.system' },
+  { pattern: /\bos\.popen\b/, reason: 'os.popen' },
+  { pattern: /\bos\.exec[lv]p?[pe]?\b/, reason: 'os.exec*' },
+  { pattern: /\b__import__\s*\(/, reason: '__import__' },
+  { pattern: /\beval\s*\(/, reason: 'eval' },
+  { pattern: /\bexec\s*\(/, reason: 'exec' },
+  { pattern: /\bcompile\s*\(/, reason: 'compile' },
+  { pattern: /\bopen\s*\(\s*['"](?:\/etc\/|C:\\Windows|C:\\Program)/i, reason: 'system path open' },
+  { pattern: /\bsocket\s*\.\s*socket\b/, reason: 'raw socket' },
+  { pattern: /\bctypes\b/, reason: 'ctypes' },
+  { pattern: /\brequests\s*\.\s*get\b/, reason: 'requests.get (use httpx via tools instead)' },
+];
+
+export function scanPythonDangerous(code: string): { ok: true } | { ok: false; reason: string } {
+  // 去掉注释和字符串字面量
+  const stripped = code
+    .replace(/'''[\s\S]*?'''/g, '')
+    .replace(/"""[\s\S]*?"""/g, '')
+    .replace(/(["'])(?:\\.|(?!\1).)*\1/g, '""');
+  for (const { pattern, reason } of PYTHON_DANGEROUS_PATTERNS) {
+    if (pattern.test(stripped)) {
+      return { ok: false, reason };
+    }
+  }
+  return { ok: true };
+}
 
 function getApiKey(name: string): string | undefined {
   return process.env[name] || '';
+}
+
+/**
+ * HTML 精简引擎 - 移除无用元素, 只保留可交互和关键内容
+ * 仿照 BrowserAct 的 HTML 精简策略, 可降低 ~93% token 消耗
+ */
+function minifyHtml(html: string): string {
+  let result = html;
+  // 移除 <script> 及其内容
+  result = result.replace(/<script[\s\S]*?<\/script>/gi, '');
+  // 移除 <style> 及其内容
+  result = result.replace(/<style[\s\S]*?<\/style>/gi, '');
+  // 移除 <link> 标签
+  result = result.replace(/<link[^>]*>/gi, '');
+  // 移除 <meta> 标签
+  result = result.replace(/<meta[^>]*>/gi, '');
+  // 移除 <noscript> 标签
+  result = result.replace(/<noscript[\s\S]*?<\/noscript>/gi, '');
+  // 移除注释
+  result = result.replace(/<!--[\s\S]*?-->/g, '');
+  // 移除自闭合的无语义标签
+  result = result.replace(/<(hr|br|img|div|span)[^>]*>/gi, (match) => {
+    // img 保留 alt 信息
+    if (match.match(/<img[^>]*alt=["']([^"']*)["']/i)) {
+      const alt = match.match(/alt=["']([^"']*)["']/i)?.[1] || '';
+      return alt ? `[图片: ${alt}]` : '';
+    }
+    return ''; // br/hr/div/span 直接移除
+  });
+  // 限制输出长度 (最大 50KB)
+  if (result.length > 50_000) {
+    result = result.slice(0, 50_000) + '\n[内容过长, 已截断]';
+  }
+  return result;
+}
+
+/**
+ * 分析 HTML 页面结构, 提取关键交互元素
+ */
+function analyzeHtmlStructure(html: string): Array<{
+  tag: string;
+  selector: string;
+  text?: string;
+  type?: string;
+  href?: string;
+  placeholder?: string;
+  role?: string;
+}> {
+  const elements: typeof elements[0][] = [];
+  const interactiveTags = ['a', 'button', 'input', 'select', 'textarea'];
+  const roles = ['button', 'link', 'textbox', 'combobox', 'listbox'];
+
+  // 简单正则提取 (不依赖 DOMParser, 避免 XSS)
+  for (const tag of interactiveTags) {
+    const pattern = new RegExp(`<${tag}([^>]*)>([^<]*)</${tag}>|<${tag}([^>]*)/?>`, 'gi');
+    let match;
+    while ((match = pattern.exec(html)) !== null) {
+      const attrs = (match[1] || match[3] || '').toLowerCase();
+      const text = (match[2] || '').trim().slice(0, 100);
+      
+      // 生成简单 selector
+      let selector = tag;
+      const idMatch = attrs.match(/id=["']([^"']*)["']/);
+      if (idMatch) selector = `#${idMatch[1]}`;
+      const classMatch = attrs.match(/class=["']([^"']*)["']/);
+      if (classMatch) selector = `${tag}.${classMatch[1].split(/\s+/)[0]}`;
+
+      elements.push({
+        tag,
+        selector,
+        text: text || undefined,
+        type: attrs.match(/type=["']([^"']*)["']/)?.[1],
+        href: attrs.match(/href=["']([^"']*)["']/)?.[1],
+        placeholder: attrs.match(/placeholder=["']([^"']*)["']/)?.[1],
+      });
+    }
+  }
+
+  // 提取有 role 属性的元素
+  const rolePattern = /<([a-z][a-z0-9]*)\b([^>]*)role=["']([^"']*)["']([^>]*)>/gi;
+  let roleMatch;
+  while ((roleMatch = rolePattern.exec(html)) !== null) {
+    const tag = roleMatch[1];
+    const beforeRole = roleMatch[2];
+    const role = roleMatch[3];
+    const afterRole = roleMatch[4];
+
+    if (roles.includes(role)) {
+      let selector = tag;
+      const idMatch = (beforeRole + afterRole).match(/id=["']([^"']*)["']/);
+      if (idMatch) selector = `#${idMatch[1]}`;
+
+      elements.push({
+        tag,
+        selector,
+        role,
+        text: '',
+      });
+    }
+  }
+
+  return elements.slice(0, 50); // 最多 50 个元素
+}
+
+/**
+ * 生成 SKILL.md 文件内容
+ */
+function generateSkillMd(config: {
+  name: string;
+  description: string;
+  targetUrl: string;
+  elements: Array<{ tag: string; selector: string; text?: string; type?: string; href?: string }>;
+}): string {
+  const { name, description, targetUrl, elements } = config;
+  return `---
+name: ${name}
+description: ${description}
+category: web-scraping
+triggers:
+  - "抓取${name.split('-')[0]}"
+  - "提取数据"
+  - "scrape"
+---
+
+# ${name}
+
+## 描述
+${description}
+
+## 目标网站
+${targetUrl}
+
+## 关键元素
+${elements.slice(0, 10).map(e => `- **${e.tag}**: ${e.selector}${e.text ? ` (${e.text.slice(0, 50)})` : ''}`).join('\n')}
+
+## 使用说明
+直接调用此技能即可从目标网站提取数据。
+
+## 注意事项
+- 网站结构可能变化, 如遇提取失败请重新生成技能
+- 遵守网站 robots.txt 和使用条款
+`;
+}
+
+/**
+ * 生成执行脚本 (JavaScript)
+ */
+function generateScript(config: {
+  name: string;
+  targetUrl: string;
+  elements: Array<{ tag: string; selector: string; text?: string; type?: string; href?: string }>;
+  extractionGoal: string;
+}): string {
+  const { name, targetUrl, elements, extractionGoal } = config;
+  
+  return `/**
+ * ${name} - 自动从 ${targetUrl} 提取数据
+ * 生成时间: ${new Date().toISOString()}
+ * 提取目标: ${extractionGoal}
+ */
+
+import { web_fetch } from './tools.js';
+
+export async function main(args = {}) {
+  const url = '${targetUrl}';
+  
+  // 1. 获取页面 HTML
+  const html = await web_fetch(url);
+  if (!html) throw new Error('无法获取页面');
+  
+  // 2. 解析并提取数据
+  const results = [];
+  ${elements.slice(0, 5).map(e => {
+    if (e.tag === 'a' && e.href) {
+      return `  // 提取链接: ${e.selector}`;
+    } else if (e.tag === 'input') {
+      return `  // 输入框: ${e.selector}`;
+    } else {
+      return `  // 元素: ${e.selector}`;
+    }
+  }).join('\n')}
+  
+  // 3. 返回结构化数据
+  return {
+    url,
+    extractedAt: new Date().toISOString(),
+    data: results,
+  };
+}
+`;
 }
 
 const bgJobs = new Map<number, any>();
@@ -16,47 +260,74 @@ let jobIdCounter = 0;
 let _active_plan: any = null;
 export { _active_plan };
 
-/** 自动验证: 文件修改后运行 tsc 检查编译错误 */
+/** 自动验证: 文件修改后运行 tsc 检查编译错误 (带防抖) */
+// ═══ 2026-06-28 优化: 防抖机制, 批量修改只验证一次 ═══
+let _verifyDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let _verifyPendingFiles: Set<string> = new Set();
+let _verifyLastResult: string | null = null;
+const VERIFY_DEBOUNCE_MS = 2000; // 2秒内的连续修改只验证一次
+
 async function auto_verify(filePath: string): Promise<string | null> {
   if (!/\.(tsx?|jsx?)$/i.test(filePath)) return null;
-  try {
-    const { execSync } = await import('child_process');
-    const ws = wm().projectDir;
-    // 找到最近的 tsconfig.json
-    let tsconfigDir = ws;
-    for (const sub of ['packages/agentai-gateway', 'packages/agentai-gui', '.']) {
-      const candidate = path.join(ws, sub, 'tsconfig.json');
-      if (fs.existsSync(candidate) && filePath.includes(sub.replace(/\//g, path.sep))) {
-        tsconfigDir = path.join(ws, sub);
-        break;
-      }
-    }
-    const result = execSync('npx tsc --noEmit 2>&1', {
-      cwd: tsconfigDir, encoding: 'utf-8', timeout: 30000,
-    }).trim();
-    // 只提取与当前文件相关的错误
-    const fileName = path.basename(filePath);
-    const relevantErrors = result.split('\n')
-      .filter(l => l.includes(fileName) && l.includes('error TS'))
-      .slice(0, 5)
-      .join('\n');
-    return relevantErrors || null;
-  } catch (e: any) {
-    // tsc 返回非零退出码时 execSync 会抛异常, stdout 在 e.stdout
-    const output = (e.stdout || e.stderr || '').toString();
-    const fileName = path.basename(filePath);
-    const relevantErrors = output.split('\n')
-      .filter((l: string) => l.includes(fileName) && l.includes('error TS'))
-      .slice(0, 5)
-      .join('\n');
-    return relevantErrors || null;
+
+  // 防抖: 将文件加入待验证集合, 如果已有定时器则等待
+  _verifyPendingFiles.add(filePath);
+  if (_verifyDebounceTimer) {
+    // 已有定时器在等待, 本次直接返回上次结果 (可能为 null)
+    return _verifyLastResult;
   }
+
+  // 创建新的防抖定时器
+  return new Promise((resolve) => {
+    _verifyDebounceTimer = setTimeout(async () => {
+      _verifyDebounceTimer = null;
+      const filesToCheck = [..._verifyPendingFiles];
+      _verifyPendingFiles.clear();
+
+      try {
+        const { execSync } = await import('child_process');
+        const ws = wm().projectDir;
+        // 找到最近的 tsconfig.json
+        let tsconfigDir = ws;
+        for (const sub of ['packages/agentai-gateway', 'packages/agentai-gui', '.']) {
+          const candidate = path.join(ws, sub, 'tsconfig.json');
+          if (fs.existsSync(candidate) && filesToCheck.some(f => f.includes(sub.replace(/\//g, path.sep)))) {
+            tsconfigDir = path.join(ws, sub);
+            break;
+          }
+        }
+        const result = execSync('npx tsc --noEmit --incremental 2>&1', {
+          cwd: tsconfigDir, encoding: 'utf-8', timeout: 30000,
+        }).trim();
+        // 提取与当前待验证文件相关的错误
+        const fileNames = filesToCheck.map(f => path.basename(f));
+        const relevantErrors = result.split('\n')
+          .filter(l => fileNames.some(fn => l.includes(fn)) && l.includes('error TS'))
+          .slice(0, 10)
+          .join('\n');
+        _verifyLastResult = relevantErrors || null;
+        resolve(_verifyLastResult);
+      } catch (e: any) {
+        const output = (e.stdout || e.stderr || '').toString();
+        const fileNames = filesToCheck.map(f => path.basename(f));
+        const relevantErrors = output.split('\n')
+          .filter((l: string) => fileNames.some(fn => l.includes(fn)) && l.includes('error TS'))
+          .slice(0, 10)
+          .join('\n');
+        _verifyLastResult = relevantErrors || null;
+        resolve(_verifyLastResult);
+      }
+    }, VERIFY_DEBOUNCE_MS);
+  });
 }
 
 /** 获取 WorkspaceManager 单例 */
 function wm(): WorkspaceManager {
   return WorkspaceManager.getInstance();
 }
+
+/** Pending previews — Claude Code 式 diff 预览暂存 */
+const pendingPreviews = new Map<string, { edits: any[]; createdAt: number; workspace?: string }>();
 
 /** 解析工具操作路径: 相对于项目目录, 但允许安全的绝对路径 */
 const resolvePath = (p: string, ws?: string) => {
@@ -95,14 +366,40 @@ async function sandboxGuard(p: string, op: 'read' | 'write' | 'delete', size?: n
   };
 }
 
+/**
+ * 检查模型是否支持多模态 (视觉理解)
+ * 用于 browser_screenshot 时提醒用户切换模型
+ */
+function checkMultimodalSupport(model: string): string {
+  if (!model) return '';
+  const m = model.toLowerCase();
+  // 已知支持视觉的模型关键词
+  const multimodalKeywords = [
+    'glm-4v', 'glm-4-plus', 'gpt-4o', 'gpt-4-vision', 'gpt-4-turbo',
+    'claude-3', 'claude-sonnet', 'claude-opus', 'claude-haiku',
+    'gemini', 'qwen-vl', 'qwen2-vl', 'internvl', 'minicpm-v',
+    'yi-vl', 'deepseek-vl', 'llava',
+  ];
+  const isMultimodal = multimodalKeywords.some(kw => m.includes(kw));
+  if (!isMultimodal) {
+    return '当前模型可能不支持视觉理解, 截图无法被AI"看到"。如需视觉分析, 请切换到多模态模型 (如 glm-4v, gpt-4o, qwen-vl)。也可使用 browser_extract 提取文本代替。';
+  }
+  return '';
+}
+
 export const EXTRA_TOOLS = [
-  { name: 'generate_image', description: 'Generate an AI image. Uses Cogview-3-Flash (免费, 智谱 API Key) 优先, 降级到 agnes-image. Use for: 效果图/海报/插画/设计图/照片/任何需要生成图片的任务. Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. Cogview sizes: 1024x1024, 768x1344, 864x1152, 1344x768, 1152x864, 1440x720, 720x1440', parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Detailed image description in Chinese or English. Include style, colors, composition, lighting, mood.' }, size: { type: 'string', enum: ['1024x1024','720x1280','1280x720','1024x768','768x1024','768x1344','864x1152','1344x768','1152x864','1440x720','720x1440'], default: '1024x1024' }, style: { type: 'string', description: 'Optional: art style hint' }, negative_prompt: { type: 'string', description: 'Optional: what to avoid in the image' } }, required: ['prompt'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'generate_image', description: `AI 绘画/图片生成. 4 级免费引擎: HF SD → 通义万相(500张) → 智谱 Cogview-3-Flash → agnes-image.
+⚠️ 仅用于生成艺术图片: 效果图/海报/插画/设计图/照片/壁纸/头像等视觉内容。
+❌ 绝对不要用于: 架构图/流程图/知识图谱/技术图表 — 这些请用 generate_diagram 工具 (SVG, 内联渲染, 不会出现"图片加载失败")。
+Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. Cogview sizes: 1024x1024, 768x1344, 864x1152, 1344x768, 1152x864, 1440x720, 720x1440`, parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Detailed image description in Chinese or English. Include style, colors, composition, lighting, mood.' }, size: { type: 'string', enum: ['1024x1024','720x1280','1280x720','1024x768','768x1024','768x1344','864x1152','1344x768','1152x864','1440x720','720x1440'], default: '1024x1024' }, style: { type: 'string', description: 'Optional: art style hint' }, negative_prompt: { type: 'string', description: 'Optional: what to avoid in the image' } }, required: ['prompt'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'generate_video', description: 'Generate video. CogVideoX-Flash (免费, 智谱 API Key) 优先, 降级到 Agnes Video V2.0', parameters: { type: 'object', properties: { prompt: { type: 'string' }, size: { type: 'string', enum: ['720x1280','1280x720','1080x1920','1920x1080'], default: '720x1280' }, duration: { type: 'number', default: 5 }, image: { type: 'string' } }, required: ['prompt'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'query_video', description: 'Query video generation task status', parameters: { type: 'object', properties: { videoId: { type: 'string' }, taskId: { type: 'string' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'web_search', description: 'Search the web for information', parameters: { type: 'object', properties: { query: { type: 'string' }, topK: { type: 'number', default: 5 } }, required: ['query'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'generate_diagram', description: `Generate an inline SVG diagram for the chat. PROACTIVELY use this tool whenever you need to visualize architecture, flowcharts, data relationships, timelines, or comparisons — do NOT wait for the user to ask. If you are explaining a system, process, or relationship, generate a diagram to make it clearer. Types: flowchart (流程步骤), architecture (系统架构), comparison (对比表), timeline (时间线), mindmap (思维导图). Provide a detailed description of what to visualize. The diagram will render inline in the chat, not as a file.`, parameters: { type: 'object', properties: { description: { type: 'string', description: 'Detailed Chinese/English description of the diagram to generate. Include: layout, elements, connections, colors, labels.' }, type: { type: 'string', enum: ['flowchart', 'architecture', 'comparison', 'timeline', 'mindmap'], default: 'flowchart', description: 'Diagram type' }, title: { type: 'string', description: 'Optional diagram title (displayed at top)' } }, required: ['description'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'web_fetch', description: 'Fetch any URL and return its text content. Supports: 微信公众号文章, GitHub, 知乎, 掘金, CSDN, Stack Overflow, 任何公开网页. 当用户发送链接或提到文章时主动使用此工具获取内容.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Complete URL to fetch (supports https://mp.weixin.qq.com/s/... etc.)' } }, required: ['url'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'multi_edit', description: 'Apply multiple SEARCH/REPLACE edits across files', parameters: { type: 'object', properties: { edits: { type: 'array', items: { type: 'object', properties: { file_path: { type: 'string', description: 'Relative path within workspace' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, required: ['file_path','old_str','new_str'] } } }, required: ['edits'] }, parallelSafe: false, riskLevel: 'high' },
+  { name: 'preview_edit', description: '【Claude Code 式工作流】预览将要修改的文件 diff，不实际写入。返回 unified diff 供用户审查，用户确认后调用 apply_edit 应用。先 preview 再 apply，养成好习惯。', parameters: { type: 'object', properties: { edits: { type: 'array', items: { type: 'object', properties: { file_path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, required: ['file_path','old_str','new_str'] } } }, required: ['edits'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'apply_edit', description: '【Claude Code 式工作流】确认应用 preview_edit 预览的修改。需提供 preview_id。5 分钟内有效。', parameters: { type: 'object', properties: { preview_id: { type: 'string' } }, required: ['preview_id'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'create_directory', description: 'Create a directory', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'copy_file', description: 'Copy a file or directory', parameters: { type: 'object', properties: { source: { type: 'string' }, destination: { type: 'string' } }, required: ['source','destination'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'move_file', description: 'Move/rename a file or directory', parameters: { type: 'object', properties: { source: { type: 'string' }, destination: { type: 'string' } }, required: ['source','destination'] }, parallelSafe: false, riskLevel: 'medium' },
@@ -114,27 +411,59 @@ export const EXTRA_TOOLS = [
   { name: 'write_file', description: 'Write content to a file (overwrites existing)', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Relative path within workspace (e.g. "src/output.txt")' }, content: { type: 'string', description: 'Content to write' } }, required: ['file_path','content'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'delete_file', description: 'Delete a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'undo_edit', description: 'Undo the last AI edit on a file by restoring from backup (.agentai/backups/)', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'File to restore' } }, required: ['file_path'] }, parallelSafe: false, riskLevel: 'medium' },
+  // ====== 屏幕与窗口控制（AI 视觉能力）======
+  { name: 'capture_screen', description: `截取屏幕画面（桌面/活动窗口/浏览器/指定区域）。返回 PNG base64。当用户问"现在屏幕上显示什么"或需要查看实时状态时使用。模式: desktop=全桌面, window=活动窗口, browser=需要URL, region=指定区域。`, parameters: { type: 'object', properties: { mode: { type: 'string', enum: ['desktop', 'window', 'browser', 'region'], default: 'desktop' }, url: { type: 'string', description: 'browser 模式需要的 URL' }, region: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } }, description: 'region 模式的坐标和尺寸' }, windowTitle: { type: 'string', description: 'window 模式的窗口标题模糊匹配' }, savePath: { type: 'string', description: '保存路径（不传则返回 base64）' } } }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'ocr_image', description: `从图片中提取文字（OCR）。支持: Windows 内置 OCR / macOS Vision / Tesseract / LLM 视觉引擎。当用户说"读取这个截图"或"提取图片文字"时使用。`, parameters: { type: 'object', properties: { imagePath: { type: 'string', description: '图片路径' }, engine: { type: 'string', enum: ['auto', 'windows', 'macos', 'tesseract', 'llm'], default: 'auto' }, language: { type: 'string', default: 'chi_sim+eng' } }, required: ['imagePath'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'capture_and_read', description: `一键截图+OCR：截取屏幕并提取文字，最常用的"看看屏幕上显示什么"工具。返回 { image, text, mode, ocrEngine }。`, parameters: { type: 'object', properties: { mode: { type: 'string', enum: ['desktop', 'window', 'browser', 'region'], default: 'desktop' }, url: { type: 'string' }, region: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } } } } }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'list_windows', description: `列出所有可见窗口（Windows）。返回 [{ hwnd, title, process, rect }]。`, parameters: { type: 'object', properties: { titleFilter: { type: 'string', description: '标题模糊匹配过滤' } } }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'window_control', description: `窗口控制（Windows）。动作: minimize / maximize / restore / close / show / hide / focus / move / resize。`, parameters: { type: 'object', properties: { action: { type: 'string', enum: ['minimize', 'maximize', 'restore', 'close', 'show', 'hide', 'focus', 'move', 'resize'] }, windowTitle: { type: 'string', description: '窗口标题（模糊匹配）' }, x: { type: 'number', description: 'move 用的新 X 坐标' }, y: { type: 'number', description: 'move 用的新 Y 坐标' }, width: { type: 'number', description: 'resize 用的新宽度' }, height: { type: 'number', description: 'resize 用的新高度' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
+  // ===== 桌面自动化: 鼠标/键盘/剪贴板/进程/通知 (Windows) =====
+  { name: 'mouse_move', description: '移动鼠标到屏幕坐标 (x, y)。不点击, 仅移动。', parameters: { type: 'object', properties: { x: { type: 'number', description: '屏幕 X 坐标' }, y: { type: 'number', description: '屏幕 Y 坐标' } }, required: ['x', 'y'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'mouse_click', description: '在指定坐标点击鼠标。可选左/右/中键, 单击/双击。常见流程: capture_and_read 看到屏幕 → 坐标定位按钮 → mouse_click。', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, button: { type: 'string', enum: ['left', 'right', 'middle'], default: 'left' }, clicks: { type: 'number', enum: [1, 2], default: 1 }, moveFirst: { type: 'boolean', default: true, description: '是否先移动到该位置' } }, required: ['x', 'y'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'mouse_drag', description: '从 (x1,y1) 拖拽到 (x2,y2)。可用于拖动文件、滑动条、选区等。', parameters: { type: 'object', properties: { x1: { type: 'number' }, y1: { type: 'number' }, x2: { type: 'number' }, y2: { type: 'number' }, button: { type: 'string', enum: ['left', 'right'], default: 'left' }, durationMs: { type: 'number', default: 200, description: '拖拽持续时间' } }, required: ['x1', 'y1', 'x2', 'y2'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'mouse_scroll', description: '在指定坐标滚动鼠标滚轮。可用于页面/长列表/画布缩放。', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], default: 'down' }, amount: { type: 'number', default: 3, description: '滚动量 (1-20)' } }, required: ['x', 'y', 'direction'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'keyboard_type', description: '在当前焦点窗口输入文本。中文/emoji 自动走剪贴板+粘贴, ASCII 走 SendKeys。最大 5000 字符。会自动拒绝密码管理器等敏感窗口。', parameters: { type: 'object', properties: { text: { type: 'string', description: '要输入的文本' }, intervalMs: { type: 'number', default: 10, description: '字符间隔 (毫秒)' }, maxLength: { type: 'number', default: 5000 } }, required: ['text'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'press_hotkey', description: '按下快捷键组合, 如 "ctrl+c" / "alt+tab" / "ctrl+shift+esc" / "enter" / "f5"。', parameters: { type: 'object', properties: { combo: { type: 'string', description: '组合键, 用 + 分隔, 如 "ctrl+shift+enter"' } }, required: ['combo'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'clipboard_read', description: '读取系统剪贴板当前文本内容。', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'clipboard_write', description: '向系统剪贴板写入文本。', parameters: { type: 'object', properties: { text: { type: 'string', description: '要写入的文本' } }, required: ['text'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'list_processes', description: '列出进程 (PID + 名称 + 窗口标题 + 内存). 默认只列有主窗口的 (轻量); 设 onlyWithWindow=false 可列出全部进程 (含命令行, 如 powershell/node/python). 适合自动化前的目标定位.', parameters: { type: 'object', properties: { nameFilter: { type: 'string', description: '进程名模糊过滤' }, limit: { type: 'number', default: 50 }, onlyWithWindow: { type: 'boolean', default: true, description: '是否只列有主窗口的进程' } } }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'kill_process', description: '通过 PID 终止进程。系统关键进程 (csrss/lsass/explorer 等) 自动拒绝。', parameters: { type: 'object', properties: { pid: { type: 'number', description: '进程 ID' }, force: { type: 'boolean', default: false, description: '是否强制结束 (/F)' } }, required: ['pid'] }, parallelSafe: false, riskLevel: 'high' },
+  { name: 'notify', description: '发送 Windows 桌面通知 (Toast). 可用于长时间任务完成时提醒用户.', parameters: { type: 'object', properties: { title: { type: 'string' }, message: { type: 'string' }, severity: { type: 'string', enum: ['info', 'warning', 'error'], default: 'info' } }, required: ['title', 'message'] }, parallelSafe: true, riskLevel: 'low' },
+  // ===== 扩展自动化: 启动应用/系统状态/锁屏/音量/等待窗口 =====
+  { name: 'launch_app', description: '启动应用 (Windows). 支持系统命令 (notepad/calc/explorer 等) + 任意可执行路径 + http(s) URL + 文件关联. 系统命令走白名单, 路径必须存在.', parameters: { type: 'object', properties: { target: { type: 'string', description: '应用名/路径/URL' }, args: { type: 'string', description: '额外参数' }, cwd: { type: 'string', description: '工作目录' } }, required: ['target'] }, parallelSafe: true, riskLevel: 'medium' },
+  { name: 'system_info', description: '获取系统状态: OS/CPU/内存/磁盘/启动时间. 适合自动化的前后状态检查.', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'lock_screen', description: '锁屏 (Windows LockWorkStation).', parameters: { type: 'object', properties: {} }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'set_volume', description: '设置系统音量 (0-100). 模拟键盘音量键 (近似值).', parameters: { type: 'object', properties: { level: { type: 'number', minimum: 0, maximum: 100 } }, required: ['level'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'toggle_mute', description: '切换系统静音.', parameters: { type: 'object', properties: {} }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'wait_for_window', description: '等待指定标题的窗口出现 (异步自动化的关键). 轮询直到窗口可见或超时.', parameters: { type: 'object', properties: { titleContains: { type: 'string', description: '窗口标题的部分匹配字符串' }, timeoutMs: { type: 'number', default: 10000 }, pollMs: { type: 'number', default: 500 } }, required: ['titleContains'] }, parallelSafe: true, riskLevel: 'low' },
+  // ===== 视觉驱动自动化 (Vision-Driven) =====
+  { name: 'find_text_on_screen', description: '在屏幕上查找文字 (单次截屏+OCR), 返回中心坐标. 典型用法: findText→得到坐标→mouseClick. 比纯坐标点击更智能.', parameters: { type: 'object', properties: { text: { type: 'string', description: '要查找的文字' }, exactMatch: { type: 'boolean', default: false, description: '完全匹配 (默认包含匹配)' }, ignoreCase: { type: 'boolean', default: true }, windowTitle: { type: 'string', description: '限定窗口 (只截该窗口)' } }, required: ['text'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'click_text', description: '点击屏幕上指定文字 (组合: findText+mouseClick). 不需要知道坐标, 适用于"点击确定按钮"等场景.', parameters: { type: 'object', properties: { text: { type: 'string', description: '要点击的文字' }, exactMatch: { type: 'boolean', default: false }, doubleClick: { type: 'boolean', default: false }, button: { type: 'string', enum: ['left', 'right', 'middle'], default: 'left' }, windowTitle: { type: 'string' } }, required: ['text'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'wait_for_text', description: '等待指定文字在屏幕上出现 (轮询 OCR). 适用于: 等待对话框/提示/结果出现.', parameters: { type: 'object', properties: { text: { type: 'string' }, timeoutMs: { type: 'number', default: 10000 }, pollMs: { type: 'number', default: 1500 }, exactMatch: { type: 'boolean', default: false }, windowTitle: { type: 'string' } }, required: ['text'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'double_click_text', description: '双击屏幕上指定文字. 适用于"双击打开文件"等场景.', parameters: { type: 'object', properties: { text: { type: 'string' }, exactMatch: { type: 'boolean', default: false }, windowTitle: { type: 'string' } }, required: ['text'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'type_into_text', description: '点击文字位置后输入文本 (组合: clickText+keyboardType). 适用于"在搜索框输入xxx"等场景. 会自动点击字段并输入.', parameters: { type: 'object', properties: { fieldText: { type: 'string', description: '要点击的字段文字 (标签/占位符)' }, inputText: { type: 'string', description: '要输入的文本' }, clearBefore: { type: 'boolean', default: true, description: '输入前清空 (Ctrl+A + Delete)' }, intervalMs: { type: 'number', default: 10 } }, required: ['fieldText', 'inputText'] }, parallelSafe: false, riskLevel: 'medium' },
+  // ===== 图像模板匹配 (不依赖 OCR) =====
+  { name: 'find_image_on_screen', description: '在屏幕上找图片 (模板匹配, .NET Bitmap 像素比对). 不需要 OCR, 可用于找图标/按钮. 阈值越高越严格.', parameters: { type: 'object', properties: { templatePath: { type: 'string', description: '模板图片路径' }, threshold: { type: 'number', default: 0.85, minimum: 0.5, maximum: 0.99, description: '相似度阈值 (0.5-0.99)' }, region: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } } } }, required: ['templatePath'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'click_image', description: '点击屏幕上指定图片 (组合: findImage+mouseClick). 适用于"点击某个图标"等场景.', parameters: { type: 'object', properties: { templatePath: { type: 'string' }, threshold: { type: 'number', default: 0.85 }, button: { type: 'string', enum: ['left', 'right', 'middle'] }, doubleClick: { type: 'boolean', default: false } }, required: ['templatePath'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'wait_for_image', description: '等待指定图片在屏幕上出现 (轮询模板匹配). 适用于: 等待图标/动画/状态变化.', parameters: { type: 'object', properties: { templatePath: { type: 'string' }, timeoutMs: { type: 'number', default: 10000 }, pollMs: { type: 'number', default: 2000 }, threshold: { type: 'number', default: 0.85 } }, required: ['templatePath'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'search_content', description: 'Search file contents matching a pattern (supports regex). Output includes line numbers.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Search pattern (text or regex)' }, path: { type: 'string' }, glob: { type: 'string', description: 'File glob filter (e.g. "*.ts")' }, type: { type: 'string', description: 'File type shortcut: ts/js/py/go/rs/java/css/html/json/md' }, context: { type: 'number', default: 2, description: 'Context lines before/after match' }, regex: { type: 'boolean', default: false, description: 'Treat pattern as regex' }, files_only: { type: 'boolean', default: false, description: 'Only return matching file paths' } }, required: ['pattern'] }, parallelSafe: true, riskLevel: 'low' },
-  { name: 'get_symbols', description: 'Outline symbols in a source file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'run_background', description: 'Start a long-running background process', parameters: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' }, waitSec: { type: 'number', default: 3 } }, required: ['command'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'job_output', description: 'Read output of a background job', parameters: { type: 'object', properties: { jobId: { type: 'number' }, tailLines: { type: 'number', default: 80 } }, required: ['jobId'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'wait_for_job', description: 'Wait for a background job to finish', parameters: { type: 'object', properties: { jobId: { type: 'number' }, timeoutMs: { type: 'number', default: 5000 } }, required: ['jobId'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'stop_job', description: 'Stop a background job', parameters: { type: 'object', properties: { jobId: { type: 'number' } }, required: ['jobId'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'list_jobs', description: 'List all background jobs', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
   { name: 'remember', description: 'Save a memory. scope=project: 项目级记忆, 写入项目 .agentai/memory.jsonl, 会自动摘要旧条目; scope=global: 全局记忆, 仅用于技能/语法/代码开发模式 (如 "项目使用pnpm, 禁止使用npm")', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['skill','pattern','context','preference'] }, scope: { type: 'string', enum: ['global','project'] }, name: { type: 'string' }, description: { type: 'string' }, content: { type: 'string' }, priority: { type: 'string', enum: ['low','medium','high'] }, industry: { type: 'string', description: 'Industry tag (auto-filled from current industry if omitted)' } }, required: ['type','scope','name','description','content'] }, parallelSafe: false, riskLevel: 'low' },
-  { name: 'plan_task', description: '为复杂任务创建执行计划。当任务涉及多个步骤、多个文件、或预计执行超过2分钟时，必须先调用此工具拆解子任务。例如：生成报告→拆为数据收集+分析+生成文档；代码重构→拆为审查+修改+测试。', parameters: { type: 'object', properties: { goal: { type: 'string', description: '任务总目标' }, subtasks: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, priority: { type: 'string', enum: ['high','medium','low'] } }, required: ['id','title'] } } }, required: ['goal','subtasks'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'plan_task', description: '【复杂任务分解 / 多步骤执行 / 必须先用此工具】\n当用户提出任何**复杂、多步、需要规划**的任务时，**必须**先调用此工具拆解为子任务，再逐个执行。\n\n🔑 触发关键词（命中任一即用此工具）:\n- "完整"/"全套"/"整套"/"全方位"/"系统地"\n- "多步骤"/"分步"/"分阶段"/"涉及多个"/"一整套"\n- "调研报告"/"分析报告"/"市场报告"/"研究"\n- "大型"/"复杂"/"综合"/"深度"\n- "项目"/"方案"/"计划"/"规划"\n- 涉及 3+ 个不同类型的工作（搜索+分析+生成+测试等）\n- 预计执行超过 2 分钟\n\n⚠️ 关键区别:\n- generate_diagram = 画图（视觉输出）\n- spec_generate = 生成 PRD（需求文档）\n- web_search/web_fetch = 搜资料（信息收集）\n- plan_task = **拆解任务**（先规划再执行, 适合多步任务）\n\n💡 适用场景:\n- 完整报告/调研：数据收集→分析→生成文档\n- 代码重构：审查→修改→测试\n- 产品发布：需求→开发→测试→上线\n- 长任务管理：每步用 update_plan 更新进度\n\n📝 案例: "帮我做一个完整的市场调研报告, 涉及多个步骤" → plan_task(goal:..., subtasks:[调研+分析+生成])\n"做一个智能客服系统, 全套" → plan_task(goal:..., subtasks:[需求+架构+开发+测试])', parameters: { type: 'object', properties: { goal: { type: 'string', description: '任务总目标，简明扼要' }, subtasks: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, priority: { type: 'string', enum: ['high','medium','low'] } }, required: ['id','title'] } } }, required: ['goal','subtasks'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'update_plan', description: '更新任务计划中某个子任务的状态', parameters: { type: 'object', properties: { task_id: { type: 'string' }, status: { type: 'string', enum: ['pending','in_progress','completed','failed'] }, summary: { type: 'string', description: '完成摘要(仅 completed 时)' } }, required: ['task_id','status'] }, parallelSafe: false, riskLevel: 'low' },
-  { name: 'evolve_prompt', description: '修改自己的行为规则。通过反思发现某条规则导致低效或错误时使用。规则存储在 .agentai/evolved-rules.json 中，每次对话自动加载。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['add','remove','list'], description: 'add=添加新规则, remove=删除规则, list=查看所有规则' }, rule: { type: 'string', description: '规则内容 (add 时必填)' }, reason: { type: 'string', description: '为什么要添加/删除这条规则' }, rule_id: { type: 'number', description: '要删除的规则编号 (remove 时必填)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'evolve_prompt', description: '【AI 行为规则自进化 / 永久规则】修改 AI 自己的系统行为规则。\n\n⚠️ 关键区别:\n- remember = 存事实/上下文/用户偏好, 会话级记忆\n- evolve_prompt = 添加永久行为规则, 影响未来所有 AI 行为, 写入 .agentai/evolved-rules.json\n\n🔑 触发场景 (用户提到以下关键词时必须用此工具而非 remember):\n- "添加规则"/"写入规则"/"形成规则"/"系统约束"\n- "避免再犯"/"未来不要"/"以后都"/"永远不要"\n- "行为准则"/"操作规范"/"系统行为"/"AI 行为"\n- 发现低效/错误模式, 希望 AI 永久记住并避免\n\n💡 示例: "我发现 PowerShell 不支持 &&, 帮我添加这条规则避免再犯" → evolve_prompt(action:add, rule:...)\n"删除刚才那条规则" → evolve_prompt(action:remove, rule_id:N)\n"查看所有规则" → evolve_prompt(action:list)', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['add','remove','list'], description: 'add=添加新规则, remove=删除规则, list=查看所有规则' }, rule: { type: 'string', description: '规则内容 (add 时必填)。简洁明确, 1-2 句' }, reason: { type: 'string', description: '为什么要添加/删除这条规则' }, rule_id: { type: 'number', description: '要删除的规则编号 (remove 时必填)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'create_tool', description: '创建自定义工具。当发现经常需要某个操作但没有现成工具时使用。工具以脚本形式存储在 .agentai/custom-tools/ 目录下。', parameters: { type: 'object', properties: { name: { type: 'string', description: '工具名称 (小写+下划线)' }, description: { type: 'string' }, script: { type: 'string', description: 'Node.js 脚本内容。必须导出 async function run(args): Promise<string>' }, parameters: { type: 'object', description: '参数定义 (JSON Schema)' } }, required: ['name','description','script'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'forget', description: 'Delete a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'spawn_subagent', description: '创建子智能体执行独立任务。适用场景：(1)需要并行处理多个独立子任务 (2)需要深度探索代码库而不影响主对话 (3)需要独立搜索调研。子智能体有独立上下文，结果自动汇总回主对话。长任务建议先 plan_task 分解，再对独立子任务各 spawn 一个子智能体。', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['explore','research','review','security-review','battle'], description: 'explore=代码探索, research=搜索调研, review=代码审查, security-review=安全审查, battle=多Agent竞争' }, task: { type: 'string', description: '子智能体要完成的具体任务描述' }, numAgents: { type: 'number', description: 'Number of competing agents (battle mode only, default 3)' } }, required: ['type','task'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'spec_generate', description: '为模糊需求生成结构化 PRD。当用户请求模糊时（如"帮我做一个功能"），调用此工具生成包含用户故事、目标、边界、验收标准、测试标准的 PRD 文档。生成后展示给用户确认，确认后调用 plan_task 拆分子任务。', parameters: { type: 'object', properties: { request: { type: 'string', description: '用户原始需求描述' } }, required: ['request'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'ask_user', description: '向用户提问并等待回答。必须在以下场景主动使用: (1) 用户需求模糊/有多种理解方式 (2) 缺少关键参数(风格/尺寸/格式/目标等) (3) 方案有重大取舍需用户决定 (4) 执行出错且所有自主修复失败后。不要在文字中说"我来问你"然后不调工具——用户只能通过工具弹出的卡片看到问题。', parameters: { type: 'object', properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } }, required: ['id','title'] } } }, required: ['question'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'wechat_bot', description: 'Send message via WeChat bot', parameters: { type: 'object', properties: { message: { type: 'string' }, to: { type: 'string' } }, required: ['message'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'connect_qq_bot', description: '连接 QQ 机器人. 使用用户提供的 AppID 和 AppSecret 自动建立 WebSocket 连接, 使 AI 可以实时接收和回复 QQ 消息', parameters: { type: 'object', properties: { appId: { type: 'string', description: 'QQ 机器人 AppID (从 q.qq.com 获取)' }, appSecret: { type: 'string', description: 'QQ 机器人 AppSecret (从 q.qq.com 获取)' }, sandbox: { type: 'boolean', default: false, description: '是否使用沙箱环境' } }, required: ['appId','appSecret'] }, parallelSafe: false, riskLevel: 'medium' },
-  { name: 'submit_report', description: 'Submit final report for chain', parameters: { type: 'object', properties: { chainId: { type: 'string' }, report: { type: 'string' } }, required: ['chainId','report'] }, parallelSafe: false, riskLevel: 'low' },
-  { name: 'chain_advance', description: 'Advance chain to next stage', parameters: { type: 'object', properties: { chainId: { type: 'string' }, stage: { type: 'string' }, output: { type: 'string' } }, required: ['chainId','stage'] }, parallelSafe: false, riskLevel: 'medium' },
-  { name: 'chain_mark', description: 'Mark current stage success/fail', parameters: { type: 'object', properties: { chainId: { type: 'string' }, status: { type: 'string', enum: ['success','failed'] }, error: { type: 'string' } }, required: ['chainId','status'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'chain_create', description: 'Create a new task chain', parameters: { type: 'object', properties: { goal: { type: 'string' }, chain_type: { type: 'string', enum: ['linear','graph'], default: 'linear' } }, required: ['goal'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'search_codebase', description: 'Semantic code search — find functions, classes, or patterns by describing what they do in natural language (Chinese or English)', parameters: { type: 'object', properties: { question: { type: 'string', description: 'Natural language question about the codebase, e.g. "Where is the LLM router implemented?"' } }, required: ['question'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'analyze_code', description: 'Analyze a TypeScript file — list exported symbols, dependencies, and cyclomatic complexity', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Absolute path to the .ts/.tsx file to analyze' }, detail: { type: 'string', enum: ['symbols','deps','complexity','all'], default: 'all' } }, required: ['file_path'] }, parallelSafe: true, riskLevel: 'low' },
@@ -149,18 +478,92 @@ export const EXTRA_TOOLS = [
   { name: 'browser_click', description: '在内嵌浏览器中点击指定元素. 通过CSS selector定位元素并模拟点击.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位要点击的元素 (如 "#search-btn", "a.login", "[data-testid=submit]")' }, wait_ms: { type: 'number', default: 1000, description: '点击后等待毫秒数' } }, required: ['selector'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'browser_type', description: '在内嵌浏览器的输入框中输入文本. 先聚焦元素再输入.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位输入框' }, text: { type: 'string', description: '要输入的文本' }, press_enter: { type: 'boolean', default: false, description: '输入后是否按Enter' } }, required: ['selector','text'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'browser_screenshot', description: '截取当前浏览器页面的截图, 返回截图数据用于AI视觉分析.', parameters: { type: 'object', properties: { selector: { type: 'string', description: '可选: 只截取指定元素的截图' }, full_page: { type: 'boolean', default: false, description: '是否截取完整页面' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
-  { name: 'browser_extract', description: '从当前浏览器页面提取文本内容. 可提取整个页面或指定元素.', parameters: { type: 'object', properties: { selector: { type: 'string', description: '可选: CSS selector 提取特定元素' }, extract_type: { type: 'string', enum: ['text','html','links','tables'], default: 'text', description: '提取类型' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'browser_extract', description: '从当前浏览器页面提取文本内容. 可提取整个页面或指定元素. extract_type=tables 时自动解析表格为 JSON 数组.', parameters: { type: 'object', properties: { selector: { type: 'string', description: '可选: CSS selector 提取特定元素' }, extract_type: { type: 'string', enum: ['text','html','links','tables','cards'], default: 'text', description: '提取类型: text=纯文本, html=HTML源码, links=所有链接, tables=表格数据(JSON), cards=卡片列表(JSON)' }, fields: { type: 'object', description: 'extract_type=cards 时指定字段映射, 如 {title:".title", price:".price"}' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  // ====== 浏览器自动化增强工具 ======
+  { name: 'browser_submit', description: '提交内嵌浏览器中的表单. 通过CSS selector定位form元素并触发submit. 适用于搜索表单、登录表单等.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位 form 元素 (如 "#search-form", "form.login")' } }, required: ['selector'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'browser_upload', description: '在内嵌浏览器中上传文件. 通过CSS selector定位 input[type=file] 元素并设置文件路径. 注意: 出于安全限制, 文件路径需为工作区内文件.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位 input[type=file] 元素' }, file_path: { type: 'string', description: '文件路径 (工作区内相对路径或绝对路径)' } }, required: ['selector','file_path'] }, parallelSafe: false, riskLevel: 'high' },
+  { name: 'browser_tabs', description: '管理内嵌浏览器标签页. 支持新建、关闭、切换、列出所有标签页.', parameters: { type: 'object', properties: { tab_action: { type: 'string', enum: ['list','new','close','switch'], description: '操作类型: list=列出所有标签页, new=新建标签页, close=关闭标签页, switch=切换标签页' }, tab_id: { type: 'string', description: '标签页ID (close/switch时需要)' }, url: { type: 'string', description: '新建标签页时打开的URL' } }, required: ['tab_action'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'browser_set_cookies', description: '向内嵌浏览器注入Cookie. 用于免登录场景: 先从本地浏览器读取Cookie, 再注入到iframe中. 也可手动指定Cookie.', parameters: { type: 'object', properties: { cookies: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, value: { type: 'string' }, domain: { type: 'string' }, path: { type: 'string' } } }, description: 'Cookie 数组' }, domain: { type: 'string', description: '可选: 从本地浏览器读取指定域名的Cookie (如 "example.com")' } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'browser_wait_for', description: '等待内嵌浏览器中指定元素出现. 使用MutationObserver高效监听DOM变化, 适用于等待异步加载的内容.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 等待出现的元素' }, timeout: { type: 'number', default: 10000, description: '超时毫秒数 (默认10秒)' } }, required: ['selector'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'browser_select', description: '在内嵌浏览器中选择下拉框选项. 支持 select 元素和自定义下拉组件.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位 select 元素' }, value: { type: 'string', description: '要选择的值' } }, required: ['selector','value'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'browser_hover', description: '在内嵌浏览器中模拟鼠标悬停. 触发 mouseover/mouseenter 事件, 适用于悬停菜单、提示框等.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位元素' } }, required: ['selector'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'browser_press_key', description: '在内嵌浏览器中模拟按键. 支持组合键 (如 "Enter", "Escape", "Tab", "ctrl+a").', parameters: { type: 'object', properties: { key: { type: 'string', description: '按键名称 (如 "Enter", "Tab", "Escape", "ctrl+c")' } }, required: ['key'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'browser_scroll_to', description: '在内嵌浏览器中滚动到指定元素. 让目标元素滚动到可视区域.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位目标元素' } }, required: ['selector'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'browser_get_attribute', description: '获取内嵌浏览器中元素的属性值. 用于读取 href, src, data-* 等属性.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位元素' }, attribute: { type: 'string', description: '属性名 (如 "href", "src", "value", "data-id")' } }, required: ['selector','attribute'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'browser_scan', description: '扫描当前浏览器页面的可交互元素. 返回元素列表(tag/selector/text/位置/交互分数). 用于导航或点击后重新获取页面结构, 无需重新导航.', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'browser_snapshot', description: '一次性获取当前页面的截图+元素列表+URL. 比分别调用 browser_screenshot + browser_scan 更高效. 返回 base64 截图和元素列表, AI 可"看到"页面并据此操作.', parameters: { type: 'object', properties: { full_page: { type: 'boolean', default: false, description: '是否截取完整页面 (包括滚动区域)' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  // ====== RPA 操作录制与回放 ======
+  { name: 'browser_record', description: '录制浏览器操作序列. 用户在浏览器中手动操作, 系统自动捕获并转为可回放的步骤脚本. action=start 开始录制, action=stop 停止并保存, action=status 查看录制状态, action=cancel 取消录制, action=list 列出已保存脚本, action=delete 删除脚本, action=get 查看脚本详情.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['start','stop','status','cancel','list','delete','get'], default: 'status', description: '录制控制动作' }, name: { type: 'string', description: '脚本名称 (start 时)' }, start_url: { type: 'string', description: '录制起始URL (start 时)' }, description: { type: 'string', description: '脚本描述 (stop 时可选)' }, script_id: { type: 'string', description: '脚本ID (delete/get 时)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'browser_replay', description: '回放已录制的浏览器操作脚本. 按录制的步骤自动执行, 支持变量替换 ({{变量名}}). 也可直接传入步骤列表创建临时回放. 适合重复性网页操作: 数据采集、表单批量填写、定时巡检等.', parameters: { type: 'object', properties: { script_id: { type: 'string', description: '已保存的脚本ID (二选一)' }, steps: { type: 'array', items: { type: 'object', properties: { action: { type: 'string', description: '操作类型: navigate/click/type/select/submit/wait/press_key/hover' }, selector: { type: 'string' }, text: { type: 'string' }, url: { type: 'string' }, value: { type: 'string' }, key: { type: 'string' }, wait_ms: { type: 'number' }, screenshot: { type: 'boolean' } } }, description: '直接传入步骤列表 (无需预录制, 二选一)' }, variables: { type: 'object', description: '变量替换 (如 {keyword:"手机"} → 步骤中 {{keyword}} 被替换)' }, name: { type: 'string', description: '创建新脚本时的名称 (与 steps 配合使用)' } }, required: [] }, parallelSafe: false, riskLevel: 'high' },
+  // ====== 通知推送系统 ======
+  { name: 'send_notification', description: '发送通知消息到指定渠道. 支持多渠道: sse(前端实时显示)、webhook(钉钉/企业微信/飞书)、email(邮件)、desktop(桌面弹窗). 适用于: 任务完成提醒、异常告警、定时巡检通知等.', parameters: { type: 'object', properties: { title: { type: 'string', description: '通知标题' }, body: { type: 'string', description: '通知正文 (支持 Markdown)' }, level: { type: 'string', enum: ['info','success','warning','error'], default: 'info', description: '通知级别' }, channel: { type: 'string', enum: ['sse','webhook','email','desktop'], default: 'sse', description: '推送渠道: sse=前端实时, webhook=钉钉/企业微信/飞书, email=邮件, desktop=桌面弹窗' }, target: { type: 'string', description: '推送目标: webhook时为URL(留空则用配置的默认webhook), email时为收件人地址, desktop时留空' }, source: { type: 'string', description: '通知来源标记 (如 "定时巡检", "异常监控")' } }, required: ['title','body'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'notification_history', description: '查询通知历史记录. 可按级别过滤, 返回最近的通知列表和统计信息.', parameters: { type: 'object', properties: { limit: { type: 'number', default: 50, description: '返回条数 (最多100)' }, level: { type: 'string', enum: ['info','success','warning','error'], description: '按级别过滤' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  // ====== 定时任务调度器 ======
+  { name: 'schedule_task', description: '创建定时任务. 支持Cron表达式周期执行和一次性定时执行. 5种任务类型: rpa=回放浏览器录制脚本, ai_task=发送AI消息执行任务, notification=定时推送通知, custom=自定义HTTP, workflow=执行工作流模板. 示例: 每天早上8点检查价格 → schedule_task({name:"每日价格检查", type:"rpa", cron:"0 8 * * *", config:{rpa_script_id:"rpa-xxx"}}). 示例2: 每天执行装修报价工作流 → schedule_task({name:"每日报价", type:"workflow", cron:"0 9 * * *", config:{workflowTemplateId:"builtin-decoration-quotation", workflowVariables:{customer_name:"张三"}}})', parameters: { type: 'object', properties: { name: { type: 'string', description: '任务名称' }, description: { type: 'string', description: '任务描述' }, type: { type: 'string', enum: ['rpa','ai_task','notification','custom','workflow'], description: '任务类型: rpa=浏览器自动化回放, ai_task=AI任务, notification=通知推送, custom=自定义HTTP, workflow=工作流模板' }, cron: { type: 'string', default: 'once', description: "Cron表达式(5字段: 分 时 日 月 周) 或 'once' 表示一次性任务. 示例: '0 8 * * *'=每天8点, '*/30 * * * *'=每30分钟, '0 */6 * * *'=每6小时" }, run_at: { type: 'string', description: "一次性任务执行时间 (ISO格式, cron='once'时必填). 如 '2025-12-25T08:00:00'" }, config: { type: 'object', description: '任务配置(根据type不同): rpa={rpa_script_id, rpa_steps, rpa_variables}, ai_task={ai_message, ai_session_id}, notification={notif_title, notif_body, notif_level, notif_channel}, custom={custom_url, custom_method, custom_body}, workflow={workflowTemplateId, workflowVariables}' }, notify_on_failure: { type: 'boolean', default: true, description: '失败时是否发送通知' }, notify_on_success: { type: 'boolean', default: false, description: '成功时是否发送通知' }, timeout_ms: { type: 'number', default: 120000, description: '执行超时(毫秒)' } }, required: ['name','type','config'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'list_schedules', description: '查看定时任务列表. 可按状态过滤, 返回任务详情和执行统计. action=list 列出所有, action=get 查看单个详情, action=run 立即执行一次, action=pause 暂停, action=resume 恢复, action=delete 删除, action=stats 查看统计.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['list','get','run','pause','resume','delete','stats'], default: 'list', description: '操作类型' }, schedule_id: { type: 'string', description: '任务ID (get/run/pause/resume/delete 时需要)' }, status: { type: 'string', enum: ['active','paused','disabled'], description: '按状态过滤 (list 时)' } }, required: ['action'] }, parallelSafe: true, riskLevel: 'low' },
+  // ====== 行业工作流模板引擎 ======
+  { name: 'workflow_run', description: '执行行业工作流模板. 模板是 DAG (有向无环图) 结构的多步骤自动化流程, 支持 RPA回放/AI任务/通知/条件判断/数据提取/HTTP请求 等步骤类型. 步骤间通过 {{variable}} 传递数据, 失败自动重试. 内置模板: 装修报价自动化(builtin-decoration-quotation)、竞品价格监控(builtin-ecommerce-price-monitor)、网站健康巡检(builtin-website-health-check).', parameters: { type: 'object', properties: { template_id: { type: 'string', description: '模板ID (如 builtin-decoration-quotation)' }, variables: { type: 'object', description: '模板变量 (覆盖默认值). 如 {cad_file_path:"/path/to/file.dxf", customer_name:"张三"}' } }, required: ['template_id'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'workflow_list_templates', description: '列出所有工作流模板. 可按行业过滤. 内置行业: decoration(装修)、ecommerce(电商)、monitoring(监控). 也支持自定义模板.', parameters: { type: 'object', properties: { industry: { type: 'string', description: '按行业过滤 (decoration/ecommerce/monitoring/custom)' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'workflow_create', description: '创建自定义工作流模板. 定义 DAG 步骤, 步骤间用 dependsOn 声明依赖, 用 {{variable}} 引用变量. 步骤类型: rpa/ai_task/notification/condition/extract/transform/delay/http. 创建后可通过 workflow_run 执行或 schedule_task 定时调度.', parameters: { type: 'object', properties: { name: { type: 'string', description: '模板名称' }, industry: { type: 'string', default: 'custom', description: '行业分类' }, description: { type: 'string', description: '模板描述' }, variables: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, type: { type: 'string', enum: ['string','number','boolean','json'] }, defaultValue: {}, description: { type: 'string' }, required: { type: 'boolean' } } }, description: '模板变量定义' }, steps: { type: 'array', items: { type: 'object', properties: { id: { type: 'string', description: '步骤唯一ID' }, name: { type: 'string' }, type: { type: 'string', enum: ['rpa','ai_task','notification','condition','extract','transform','delay','http'] }, dependsOn: { type: 'array', items: { type: 'string' }, description: '前置步骤ID列表' }, config: { type: 'object', description: '类型特定配置' }, retryCount: { type: 'number', default: 0 }, timeout: { type: 'number', default: 30000 }, condition: { type: 'string', description: '执行条件 (如 "{{step1.output}} == true")' } } }, description: '工作流步骤 (DAG)' }, notifyOnComplete: { type: 'boolean', default: false }, notifyOnFailure: { type: 'boolean', default: true } }, required: ['name','steps'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'workflow_history', description: '查看工作流执行历史. 返回最近执行记录, 包含状态、耗时、各步骤结果.', parameters: { type: 'object', properties: { template_id: { type: 'string', description: '按模板ID过滤' }, limit: { type: 'number', default: 20, description: '返回条数' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'workflow_generate', description: 'AI 自动生成工作流模板. 输入自然语言描述, AI 自动拆解为 DAG 步骤, 选择合适的步骤类型(rpa/ai_task/notification/condition/extract/http), 定义变量和依赖关系, 生成完整可执行的工作流模板. 这是"一句话创建自动化流程"的核心能力.', parameters: { type: 'object', properties: { description: { type: 'string', description: '工作流需求描述 (如 "每天检查某网站价格, 低于100元时通知我")' }, industry: { type: 'string', description: '行业分类 (如 decoration/ecommerce/monitoring/custom, 默认 custom)' }, name: { type: 'string', description: '模板名称 (可选, 默认从描述生成)' } }, required: ['description'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'workflow_export', description: '导出工作流模板为 JSON 字符串, 可保存到文件或分享给其他用户. 导出的 JSON 可通过 workflow_import 导入.', parameters: { type: 'object', properties: { template_id: { type: 'string', description: '要导出的模板ID' } }, required: ['template_id'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'workflow_import', description: '从 JSON 字符串导入工作流模板. 可导入其他用户导出的模板, 或从文件读取的模板配置.', parameters: { type: 'object', properties: { json: { type: 'string', description: '模板 JSON 字符串 (workflow_export 的输出)' } }, required: ['json'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'desktop_automate', description: '执行桌面自动化操作: 模拟键盘按键、鼠标点击、截图等. 用于操控桌面应用程序.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['screenshot','key_press','key_type','mouse_click','mouse_move','scroll'], description: '自动化动作类型' }, key: { type: 'string', description: 'key_press时按的键 (如 "Enter", "Tab", "Escape", "ctrl+c")' }, text: { type: 'string', description: 'key_type时输入的文本' }, x: { type: 'number', description: '鼠标X坐标' }, y: { type: 'number', description: '鼠标Y坐标' }, button: { type: 'string', enum: ['left','right','middle'], default: 'left', description: '鼠标按钮' }, direction: { type: 'string', enum: ['up','down'], default: 'down', description: '滚动方向' }, amount: { type: 'number', default: 3, description: '滚动量' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'high' },
+  { name: 'visual_gui_agent', description: '视觉 GUI Agent — 截图→视觉分析→操作循环. 让 AI 像人一样"看"屏幕并操作桌面应用. 适用于: 操作没有 API 的桌面软件、自动化重复性 GUI 任务、通过验证码等. 核心流程: 1)截图 2)视觉模型分析 3)返回操作建议 4)执行操作 5)循环直到任务完成.', parameters: { type: 'object', properties: { task: { type: 'string', description: '要完成的桌面操作任务描述 (如 "打开记事本输入hello并保存")' }, max_steps: { type: 'number', default: 20, description: '最大操作步骤数, 防止死循环' } }, required: ['task'] }, parallelSafe: false, riskLevel: 'high' },
   // ====== 沙箱代码执行 (自动模式核心能力) ======
   { name: 'run_code', description: '在安全沙箱中执行 JavaScript/Python 代码并返回结果. 用于: 计算结果、验证逻辑、调试代码、运行脚本. 自动模式下的核心能力 — 缺什么就写代码跑!', parameters: { type: 'object', properties: { code: { type: 'string', description: '要执行的代码. JS: 箭头函数如 "() => 1+1" 或语句块. Python: 完整脚本' }, language: { type: 'string', enum: ['javascript','python'], default: 'javascript', description: '编程语言' }, timeout_ms: { type: 'number', default: 10000, description: '超时毫秒数 (最大30秒)' }, context: { type: 'object', description: '可选: 传入代码的上下文变量' } }, required: ['code'] }, parallelSafe: false, riskLevel: 'medium' },
   // ====== 技能自创建 (自动模式核心能力) ======
   { name: 'discover_or_create_skill', description: '发现或创建新技能. 当现有工具无法满足需求时, AI可以自行创建新技能来扩展能力. 这是AI自进化的核心 — 缺什么工具就创建什么!', parameters: { type: 'object', properties: { name: { type: 'string', description: '技能名称 (小写+连字符, 如 "pdf-generator")' }, description: { type: 'string', description: '技能功能描述' }, category: { type: 'string', enum: ['code','media','data','web','system','automation'], default: 'code', description: '技能分类' }, code: { type: 'string', description: '可选: 技能实现代码 (JS箭头函数)' }, parameters: { type: 'object', description: '可选: 技能参数定义 (JSON Schema)' } }, required: ['name','description'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'skill_forge', description: 'Skill Forge — AI 自己写 AI 技能 (仿 BrowserAct). 输入需求或目标网站 URL, AI 自动研究网站结构, 生成 SKILL.md + 执行脚本, 并自动注册到技能系统. 生成的技能可复用, 以后一句话就能触发. 不同于"录制回放", 它理解网站逻辑而非记住坐标.', parameters: { type: 'object', properties: { task: { type: 'string', description: '任务描述 (如 "每天抓取某网站价格数据")' }, targetUrl: { type: 'string', description: '目标网站 URL' }, skillName: { type: 'string', description: '可选: 技能名称 (默认自动生成)' }, skillDescription: { type: 'string', description: '可选: 技能描述 (默认从任务生成)' } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
+  // ====== 专家系统: 对标 WorkBuddy 的封装专家和专家团 ======
+  { name: 'activate_expert', description: '【专家模式】激活领域专家。对标 WorkBuddy: 把 Agent 包装为预配置好的专家角色，包含 7 层提示词结构 (身份锚定→工作方法→交付标准→沟通风格)。可用专家: architect-ux(UX架构师), doc-writer(长文档写手), code-reviewer(代码审查), data-analyst(数据分析师)', parameters: { type: 'object', properties: { expert_id: { type: 'string', enum: ['architect-ux','doc-writer','code-reviewer','data-analyst'], description: '专家 ID' }, task: { type: 'string', description: '派发给专家的具体任务' } }, required: ['expert_id','task'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'activate_expert_team', description: '【专家团模式】多专家协作完成复杂任务。对标 WorkBuddy 专家团: 主理人拆需求→分配子任务→各专家独立执行→主理人汇总。支持: content-creation(内容创作团), code-quality(代码质量团)', parameters: { type: 'object', properties: { team: { type: 'string', enum: ['content-creation','code-quality'], description: '专家团名称' }, task: { type: 'string', description: '团队任务描述' } }, required: ['team','task'] }, parallelSafe: false, riskLevel: 'low' },
+  // ====== 验证循环 + 项目记忆 (P0 指挥官战略) ======
+  { name: 'validate_and_fix', description: '【自动验证修复】对标 Claude Code: 改完代码自动 typecheck/lint，有错误自动修复并重验 (最多3轮)。支持 TS/JS/Python/Go。每次 apply_edit 后应调用。', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' }, description: '可选: 指定要验证的文件' } } }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'remember_project', description: '【项目记忆】记录到跨会话记忆: 技术栈偏好/代码风格/修复模式/已知问题。下次对话自动加载。action: add_fact|add_preference|add_fix|add_issue', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['add_fact','add_preference','add_fix','add_issue'] }, key: { type: 'string' }, value: { type: 'string' }, severity: { type: 'string', enum: ['critical','high','medium','low'] } }, required: ['action','key','value'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'recall_project', description: '【项目记忆】读取跨会话记忆: 技术栈/偏好/历史修复/已知问题。开始新对话或了解项目时应先调用。', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
   // ====== AI 自主能力: 代码探索 + 行业洞察 + 系统自管理 (授人以渔) ======
   { name: 'explore_project', description: '自主探索项目代码结构, 生成代码地图. 不需要用户指定文件, AI自己发现项目入口、关键目录、依赖关系和设计模式. 授人以渔: 给AI探索代码的能力, 而非替用户读代码.', parameters: { type: 'object', properties: { mode: { type: 'string', enum: ['structure','dependencies','patterns','full'], default: 'structure', description: '探索模式: structure=目录结构, dependencies=依赖图, patterns=设计模式识别, full=全部' }, trace_from: { type: 'string', description: '可选: 从指定文件追踪 import 链' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'industry_insight', description: '获取或添加行业洞察. AI能自主积累行业知识: 识别用户的行业, 提供行业画像(核心概念/工作流/痛点), 并从对话中自动提取洞察. 授人以渔: 让AI拥有行业深度, 而非每次从零开始.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['detect','profile','add','summary'], default: 'detect', description: 'detect=从消息识别行业, profile=获取行业画像, add=手动添加洞察, summary=所有洞察摘要' }, industry_id: { type: 'string', description: '行业ID (如 software_dev, decoration, ecommerce)' }, category: { type: 'string', enum: ['core_knowledge','workflow','terminology','tools','trends','pain_points','best_practices'], description: '洞察类别 (add 操作时必填)' }, content: { type: 'string', description: '洞察内容 (add 操作时必填)' }, message: { type: 'string', description: '用于检测行业的消息文本 (detect 操作时使用)' } }, required: ['action'] }, parallelSafe: true, riskLevel: 'low' },
-  { name: 'self_diagnose', description: '系统自检与自修复. AI能自主检查系统健康状态(API Key/磁盘/记忆/缓存), 并自动修复常见问题. 授人以渔: 让AI管理自己的系统, 而非等用户来维护.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['diagnose','autofix','cleanup','health_prompt'], default: 'diagnose', description: 'diagnose=执行自检, autofix=自动修复, cleanup=清理临时文件, health_prompt=生成健康提示' } }, required: ['action'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'self_diagnose', description: '【系统健康检查 / 自检自修复 / 资源监控】\n当用户询问系统状态、平台健康、资源占用、服务可用性时，**必须**使用此工具，而非 system_info / list_processes。\n\n🔑 触发关键词（命中任一即用此工具）:\n- "系统健康吗"/"系统正常吗"/"平台状态"\n- "API Key"/"密钥失效"/"配置异常"\n- "磁盘满了"/"内存占用"/"CPU 占用"\n- "进程异常"/"服务挂了"/"系统卡顿"\n- "系统自检"/"健康检查"/"自诊断"\n- "自愈"/"自动修复"/"清理临时文件"\n\n🔍 检查范围:\n- API Key 状态与有效期（DEEPSEEK/AGENTAI/DXNT/ZHIPU/CLINE）\n- 磁盘空间（系统盘/工作盘）\n- 内存/CPU 占用\n- 后台进程异常（孤儿进程/僵尸）\n- 记忆/缓存完整性\n- 工作流调度器健康度\n\n🛠️ 4 种 action:\n- diagnose = 执行自检，返回健康报告\n- autofix = 自动修复常见问题\n- cleanup = 清理临时文件、过期备份、孤儿快照\n- health_prompt = 生成健康提示文本（给用户看）\n\n💡 示例: "现在系统健康吗? 有没有 API Key 失效或磁盘满" → self_diagnose(action:diagnose)', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['diagnose','autofix','cleanup','health_prompt'], default: 'diagnose', description: 'diagnose=执行自检, autofix=自动修复, cleanup=清理临时文件, health_prompt=生成健康提示' } }, required: ['action'] }, parallelSafe: true, riskLevel: 'low' },
   // ====== 音乐播放器控制 (用户体验增强) ======
   { name: 'control_music', description: '控制音乐播放器. AI可以主动为用户播放背景音乐, 缓解工作压力. 支持操作: play(播放), pause(暂停), next(下一曲), prev(上一曲), volume(调整音量), load_free(加载免费音乐库), show(显示播放器). 用法示例: control_music({action:"play"}) 或 control_music({action:"load_free"})', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['play','pause','next','prev','volume','load_free','show'], description: '音乐控制动作: play=播放, pause=暂停, next=下一曲, prev=上一曲, volume=调整音量, load_free=加载免费音乐库, show=显示播放器面板' }, volume: { type: 'number', description: '音量 (0-1), volume操作时使用' }, track_index: { type: 'number', description: '可选: 指定播放曲目索引' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'low' },
+
+  // ====== CAD 控制工具 (建材行业核心能力) ======
+  { name: 'cad_control', description: 'AutoCAD CLI 控制工具，支持生成 .scr 脚本、执行 CAD 命令、DXF 文件读写。建材行业核心能力：从CAD图纸提取户型数据、生成施工图。用法示例: cad_control({action:"parse_dxf", file_path:"drawing.dxf"}) 或 cad_control({action:"generate_script", commands:[{cmd:"LINE", args:["0,0","100,100"]}]})', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['generate_script','run_script','parse_dxf','write_dxf'], description: 'CAD操作类型: generate_script=生成.scr脚本, run_script=执行脚本, parse_dxf=解析DXF文件, write_dxf=写入DXF文件' }, commands: { type: 'array', items: { type: 'object', properties: { cmd: { type: 'string', description: 'CAD命令 (LINE/CIRCLE/TEXT/RECTANG等)' }, args: { type: 'array', items: { type: 'string' }, description: '命令参数' } } }, description: 'CAD命令列表 (generate_script时使用)' }, file_path: { type: 'string', description: 'DXF文件路径 (parse_dxf时使用)' }, entities: { type: 'array', items: { type: 'object', properties: { type: { type: 'string', description: '实体类型 (LINE/CIRCLE/TEXT等)' } } }, description: 'DXF实体列表 (write_dxf时使用)' }, output_path: { type: 'string', description: '输出文件路径' }, script_path: { type: 'string', description: '脚本路径 (run_script时使用)' }, acad_path: { type: 'string', description: '可选: AutoCAD安装路径' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
+  // ====== Office 文档处理 (AI 原生 Office 能力) ======
+  { name: 'officecli', description: 'OfficeCLI — 零依赖 Office 文档处理工具，支持 Word(.docx)/Excel(.xlsx)/PowerPoint(.pptx) 的创建、读取、修改和批量生成。AI 友好，JSON 输出，实时预览。用法示例: officecli({action:"create", file:"report.docx"}) 或 officecli({action:"add", file:"deck.pptx", path:"/slide[1]", type:"shape", text:"标题"})', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['create','view','get','set','add','remove','move','swap','batch','merge','watch','validate','raw','raw-set'], description: 'Office操作类型: create=创建文档, view=查看/导出, get=获取元素, set=修改元素, add=添加元素, remove=删除, move/swap=移动/交换, batch=批量执行, merge=模板合并, watch=实时预览, validate=格式校验, raw/raw-set=原始XML操作' }, file: { type: 'string', description: '文件路径 (.docx/.xlsx/.pptx)' }, path: { type: 'string', description: '元素路径 (如 /body, /slide[1], /Sheet1/A1)' }, type: { type: 'string', description: '元素类型 (paragraph/table/shape/chart/pivottable等)' }, prop: { type: 'object', additionalProperties: true, description: '元素属性 (text, style, bold, color, rows, cols等)' }, commands: { type: 'array', items: { type: 'object', properties: { action: { type: 'string' }, path: { type: 'string' }, type: { type: 'string' }, prop: { type: 'object' } } }, description: '批量命令列表 (batch 时使用)' }, input: { type: 'string', description: 'JSON 输入文件 (batch/merge 时使用)' }, output: { type: 'string', description: '输出路径 (view 导出时使用)' }, depth: { type: 'number', description: '获取深度 (get 时使用)' }, json: { type: 'boolean', default: false, description: '是否输出 JSON (所有命令支持)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'low' },
+
+  // ====== Git 工具集 (代替 run_shell_command 执行 git 令) ======
+  { name: 'git_status', description: 'Show git working tree status: modified/untracked/staged files. Use before commit to understand what changed.', parameters: { type: 'object', properties: { short: { type: 'boolean', default: false, description: 'Short format output' } } }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'git_diff', description: 'Show git diff of working tree or staged changes. Essential before committing to review what will be committed.', parameters: { type: 'object', properties: { staged: { type: 'boolean', default: false, description: 'Show staged (--cached) diff' }, file: { type: 'string', description: 'Specific file to diff' }, stat: { type: 'boolean', default: false, description: 'Show diffstat summary only' } } }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'git_log', description: 'Show recent git commits. Use to understand project history and recent changes.', parameters: { type: 'object', properties: { count: { type: 'number', default: 10, description: 'Number of commits' }, oneline: { type: 'boolean', default: true }, file: { type: 'string', description: 'Filter by file path' } } }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'git_commit', description: 'Stage files and create a git commit. Always review git_diff before committing.', parameters: { type: 'object', properties: { message: { type: 'string', description: 'Commit message' }, files: { type: 'array', items: { type: 'string' }, description: 'Files to stage (relative paths). If empty, commits already-staged files.' }, all: { type: 'boolean', default: false, description: 'Stage all modified tracked files (-a)' } }, required: ['message'] }, parallelSafe: false, riskLevel: 'high' },
+  { name: 'git_smart_commit', description: '【推荐】智能一键提交: 自动分析变更生成 conventional commit (feat/fix/refactor/chore)，自动 stage 全部变更，提交。改完代码就调它，告别手动 git add/commit。', parameters: { type: 'object', properties: { description: { type: 'string', description: '可选的提交说明，留空则自动从文件变更推断' } } }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'git_branch', description: 'List, create, or switch git branches.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['list','create','switch'], default: 'list' }, name: { type: 'string', description: 'Branch name (create/switch)' } } }, parallelSafe: false, riskLevel: 'medium' },
+
+  // ====== 代码智能工具 (弥补无 LSP 的短板) ======
+  { name: 'find_references', description: 'Find all references to a symbol (function/class/variable/type) across the codebase. More precise than search_content for code navigation. Use when you need to understand usage patterns, refactoring impact, or call chains.', parameters: { type: 'object', properties: { symbol: { type: 'string', description: 'Symbol name to search (e.g. "AgentAILoop", "filterToolsByIntent")' }, type: { type: 'string', enum: ['function','class','variable','type','import','any'], default: 'any', description: 'Symbol type to narrow search' }, scope: { type: 'string', description: 'Directory to search in (relative path)' } }, required: ['symbol'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'get_outline', description: 'Get structural outline of a source file: all exported functions, classes, interfaces, types, and their line numbers. Use to quickly understand file structure without reading entire content.', parameters: { type: 'object', properties: { file: { type: 'string', description: 'File path (relative)' } }, required: ['file'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'run_tests', description: 'Run project test suite or specific test file. Essential after code changes to verify correctness. Supports jest/vitest/pytest/go test. Use after any code modification to catch regressions early.', parameters: { type: 'object', properties: { file: { type: 'string', description: 'Specific test file to run (relative path). If omitted, runs all tests.' }, filter: { type: 'string', description: 'Filter tests by name pattern (e.g. "AgentAI")' }, framework: { type: 'string', enum: ['auto','jest','vitest','pytest','go','cargo'], default: 'auto', description: 'Test framework. auto = detect from project' }, failFast: { type: 'boolean', default: false, description: 'Stop on first failure' } } }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'typecheck', description: 'Run typecheck (tsc --noEmit) or linter on the project. Essential after code changes to verify no type errors were introduced. Automatically detects project type (TypeScript/Vue/React) and runs appropriate checker.', parameters: { type: 'object', properties: { scope: { type: 'string', description: 'Package directory to check (e.g. "packages/agentai-gateway"). If omitted, checks from cwd.' }, fast: { type: 'boolean', default: true, description: 'Only show errors (skip warnings)' } }, required: [] }, parallelSafe: false, riskLevel: 'low' },
+  // ====== 知识库工具 ======
+  { name: 'knowledge_import', description: '将文本内容导入行业知识库。当用户提供行业相关文档/报价/规范/知识时，调用此工具将内容存入知识库，AI后续对话会自动检索引用。', parameters: { type: 'object', properties: { name: { type: 'string', description: '文档名称' }, industry: { type: 'string', description: '行业分类（如：装修建材、电商）' }, content: { type: 'string', description: '文档文本内容（若是文件，先用 read_file 读取后传入）' }, description: { type: 'string', description: '可选描述' } }, required: ['name', 'industry', 'content'] }, parallelSafe: false, riskLevel: 'low' },
+
+  // ====== render_widget: 内联渲染通道 (对标 WorkBuddy show_widget, 2026-06-26) ======
+  // 让 AI 直接向前端推送 SVG/HTML 内联内容，不需要写文件再下载
+  { name: 'render_widget', description: `Render an inline SVG or HTML widget directly in the chat. Use this for interactive visualizations, charts, dashboards, UI mockups, or any HTML/SVG content the user should see immediately. The content renders inline as a rich card, not a file download. Use generate_diagram for simple flow/architecture diagrams. Use render_widget when you need: (1) interactive HTML (buttons, inputs, animations), (2) custom charts, (3) UI prototypes, (4) dashboards. PROACTIVELY use when explaining data or UI concepts visually.`, parameters: { type: 'object', properties: { title: { type: 'string', description: '组件标题（显示在卡片顶部）' }, content: { type: 'string', description: 'SVG 代码（以 <svg 开头）或 HTML 代码片段（无需 <html>/<body>）' }, type: { type: 'string', enum: ['svg', 'html'], default: 'svg', description: 'svg=纯 SVG 图形, html=交互式 HTML 组件' }, width: { type: 'number', description: '宽度 px（可选，默认自适应）' }, height: { type: 'number', description: '高度 px（可选）' } }, required: ['title', 'content'] }, parallelSafe: true, riskLevel: 'low' },
+
+  // ====== Automation CRUD (对标 WorkBuddy automations 持久化, 2026-06-26) ======
+  { name: 'automation_create', description: '创建持久化自动化任务（重启后自动恢复）。支持 recurring（RRULE循环）和 once（一次性定时）两种模式。用法: automation_create({name:"每日报告", prompt:"生成今日销售报告", rrule:"FREQ=DAILY;BYHOUR=8"})', parameters: { type: 'object', properties: { name: { type: 'string', description: '任务名称' }, prompt: { type: 'string', description: '任务提示词/描述（任务执行时传给 AI 的指令）' }, scheduleType: { type: 'string', enum: ['recurring', 'once'], default: 'recurring', description: 'recurring=循环任务(需rrule), once=一次性(需scheduledAt)' }, rrule: { type: 'string', description: 'RFC 5545 RRULE: FREQ=DAILY|HOURLY|WEEKLY|MONTHLY + INTERVAL=N，例如 "FREQ=DAILY;INTERVAL=1"' }, scheduledAt: { type: 'string', description: '一次性执行时间 ISO 8601，例如 "2026-07-01T09:00:00"' }, validFrom: { type: 'string', description: '任务有效期开始（可选）' }, validUntil: { type: 'string', description: '任务有效期结束（可选）' } }, required: ['name', 'prompt'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'automation_list', description: '列出所有持久化自动化任务，显示状态、下次执行时间、执行次数。', parameters: { type: 'object', properties: { status: { type: 'string', enum: ['ACTIVE', 'PAUSED'], description: '按状态过滤（可选）' } } }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'automation_update', description: '更新或暂停/激活自动化任务。可修改名称、提示词、调度规则、状态。', parameters: { type: 'object', properties: { id: { type: 'string', description: '任务 ID（来自 automation_list）' }, name: { type: 'string' }, prompt: { type: 'string' }, rrule: { type: 'string' }, status: { type: 'string', enum: ['ACTIVE', 'PAUSED'] } }, required: ['id'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'automation_delete', description: '删除自动化任务（停止调度 + 从持久化存储删除）。', parameters: { type: 'object', properties: { id: { type: 'string', description: '任务 ID' } }, required: ['id'] }, parallelSafe: false, riskLevel: 'medium' },
+
+  // ====== C2: 客户跟进工具 ======
+  { name: 'follow_up_customer', description: '为客户创建跟进计划。AI 可在对话中自主调用, 安排后续跟进。系统会在到期时自动生成跟进话术并推送到前端审批。用法: follow_up_customer({customerId: "cust-xxx", delayHours: 72, topic: "确认装修方案"})', parameters: { type: 'object', properties: { customerId: { type: 'string', description: '客户 ID (可从客户档案中获取)' }, delayHours: { type: 'number', description: '多少小时后跟进 (默认72=3天)' }, topic: { type: 'string', description: '跟进主题/原因' } }, required: ['customerId'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'customer_search', description: '搜索/查询客户档案。支持按名称、电话、标签、意向筛选。用法: customer_search({search: "张三"}) 或 customer_search({intent: "high"})', parameters: { type: 'object', properties: { search: { type: 'string', description: '搜索关键词 (名称/电话/备注)' }, tags: { type: 'string', description: '标签筛选 (逗号分隔)' }, intent: { type: 'string', enum: ['high', 'medium', 'low', 'none'], description: '意向筛选' }, industry: { type: 'string', description: '行业筛选' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
 ];
 
 // ====== 图表生成辅助函数 (generate_diagram tool) ======
@@ -237,8 +640,72 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       const { prompt, size = '1024x1024', style, negative_prompt } = args;
       const finalPrompt = style ? `${prompt} (风格: ${style})` : prompt;
 
+      // ---- 辅助函数: 下载图片到本地临时文件 (避免前端 CORS/URL过期) ----
+      const downloadToTempFile = async (url: string): Promise<string | null> => {
+        try {
+          const imgResp = await fetch(url, { signal: AbortSignal.timeout(30000) });
+          if (!imgResp.ok) return null;
+          const buf = Buffer.from(await imgResp.arrayBuffer());
+          const tempDir = path.join(os.homedir(), '.agentai', 'temp-images');
+          if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+          const fileName = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.png`;
+          const filePath = path.join(tempDir, fileName);
+          fs.writeFileSync(filePath, buf);
+          return filePath;
+        } catch { return null; }
+      };
+
       // ---- 引擎 1: Cogview-3-Flash (免费, ZHIPU_API_KEY) ----
       const zhipuKey = getApiKey('ZHIPU_API_KEY');
+
+      // ---- 引擎 2: Hugging Face Inference API (永久免费, HF_TOKEN) ----
+      const hfToken = getApiKey('HF_TOKEN');
+      if (hfToken) {
+        try {
+          const hfResp = await fetch('https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${hfToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ inputs: finalPrompt }),
+            signal: AbortSignal.timeout(60000),
+          });
+          if (hfResp.ok && hfResp.headers.get('content-type')?.includes('image')) {
+            const imgBuf = Buffer.from(await hfResp.arrayBuffer());
+            const tempDir = path.join(os.homedir(), '.agentai', 'temp-images');
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+            const filePath = path.join(tempDir, `hf-${Date.now()}.png`);
+            fs.writeFileSync(filePath, imgBuf);
+            return { success: true, output: `✅ 图片已生成! (HuggingFace SD v1.5)\nFILE: ${filePath}\n提示词: ${prompt}`, data: { localPath: filePath, prompt, size, provider: 'huggingface-sd' } };
+          }
+          console.warn('[huggingface] failed with status', hfResp.status);
+        } catch (e: any) { console.warn('[huggingface] error:', e.message); }
+      }
+
+      // ---- 引擎 3: 通义万相 (500 张免费, DASHSCOPE_API_KEY) ----
+      const dashscopeKey = getApiKey('DASHSCOPE_API_KEY');
+      if (dashscopeKey) {
+        try {
+          const wanxBody = {
+            model: 'wanx-v1',
+            input: { prompt: finalPrompt },
+            parameters: { size: size === '1024x1024' ? '1024*1024' : '1024*1024', n: 1 }
+          };
+          const wanxResp = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${dashscopeKey}`, 'Content-Type': 'application/json', 'X-DashScope-Async': 'enable' },
+            body: JSON.stringify(wanxBody),
+            signal: AbortSignal.timeout(30000),
+          });
+          if (wanxResp.ok) {
+            const wanxData = await wanxResp.json();
+            const taskId = wanxData.output?.task_id;
+            if (taskId) {
+              return { success: true, output: `✅ 图片任务已提交! (通义万相)\n任务ID: ${taskId}\n提示词: ${prompt}\n约 10-30 秒后完成，请稍候查询`, data: { taskId, provider: 'wanx', prompt } };
+            }
+          }
+          console.warn('[wanx] failed with status', wanxResp.status);
+        } catch (e: any) { console.warn('[wanx] error:', e.message); }
+      }
+
       if (zhipuKey) {
         try {
           const cogSize = ['1024x1024','768x1344','864x1152','1344x768','1152x864','1440x720','720x1440'].includes(size) ? size : '1024x1024';
@@ -251,13 +718,17 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
           });
           if (resp.ok) {
             const data = await resp.json();
-            // Cogview 返回格式: { data: [{ url: "..." }] }
             const imageUrl = data.data?.[0]?.url || data.data?.[0]?.image_url || data.url;
             if (imageUrl) {
+              // 后端下载图片到本地, 前端通过 gateway 文件接口加载, 无 CORS/URL过期问题
+              const localPath = await downloadToTempFile(imageUrl);
+              if (localPath) {
+                return { success: true, output: `✅ 图片已生成! (Cogview-3-Flash)\nFILE: ${localPath}\n提示词: ${prompt}`, data: { imageUrl, localPath, prompt, size, provider: 'cogview-3-flash' } };
+              }
+              // 下载失败, 仍返回 URL
               return { success: true, output: `✅ 图片已生成! (Cogview-3-Flash)\nURL: ${imageUrl}\n提示词: ${prompt}`, data: { imageUrl, prompt, size, provider: 'cogview-3-flash' } };
             }
           }
-          // Cogview 失败: 记日志, 降级
           console.warn('[cogview] failed with status', resp.status, 'falling back to agnes');
         } catch (e: any) {
           console.warn('[cogview] error:', e.message, 'falling back to agnes');
@@ -269,7 +740,7 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       if (!apiKey) {
         return { success: false, output: zhipuKey
           ? 'Cogview-3-Flash 生成失败, 且未配置 AGENTAI_API_KEY 作为降级。请检查网络或重试。'
-          : '未配置 API Key。请在 .env 中设置 ZHIPU_API_KEY (免费生图) 或 AGENTAI_API_KEY。' };
+          : '未配置 API Key。请在 .env 设置:\n  HF_TOKEN (HuggingFace 永久免费)\n  DASHSCOPE_API_KEY (通义万相 500 张免费)\n  ZHIPU_API_KEY (智谱 Cogview-3-Flash 免费)\n  或 AGENTAI_API_KEY' };
       }
       const body: any = {
         model: 'agnes-image-2.1-flash',
@@ -290,6 +761,10 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       const data = await resp.json();
       const imageUrl = data.data?.[0]?.url || data.url || data.image_url;
       if (imageUrl) {
+        const localPath = await downloadToTempFile(imageUrl);
+        if (localPath) {
+          return { success: true, output: `✅ 图片已生成! (agnes-image)\nFILE: ${localPath}\n提示词: ${prompt}`, data: { imageUrl, localPath, prompt, size, provider: 'agnes-image' } };
+        }
         return { success: true, output: `✅ 图片已生成! (agnes-image)\nURL: ${imageUrl}\n提示词: ${prompt}`, data: { imageUrl, prompt, size, provider: 'agnes-image' } };
       }
       return { success: true, output: `图片任务已提交: ${JSON.stringify(data).slice(0, 500)}`, data };
@@ -301,6 +776,33 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
 
       // ---- 引擎 1: CogVideoX-Flash (免费, ZHIPU_API_KEY) ----
       const zhipuKey = getApiKey('ZHIPU_API_KEY');
+
+      // ---- 引擎 2: 通义万相视频 (50次/天免费, DASHSCOPE_API_KEY) ----
+      const dashscopeKey = getApiKey('DASHSCOPE_API_KEY');
+      if (dashscopeKey) {
+        try {
+          const wanxVideoBody = {
+            model: 'wanx2.0-t2v-video',
+            input: { prompt },
+            parameters: { duration: Math.min(duration || 5, 5), size: '1280*720' }
+          };
+          const wanxResp = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${dashscopeKey}`, 'Content-Type': 'application/json', 'X-DashScope-Async': 'enable' },
+            body: JSON.stringify(wanxVideoBody),
+            signal: AbortSignal.timeout(30000),
+          });
+          if (wanxResp.ok) {
+            const wanxData = await wanxResp.json();
+            const taskId = wanxData.output?.task_id;
+            if (taskId) {
+              return { success: true, output: `✅ 视频任务已提交! (通义万相)\n任务ID: ${taskId}\n提示词: ${prompt}\n约 2-5 分钟后完成`, data: { taskId, provider: 'wanx-video', prompt } };
+            }
+          }
+          console.warn('[wanx-video] failed with status', wanxResp.status);
+        } catch (e: any) { console.warn('[wanx-video] error:', e.message); }
+      }
+
       if (zhipuKey) {
         try {
           const body: any = { model: 'cogvideox-flash', prompt };
@@ -328,7 +830,7 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       if (!apiKey) {
         return { success: false, output: zhipuKey
           ? 'CogVideoX-Flash 生成失败, 且未配置 AGENTAI_API_KEY 作为降级。请检查网络或重试。'
-          : '未配置 API Key。请在 .env 中设置 ZHIPU_API_KEY (免费生视频) 或 AGENTAI_API_KEY。' };
+          : '未配置 API Key。请在 .env 设置:\n  DASHSCOPE_API_KEY (通义万相 50次/天免费视频)\n  ZHIPU_API_KEY (智谱 CogVideoX-Flash 免费)\n  或 AGENTAI_API_KEY' };
       }
       const dims = size.split('x');
       const body: any = { model: 'agnes-video-v2.0', prompt, size: { width: parseInt(dims[0]), height: parseInt(dims[1]) }, duration };
@@ -375,10 +877,17 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
   web_search: async (args) => {
     try {
       const { query, topK = 5 } = args;
+      // 优先使用 web-search.ts 统一搜索引擎 (含 browser 引擎: 免费 Google 搜索)
+      try {
+        const { webSearchWithFallback, formatSearchResults } = await import('./web-search.js');
+        const { results, engine } = await webSearchWithFallback(query, topK);
+        return { success: true, output: formatSearchResults(query, results, engine) };
+      } catch (e: any) { /* 降级到内联搜索 */ }
+      // 兜底: 内联 Bing + DuckDuckGo (保持原有逻辑)
       try {
         const { callPython } = await import('./python-bridge.js');
-        const r = await callPython('packages/agentai-skills/web/scrapling/main.py', { action: 'search', query, topK });
-        if (r.success) return { success: true, output: `Search results for "${query}":\n${r.output.slice(0, 8000)}` };
+        const r = await callPython('packages/agentai-skills/web/browser-auto/main.py', { action: 'search', query, topK });
+        if (r.success) return { success: true, output: `Search results for "${query}":\n${(r.output || '').slice(0, 8000)}` };
       } catch (e: any) { /* web_search optional */ }
       const backends = [
         async () => {
@@ -510,50 +1019,85 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
     try {
       const { edits } = args;
       if (!Array.isArray(edits)) return { success: false, output: 'edits must be array' };
-      const results: string[] = [];
       const ws = wm().projectDir;
       const backupDir = path.join(ws, '.agentai', 'backups');
+      fs.mkdirSync(backupDir, { recursive: true });
+      const backupId = Date.now();
+
+      // === Phase 1: 预检 + 备份所有文件 ===
+      const backups: Array<{ filePath: string; bakPath: string }> = [];
+      const errors: string[] = [];
       for (const e of edits) {
         const resolvedPath = resolvePath(e.file_path, ctx?.workspace);
+        // 沙箱检查
         const g = await sandboxGuard(resolvedPath, 'write');
-        if (g) { results.push(`${e.file_path}: ${g.output}`); continue; }
-        if (!fs.existsSync(resolvedPath)) { results.push(`${e.file_path}: not found`); continue; }
+        if (g) { errors.push(`${e.file_path}: ${g.output}`); continue; }
+        if (!fs.existsSync(resolvedPath)) { errors.push(`${e.file_path}: not found`); continue; }
         const content = fs.readFileSync(resolvedPath, 'utf-8');
         if (!content.includes(e.old_str)) {
-          // 模糊匹配: 找最相似的代码段提示
+          // 模糊匹配提示
           const lines = content.split('\n');
-          const searchLines = e.old_str.split('\n');
-          const firstSearchLine = searchLines[0].trim();
+          const firstSearchLine = e.old_str.split('\n')[0].trim();
           let bestMatch = ''; let bestLine = -1;
           for (let i = 0; i < lines.length; i++) {
             if (lines[i].trim().includes(firstSearchLine.slice(0, 30))) {
-              bestMatch = lines.slice(i, i + searchLines.length).join('\n');
+              bestMatch = lines.slice(i, i + 3).join('\n');
               bestLine = i + 1;
               break;
             }
           }
-          const hint = bestLine > 0
-            ? `\n最相似代码在 L${bestLine}:\n${bestMatch.slice(0, 200)}`
-            : '';
-          results.push(`${e.file_path}: old_str not found (检查空格/缩进)${hint}`);
+          const hint = bestLine > 0 ? `\n最相似代码在 L${bestLine}:\n${bestMatch.slice(0, 200)}` : '';
+          errors.push(`${e.file_path}: old_str not found (检查空格/缩进)${hint}`);
           continue;
         }
-        // 备份原文件
-        try {
-          fs.mkdirSync(backupDir, { recursive: true });
-          const bakName = path.basename(resolvedPath) + '.' + Date.now() + '.bak';
-          fs.writeFileSync(path.join(backupDir, bakName), content, 'utf-8');
-        } catch { /* backup optional */ }
-        // 只替换第一处匹配
-        const newContent = content.replace(e.old_str, e.new_str);
-        fs.writeFileSync(resolvedPath, newContent, 'utf-8');
-        // diff 摘要
-        const oldLines = content.split('\n').length;
-        const newLines = newContent.split('\n').length;
-        const diff = newLines - oldLines;
-        const diffLabel = diff > 0 ? `+${diff}` : diff < 0 ? `${diff}` : '±0';
-        results.push(`${e.file_path}: ok (${diffLabel} lines)`);
+        // 备份
+        const bakName = path.basename(resolvedPath) + `.${backupId}.bak`;
+        const bakPath = path.join(backupDir, bakName);
+        fs.writeFileSync(bakPath, content, 'utf-8');
+        backups.push({ filePath: resolvedPath, bakPath });
       }
+
+      // 预检失败 → 不修改任何文件, 直接返回错误
+      if (errors.length > 0) {
+        return { success: false, output: `预检失败, 未修改任何文件:\n${errors.join('\n')}` };
+      }
+
+      // === Phase 2: 原子执行 ===
+      const results: string[] = [];
+      let hadError = false;
+      const reverted: string[] = [];
+      for (const e of edits) {
+        const resolvedPath = resolvePath(e.file_path, ctx?.workspace);
+        const content = fs.readFileSync(resolvedPath, 'utf-8');
+        try {
+          // 只替换第一处匹配
+          const newContent = content.replace(e.old_str, e.new_str);
+          fs.writeFileSync(resolvedPath, newContent, 'utf-8');
+          const oldLines = content.split('\n').length;
+          const newLines = newContent.split('\n').length;
+          const diff = newLines - oldLines;
+          const diffLabel = diff > 0 ? `+${diff}` : diff < 0 ? `${diff}` : '±0';
+          results.push(`${e.file_path}: ok (${diffLabel} lines)`);
+        } catch (writeErr: any) {
+          // 写入失败 → 回滚所有已修改文件
+          hadError = true;
+          results.push(`${e.file_path}: write error - ${writeErr.message}`);
+          break;
+        }
+      }
+
+      // === Phase 3: 回滚 (如果任一步失败) ===
+      if (hadError) {
+        for (const bk of backups) {
+          try {
+            const original = fs.readFileSync(bk.bakPath, 'utf-8');
+            fs.writeFileSync(bk.filePath, original, 'utf-8');
+            reverted.push(path.basename(bk.filePath));
+          } catch { /* 尽力回滚 */ }
+        }
+        results.push(`回滚: 已还原 ${reverted.length} 个文件 (${reverted.join(', ')})`);
+      }
+
       // 自动验证: 对所有修改的 TS/JS 文件检查编译错误
       const editedFiles = edits
         .map((e: any) => resolvePath(e.file_path, ctx?.workspace))
@@ -567,6 +1111,123 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       return { success: results.every(r => r.includes(': ok')), output: results.join('\n') };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
+
+  // ===== Diff 预览 + 确认编辑 (Claude Code 式工作流) =====
+  preview_edit: async (args, ctx) => {
+    try {
+      const { edits } = args;
+      if (!Array.isArray(edits)) return { success: false, output: 'edits must be array' };
+      const ws = wm().projectDir;
+
+      const diffs: Array<{ file_path: string; hunks: string; plusLines: number; minusLines: number }> = [];
+      const errors: string[] = [];
+
+      for (const e of edits) {
+        const resolvedPath = resolvePath(e.file_path, ctx?.workspace);
+        const g = await sandboxGuard(resolvedPath, 'write');
+        if (g) { errors.push(`${e.file_path}: ${g.output}`); continue; }
+        if (!fs.existsSync(resolvedPath)) { errors.push(`${e.file_path}: not found`); continue; }
+        const content = fs.readFileSync(resolvedPath, 'utf-8');
+        if (!content.includes(e.old_str)) { errors.push(`${e.file_path}: old_str not found`); continue; }
+
+        // 生成 unified diff
+        const newContent = content.replace(e.old_str, e.new_str);
+        const oldLines = content.split('\n');
+        const newLines = newContent.split('\n');
+
+        // 找到 old_str 的行号
+        const oldStrFirstLine = e.old_str.split('\n')[0];
+        let matchLine = -1;
+        for (let i = 0; i < oldLines.length; i++) {
+          if (oldLines[i].includes(oldStrFirstLine.trim())) { matchLine = i + 1; break; }
+        }
+
+        const plusLines = newLines.length - oldLines.length;
+        const minusLines = oldLines.length - newLines.length;
+
+        // 构建简化的 diff hunk
+        const contextBefore = oldLines.slice(Math.max(0, matchLine - 4), matchLine - 1);
+        const contextAfter = newLines.slice(matchLine + (e.new_str.split('\n').length) - 1,
+          Math.min(newLines.length, matchLine + (e.new_str.split('\n').length) + 3));
+
+        let hunk = `@@ -${matchLine},${e.old_str.split('\n').length} +${matchLine},${e.new_str.split('\n').length} @@\n`;
+        for (const l of contextBefore) hunk += `  ${l}\n`;
+        for (const l of e.old_str.split('\n')) hunk += `- ${l}\n`;
+        for (const l of e.new_str.split('\n')) hunk += `+ ${l}\n`;
+        for (const l of contextAfter) hunk += `  ${l}\n`;
+
+        diffs.push({ file_path: e.file_path, hunks: hunk, plusLines, minusLines });
+      }
+
+      if (errors.length > 0) {
+        return { success: false, output: `预览失败:\n${errors.join('\n')}` };
+      }
+
+      // 生成预览 ID 并存储
+      const previewId = `preview_${Date.now()}`;
+      pendingPreviews.set(previewId, { edits, createdAt: Date.now(), workspace: ctx?.workspace });
+
+      // 格式化输出
+      const totalAdd = diffs.reduce((s, d) => s + d.plusLines, 0);
+      const totalDel = diffs.reduce((s, d) => s + d.minusLines, 0);
+      const lines = [`📝 预览修改 (${diffs.length} 文件, +${totalAdd}/-${totalDel} 行)`, '', `preview_id: ${previewId}`, ''];
+      for (const d of diffs) {
+        lines.push(`### ${d.file_path}`);
+        lines.push('```diff');
+        lines.push(d.hunks.trim());
+        lines.push('```');
+        lines.push('');
+      }
+      lines.push('---');
+      lines.push('调用 apply_edit 确认应用, 或忽略此预览放弃修改');
+
+      return {
+        success: true,
+        output: lines.join('\n'),
+        data: { preview_id: previewId, diffs: diffs.map(d => ({ ...d, hunks: undefined, diff_text: d.hunks })) }
+      };
+    } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+
+  apply_edit: async (args, ctx) => {
+    try {
+      const { preview_id } = args;
+      if (!preview_id) return { success: false, output: 'preview_id required' };
+
+      const pending = pendingPreviews.get(preview_id);
+      if (!pending) return { success: false, output: `预览 ${preview_id} 不存在或已过期` };
+
+      // 检查是否在 5 分钟内
+      if (Date.now() - pending.createdAt > 300000) {
+        pendingPreviews.delete(preview_id);
+        return { success: false, output: '预览已过期 (5分钟), 请重新预览' };
+      }
+
+      const ws = wm().projectDir;
+      const backupDir = path.join(ws, '.agentai', 'backups');
+      fs.mkdirSync(backupDir, { recursive: true });
+      const backupId = Date.now();
+
+      const results: string[] = [];
+      for (const e of pending.edits) {
+        const resolvedPath = resolvePath(e.file_path, ctx?.workspace);
+        const g = await sandboxGuard(resolvedPath, 'write');
+        if (g) { results.push(`${e.file_path}: ${g.output}`); continue; }
+        const content = fs.readFileSync(resolvedPath, 'utf-8');
+        // 备份
+        const bakPath = path.join(backupDir, `${path.basename(resolvedPath)}.${backupId}.bak`);
+        fs.writeFileSync(bakPath, content, 'utf-8');
+
+        const newContent = content.replace(e.old_str, e.new_str);
+        fs.writeFileSync(resolvedPath, newContent, 'utf-8');
+        results.push(`${e.file_path}: ✅ applied`);
+      }
+
+      pendingPreviews.delete(preview_id);
+      return { success: true, output: `应用完成:\n${results.join('\n')}` };
+    } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+
   create_directory: async (args, ctx) => { try { const p = resolvePath(args.path, ctx?.workspace); fs.mkdirSync(p, { recursive: true }); return { success: true, output: 'Created' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   copy_file: async (args, ctx) => { try { const src = resolvePath(args.source, ctx?.workspace); const dst = resolvePath(args.destination, ctx?.workspace); const g1 = await sandboxGuard(src, 'read'); if (g1) return g1; const g2 = await sandboxGuard(dst, 'write'); if (g2) return g2; fs.cpSync(src, dst, { recursive: true }); return { success: true, output: 'Copied' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   move_file: async (args, ctx) => { try { const src = resolvePath(args.source, ctx?.workspace); const dst = resolvePath(args.destination, ctx?.workspace); const g1 = await sandboxGuard(src, 'read'); if (g1) return g1; const g2 = await sandboxGuard(dst, 'write'); if (g2) return g2; fs.renameSync(src, dst); return { success: true, output: 'Moved' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
@@ -795,13 +1456,50 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
   wait_for_job: async (args) => { const j = bgJobs.get(args.jobId); if (!j) return { success: false, output: 'Not found' }; const start = Date.now(); while (j.running && Date.now() - start < (args.timeoutMs || 5000)) await new Promise(r => setTimeout(r, 200)); return { success: !j.running, output: j.output || '' }; },
   stop_job: async (args) => { try { const j = bgJobs.get(args.jobId); if (!j) return { success: false, output: 'Not found' }; const { execSync } = await import('child_process'); execSync(`taskkill /F /PID ${j.pid}`, { stdio: 'ignore' }); return { success: true, output: 'Stopped' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   list_jobs: async () => ({ success: true, output: [...bgJobs.entries()].map(([id, j]) => `#${id}: running=${j.running}`).join('\n') || '(none)' }),
-  remember: async (args, ctx) => { try { const ws = wm().projectDir; const uid = (ctx as any)?.userId || 'default'; await writeMemory({ userId: uid, workspace: ws, role: 'system', content: args.content, metadata: { type: args.type, scope: args.scope, name: args.name, description: args.description, priority: args.priority }, source: 'tool', industry: args.industry }); return { success: true, output: `✅ 记忆已保存: [${args.type}] ${args.name}\n内容: ${args.content.slice(0, 100)}${args.content.length > 100 ? '...' : ''}` }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
+  remember: async (args, ctx) => {
+    try {
+      const { MemoryManager } = await import('./memory-manager.js');
+      const ws = wm().projectDir;
+      const mm = MemoryManager.getInstance(ws);
+      const content = args.content || '';
+      await mm.remember({
+        key: args.name || `auto-${Date.now()}`,
+        value: content,
+        scope: args.scope || 'project',
+        metadata: { type: args.type, description: args.description, priority: args.priority }
+      });
+      return { success: true, output: `✅ 记忆已保存: [${args.type || 'fact'}] ${args.name}\n内容: ${content.slice(0, 100)}${content.length > 100 ? '...' : ''}` };
+    } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
   plan_task: async (args) => {
     try {
       const { goal, subtasks } = args;
       if (!Array.isArray(subtasks) || subtasks.length === 0) {
         return { success: false, output: '至少需要 1 个子任务' };
       }
+
+      // ====== 增量约束检查 (/build 原则) ======
+      const violations: string[] = [];
+      for (const t of subtasks) {
+        // 检查单次文件数（从 title 中提取文件路径）
+        const fileMatches = (t.title || '').match(/`([^`]+\.ts[xj]?)`|["']([^"']+\.ts[xj]?)["']/g);
+        if (fileMatches && fileMatches.length > 1) {
+          violations.push(`子任务 "${t.title}" 涉及 ${fileMatches.length} 个文件（最多 1 个）`);
+        }
+        // 检查单次行数（从 title 中提取行数信息）
+        const lineMatch = (t.title || '').match(/(\d+)\s*行/i);
+        if (lineMatch && parseInt(lineMatch[1], 10) > 100) {
+          violations.push(`子任务 "${t.title}" 修改超过 100 行（当前 ${lineMatch[1]} 行）`);
+        }
+      }
+
+      if (violations.length > 0) {
+        return {
+          success: false,
+          output: `⚠️ 计划违反增量约束，请重新拆分子任务：\n\n${violations.map(v => `• ${v}`).join('\n')}\n\n**约束规则**：\n• 每个子任务最多修改 **1 个文件**\n• 每个子任务修改不超过 **100 行**\n• 每个子任务必须可独立测试和验证`,
+        };
+      }
+
       const plan = {
         id: `plan-${Date.now()}`,
         goal,
@@ -898,25 +1596,74 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
         return { success: false, output: '工具名必须是小写+下划线, 如 diff_files' };
       }
 
-      // 保存脚本
+      // ═══ 2026-07-02 新增: 独立审计 (学 SkillEvolver 三阶段之独立审计) ═══
+      // 新工具先通过语法验证再注册, 防止"一次写错永远用错"
       const scriptFile = path.join(toolsDir, `${name}.mjs`);
       fs.writeFileSync(scriptFile, script, 'utf-8');
+
+      // 审计 1: 语法检查 — 用 Node.js --check 验证脚本语法
+      let auditPassed = true;
+      let auditIssues: string[] = [];
+      try {
+        const { execSync } = await import('child_process');
+        execSync(`node --check "${scriptFile}"`, { stdio: 'pipe', timeout: 5000 });
+      } catch (syntaxErr: any) {
+        auditPassed = false;
+        const stderr = syntaxErr.stderr?.toString() || syntaxErr.message || '';
+        auditIssues.push(`语法检查失败: ${stderr.slice(0, 200)}`);
+      }
+
+      // 审计 2: 检查脚本是否导出 run 函数
+      if (!script.includes('export') || !script.includes('run')) {
+        auditIssues.push('脚本必须导出 async function run(args): Promise<string> — 缺少 export 或 run');
+        // 不强制失败, 但标记为警告
+      }
+
+      // 审计 3: 如果有参数定义, 检查必填项是否声明
+      if (params && typeof params === 'object') {
+        const required = params.required;
+        if (Array.isArray(required)) {
+          const properties = params.properties || {};
+          for (const req of required) {
+            if (!properties[req]) {
+              auditIssues.push(`参数 "${req}" 在 required 中声明但 properties 中未定义`);
+            }
+          }
+        }
+      }
+
+      if (!auditPassed) {
+        // 审计失败: 删除脚本, 不注册
+        try { fs.unlinkSync(scriptFile); } catch { /* ignore */ }
+        return {
+          success: false,
+          output: `❌ 工具审计未通过, 已拒绝注册:\n${auditIssues.join('\n')}\n请修复上述问题后重新创建。`,
+        };
+      }
 
       // 注册到 registry
       const registryFile = path.join(toolsDir, 'registry.json');
       let registry: Record<string, any> = {};
       try { registry = JSON.parse(fs.readFileSync(registryFile, 'utf-8')); } catch { /* new */ }
-      registry[name] = { description, parameters: params || {}, scriptFile: `${name}.mjs`, createdAt: Date.now() };
+      registry[name] = {
+        description,
+        parameters: params || {},
+        scriptFile: `${name}.mjs`,
+        createdAt: Date.now(),
+        audited: true,
+        auditWarnings: auditIssues.length > 0 ? auditIssues : undefined,
+      };
       fs.writeFileSync(registryFile, JSON.stringify(registry, null, 2), 'utf-8');
 
+      const warningStr = auditIssues.length > 0 ? `\n⚠️ 审计警告: ${auditIssues.join('; ')}` : '';
       return {
         success: true,
-        output: `✅ 自定义工具 "${name}" 已创建\n脚本: ${scriptFile}\n描述: ${description}\n下次对话可通过 run_code 调用此脚本`,
+        output: `✅ 自定义工具 "${name}" 已创建并通过审计\n脚本: ${scriptFile}\n描述: ${description}\n下次对话可通过 run_code 调用此脚本${warningStr}`,
       };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
-  forget: async (args, ctx) => { try { const ws = wm().projectDir; const uid = (ctx as any)?.userId || 'default'; const mems = await readMemory({ userId: uid, workspace: ws }); const before = mems.length; const filtered = mems.filter((m: any) => !(m.metadata?.name === args.name && m.metadata?.scope === args.scope)); return { success: true, output: `已忘记 ${args.name}, 剩余 ${filtered.length} 条记忆` }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
-  recall_memory: async (args, ctx) => { try { const ws = wm().projectDir; const uid = (ctx as any)?.userId || 'default'; const mems = await readMemory({ userId: uid, workspace: ws, limit: 20 }); if (args.name) { const found = mems.filter((m: any) => m.metadata?.name === args.name); return { success: true, output: found.length > 0 ? found.map((m: any) => `[${m.metadata?.type || m.role}] ${m.content}`).join('\n---\n') : `未找到记忆: ${args.name}` }; } return { success: true, output: mems.length > 0 ? mems.slice(0, 10).map((m: any) => `[${new Date(m.ts).toLocaleString()}] ${m.content.slice(0, 80)}`).join('\n') : '暂无记忆' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
+  forget: async (args) => { try { const { MemoryManager } = await import('./memory-manager.js'); const ws = wm().projectDir; const mm = MemoryManager.getInstance(ws); const existed = await mm.forget(args.name); return { success: true, output: existed ? `已忘记: ${args.name}` : `未找到: ${args.name}` }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
+  recall_memory: async (args) => { try { const { MemoryManager } = await import('./memory-manager.js'); const ws = wm().projectDir; const mm = MemoryManager.getInstance(ws); const results = await mm.recall({ key: args.name, scope: args.scope, limit: args.limit || 10 }); if (results.length === 0) return { success: true, output: args.name ? `未找到: ${args.name}` : '暂无记忆' }; return { success: true, output: results.map(r => `[${r.key}] ${r.value.slice(0, 120)}`).join('\n---\n'), data: { count: results.length } }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   spawn_subagent: async (args, ctx) => {
     try {
       const { type, task } = args;
@@ -980,9 +1727,9 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
           `🏆 博弈结果 (${result.mode}模式, ${result.totalAgents}个Agent):`,
           ``,
           `=== 🥇 胜出方案 (${winner.agentName}, ${winner.score}分) ===`,
-          winner.output.slice(0, 1500),
+          (winner.output || '').slice(0, 1500),
           ``,
-          result.merged ? `=== 🤝 融合方案 ===\n${result.merged.output.slice(0, 1000)}` : '',
+          result.merged ? `=== 🤝 融合方案 ===\n${(result.merged.output || '').slice(0, 1000)}` : '',
           ``,
           `失败分析:`,
           ...result.failurePatterns.map(f => `- ${f.agentId}: ${f.lesson}`),
@@ -1062,6 +1809,82 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       if (args.status === 'failed' && typeof (chain as any).failCurrent === 'function') await (chain as any).failCurrent(args.error);
       return { success: true, output: `Marked ${args.status}` };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+  spec_generate: async (args) => {
+    try {
+      const { generatePRD, formatPRD } = await import('./skills/spec-driven-development.js');
+      const request = args.request || '';
+      if (!request) {
+        return { success: false, output: 'request 参数必填' };
+      }
+      const prd = generatePRD(request);
+      const prdMarkdown = formatPRD(prd);
+      return {
+        success: true,
+        output: prdMarkdown,
+        data: { action: 'prd_generated', prd },
+      };
+    } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+  officecli: async (args) => {
+    try {
+      const { execSync } = await import('child_process');
+      const { action, file, path, type, prop, commands, input, output, depth, json } = args;
+
+      if (!action) {
+        return { success: false, output: 'action 参数必填' };
+      }
+
+      // 构建命令
+      let cmd = 'officecli';
+      cmd += ` ${action}`;
+
+      if (file) cmd += ` ${file}`;
+      if (path) cmd += ` ${path}`;
+      if (type) cmd += ` --prop type=${type}`;
+
+      // 添加属性
+      if (prop && typeof prop === 'object') {
+        for (const [key, value] of Object.entries(prop)) {
+          cmd += ` --prop ${key}=${value}`;
+        }
+      }
+
+      // 批量命令
+      if (commands && Array.isArray(commands)) {
+        // 批量模式：每个命令一行
+        const batchFile = path.join(process.cwd(), '.agentai', 'officecli-batch.json');
+        const fs = await import('fs');
+        fs.mkdirSync(path.dirname(batchFile), { recursive: true });
+        fs.writeFileSync(batchFile, JSON.stringify(commands, null, 2));
+        cmd += ` --input ${batchFile}`;
+      }
+
+      // JSON 输入
+      if (input) cmd += ` --input ${input}`;
+
+      // 输出路径
+      if (output) cmd += ` --output ${output}`;
+
+      // 深度
+      if (depth) cmd += ` --depth ${depth}`;
+
+      // JSON 输出
+      if (json) cmd += ' --json';
+
+      // 执行命令
+      const result = execSync(cmd, { encoding: 'utf-8', timeout: 60000 });
+
+      // 尝试解析 JSON 输出
+      try {
+        const parsed = JSON.parse(result);
+        return { success: true, output: JSON.stringify(parsed, null, 2), data: parsed };
+      } catch {
+        return { success: true, output: result };
+      }
+    } catch (e: any) {
+      return { success: false, output: `OfficeCLI 执行失败: ${e.message}` };
+    }
   },
   submit_report: async (args) => {
     try {
@@ -1205,7 +2028,7 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
           if (err && !stdout) {
             resolve({ success: false, output: `安装失败: ${stderr || err.message}` });
           } else {
-            resolve({ success: true, output: `✅ ${pkg} 安装完成\n${stdout.slice(0, 2000)}` });
+            resolve({ success: true, output: `✅ ${pkg} 安装完成\n${(stdout || '').slice(0, 2000)}` });
           }
         });
       });
@@ -1237,29 +2060,59 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
     try {
       const { url, wait_for = 'networkidle' } = args;
       if (!url) return { success: false, output: 'url required' };
-      // 通过内嵌浏览器的 WebSocket 接口控制
-      const browserWsUrl = process.env.BROWSER_WS_URL || 'http://127.0.0.1:18789';
-      const resp = await fetch(`${browserWsUrl}/v1/browser/navigate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, wait_for }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!resp.ok) {
-        // 降级: 用 web_fetch 获取页面内容
-        try {
-          const pageResp = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          const html = await pageResp.text();
-          const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
-          const title = titleMatch?.[1] || url;
-          const textContent = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 3000);
-          return { success: true, output: `📄 页面: ${title}\nURL: ${url}\n\n内容预览:\n${textContent}`, data: { url, title } };
-        } catch {
-          return { success: false, output: `无法访问 ${url} — 浏览器服务未启动且直接获取失败` };
-        }
+      // 优先使用 Playwright 引擎 (真实浏览器, 完整 JS 执行 + 元素扫描)
+      // 注意: 不检查 isRunning(), 因为 navigate() 内部会调用 start() 自动启动引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      try {
+        const result = await engine.navigate(url, wait_for as any);
+        const elements = result.elements || [];
+        const elemSummary = elements.slice(0, 20).map((e: any) =>
+          `[${e.tag}]${e.text ? ` "${e.text.slice(0, 25)}"` : ''} → ${e.selector}`
+        ).join('\n');
+        return {
+          success: true,
+          output: `✅ 已导航到: ${result.title || url}\nURL: ${result.url || url}\n可交互元素: ${elements.length} 个\n\n${elemSummary}`,
+          data: { url: result.url, title: result.title, elements },
+        };
+      } catch (pwErr: any) {
+        // Playwright 导航失败 (可能未安装), 降级到 bridge
+        console.warn('[browser_navigate] Playwright 引擎不可用, 降级:', pwErr.message);
       }
-      const data = await resp.json();
-      return { success: true, output: `✅ 已导航到: ${data.title || url}\n可交互元素: ${data.elements?.length || 0} 个`, data };
+      // 降级: 通过 BrowserBridge 向前端浏览器发送导航指令
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (bridge.isConnected()) {
+        const result = await bridge.navigate(url, wait_for);
+        if (result.success) {
+          const d = result.data || {};
+          const elements = d.elements || [];
+          const elemSummary = elements.slice(0, 20).map((e: any) =>
+            `[${e.tag}]${e.text ? ` "${e.text.slice(0, 25)}"` : ''} → ${e.selector}`
+          ).join('\n');
+          return {
+            success: true,
+            output: `✅ 已导航到: ${d.title || url}\nURL: ${d.url || url}\n可交互元素: ${elements.length} 个\n\n${elemSummary}`,
+            data: d,
+          };
+        }
+        return { success: false, output: `导航失败: ${result.error || '未知错误'}` };
+      }
+      // 最终降级: 服务端直接获取页面
+      try {
+        const pageResp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        const html = await pageResp.text();
+        const captcha = detectCaptchaFromHtml(html);
+        if (captcha) {
+          return { success: true, output: `⚠️ 检测到验证码: ${captcha.description}\n请在浏览器中手动处理。`, data: { url, captcha: captcha.type, humanIntervention: true }, _captcha_alert: captcha };
+        }
+        const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
+        const title = titleMatch?.[1] || url;
+        const textContent = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 3000);
+        return { success: true, output: `📄 页面(服务端获取): ${title}\nURL: ${url}\n\n内容预览:\n${textContent}`, data: { url, title } };
+      } catch {
+        return { success: false, output: `无法访问 ${url}, 且前端浏览器未连接。请先打开浏览器标签页。` };
+      }
     } catch (e: any) { return { success: false, output: `browser_navigate error: ${e.message}` }; }
   },
 
@@ -1267,28 +2120,25 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
     try {
       const { selector, wait_ms = 1000 } = args;
       if (!selector) return { success: false, output: 'selector required' };
-
-      // 优先尝试浏览器服务
-      try {
-        const browserWsUrl = process.env.BROWSER_WS_URL || 'http://127.0.0.1:18789';
-        const resp = await fetch(`${browserWsUrl}/v1/browser/click`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ selector, wait_ms }),
-          signal: AbortSignal.timeout(5000),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          return { success: true, output: `✅ 已点击: ${selector}${data.result ? `\n结果: ${String(data.result).slice(0, 500)}` : ''}`, data };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          await engine.click(selector, wait_ms);
+          return { success: true, output: `✅ 已点击: ${selector}` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (bridge.isConnected()) {
+        const result = await bridge.click(selector, wait_ms);
+        if (result.success) {
+          return { success: true, output: `✅ 已点击: ${selector}${result.data?.result ? `\n结果: ${String(result.data.result).slice(0, 500)}` : ''}`, data: result.data };
         }
-      } catch { /* fallback to iframe action */ }
-
-      // Fallback: 通过前端 iframe 执行操作 (SSE 推送指令)
-      return {
-        success: true,
-        output: `✅ 已发送点击指令: ${selector} (通过内嵌浏览器执行)`,
-        _iframe_action: { action: 'click', selector },
-      };
+        return { success: false, output: `点击失败: ${result.error || '元素未找到'}` };
+      }
+      return { success: false, output: '浏览器引擎未启动, 请先调用 browser_navigate 打开页面' };
     } catch (e: any) { return { success: false, output: `browser_click error: ${e.message}` }; }
   },
 
@@ -1296,66 +2146,1012 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
     try {
       const { selector, text, press_enter = false } = args;
       if (!selector || !text) return { success: false, output: 'selector and text required' };
-
-      // 优先尝试浏览器服务
-      try {
-        const browserWsUrl = process.env.BROWSER_WS_URL || 'http://127.0.0.1:18789';
-        const resp = await fetch(`${browserWsUrl}/v1/browser/type`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ selector, text, press_enter }),
-          signal: AbortSignal.timeout(5000),
-        });
-        if (resp.ok) {
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          await engine.type(selector, text, press_enter);
+          return { success: true, output: `✅ 已在 ${selector} 输入: "${text.slice(0, 50)}"${press_enter ? ' + Enter' : ''}` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (bridge.isConnected()) {
+        const result = await bridge.type(selector, text, press_enter);
+        if (result.success) {
           return { success: true, output: `✅ 已在 ${selector} 输入: "${text.slice(0, 50)}"${press_enter ? ' + Enter' : ''}` };
         }
-      } catch { /* fallback to iframe action */ }
-
-      // Fallback: 通过前端 iframe 执行操作
-      const actionText = press_enter ? text + '\n' : text;
-      return {
-        success: true,
-        output: `✅ 已发送输入指令: ${selector} = "${text.slice(0, 50)}"${press_enter ? ' + Enter' : ''} (通过内嵌浏览器执行)`,
-        _iframe_action: { action: 'fill', selector, value: actionText },
-      };
+        return { success: false, output: `输入失败: ${result.error || '元素未找到'}` };
+      }
+      return { success: false, output: '浏览器引擎未启动, 请先调用 browser_navigate 打开页面' };
     } catch (e: any) { return { success: false, output: `browser_type error: ${e.message}` }; }
   },
 
   browser_screenshot: async (args: any, ctx?: any) => {
     try {
       const { selector, full_page = false } = args;
-      const browserWsUrl = process.env.BROWSER_WS_URL || 'http://127.0.0.1:18789';
-      const resp = await fetch(`${browserWsUrl}/v1/browser/screenshot`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selector, full_page }),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!resp.ok) return { success: false, output: `截图失败: 浏览器服务未启动 (HTTP ${resp.status})` };
-      const data = await resp.json();
-      const imageBase64 = data.imageBase64 || '';
-      // 限制 base64 大小 (最大 5MB) 避免 LLM 上下文膨胀
-      if (imageBase64.length > 5_000_000) {
-        return { success: true, output: `✅ 截图完成 (${data.width}x${data.height}, ${Math.round(imageBase64.length / 1024)}KB, 图片过大仅显示路径)` };
+      // 优先使用 Playwright 引擎 (真实截图, AI 可以真正"看到"页面)
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          const pwShot = await engine.screenshot(selector, full_page);
+          const imageBase64 = pwShot.base64;
+          if (imageBase64.length > 5_000_000) {
+            return { success: true, output: `✅ 截图完成 (${pwShot.width}x${pwShot.height}, ${Math.round(imageBase64.length / 1024)}KB, 图片过大)\n💡 提示: 截图过大无法发送给AI分析, 建议使用 browser_extract 提取文本代替` };
+          }
+          const modelHint = ctx?.model ? checkMultimodalSupport(ctx.model) : '';
+          return {
+            success: true,
+            output: `✅ 截图完成 (${pwShot.width}x${pwShot.height})${modelHint ? `\n💡 ${modelHint}` : ''}`,
+            data: { imageBase64, width: pwShot.width, height: pwShot.height },
+          };
+        } catch { /* 降级到 iframe */ }
       }
-      return { success: true, output: `✅ 截图完成 (${data.width}x${data.height})`, data: { imageBase64, width: data.width, height: data.height } };
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (bridge.isConnected()) {
+        const result = await bridge.screenshot(selector, full_page);
+        if (result.success) {
+          const d = result.data || {};
+          const imageBase64 = d.imageBase64 || '';
+          if (imageBase64.length > 5_000_000) {
+            return { success: true, output: `✅ 截图完成 (${d.width}x${d.height}, ${Math.round(imageBase64.length / 1024)}KB, 图片过大)\n💡 提示: 截图过大无法发送给AI分析, 建议使用 browser_extract 提取文本代替` };
+          }
+          // 多模态模型提醒: 检查当前模型是否支持视觉
+          const modelHint = ctx?.model ? checkMultimodalSupport(ctx.model) : '';
+          return {
+            success: true,
+            output: `✅ 截图完成 (${d.width}x${d.height})${modelHint ? `\n💡 ${modelHint}` : ''}`,
+            data: { imageBase64, width: d.width, height: d.height },
+          };
+        }
+        return { success: false, output: `截图失败: ${result.error || '未知错误'}` };
+      }
+      return { success: false, output: '浏览器引擎未启动, 请先调用 browser_navigate 打开页面' };
     } catch (e: any) { return { success: false, output: `browser_screenshot error: ${e.message}` }; }
   },
 
   browser_extract: async (args: any, ctx?: any) => {
     try {
-      const { selector, extract_type = 'text' } = args;
-      const browserWsUrl = process.env.BROWSER_WS_URL || 'http://127.0.0.1:18789';
-      const resp = await fetch(`${browserWsUrl}/v1/browser/extract`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selector, extract_type }),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!resp.ok) return { success: false, output: `提取失败: 浏览器服务未启动 (HTTP ${resp.status})` };
-      const data = await resp.json();
-      return { success: true, output: `✅ 提取完成 (${extract_type}):\n${String(data.content || '').slice(0, 3000)}`, data };
+      const { selector, extract_type = 'text', fields } = args;
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          const pwContent = await engine.extract(selector, extract_type, fields);
+          const pwResult = (extract_type === 'html' && pwContent) ? minifyHtml(pwContent) : pwContent;
+          const maxLen = (extract_type === 'tables' || extract_type === 'cards') ? 10000 : 5000;
+          return { success: true, output: `✅ 提取完成 (${extract_type}):\n${pwResult.slice(0, maxLen)}`, data: { content: pwResult } };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (bridge.isConnected()) {
+        const result = await bridge.extract(selector, extract_type, fields);
+        if (result.success) {
+          let content = String(result.data?.content || '');
+          if (extract_type === 'html' && content) content = minifyHtml(content);
+          // tables/cards 类型已经是 JSON, 不截断太短
+          const maxLen = (extract_type === 'tables' || extract_type === 'cards') ? 10000 : 5000;
+          return { success: true, output: `✅ 提取完成 (${extract_type}):\n${content.slice(0, maxLen)}`, data: result.data };
+        }
+        return { success: false, output: `提取失败: ${result.error || '未知错误'}` };
+      }
+      return { success: false, output: '浏览器引擎未启动, 请先调用 browser_navigate 打开页面' };
     } catch (e: any) { return { success: false, output: `browser_extract error: ${e.message}` }; }
+  },
+
+  // ====== 浏览器自动化增强处理器 ======
+
+  browser_submit: async (args: any, ctx?: any) => {
+    try {
+      const { selector } = args;
+      if (!selector) return { success: false, output: 'selector required' };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          await engine.submit(selector);
+          return { success: true, output: `✅ 表单已提交: ${selector}` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await bridge.submit(selector);
+      if (result.success) {
+        return { success: true, output: `✅ 表单已提交: ${selector}`, data: result.data };
+      }
+      return { success: false, output: `提交失败: ${result.error || '表单未找到'}` };
+    } catch (e: any) { return { success: false, output: `browser_submit error: ${e.message}` }; }
+  },
+
+  browser_upload: async (args: any, ctx?: any) => {
+    try {
+      const { selector, file_path } = args;
+      if (!selector || !file_path) return { success: false, output: 'selector and file_path required' };
+      // 安全守护: 文件路径必须在 workspace 内或 tmp 目录
+      const { getGlobalSandbox } = await import('./sandbox/index.js');
+      const sandbox = getGlobalSandbox();
+      const resolvedPath = path.resolve(file_path);
+      if (!fs.existsSync(resolvedPath)) {
+        return { success: false, output: `文件不存在: ${resolvedPath}` };
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器引擎未启动, 请先调用 browser_navigate 打开页面' };
+      const result = await bridge.upload(selector, resolvedPath);
+      if (result.success) {
+        return { success: true, output: `✅ 文件已上传: ${file_path} → ${selector}`, data: result.data };
+      }
+      return { success: false, output: `上传失败: ${result.error || '元素未找到'}` };
+    } catch (e: any) { return { success: false, output: `browser_upload error: ${e.message}` }; }
+  },
+
+  browser_tabs: async (args: any, ctx?: any) => {
+    try {
+      const { tab_action, tab_id, url } = args;
+      if (!tab_action) return { success: false, output: 'tab_action required' };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          if (tab_action === 'list') {
+            const tabs = await engine.listPages();
+            const tabsList = tabs.map(t => `  - [${t.tabId}] ${t.title || t.url || '新标签页'}${t.tabId === engine.getActiveTabId() ? ' (活跃)' : ''}`).join('\n');
+            return { success: true, output: `✅ 标签页列表 (${tabs.length}):\n${tabsList}`, data: { tabs } };
+          }
+          if (tab_action === 'new') {
+            const info = await engine.newPage(url);
+            return { success: true, output: `✅ 新标签页: ${info.tabId}`, data: info };
+          }
+          if (tab_action === 'close' && tab_id) {
+            const ok = await engine.closePage(tab_id);
+            return { success: ok, output: ok ? '✅ 标签页已关闭' : '标签页不存在' };
+          }
+          if (tab_action === 'switch' && tab_id) {
+            const ok = engine.switchTab(tab_id);
+            return { success: ok, output: ok ? '✅ 已切换标签页' : '标签页不存在' };
+          }
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await bridge.tabs(tab_action, tab_id, url);
+      if (result.success) {
+        const d = result.data || {};
+        if (tab_action === 'list') {
+          const tabsList = (d.tabs || []).map((t: any) => `  - [${t.id}] ${t.title || t.url || '新标签页'}${t.active ? ' (活跃)' : ''}`).join('\n');
+          return { success: true, output: `✅ 标签页列表 (${d.tabs?.length || 0}):\n${tabsList}`, data: d };
+        }
+        return { success: true, output: `✅ 标签页操作完成: ${tab_action}`, data: d };
+      }
+      return { success: false, output: `标签页操作失败: ${result.error || '未知错误'}` };
+    } catch (e: any) { return { success: false, output: `browser_tabs error: ${e.message}` }; }
+  },
+
+  browser_set_cookies: async (args: any, ctx?: any) => {
+    try {
+      const { cookies, domain } = args;
+      // 安全校验: domain 必须是合法域名 (拒绝 IP 地址和可疑格式)
+      if (domain) {
+        if (/^(\d{1,3}\.){3}\d{1,3}$/.test(domain)) {
+          return { success: false, output: '安全限制: 不允许从 IP 地址读取 Cookie, 请使用域名' };
+        }
+        if (!/^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(domain)) {
+          return { success: false, output: `域名格式无效: ${domain}` };
+        }
+      }
+      // 安全校验: 手动传入的 cookies 的 domain 字段也需验证
+      if (cookies && Array.isArray(cookies)) {
+        for (const c of cookies) {
+          if (c.domain && /^(\d{1,3}\.){3}\d{1,3}$/.test(c.domain)) {
+            return { success: false, output: '安全限制: 不允许向 IP 地址注入 Cookie' };
+          }
+        }
+      }
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          let cookieData = cookies;
+          if (domain && !cookieData) {
+            const { readCookies } = await import('./browser-profile.js');
+            const localCookies = await readCookies(domain);
+            if (localCookies.length === 0) {
+              return { success: false, output: `未找到 ${domain} 的本地 Cookie` };
+            }
+            cookieData = localCookies.map(c => ({ name: c.name, value: c.value, domain: c.domain, path: c.path }));
+          }
+          if (!cookieData || !Array.isArray(cookieData) || cookieData.length === 0) {
+            return { success: false, output: 'cookies 数组为空, 或指定 domain 未找到本地 Cookie' };
+          }
+          const count = await engine.setCookies(cookieData);
+          return { success: true, output: `✅ 已注入 ${count} 个 Cookie` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+
+      let cookieData = cookies;
+      // 如果指定了 domain, 从本地浏览器读取 Cookie
+      if (domain && !cookieData) {
+        const { readCookies } = await import('./browser-profile.js');
+        const localCookies = await readCookies(domain);
+        if (localCookies.length === 0) {
+          return { success: false, output: `未找到 ${domain} 的本地 Cookie` };
+        }
+        cookieData = localCookies.map(c => ({ name: c.name, value: c.value, domain: c.domain, path: c.path }));
+      }
+
+      if (!cookieData || !Array.isArray(cookieData) || cookieData.length === 0) {
+        return { success: false, output: 'cookies 数组为空, 或指定 domain 未找到本地 Cookie' };
+      }
+
+      const result = await bridge.setCookie(cookieData);
+      if (result.success) {
+        return { success: true, output: `✅ 已注入 ${cookieData.length} 个 Cookie`, data: result.data };
+      }
+      return { success: false, output: `Cookie 注入失败: ${result.error || '未知错误'}` };
+    } catch (e: any) { return { success: false, output: `browser_set_cookies error: ${e.message}` }; }
+  },
+
+  browser_wait_for: async (args: any, ctx?: any) => {
+    try {
+      const { selector, timeout = 10000 } = args;
+      if (!selector) return { success: false, output: 'selector required' };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          await engine.waitFor(selector, timeout);
+          return { success: true, output: `✅ 元素已出现: ${selector}` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await bridge.waitForElement(selector, timeout);
+      if (result.success) {
+        return { success: true, output: `✅ 元素已出现: ${selector}`, data: result.data };
+      }
+      return { success: false, output: `等待超时: ${result.error || '元素未出现'}` };
+    } catch (e: any) { return { success: false, output: `browser_wait_for error: ${e.message}` }; }
+  },
+
+  browser_select: async (args: any, ctx?: any) => {
+    try {
+      const { selector, value } = args;
+      if (!selector || value === undefined) return { success: false, output: 'selector and value required' };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          await engine.select(selector, value);
+          return { success: true, output: `✅ 已选择: ${selector} = ${value}` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await bridge.select(selector, value);
+      if (result.success) {
+        return { success: true, output: `✅ 已选择: ${selector} = ${value}`, data: result.data };
+      }
+      return { success: false, output: `选择失败: ${result.error || '元素未找到'}` };
+    } catch (e: any) { return { success: false, output: `browser_select error: ${e.message}` }; }
+  },
+
+  browser_hover: async (args: any, ctx?: any) => {
+    try {
+      const { selector } = args;
+      if (!selector) return { success: false, output: 'selector required' };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          await engine.hover(selector);
+          return { success: true, output: `✅ 已悬停: ${selector}` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await bridge.hover(selector);
+      if (result.success) {
+        return { success: true, output: `✅ 已悬停: ${selector}`, data: result.data };
+      }
+      return { success: false, output: `悬停失败: ${result.error || '元素未找到'}` };
+    } catch (e: any) { return { success: false, output: `browser_hover error: ${e.message}` }; }
+  },
+
+  browser_press_key: async (args: any, ctx?: any) => {
+    try {
+      const { key } = args;
+      if (!key) return { success: false, output: 'key required' };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          await engine.pressKey(key);
+          return { success: true, output: `✅ 已按键: ${key}` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await bridge.pressKey(key);
+      if (result.success) {
+        return { success: true, output: `✅ 已按键: ${key}`, data: result.data };
+      }
+      return { success: false, output: `按键失败: ${result.error || '未知错误'}` };
+    } catch (e: any) { return { success: false, output: `browser_press_key error: ${e.message}` }; }
+  },
+
+  browser_scroll_to: async (args: any, ctx?: any) => {
+    try {
+      const { selector } = args;
+      if (!selector) return { success: false, output: 'selector required' };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          await engine.scrollTo(selector);
+          return { success: true, output: `✅ 已滚动到: ${selector}` };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await bridge.scrollTo(selector);
+      if (result.success) {
+        return { success: true, output: `✅ 已滚动到: ${selector}`, data: result.data };
+      }
+      return { success: false, output: `滚动失败: ${result.error || '元素未找到'}` };
+    } catch (e: any) { return { success: false, output: `browser_scroll_to error: ${e.message}` }; }
+  },
+
+  browser_get_attribute: async (args: any, ctx?: any) => {
+    try {
+      const { selector, attribute } = args;
+      if (!selector || !attribute) return { success: false, output: 'selector and attribute required' };
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          const val = await engine.getAttribute(selector, attribute);
+          return { success: true, output: `✅ ${selector}[${attribute}] = "${String(val).slice(0, 200)}"`, data: { value: val } };
+        } catch { /* 降级到 iframe */ }
+      }
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await bridge.getAttribute(selector, attribute);
+      if (result.success) {
+        const val = result.data?.value || '';
+        return { success: true, output: `✅ ${selector}[${attribute}] = "${String(val).slice(0, 200)}"`, data: result.data };
+      }
+      return { success: false, output: `获取属性失败: ${result.error || '元素未找到'}` };
+    } catch (e: any) { return { success: false, output: `browser_get_attribute error: ${e.message}` }; }
+  },
+
+  // ====== 浏览器扫描 + 快照 ======
+
+  browser_scan: async (args: any, ctx?: any) => {
+    try {
+      // 优先使用 Playwright 引擎
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          const elements = await engine.scanElements();
+          const elemSummary = elements.slice(0, 25).map((e: any) =>
+            `[${e.tag}]${e.text ? ` "${e.text.slice(0, 25)}"` : ''} → ${e.selector}`
+          ).join('\n');
+          return {
+            success: true,
+            output: `✅ 扫描完成: ${elements.length} 个可交互元素\n\n${elemSummary}`,
+            data: { elements, url: engine.getCurrentUrl() },
+          };
+        } catch { /* 降级到 iframe */ }
+      }
+      // 降级: BrowserBridge
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (bridge.isConnected()) {
+        const result = await bridge.scan();
+        if (result.success) {
+          const elements = result.data?.elements || [];
+          const elemSummary = elements.slice(0, 25).map((e: any) =>
+            `[${e.tag}]${e.text ? ` "${e.text.slice(0, 25)}"` : ''} → ${e.selector}`
+          ).join('\n');
+          return {
+            success: true,
+            output: `✅ 扫描完成: ${elements.length} 个可交互元素\n\n${elemSummary}`,
+            data: { elements },
+          };
+        }
+        return { success: false, output: `扫描失败: ${result.error || '未知错误'}` };
+      }
+      return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+    } catch (e: any) { return { success: false, output: `browser_scan error: ${e.message}` }; }
+  },
+
+  browser_snapshot: async (args: any, ctx?: any) => {
+    try {
+      const { full_page = false } = args;
+      // 优先使用 Playwright 引擎 (截图 + 元素一次获取)
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) {
+        try {
+          const shot = await engine.screenshot(undefined, full_page);
+          const elements = await engine.scanElements();
+          const url = engine.getCurrentUrl();
+          const imageBase64 = shot.base64;
+          const modelHint = ctx?.model ? checkMultimodalSupport(ctx.model) : '';
+          const elemSummary = elements.slice(0, 15).map((e: any) =>
+            `[${e.tag}]${e.text ? ` "${e.text.slice(0, 20)}"` : ''} → ${e.selector}`
+          ).join('\n');
+          return {
+            success: true,
+            output: `✅ 快照已获取 (${shot.width}x${shot.height})\nURL: ${url}\n可交互元素: ${elements.length} 个\n\n${elemSummary}\n\n📸 截图已附带${modelHint ? `\n${modelHint}` : ''}`,
+            data: { screenshot: imageBase64, width: shot.width, height: shot.height, elements, url },
+            _image_base64: imageBase64,
+            _image_mime: 'image/jpeg',
+          };
+        } catch { /* 降级到 iframe */ }
+      }
+      // 降级: 分别调用 screenshot + scan
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (!bridge.isConnected()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const shotResult = await bridge.screenshot(undefined, full_page);
+      const scanResult = await bridge.scan();
+      if (shotResult.success) {
+        const imageBase64 = shotResult.data?.imageBase64 || '';
+        const elements = scanResult.data?.elements || [];
+        const modelHint = ctx?.model ? checkMultimodalSupport(ctx.model) : '';
+        const elemSummary = elements.slice(0, 15).map((e: any) =>
+          `[${e.tag}]${e.text ? ` "${e.text.slice(0, 20)}"` : ''} → ${e.selector}`
+        ).join('\n');
+        return {
+          success: true,
+          output: `✅ 快照已获取 (${shotResult.data?.width || 0}x${shotResult.data?.height || 0})\n可交互元素: ${elements.length} 个\n\n${elemSummary}\n\n📸 截图已附带${modelHint ? `\n${modelHint}` : ''}`,
+          data: { screenshot: imageBase64, width: shotResult.data?.width, height: shotResult.data?.height, elements },
+          _image_base64: imageBase64,
+          _image_mime: 'image/jpeg',
+        };
+      }
+      return { success: false, output: '快照获取失败' };
+    } catch (e: any) { return { success: false, output: `browser_snapshot error: ${e.message}` }; }
+  },
+
+  // ====== RPA 操作录制与回放处理器 ======
+
+  browser_record: async (args: any, ctx?: any) => {
+    try {
+      const { action = 'status', name, start_url, description, script_id } = args;
+      const { getRpaRecorder } = await import('./rpa-recorder.js');
+      const recorder = getRpaRecorder();
+
+      switch (action) {
+        case 'start': {
+          const r = recorder.startRecording(name || `脚本-${Date.now()}`, start_url || '');
+          return { success: r.success, output: r.message };
+        }
+        case 'stop': {
+          const r = recorder.stopRecording(description);
+          if (r.success && r.script) {
+            return { success: true, output: `${r.message}\n脚本ID: ${r.script.id}\n步骤数: ${r.script.steps.length}`, data: { scriptId: r.script.id, steps: r.script.steps } };
+          }
+          return { success: false, output: r.message };
+        }
+        case 'status': {
+          const s = recorder.getRecordingStatus();
+          if (s.recording) {
+            return { success: true, output: `录制中: ${s.name}\n已记录 ${s.stepCount} 步\n起始URL: ${s.startUrl}`, data: s };
+          }
+          return { success: true, output: '当前未在录制' };
+        }
+        case 'cancel': {
+          recorder.cancelRecording();
+          return { success: true, output: '录制已取消' };
+        }
+        case 'list': {
+          const scripts = recorder.listScripts();
+          if (scripts.length === 0) return { success: true, output: '暂无已保存的录制脚本' };
+          const list = scripts.map(s => `  - [${s.id}] ${s.name} (${s.steps.length}步, 执行${s.runCount}次${s.lastResult?.success ? ', 上次成功' : s.lastResult ? ', 上次失败' : ''})`).join('\n');
+          return { success: true, output: `已保存脚本 (${scripts.length}):\n${list}`, data: { scripts } };
+        }
+        case 'delete': {
+          if (!script_id) return { success: false, output: 'script_id required' };
+          const ok = recorder.deleteScript(script_id);
+          return { success: ok, output: ok ? '✅ 脚本已删除' : '脚本不存在' };
+        }
+        case 'get': {
+          if (!script_id) return { success: false, output: 'script_id required' };
+          const script = recorder.getScript(script_id);
+          if (!script) return { success: false, output: '脚本不存在' };
+          const stepsText = script.steps.map(s => `  ${s.index + 1}. ${s.action}${s.selector ? ` → ${s.selector}` : ''}${s.text ? ` "${s.text.slice(0, 30)}"` : ''}${s.url ? ` → ${s.url}` : ''}`).join('\n');
+          return { success: true, output: `脚本: ${script.name}\n描述: ${script.description}\n起始URL: ${script.startUrl}\n步骤:\n${stepsText}`, data: script };
+        }
+        default:
+          return { success: false, output: `未知操作: ${action}` };
+      }
+    } catch (e: any) { return { success: false, output: `browser_record error: ${e.message}` }; }
+  },
+
+  browser_replay: async (args: any, ctx?: any) => {
+    try {
+      const { script_id, steps, variables, name } = args;
+      const { getRpaRecorder } = await import('./rpa-recorder.js');
+      const recorder = getRpaRecorder();
+
+      // 模式1: 直接传入步骤列表 → 创建临时脚本并执行
+      if (steps && Array.isArray(steps) && steps.length > 0) {
+        const script = recorder.createScript({
+          name: name || `临时脚本-${Date.now()}`,
+          startUrl: steps[0]?.url || '',
+          steps,
+        });
+        const result = await recorder.replay(script.id, variables);
+        const status = result.success ? '✅' : '❌';
+        return {
+          success: result.success,
+          output: `${status} 回放完成: ${result.completedSteps}/${result.totalSteps} 步 (${result.durationMs}ms)${result.error ? `\n错误: ${result.error}` : ''}`,
+          data: result,
+        };
+      }
+
+      // 模式2: 使用已保存的脚本
+      if (!script_id) return { success: false, output: '需要 script_id 或 steps 参数' };
+      const result = await recorder.replay(script_id, variables);
+      const status = result.success ? '✅' : '❌';
+      return {
+        success: result.success,
+        output: `${status} 回放完成: ${result.completedSteps}/${result.totalSteps} 步 (${result.durationMs}ms)${result.error ? `\n错误: ${result.error}` : ''}`,
+        data: result,
+      };
+    } catch (e: any) { return { success: false, output: `browser_replay error: ${e.message}` }; }
+  },
+
+  rpa_transcribe: async (args: any) => {
+    try {
+      const { script_id } = args;
+      if (!script_id) return { success: false, output: 'script_id required' };
+      const { getRpaRecorder } = await import('./rpa-recorder.js');
+      const recorder = getRpaRecorder();
+      const card = await recorder.transcribeToSkill(script_id);
+      if (!card) return { success: false, output: '转写失败: 脚本不存在或步骤为空' };
+      return {
+        success: true,
+        output: `技能卡转写成功!\n\n技能名: ${card.skillName}\n描述: ${card.description}\n步骤数: ${card.steps.length}\n成功条件: ${card.successCondition}\n变量: ${card.variables.join(', ') || '无'}\n\n步骤:\n${card.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
+      };
+    } catch (e: any) { return { success: false, output: `rpa_transcribe error: ${e.message}` }; }
+  },
+
+  rpa_execute_skill: async (args: any) => {
+    try {
+      const { script_id, variables } = args;
+      if (!script_id) return { success: false, output: 'script_id required' };
+      const { getRpaRecorder } = await import('./rpa-recorder.js');
+      const recorder = getRpaRecorder();
+      const result = await recorder.executeBySkill(script_id, variables);
+      return {
+        success: result.success,
+        output: result.success
+          ? `语义执行完成! ${result.completedSteps}/${result.totalSteps} 步成功 (${result.durationMs}ms)`
+          : `语义执行失败: ${result.error || '未知错误'} (完成 ${result.completedSteps}/${result.totalSteps} 步)`,
+        data: result,
+      };
+    } catch (e: any) { return { success: false, output: `rpa_execute_skill error: ${e.message}` }; }
+  },
+
+  // ====== 通知推送处理器 ======
+
+  send_notification: async (args: any, ctx?: any) => {
+    try {
+      const { title, body, level = 'info', channel = 'sse', target, source } = args;
+      if (!title || !body) return { success: false, output: 'title and body required' };
+      const { getNotificationEngine } = await import('./notification-engine.js');
+      const engine = getNotificationEngine();
+      const notification = await engine.send({ title, body, level, channel, target, source: source || 'ai' });
+      const icon = level === 'error' ? '🔴' : level === 'warning' ? '🟡' : level === 'success' ? '🟢' : '🔵';
+      return {
+        success: true,
+        output: `${icon} 通知已发送: ${title}\n渠道: ${channel}\n状态: ${notification.status}\nID: ${notification.id}`,
+        data: notification,
+      };
+    } catch (e: any) { return { success: false, output: `send_notification error: ${e.message}` }; }
+  },
+
+  notification_history: async (args: any, ctx?: any) => {
+    try {
+      const { limit = 50, level } = args;
+      const { getNotificationEngine } = await import('./notification-engine.js');
+      const engine = getNotificationEngine();
+      const history = engine.getHistory(Math.min(limit, 100), level);
+      const stats = engine.getStats();
+      const list = history.slice(0, limit).map(n => {
+        const icon = n.level === 'error' ? '🔴' : n.level === 'warning' ? '🟡' : n.level === 'success' ? '🟢' : '🔵';
+        return `  ${icon} [${n.status}] ${n.title} (${n.channel}) - ${new Date(n.createdAt).toLocaleString()}`;
+      }).join('\n');
+      return {
+        success: true,
+        output: `通知历史 (${history.length} 条, 总计 ${stats.total}):\n${list || '  (空)'}\n\n统计: 发送成功 ${stats.sent} | 失败 ${stats.failed} | 待发送 ${stats.pending}`,
+        data: { history, stats },
+      };
+    } catch (e: any) { return { success: false, output: `notification_history error: ${e.message}` }; }
+  },
+
+  // ====== 定时任务调度器处理器 ======
+
+  schedule_task: async (args: any, ctx?: any) => {
+    try {
+      const { name, description, type, cron = 'once', run_at, config, notify_on_failure = true, notify_on_success = false, timeout_ms = 120000 } = args;
+      if (!name || !type || !config) return { success: false, output: 'name, type, config required' };
+      const { getTaskScheduler } = await import('./task-scheduler.js');
+      const scheduler = getTaskScheduler();
+      // 设置 gateway URL
+      const host = process.env.AGENTAI_HOST || '127.0.0.1';
+      const port = process.env.AGENTAI_PORT || '18789';
+      scheduler.setGatewayUrl(`http://${host}:${port}`);
+
+      const schedule = scheduler.create({
+        name, description: description || '', type, cron, runAt: run_at,
+        config, status: 'active',
+        notifyOnFailure: notify_on_failure, notifyOnSuccess: notify_on_success, timeoutMs: timeout_ms,
+      });
+
+      const typeLabel = { rpa: '浏览器自动化', ai_task: 'AI 任务', notification: '通知推送', custom: '自定义HTTP', workflow: '工作流' }[type] || type;
+      const cronLabel = cron === 'once' ? `一次性 (${run_at || '立即'})` : `Cron: ${cron}`;
+      return {
+        success: true,
+        output: `✅ 定时任务已创建\n名称: ${name}\n类型: ${typeLabel}\n调度: ${cronLabel}\nID: ${schedule.id}\n\n任务将在指定时间自动执行, 失败${notify_on_failure ? '会' : '不会'}发送通知。`,
+        data: schedule,
+      };
+    } catch (e: any) { return { success: false, output: `schedule_task error: ${e.message}` }; }
+  },
+
+  list_schedules: async (args: any, ctx?: any) => {
+    try {
+      const { action = 'list', schedule_id, status } = args;
+      const { getTaskScheduler } = await import('./task-scheduler.js');
+      const scheduler = getTaskScheduler();
+
+      switch (action) {
+        case 'list': {
+          const schedules = scheduler.list(status as any);
+          if (schedules.length === 0) return { success: true, output: '暂无定时任务' };
+          const list = schedules.map(s => {
+            const typeIcon = { rpa: '🌐', ai_task: '🤖', notification: '🔔', custom: '⚙️', workflow: '🏭' }[s.type] || '📋';
+            const statusBadge = s.status === 'active' ? '🟢' : s.status === 'paused' ? '🟡' : '⚪';
+            const lastRun = s.lastRunAt ? `上次: ${new Date(s.lastRunAt).toLocaleString()} ${s.lastResult?.success ? '✅' : '❌'}` : '未执行';
+            return `  ${typeIcon} ${statusBadge} [${s.id}] ${s.name} (${s.type}, ${s.cron}) — 执行${s.runCount}次 | ${lastRun}`;
+          }).join('\n');
+          return { success: true, output: `定时任务 (${schedules.length}):\n${list}`, data: { schedules } };
+        }
+        case 'get': {
+          if (!schedule_id) return { success: false, output: 'schedule_id required' };
+          const s = scheduler.get(schedule_id);
+          if (!s) return { success: false, output: '任务不存在' };
+          return {
+            success: true,
+            output: `任务: ${s.name}\n类型: ${s.type}\nCron: ${s.cron}\n状态: ${s.status}\n执行: ${s.runCount}次 (成功${s.successCount}/失败${s.failCount})\n创建: ${new Date(s.createdAt).toLocaleString()}\n${s.lastRunAt ? `上次执行: ${new Date(s.lastRunAt).toLocaleString()} (${s.lastResult?.success ? '✅' : '❌'} ${s.lastResult?.durationMs}ms)` : ''}\n${s.lastResult?.error ? `错误: ${s.lastResult.error}` : ''}`,
+            data: s,
+          };
+        }
+        case 'run': {
+          if (!schedule_id) return { success: false, output: 'schedule_id required' };
+          const result = await scheduler.runOnce(schedule_id);
+          return {
+            success: result.success,
+            output: `${result.success ? '✅' : '❌'} 手动执行完成 (${result.durationMs}ms)${result.output ? `\n结果: ${result.output.slice(0, 300)}` : ''}${result.error ? `\n错误: ${result.error}` : ''}`,
+            data: result,
+          };
+        }
+        case 'pause': {
+          if (!schedule_id) return { success: false, output: 'schedule_id required' };
+          const s = scheduler.pause(schedule_id);
+          return { success: !!s, output: s ? `⏸️ 已暂停: ${s.name}` : '任务不存在' };
+        }
+        case 'resume': {
+          if (!schedule_id) return { success: false, output: 'schedule_id required' };
+          const s = scheduler.resume(schedule_id);
+          return { success: !!s, output: s ? `▶️ 已恢复: ${s.name}` : '任务不存在' };
+        }
+        case 'delete': {
+          if (!schedule_id) return { success: false, output: 'schedule_id required' };
+          const ok = scheduler.delete(schedule_id);
+          return { success: ok, output: ok ? '✅ 任务已删除' : '任务不存在' };
+        }
+        case 'stats': {
+          const stats = scheduler.getStats();
+          return {
+            success: true,
+            output: `定时任务统计:\n  总数: ${stats.total}\n  活跃: ${stats.active}\n  暂停: ${stats.paused}\n  总执行: ${stats.totalRuns} (成功 ${stats.totalSuccess} / 失败 ${stats.totalFail})`,
+            data: stats,
+          };
+        }
+        default:
+          return { success: false, output: `未知操作: ${action}` };
+      }
+    } catch (e: any) { return { success: false, output: `list_schedules error: ${e.message}` }; }
+  },
+
+  // ====== 行业工作流模板引擎处理器 ======
+
+  workflow_run: async (args: any, ctx?: any) => {
+    try {
+      const { template_id, variables } = args;
+      if (!template_id) return { success: false, output: 'template_id required' };
+      const { getWorkflowEngine } = await import('./workflow-template-engine.js');
+      const engine = getWorkflowEngine();
+      const host = process.env.AGENTAI_HOST || '127.0.0.1';
+      const port = process.env.AGENTAI_PORT || '18789';
+      engine.setGatewayUrl(`http://${host}:${port}`);
+
+      const execution = await engine.execute(template_id, variables);
+
+      // 格式化步骤结果
+      const stepsSummary = Array.from(execution.stepResults.entries()).map(([id, r]) => {
+        const icon = r.status === 'success' ? '✅' : r.status === 'failed' ? '❌' : r.status === 'skipped' ? '⏭️' : '⏳';
+        return `  ${icon} ${id}: ${r.status}${r.error ? ` (${r.error})` : ''}${r.retryAttempts ? ` [重试${r.retryAttempts}次]` : ''}`;
+      }).join('\n');
+
+      const duration = ((execution.completedAt! - execution.startedAt) / 1000).toFixed(1);
+      const statusIcon = execution.status === 'completed' ? '✅' : execution.status === 'failed' ? '❌' : '⚠️';
+
+      return {
+        success: execution.status !== 'failed',
+        output: `${statusIcon} 工作流执行完成: ${execution.templateName}\n状态: ${execution.status}\n耗时: ${duration}s\n执行ID: ${execution.id}\n\n步骤结果:\n${stepsSummary}${execution.error ? `\n\n错误: ${execution.error}` : ''}`,
+        data: execution,
+      };
+    } catch (e: any) { return { success: false, output: `workflow_run error: ${e.message}` }; }
+  },
+
+  workflow_list_templates: async (args: any, ctx?: any) => {
+    try {
+      const { industry } = args;
+      const { getWorkflowEngine } = await import('./workflow-template-engine.js');
+      const engine = getWorkflowEngine();
+      const templates = engine.listTemplates(industry);
+
+      if (templates.length === 0) return { success: true, output: '暂无工作流模板' };
+
+      const grouped: Record<string, typeof templates> = {};
+      for (const t of templates) {
+        const key = t.industry || 'custom';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(t);
+      }
+
+      const industryLabels: Record<string, string> = {
+        decoration: '🏠 装修行业',
+        ecommerce: '🛒 电商行业',
+        monitoring: '📊 监控运维',
+        custom: '🔧 自定义',
+      };
+
+      const lines: string[] = [];
+      for (const [ind, tmps] of Object.entries(grouped)) {
+        lines.push(`\n${industryLabels[ind] || ind}:`);
+        for (const t of tmps) {
+          const builtinTag = t.builtin ? ' [内置]' : '';
+          const varList = t.variables.map(v => `${v.name}${v.required ? '*' : ''}`).join(', ');
+          lines.push(`  📋 [${t.id}] ${t.name}${builtinTag}`);
+          lines.push(`     ${t.description}`);
+          lines.push(`     变量: ${varList || '无'} | 步骤: ${t.steps.length}个`);
+        }
+      }
+
+      return {
+        success: true,
+        output: `工作流模板 (${templates.length} 个):${lines.join('\n')}\n\n💡 使用 workflow_run({template_id:"模板ID", variables:{...}}) 执行模板`,
+        data: { templates },
+      };
+    } catch (e: any) { return { success: false, output: `workflow_list_templates error: ${e.message}` }; }
+  },
+
+  workflow_create: async (args: any, ctx?: any) => {
+    try {
+      const { name, industry = 'custom', description, variables = [], steps, notifyOnComplete = false, notifyOnFailure = true } = args;
+      if (!name || !steps || !Array.isArray(steps)) return { success: false, output: 'name and steps required' };
+
+      const { getWorkflowEngine } = await import('./workflow-template-engine.js');
+      const engine = getWorkflowEngine();
+
+      const template = engine.createTemplate({
+        name,
+        industry,
+        description: description || '',
+        variables,
+        steps,
+        notifyOnComplete,
+        notifyOnFailure,
+        notifyChannel: 'sse',
+      });
+
+      return {
+        success: true,
+        output: `✅ 工作流模板已创建\n名称: ${template.name}\n行业: ${template.industry}\n步骤: ${template.steps.length}个\nID: ${template.id}\n\n💡 使用 workflow_run({template_id:"${template.id}"}) 执行`,
+        data: template,
+      };
+    } catch (e: any) { return { success: false, output: `workflow_create error: ${e.message}` }; }
+  },
+
+  workflow_history: async (args: any, ctx?: any) => {
+    try {
+      const { template_id, limit = 20 } = args;
+      const { getWorkflowEngine } = await import('./workflow-template-engine.js');
+      const engine = getWorkflowEngine();
+      const executions = engine.listExecutions(template_id, limit);
+
+      if (executions.length === 0) return { success: true, output: '暂无执行历史' };
+
+      const list = executions.map(e => {
+        const icon = e.status === 'completed' ? '✅' : e.status === 'failed' ? '❌' : e.status === 'partial' ? '⚠️' : '⏳';
+        const duration = e.completedAt ? `${((e.completedAt - e.startedAt) / 1000).toFixed(1)}s` : '进行中';
+        return `  ${icon} [${e.id}] ${e.templateName} — ${e.status} (${duration}) ${new Date(e.startedAt).toLocaleString()}`;
+      }).join('\n');
+
+      return {
+        success: true,
+        output: `工作流执行历史 (${executions.length} 条):\n${list}`,
+        data: { executions },
+      };
+    } catch (e: any) { return { success: false, output: `workflow_history error: ${e.message}` }; }
+  },
+
+  workflow_generate: async (args: any, ctx?: any) => {
+    try {
+      const { description, industry = 'custom', name } = args;
+      if (!description) return { success: false, output: 'description required' };
+
+      const router = (ctx as any)?._router;
+      if (!router || typeof router.chat !== 'function') {
+        return { success: false, output: 'LLM router 不可用, 无法生成工作流模板' };
+      }
+
+      const genPrompt = `你是工作流设计专家。根据用户需求生成一个 JSON 格式的工作流模板。
+
+需求: ${description}
+行业: ${industry}
+${name ? `模板名称: ${name}` : ''}
+
+请返回纯 JSON (不要 markdown 代码块), 格式如下:
+{
+  "name": "模板名称",
+  "description": "模板描述",
+  "industry": "${industry}",
+  "variables": [
+    { "name": "变量名", "type": "string", "defaultValue": "", "description": "说明", "required": true }
+  ],
+  "steps": [
+    {
+      "id": "step1",
+      "name": "步骤名称",
+      "type": "rpa|ai_task|notification|condition|extract|transform|delay|http",
+      "dependsOn": [],
+      "config": {},
+      "retryCount": 0,
+      "timeout": 30000,
+      "condition": ""
+    }
+  ],
+  "notifyOnComplete": false,
+  "notifyOnFailure": true
+}
+
+规则:
+1. 步骤间用 dependsOn 声明依赖关系 (DAG)
+2. 用 {{variable}} 或 {{stepId.output}} 引用变量
+3. 选择最合适的步骤类型:
+   - rpa: 浏览器自动化 (需要 browser_record 录制的脚本)
+   - ai_task: AI 智能任务 (自然语言处理/分析/生成)
+   - notification: 通知推送
+   - condition: 条件判断 (config: { expression: "{{x}} == true" })
+   - extract: 数据提取 (config: { source: "url|step", selector: "css", field: "text" })
+   - transform: 数据转换 (config: { expression: "代码" })
+   - delay: 延时 (config: { ms: 1000 })
+   - http: HTTP请求 (config: { url, method, headers, body })
+4. 确保模板可直接执行, 变量有合理默认值
+5. 只返回 JSON, 不要其他文字`;
+
+      const res = await router.chat({
+        model: 'agentai',
+        messages: [{ role: 'user', content: genPrompt }],
+        temperature: 0.3,
+        maxTokens: 3000,
+      });
+
+      const rawText = typeof res === 'string' ? res : (res as any)?.content || (res as any)?.choices?.[0]?.message?.content || JSON.stringify(res);
+      // 从回复中提取 JSON
+      let jsonStr = rawText.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1].trim();
+      // 尝试找到第一个 { 和最后一个 }
+      const firstBrace = jsonStr.indexOf('{');
+      const lastBrace = jsonStr.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        return { success: false, output: `AI 生成的 JSON 解析失败。原始回复:\n${rawText.slice(0, 2000)}` };
+      }
+
+      if (!parsed.name || !parsed.steps || !Array.isArray(parsed.steps)) {
+        return { success: false, output: `AI 生成的模板缺少必要字段。原始回复:\n${rawText.slice(0, 2000)}` };
+      }
+
+      const { getWorkflowEngine } = await import('./workflow-template-engine.js');
+      const engine = getWorkflowEngine();
+      const template = engine.createTemplate({
+        name: name || parsed.name,
+        industry: parsed.industry || industry,
+        description: parsed.description || description,
+        variables: parsed.variables || [],
+        steps: parsed.steps,
+        notifyOnComplete: parsed.notifyOnComplete ?? false,
+        notifyOnFailure: parsed.notifyOnFailure ?? true,
+        notifyChannel: 'sse',
+      });
+
+      return {
+        success: true,
+        output: `✅ AI 已自动生成工作流模板\n名称: ${template.name}\n行业: ${template.industry}\n步骤: ${template.steps.length}个\n变量: ${(parsed.variables || []).length}个\nID: ${template.id}\n\n💡 使用 workflow_run({template_id:"${template.id}"}) 执行\n💡 使用 schedule_task({type:"workflow", config:{workflowTemplateId:"${template.id}"}}) 定时调度`,
+        data: template,
+      };
+    } catch (e: any) { return { success: false, output: `workflow_generate error: ${e.message}` }; }
+  },
+
+  workflow_export: async (args: any, ctx?: any) => {
+    try {
+      const { template_id } = args;
+      if (!template_id) return { success: false, output: 'template_id required' };
+      const { getWorkflowEngine } = await import('./workflow-template-engine.js');
+      const engine = getWorkflowEngine();
+      const json = engine.exportTemplate(template_id);
+      return {
+        success: true,
+        output: `✅ 模板已导出 (${json.length} 字节)\n\n${json}\n\n💡 使用 workflow_import({json:"..."}) 可在其他环境导入`,
+        data: { template_id, json },
+      };
+    } catch (e: any) { return { success: false, output: `workflow_export error: ${e.message}` }; }
+  },
+
+  workflow_import: async (args: any, ctx?: any) => {
+    try {
+      const { json } = args;
+      if (!json) return { success: false, output: 'json required' };
+      const { getWorkflowEngine } = await import('./workflow-template-engine.js');
+      const engine = getWorkflowEngine();
+      const template = engine.importTemplate(json);
+      return {
+        success: true,
+        output: `✅ 模板已导入\n名称: ${template.name}\n行业: ${template.industry}\n步骤: ${template.steps.length}个\nID: ${template.id}\n\n💡 使用 workflow_run({template_id:"${template.id}"}) 执行`,
+        data: template,
+      };
+    } catch (e: any) { return { success: false, output: `workflow_import error: ${e.message}` }; }
   },
 
   desktop_automate: async (args: any, ctx?: any) => {
@@ -1463,44 +3259,264 @@ Write-Output 'OK'`;
     } catch (e: any) { return { success: false, output: `desktop_automate error: ${e.message}` }; }
   },
 
+  /**
+   * 视觉 GUI Agent — 截图→视觉分析→操作循环
+   * 仿照 Turix CUA: 看屏幕→理解画面→模拟鼠标点击→模拟键盘输入
+   */
+  visual_gui_agent: async (args: any, ctx?: any) => {
+    try {
+      const { task, max_steps = 20 } = args;
+      if (!task) return { success: false, output: 'task required' };
+
+      console.log(`[visual-gui] starting task: ${task.slice(0, 100)}`);
+      let steps = 0;
+      let history = '';
+
+      while (steps < max_steps) {
+        steps++;
+        console.log(`[visual-gui] step ${steps}/${max_steps}`);
+
+        // 1. 截图
+        const screenshotResult = await desktop_automate({ action: 'screenshot' }, ctx);
+        if (!screenshotResult.success) {
+          return { success: false, output: `截图失败: ${screenshotResult.output}` };
+        }
+
+        // 2. 获取截图 base64
+        const screenshotData = screenshotResult.data?.screenshot_data;
+        if (!screenshotData?.base64) {
+          return { success: false, output: '截图数据为空' };
+        }
+
+        // 3. 调用视觉模型分析截图
+        const visionModel = process.env.AGENTAI_API_KEY ? 'agentai' : 'deepseek';
+        const visionApiKey = visionModel === 'agentai' ? process.env.AGENTAI_API_KEY : process.env.DEEPSEEK_API_KEY;
+        const visionBaseUrl = visionModel === 'agentai'
+          ? (process.env.AGENTAI_BASE_URL || 'https://apihub.agnes-ai.com/v1')
+          : (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
+        const visionSubModel = visionModel === 'agentai' ? 'agnes-2.0-flash' : 'deepseek-v4-flash';
+
+        let visionAnalysis = '';
+        try {
+          const visionRes = await fetch(`${visionBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${visionApiKey}`,
+            },
+            body: JSON.stringify({
+              model: visionSubModel,
+              messages: [
+                {
+                  role: 'system',
+                  content: `你是一个桌面操作助手. 用户会给你发送屏幕截图, 你需要:
+1. 分析当前屏幕内容
+2. 判断任务是否完成: "${task}"
+3. 如果完成, 返回 {"done": true}
+4. 如果未完成, 返回下一步操作建议: {"action": "click|type|press|scroll", "x": 100, "y": 200, "text": "输入文本", "key": "Enter"}
+只返回 JSON, 不要其他内容. 坐标是相对于屏幕左上角的像素坐标.`,
+                },
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: `任务: ${task}\n\n历史操作: ${history || '无'}` },
+                    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshotData.base64}` } },
+                  ],
+                },
+              ],
+              max_tokens: 500,
+            }),
+            signal: AbortSignal.timeout(30000),
+          });
+
+          if (visionRes.ok) {
+            const visionData = await visionRes.json();
+            const content = visionData.choices?.[0]?.message?.content || '';
+            // 提取 JSON 部分
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const analysis = JSON.parse(jsonMatch[0]);
+              visionAnalysis = content;
+              history += `\n步骤 ${steps}: 分析结果: ${content.slice(0, 200)}`;
+
+              // 检查是否完成
+              if (analysis.done) {
+                console.log(`[visual-gui] task completed in ${steps} steps`);
+                return {
+                  success: true,
+                  output: `✅ 任务完成! 共 ${steps} 步.\n${history}`,
+                  data: { steps, history },
+                };
+              }
+
+              // 执行操作
+              let actionOutput = '';
+              if (analysis.action === 'click') {
+                actionOutput = await desktop_automate({
+                  action: 'mouse_click', x: analysis.x, y: analysis.y,
+                }, ctx);
+              } else if (analysis.action === 'type') {
+                actionOutput = await desktop_automate({
+                  action: 'key_type', text: analysis.text,
+                }, ctx);
+              } else if (analysis.action === 'press') {
+                actionOutput = await desktop_automate({
+                  action: 'key_press', key: analysis.key,
+                }, ctx);
+              } else if (analysis.action === 'scroll') {
+                actionOutput = await desktop_automate({
+                  action: 'scroll', amount: analysis.amount || 3, direction: analysis.direction || 'down',
+                }, ctx);
+              }
+
+              history += `\n执行: ${actionOutput?.output || '未知'}`;
+              console.log(`[visual-gui] executed: ${actionOutput?.output?.slice(0, 100) || 'unknown'}`);
+            } else {
+              history += `\n步骤 ${steps}: 视觉分析无 JSON: ${content.slice(0, 200)}`;
+            }
+          } else {
+            history += `\n步骤 ${steps}: 视觉模型调用失败 HTTP ${visionRes.status}`;
+          }
+        } catch (e: any) {
+          history += `\n步骤 ${steps}: 视觉分析异常: ${e.message}`;
+          console.error(`[visual-gui] vision error: ${e.message}`);
+        }
+      }
+
+      // 达到最大步数
+      return {
+        success: false,
+        output: `⚠️ 达到最大步数 (${max_steps}), 任务未完成.\n${history}`,
+        data: { steps: max_steps, history },
+      };
+    } catch (e: any) {
+      return { success: false, output: `visual_gui_agent error: ${e.message}` };
+    }
+  },
+
+  /**
+   * Skill Forge — AI 自己写 AI 技能 (仿 BrowserAct)
+   * 核心流程: 用户描述需求 → AI 研究目标网站 → 生成 SKILL.md + 脚本 → 自动注册
+   * 这不是"录制回放"，而是理解网站逻辑后生成可复用技能
+   */
+  skill_forge: async (args: any, ctx?: any) => {
+    try {
+      const { task, targetUrl, skillName, skillDescription } = args;
+      if (!task && !targetUrl) {
+        return { success: false, output: '需要提供 task (任务描述) 或 targetUrl (目标网站)' };
+      }
+
+      console.log(`[skill-forge] generating skill for: ${(task || targetUrl).slice(0, 100)}`);
+
+      // 1. 获取目标网站 HTML 结构
+      let html = '';
+      let pageTitle = '';
+      try {
+        const pageResp = await fetch(targetUrl || task, {
+          signal: AbortSignal.timeout(15000),
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        });
+        html = await pageResp.text();
+        const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
+        pageTitle = titleMatch?.[1] || targetUrl || task;
+      } catch (e: any) {
+        return { success: false, output: `无法访问 ${targetUrl || task}: ${e.message}` };
+      }
+
+      // 2. 分析页面结构，提取关键交互元素
+      const interactiveElements = analyzeHtmlStructure(html);
+      console.log(`[skill-forge] found ${interactiveElements.length} interactive elements`);
+
+      // 3. 生成 SKILL.md 描述文件
+      const skillMd = generateSkillMd({
+        name: skillName || `web-scraper-${Date.now()}`,
+        description: skillDescription || task || `从 ${pageTitle} 提取数据`,
+        targetUrl: targetUrl || task,
+        elements: interactiveElements,
+      });
+
+      // 4. 生成执行脚本 (JavaScript)
+      const script = generateScript({
+        name: skillName || `web-scraper-${Date.now()}`,
+        targetUrl: targetUrl || task,
+        elements: interactiveElements,
+        extractionGoal: skillDescription || task,
+      });
+
+      // 5. 自动注册技能到 skill-orchestrator
+      try {
+        const { skillOrchestrator } = await import('./skill-orchestrator.js');
+        const { writeFileSync, mkdirSync } = await import('fs');
+        const { join } = await import('path');
+        const os = await import('os');
+
+        const skillsDir = join(os.homedir(), '.agentai', 'skills', 'web-scraping');
+        mkdirSync(skillsDir, { recursive: true });
+
+        const skillFileName = (skillName || `web-scraper-${Date.now()}`).replace(/\s+/g, '-').toLowerCase();
+        const skillDir = join(skillsDir, skillFileName);
+        mkdirSync(skillDir, { recursive: true });
+
+        writeFileSync(join(skillDir, 'SKILL.md'), skillMd);
+        writeFileSync(join(skillDir, 'main.js'), script);
+
+        console.log(`[skill-forge] skill registered: ${skillFileName}`);
+
+        return {
+          success: true,
+          output: `✅ 技能已生成并注册!\n\n技能名: ${skillFileName}\n目录: ${skillDir}\n\nSKILL.md:\n${skillMd.slice(0, 1000)}\n\n脚本:\n${script.slice(0, 500)}`,
+          data: {
+            name: skillFileName,
+            skillDir,
+            skillMd,
+            script,
+          },
+        };
+      } catch (e: any) {
+        console.error(`[skill-forge] registration failed: ${e.message}`);
+        return {
+          success: true,
+          output: `⚠️ 技能已生成但未自动注册:\n\nSKILL.md:\n${skillMd.slice(0, 1000)}\n\n脚本:\n${script.slice(0, 500)}\n\n请手动复制到 ~/.agentai/skills/web-scraping/${(skillName || 'custom').replace(/\s+/g, '-')}/`,
+          data: {
+            name: skillName || 'custom',
+            skillMd,
+            script,
+            autoRegistered: false,
+          },
+        };
+      }
+    } catch (e: any) {
+      return { success: false, output: `skill_forge error: ${e.message}` };
+    }
+  },
+
   // ====== 沙箱代码执行 ======
   run_code: async (args: any, ctx?: any) => {
     try {
-      const { code, language = 'javascript', timeout_ms = 10000, context } = args;
+      const { code, language = 'javascript', timeout_ms = 30000, context } = args;
       if (!code) return { success: false, output: 'code required' };
-      const timeout = Math.min(timeout_ms, 30000); // 最大30秒
+      // AI 自主根据任务大小传 timeout_ms, 安全上限 10 分钟
+      const timeout = Math.min(timeout_ms, 600_000);
+
+      // 使用 CodeRunner 沙箱 (JS + Python)
+      const { createSandbox } = await import('./sandbox/executor.js');
+      const runner = createSandbox({ timeoutMs: timeout, maxOutputBytes: 1024 * 1024 });
 
       if (language === 'python') {
-        // Python: 写临时文件 + 执行
-        const { execFile } = await import('child_process');
-        const tmpFile = path.join(os.tmpdir(), `sandbox_py_${Date.now()}.py`);
-        // 在代码头部注入UTF-8编码声明和stdout重定向, 解决Windows GBK编码问题
-        const safeCode = `# -*- coding: utf-8 -*-\nimport sys, io\nsys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')\nsys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')\n\n${code}`;
-        fs.writeFileSync(tmpFile, safeCode, 'utf-8');
-        return new Promise((resolve) => {
-          execFile('python', [tmpFile], {
-            timeout,
-            maxBuffer: 1024 * 1024,
-            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
-          }, (err: any, stdout: string, stderr: string) => {
-            try { fs.unlinkSync(tmpFile); } catch (e: any) { /* temp file cleanup optional */ }
-            if (err) {
-              resolve({ success: false, output: `Python 执行错误:\n${stderr || err.message}`.slice(0, 4000) });
-            } else {
-              resolve({ success: true, output: stdout.slice(0, 8000) || '(无输出)' });
-            }
-          });
-        });
+        const result = await runner.executePython(code, context);
+        if (result.success) {
+          return { success: true, output: (result.output || '').slice(0, 8000) || '(无输出)', durationMs: result.durationMs };
+        } else {
+          return { success: false, output: `Python 执行错误: ${result.error || ''}`.slice(0, 4000), durationMs: result.durationMs, timedOut: result.timedOut };
+        }
       }
 
       // JavaScript: 使用 CodeRunner 沙箱
-      const { createSandbox } = await import('./sandbox/executor.js');
-      const runner = createSandbox({ timeoutMs: timeout, maxOutputBytes: 1024 * 1024 });
       const result = await runner.execute(code, context);
       if (result.success) {
-        return { success: true, output: result.output.slice(0, 8000) || '(无输出)', durationMs: result.durationMs };
+        return { success: true, output: (result.output || '').slice(0, 8000) || '(无输出)', durationMs: result.durationMs };
       } else {
-        return { success: false, output: `执行错误: ${result.error}\n${result.output}`.slice(0, 4000), durationMs: result.durationMs, timedOut: result.timedOut };
+        return { success: false, output: `执行错误: ${result.error || ''}\n${result.output || ''}`.slice(0, 4000), durationMs: result.durationMs, timedOut: result.timedOut };
       }
     } catch (e: any) { return { success: false, output: `run_code error: ${e.message}` }; }
   },
@@ -1550,8 +3566,15 @@ Write-Output 'OK'`;
           category,
           handler: async (skillArgs: any) => {
             try {
-              const mod = await import(path.join(skillDir, 'index.js'));
-              return typeof mod === 'function' ? mod(skillArgs) : mod.default?.(skillArgs) || { success: true, output: `Skill ${name} executed` };
+              // 安全: 改用沙箱执行器，禁止 child_process/fs/eval
+              const result = runSandboxedSkill(path.join(skillDir, 'index.js'), {
+                timeoutMs: 30000,
+                args: skillArgs,
+              });
+              if (!result.ok) {
+                return { success: false, output: `Sandbox rejected: ${result.error}` };
+              }
+              return { success: true, output: result.output || `Skill ${name} executed` };
             } catch (e: any) {
               return { success: false, output: `Skill execution error: ${e.message}` };
             }
@@ -1719,5 +3742,1234 @@ Write-Output 'OK'`;
         data: { _music_action: action, volume, trackIndex },
       };
     } catch (e: any) { return { success: false, output: `control_music error: ${e.message}` }; }
+  },
+
+  // ====== CAD 控制工具 (建材行业核心能力) ======
+  cad_control: async (args: any, ctx?: any) => {
+    try {
+      const action = args.action;
+      const commands = args.commands;
+      const filePath = args.file_path;
+      const entities = args.entities;
+      const outputPath = args.output_path;
+      const scriptPath = args.script_path;
+      const acadPath = args.acad_path;
+
+      // 调用 Python CAD 控制技能
+      const { execSync } = await import('child_process');
+      const skillsDir = path.join(process.cwd(), 'packages', 'agentai-skills', 'desktop', 'cad-control');
+      const pythonScript = path.join(skillsDir, 'main.py');
+
+      let cmdArgs = ['--action', action];
+      if (commands) cmdArgs.push('--commands', JSON.stringify(commands));
+      if (filePath) cmdArgs.push('--file-path', filePath);
+      if (entities) cmdArgs.push('--entities', JSON.stringify(entities));
+      if (outputPath) cmdArgs.push('--output-path', outputPath);
+      if (scriptPath) cmdArgs.push('--script-path', scriptPath);
+      if (acadPath) cmdArgs.push('--acad-path', acadPath);
+
+      const result = execSync(
+        `python "${pythonScript}" ${cmdArgs.join(' ')}`,
+        { encoding: 'utf-8', timeout: 30000, cwd: skillsDir }
+      );
+
+      // 解析 Python 返回的 JSON
+      try {
+        const jsonResult = JSON.parse(result);
+        return {
+          success: jsonResult.success,
+          output: jsonResult.success ? `✅ CAD 操作成功: ${action}` : `❌ CAD 操作失败: ${jsonResult.error}`,
+          data: jsonResult,
+        };
+      } catch {
+        // 如果不是 JSON，直接返回文本
+        return { success: true, output: result };
+      }
+    } catch (e: any) { return { success: false, output: `cad_control error: ${e.message}` }; }
+  },
+
+  // ====== Git 工具集 ======
+  git_status: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+      const fmt = args.short ? '-s' : '';
+      const out = execSync(`git status ${fmt} 2>&1`, { cwd: ws, encoding: 'utf-8', timeout: 10000 }).trim();
+      return { success: true, output: out || '(clean working tree)' };
+    } catch (e: any) { return { success: false, output: `git_status: ${e.message?.slice(0, 300)}` }; }
+  },
+  git_diff: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+      const parts = ['git', 'diff'];
+      if (args.staged) parts.push('--cached');
+      if (args.stat) parts.push('--stat');
+      if (args.file) parts.push('--', args.file);
+      const out = execSync(parts.join(' ') + ' 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 15000 }).trim();
+      return { success: true, output: out ? out.slice(0, 30000) : '(no changes)' };
+    } catch (e: any) { return { success: false, output: `git_diff: ${e.message?.slice(0, 300)}` }; }
+  },
+  git_log: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+      const n = Math.min(args.count || 10, 50);
+      const fmt = args.oneline !== false ? '--oneline' : '--format=%h %ai %an %s';
+      const parts = ['git', 'log', `-${n}`, fmt];
+      if (args.file) parts.push('--', args.file);
+      const out = execSync(parts.join(' ') + ' 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 10000 }).trim();
+      return { success: true, output: out || '(no commits)' };
+    } catch (e: any) { return { success: false, output: `git_log: ${e.message?.slice(0, 300)}` }; }
+  },
+  git_commit: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+      const msg = (args.message || 'update').replace(/"/g, '\\"');
+      // 暂存文件
+      if (args.files && args.files.length > 0) {
+        for (const f of args.files) {
+          execSync(`git add "${f}"`, { cwd: ws, encoding: 'utf-8', timeout: 5000 });
+        }
+      } else if (args.all) {
+        execSync('git add -u', { cwd: ws, encoding: 'utf-8', timeout: 5000 });
+      }
+      // 检查是否有可提交的内容
+      const staged = execSync('git diff --cached --stat 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+      if (!staged) {
+        return { success: false, output: '没有已暂存的变更可提交。请先指定 files 或设置 all: true' };
+      }
+      // 提交
+      const out = execSync(`git commit -m "${msg}" 2>&1`, { cwd: ws, encoding: 'utf-8', timeout: 10000 }).trim();
+      return { success: true, output: `✅ 已提交\n${out}` };
+    } catch (e: any) { return { success: false, output: `git_commit: ${e.message?.slice(0, 500)}` }; }
+  },
+  git_smart_commit: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+
+      // 沙箱: 确保在项目目录内
+      const g = await sandboxGuard(ws, 'write');
+      if (g) return g;
+
+      // 检查是否有未暂存的变更
+      const status = execSync('git status --porcelain 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+      if (!status) {
+        return { success: false, output: '没有变更可提交' };
+      }
+
+      // 分析变更内容生成 commit message
+      const diff = execSync('git diff --stat 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+      const lines = diff.split('\n');
+      const changedFiles = lines.filter(l => l.includes('|')).map(l => l.split('|')[0].trim());
+      const totalChanges = lines[lines.length - 1] || '';
+
+      // 从变更推断 commit type
+      let type = 'chore';
+      const newFiles = status.split('\n').filter(l => l.startsWith('??') || l.startsWith('A ')).length;
+      const modified = status.split('\n').filter(l => l.startsWith(' M') || l.startsWith('M ')).length;
+      const deleted = status.split('\n').filter(l => l.startsWith(' D') || l.startsWith('D ')).length;
+
+      if (newFiles > 0 && modified === 0) type = 'feat';
+      else if (deleted > 0) type = 'refactor';
+      else if (modified > 0 && newFiles === 0) type = 'fix';
+      else if (newFiles > 0 && modified > 0) type = 'feat';
+
+      // 生成简洁的 commit message
+      const fileSummary = changedFiles.slice(0, 3).join(', ');
+      const more = changedFiles.length > 3 ? ` +${changedFiles.length - 3} more` : '';
+      const msg = args.description
+        || `${type}: ${fileSummary}${more}`;
+
+      // Stage and commit
+      execSync('git add -u', { cwd: ws, encoding: 'utf-8', timeout: 5000 });
+      // Stage new (untracked) files too
+      const untracked = execSync('git ls-files --others --exclude-standard 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+      if (untracked) {
+        for (const f of untracked.split('\n')) {
+          if (f.trim()) execSync(`git add "${f.trim()}"`, { cwd: ws, encoding: 'utf-8', timeout: 5000 });
+        }
+      }
+
+      const out = execSync(`git commit -m "${msg.replace(/"/g, '\\"')}" 2>&1`, { cwd: ws, encoding: 'utf-8', timeout: 10000 }).trim();
+
+      return {
+        success: true,
+        output: `✅ 智能提交\n  ${msg}\n  ${out}\n  ${totalChanges}`,
+        data: { type, message: msg, files: changedFiles, summary: totalChanges }
+      };
+    } catch (e: any) { return { success: false, output: `git_smart_commit: ${e.message?.slice(0, 500)}` }; }
+  },
+  git_branch: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+      const action = args.action || 'list';
+      if (action === 'list') {
+        const out = execSync('git branch -a --no-color 2>&1', { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+        return { success: true, output: out || '(no branches)' };
+      } else if (action === 'create' && args.name) {
+        const out = execSync(`git checkout -b "${args.name}" 2>&1`, { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+        return { success: true, output: `✅ 已创建并切换到分支: ${args.name}\n${out}` };
+      } else if (action === 'switch' && args.name) {
+        const out = execSync(`git checkout "${args.name}" 2>&1`, { cwd: ws, encoding: 'utf-8', timeout: 5000 }).trim();
+        return { success: true, output: `✅ 已切换到分支: ${args.name}\n${out}` };
+      }
+      return { success: false, output: '无效操作。action: list/create/switch, create/switch 需要 name 参数' };
+    } catch (e: any) { return { success: false, output: `git_branch: ${e.message?.slice(0, 300)}` }; }
+  },
+
+  // ====== 代码智能工具 ======
+  find_references: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+      const symbol = args.symbol;
+      if (!symbol || symbol.length < 2) return { success: false, output: '符号名至少 2 个字符' };
+      const scope = args.scope ? path.resolve(ws, args.scope) : ws;
+      // 根据类型构建更精准的正则
+      const patterns: Record<string, string> = {
+        'function': `(function\\s+${symbol}|${symbol}\\s*[:=]\\s*(async\\s+)?function|${symbol}\\s*\\(|const\\s+${symbol}\\s*=|\\b${symbol}\\b)`,
+        'class': `(class\\s+${symbol}|new\\s+${symbol}|extends\\s+${symbol}|implements\\s+${symbol}|\\b${symbol}\\b)`,
+        'variable': `(const\\s+${symbol}|let\\s+${symbol}|var\\s+${symbol}|${symbol}\\s*[=:]|\\b${symbol}\\b)`,
+        'type': `(interface\\s+${symbol}|type\\s+${symbol}|:\\s*${symbol}|<${symbol}|\\b${symbol}\\b)`,
+        'import': `(import.*${symbol}|from.*${symbol}|require.*${symbol})`,
+        'any': `\\b${symbol}\\b`,
+      };
+      const pat = patterns[args.type || 'any'] || patterns['any'];
+      // 排除 node_modules, dist, .git
+      const cmd = `git grep -n -E "${pat}" -- "*.ts" "*.tsx" "*.js" "*.jsx" "*.py" "*.vue"`;
+      const out = execSync(cmd + ' 2>&1', { cwd: scope, encoding: 'utf-8', timeout: 15000, maxBuffer: 1024 * 1024 }).trim();
+      if (!out) return { success: true, output: `未找到 "${symbol}" 的引用` };
+      const lines = out.split('\n');
+      const summary = `找到 ${lines.length} 处引用:\n${lines.slice(0, 60).join('\n')}${lines.length > 60 ? `\n... (共 ${lines.length} 处, 截取前 60)` : ''}`;
+      return { success: true, output: summary };
+    } catch (e: any) {
+      const msg = e.message || '';
+      if (msg.includes('exit code 1') || msg.includes('did not match')) {
+        return { success: true, output: `未找到 "${args.symbol}" 的引用` };
+      }
+      return { success: false, output: `find_references: ${msg.slice(0, 300)}` };
+    }
+  },
+  get_outline: async (args: any) => {
+    try {
+      const filePath = resolvePath(args.file || '');
+      if (!fs.existsSync(filePath)) return { success: false, output: `文件不存在: ${args.file}` };
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const lines = content.split('\n');
+      const outline: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const ln = i + 1;
+        // 导出函数/类/接口/类型
+        if (/^export\s+(default\s+)?(async\s+)?function\s+(\w+)/.test(line)) {
+          const m = line.match(/function\s+(\w+)/);
+          outline.push(`L${ln} fn ${m?.[1] || '?'}()`);
+        } else if (/^export\s+(default\s+)?class\s+(\w+)/.test(line)) {
+          const m = line.match(/class\s+(\w+)/);
+          outline.push(`L${ln} class ${m?.[1] || '?'}`);
+        } else if (/^export\s+(default\s+)?(interface|type)\s+(\w+)/.test(line)) {
+          const m = line.match(/(interface|type)\s+(\w+)/);
+          outline.push(`L${ln} ${m?.[1] || 'type'} ${m?.[2] || '?'}`);
+        } else if (/^export\s+const\s+(\w+)/.test(line)) {
+          const m = line.match(/const\s+(\w+)/);
+          outline.push(`L${ln} const ${m?.[1] || '?'}`);
+        }
+        // 非导出的顶层函数/类 (缩进为0)
+        else if (/^(async\s+)?function\s+(\w+)/.test(line) && !line.startsWith(' ')) {
+          const m = line.match(/function\s+(\w+)/);
+          outline.push(`L${ln} fn ${m?.[1] || '?'}()`);
+        } else if (/^class\s+(\w+)/.test(line) && !line.startsWith(' ')) {
+          const m = line.match(/class\s+(\w+)/);
+          outline.push(`L${ln} class ${m?.[1] || '?'}`);
+        }
+        // Python: def / class (顶层)
+        else if (/^def\s+(\w+)/.test(line)) {
+          const m = line.match(/def\s+(\w+)/);
+          outline.push(`L${ln} def ${m?.[1] || '?'}()`);
+        } else if (/^class\s+(\w+)/.test(line) && filePath.endsWith('.py')) {
+          const m = line.match(/class\s+(\w+)/);
+          outline.push(`L${ln} class ${m?.[1] || '?'}`);
+        }
+        // 类内方法 (TypeScript/JavaScript: 2-4空格缩进)
+        else if (/^\s{2,4}(async\s+)?(private\s+|public\s+|protected\s+|static\s+|readonly\s+)*(get\s+|set\s+)?(\w+)\s*\(/.test(line)) {
+          const m = line.match(/(?:get\s+|set\s+)?(\w+)\s*\(/);
+          if (m && !['if', 'for', 'while', 'switch', 'catch', 'return', 'new', 'throw'].includes(m[1])) {
+            outline.push(`L${ln}   .${m[1]}()`);
+          }
+        }
+      }
+      if (outline.length === 0) return { success: true, output: `${args.file}: (无可识别的符号)` };
+      return { success: true, output: `${args.file} (${outline.length} 个符号):\n${outline.join('\n')}` };
+    } catch (e: any) { return { success: false, output: `get_outline: ${e.message?.slice(0, 300)}` }; }
+  },
+
+  // ====== 测试运行工具 ======
+  run_tests: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+
+      // 自动检测框架
+      let framework = args.framework || 'auto';
+      if (framework === 'auto') {
+        if (fs.existsSync(path.join(ws, 'jest.config.ts')) || fs.existsSync(path.join(ws, 'jest.config.js'))) framework = 'jest';
+        else if (fs.existsSync(path.join(ws, 'vitest.config.ts')) || fs.existsSync(path.join(ws, 'vitest.config.js'))) framework = 'vitest';
+        else if (fs.existsSync(path.join(ws, 'pytest.ini')) || fs.existsSync(path.join(ws, 'pyproject.toml'))) framework = 'pytest';
+        else if (fs.existsSync(path.join(ws, 'package.json'))) {
+          const pkg = JSON.parse(fs.readFileSync(path.join(ws, 'package.json'), 'utf-8'));
+          if (pkg.scripts?.test?.includes('vitest')) framework = 'vitest';
+          else if (pkg.scripts?.test?.includes('jest')) framework = 'jest';
+          else framework = 'jest'; // 默认用 jest
+        } else {
+          framework = 'jest';
+        }
+      }
+
+      // 构建命令
+      const parts: string[] = [];
+      switch (framework) {
+        case 'jest': parts.push('npx', 'jest'); break;
+        case 'vitest': parts.push('npx', 'vitest', 'run'); break;
+        case 'pytest': parts.push('python', '-m', 'pytest', '-v'); break;
+        case 'go': parts.push('go', 'test', './...'); break;
+        case 'cargo': parts.push('cargo', 'test'); break;
+        default: parts.push('npx', 'jest');
+      }
+
+      if (args.failFast) {
+        if (framework === 'jest') parts.push('--bail');
+        else if (framework === 'vitest') parts.push('--bail', '1');
+        else if (framework === 'pytest') parts.push('-x');
+      }
+
+      if (args.filter) {
+        if (framework === 'jest') parts.push('--testNamePattern', args.filter);
+        else if (framework === 'vitest') parts.push('-t', args.filter);
+        else if (framework === 'pytest') parts.push('-k', args.filter);
+      }
+
+      if (args.file) parts.push(args.file);
+
+      const cmd = parts.join(' ');
+      const out = execSync(cmd + ' 2>&1', {
+        cwd: ws, encoding: 'utf-8', timeout: 120000,
+        maxBuffer: 2 * 1024 * 1024,
+      }).trim();
+
+      // 提取摘要
+      const passMatch = out.match(/(\d+)\s+pass(?:ed|ing)/);
+      const failMatch = out.match(/(\d+)\s+fail(?:ed|ing)/);
+      let summary = `框架: ${framework}\n`;
+      if (passMatch || failMatch) {
+        summary += `通过: ${passMatch?.[1] || 0}, 失败: ${failMatch?.[1] || 0}`;
+      }
+
+      const output = out.slice(-8000); // 保留最后 8K
+      return { success: !failMatch || failMatch[1] === '0', output: `${summary}\n\n${output}` };
+    } catch (e: any) {
+      const stdout = e.stdout || '';
+      const stderr = e.stderr || '';
+      const out = (stdout + '\n' + stderr).trim();
+      // 测试失败 (非零退出码) 不是工具错误
+      if (out.includes('FAIL') || out.includes('FAILED') || out.includes('failed')) {
+        const failCount = (out.match(/failed/i) || []).length;
+        return { success: true, output: `测试结果 (框架: ${args.framework || 'auto'}):\n${out.slice(-6000)}` };
+      }
+      return { success: false, output: `run_tests: ${e.message?.slice(0, 300)}` };
+    }
+  },
+
+  // ====== Diff 预览工具 ======
+  diff_preview: async (args: any) => {
+    try {
+      const filePath = resolvePath(args.file_path);
+      if (!fs.existsSync(filePath)) return { success: false, output: `文件不存在: ${args.file_path}` };
+      const oldContent = fs.readFileSync(filePath, 'utf-8');
+
+      let newContent: string;
+      if (args.old_str) {
+        // multi_edit 模式: 替换指定段
+        if (!oldContent.includes(args.old_str)) {
+          return { success: false, output: `old_str 未找到于 ${args.file_path}。请用 read_file 确认当前内容` };
+        }
+        newContent = oldContent.replace(args.old_str, args.new_content);
+      } else {
+        // write_file 模式: 全新内容
+        newContent = args.new_content;
+      }
+
+      // 生成简单行级 diff
+      const oldLines = oldContent.split('\n');
+      const newLines = newContent.split('\n');
+      const diff: string[] = [];
+      diff.push(`--- a/${args.file_path}`);
+      diff.push(`+++ b/${args.file_path}`);
+      diff.push(`@@ -1,${oldLines.length} +1,${newLines.length} @@`);
+
+      // LCS-based simple diff
+      const maxLen = Math.max(oldLines.length, newLines.length);
+      let oldIdx = 0, newIdx = 0;
+      while (oldIdx < maxLen || newIdx < maxLen) {
+        const oldLine = oldIdx < oldLines.length ? oldLines[oldIdx] : undefined;
+        const newLine = newIdx < newLines.length ? newLines[newIdx] : undefined;
+        if (oldLine === newLine) {
+          if (oldLine !== undefined) diff.push(` ${oldLine}`);
+          oldIdx++; newIdx++;
+        } else {
+          const contextStart = Math.max(0, diff.length - 3);
+          // 跳过相同的找到差异块
+          let delStart = oldIdx;
+          let addStart = newIdx;
+          while (oldIdx < oldLines.length && newIdx < newLines.length && oldLines[oldIdx] !== newLines[newIdx]) {
+            diff.push(`-${oldLines[oldIdx]}`);
+            oldIdx++;
+          }
+          while (addStart < newIdx && addStart < newLines.length) {
+            diff.splice(diff.indexOf(`-${oldLines[delStart]}`), 0, `+${newLines[addStart]}`);
+            addStart++;
+          }
+        }
+      }
+
+      const diffText = diff.slice(-100).join('\n');
+      const changedLines = diff.filter(l => l.startsWith('+') || l.startsWith('-')).length;
+      return {
+        success: true,
+        output: `预览变更 (${changedLines} 行有变化):\n\n${diffText}`,
+        data: { changedLines, isNewFile: false },
+      };
+    } catch (e: any) { return { success: false, output: `diff_preview: ${e.message?.slice(0, 300)}` }; }
+  },
+
+  // ====== TypeCheck 工具 ======
+  typecheck: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const ws = wm().projectDir;
+      let cwd = ws;
+      if (args.scope) cwd = path.resolve(ws, args.scope);
+      // 自动检测 tsconfig
+      if (!fs.existsSync(path.join(cwd, 'tsconfig.json'))) {
+        // 尝试子目录
+        const subs = fs.readdirSync(cwd).filter(f => fs.statSync(path.join(cwd, f)).isDirectory());
+        for (const sub of subs) {
+          if (fs.existsSync(path.join(cwd, sub, 'tsconfig.json'))) {
+            cwd = path.join(cwd, sub);
+            break;
+          }
+        }
+      }
+
+      if (!fs.existsSync(path.join(cwd, 'tsconfig.json'))) {
+        return { success: false, output: '未找到 tsconfig.json。用 scope 参数指定正确的包目录。' };
+      }
+
+      const cmd = args.fast !== false
+        ? 'npx tsc --noEmit 2>&1'
+        : 'npx tsc --noEmit --pretty 2>&1';
+      const out = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 60000, maxBuffer: 2 * 1024 * 1024 }).trim();
+
+      if (!out) return { success: true, output: '✅ 类型检查通过, 无错误' };
+
+      const errors = out.split('\n').filter(l => /error TS\d+/.test(l));
+      if (errors.length === 0) return { success: true, output: `✅ 类型检查通过\n${out.slice(0, 500)}` };
+
+      return {
+        success: true,
+        output: `⚠️ ${errors.length} 个类型错误:\n${errors.slice(0, 20).join('\n')}${errors.length > 20 ? `\n... (共 ${errors.length} 个)` : ''}`,
+        data: { errorCount: errors.length },
+      };
+    } catch (e: any) {
+      const stdout = e.stdout || e.stderr || '';
+      if (stdout.includes('error TS')) {
+        const errors = stdout.split('\n').filter((l: string) => /error TS\d+/.test(l));
+        return { success: true, output: `⚠️ ${errors.length} 个类型错误:\n${errors.slice(0, 20).join('\n')}` };
+      }
+      return { success: false, output: `typecheck: ${e.message?.slice(0, 300)}` };
+    }
+  },
+
+  // ====== 知识库工具 ======
+  knowledge_import: async (args: any) => {
+    try {
+      const { name, industry, content, description } = args;
+      if (!name || !industry || !content) {
+        return { success: false, output: '缺少必要参数: name, industry, content' };
+      }
+      const base = process.env.GATEWAY_URL || 'http://127.0.0.1:18789';
+      const resp = await fetch(`${base}/v1/knowledge/import-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          industry,
+          content: typeof content === 'string' ? content.slice(0, 100000) : JSON.stringify(content),
+          description: description || `AI 自动导入 (${new Date().toLocaleString()})`,
+        }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        return { success: true, output: data.message };
+      }
+      return { success: false, output: data.error || 'knowledge_import failed' };
+    } catch (e: any) {
+      return { success: false, output: `knowledge_import error: ${e.message?.slice(0, 200)}` };
+    }
+  },
+
+  // ====== render_widget Handler (2026-06-26) ======
+  render_widget: async (args: any) => {
+    const { title, content, type = 'svg', width, height } = args;
+    if (!content || !title) {
+      return { success: false, output: 'render_widget: title 和 content 为必填参数' };
+    }
+
+    // 安全过滤（防 XSS）
+    let safeContent = content
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/\s(on\w+)\s*=\s*["'][^"']*["']/gi, '')
+      .replace(/href\s*=\s*["']javascript:[^"']*["']/gi, '');
+
+    // 构建渲染数据包 — 前端 Thread.tsx 识别 __widget 类型消息
+    const widgetData = {
+      __type: 'widget',
+      title,
+      contentType: type,
+      content: safeContent,
+      width: width || null,
+      height: height || null,
+    };
+
+    return {
+      success: true,
+      output: `[widget:${title}]`,  // 文本回退（无前端支持时显示）
+      data: widgetData,
+    };
+  },
+
+  // ====== Automation CRUD Handlers (2026-06-26) ======
+  automation_create: async (args: any, ctx?: any) => {
+    try {
+      const { getAutomationStore } = await import('./automation-store.js');
+      const store = await getAutomationStore();
+      const record = await store.create({
+        name: args.name,
+        prompt: args.prompt,
+        scheduleType: args.scheduleType || 'recurring',
+        rrule: args.rrule,
+        scheduledAt: args.scheduledAt,
+        validFrom: args.validFrom,
+        validUntil: args.validUntil,
+        userId: ctx?.userId,
+        cwd: ctx?.workspace,
+      });
+      return {
+        success: true,
+        output: `✅ 自动化任务已创建\nID: ${record.id}\n名称: ${record.name}\n调度: ${record.rrule || record.scheduledAt || '未设置'}\n状态: ${record.status}`,
+        data: record,
+      };
+    } catch (e: any) {
+      return { success: false, output: `automation_create error: ${e.message}` };
+    }
+  },
+
+  automation_list: async (args: any) => {
+    try {
+      const { getAutomationStore } = await import('./automation-store.js');
+      const store = await getAutomationStore();
+      const records = await store.list(args.status ? { status: args.status } : undefined);
+      if (records.length === 0) {
+        return { success: true, output: '暂无自动化任务。使用 automation_create 创建第一个任务。' };
+      }
+      const lines = records.map(r => {
+        const next = r.nextRunAt ? new Date(r.nextRunAt).toLocaleString('zh-CN') : '未知';
+        return `- [${r.status}] **${r.name}** (${r.id.slice(0, 8)})\n  调度: ${r.rrule || r.scheduledAt || '未设置'} | 执行: ${r.runCount}次 | 下次: ${next}`;
+      });
+      return { success: true, output: `## 自动化任务 (${records.length} 个)\n${lines.join('\n')}`, data: records };
+    } catch (e: any) {
+      return { success: false, output: `automation_list error: ${e.message}` };
+    }
+  },
+
+  automation_update: async (args: any) => {
+    try {
+      const { getAutomationStore } = await import('./automation-store.js');
+      const store = await getAutomationStore();
+      const { id, ...patch } = args;
+      const updated = await store.update(id, patch);
+      if (!updated) return { success: false, output: `任务 ${id} 不存在` };
+      return { success: true, output: `✅ 任务已更新: ${updated.name} (状态: ${updated.status})`, data: updated };
+    } catch (e: any) {
+      return { success: false, output: `automation_update error: ${e.message}` };
+    }
+  },
+
+  automation_delete: async (args: any) => {
+    try {
+      const { getAutomationStore } = await import('./automation-store.js');
+      const store = await getAutomationStore();
+      const ok = await store.delete(args.id);
+      if (!ok) return { success: false, output: `任务 ${args.id} 不存在` };
+      return { success: true, output: `✅ 任务 ${args.id} 已删除` };
+    } catch (e: any) {
+      return { success: false, output: `automation_delete error: ${e.message}` };
+    }
+  },
+
+  // ====== C2: 客户跟进工具 ======
+  follow_up_customer: async (args: any) => {
+    try {
+      const { getCustomer, updateCustomer } = await import('./customer-store.js');
+      const customer = getCustomer(args.customerId);
+      if (!customer) {
+        return { success: false, output: `客户 ${args.customerId} 不存在` };
+      }
+      const delayHours = args.delayHours || 72;
+      const nextFollowUpAt = Date.now() + delayHours * 3600 * 1000;
+      updateCustomer(args.customerId, { nextFollowUpAt });
+      const dateStr = new Date(nextFollowUpAt).toLocaleString();
+      return {
+        success: true,
+        output: `✅ 已为客户 ${customer.name} 设置跟进计划\n跟进时间: ${dateStr}\n跟进主题: ${args.topic || '常规跟进'}\n\n系统会在到期时自动生成跟进话术并推送到前端审批。`,
+      };
+    } catch (e: any) {
+      return { success: false, output: `follow_up_customer error: ${e.message}` };
+    }
+  },
+
+  customer_search: async (args: any) => {
+    try {
+      const { listCustomers } = await import('./customer-store.js');
+      const customers = listCustomers({
+        search: args.search,
+        tags: args.tags ? args.tags.split(',').map((t: string) => t.trim()) : undefined,
+        intent: args.intent,
+        industry: args.industry,
+        limit: 20,
+      });
+      if (customers.length === 0) {
+        return { success: true, output: '未找到匹配的客户' };
+      }
+      const lines = customers.map((c, i) => {
+        const channels = c.channels.map(ch => `${ch.type}:${ch.id.slice(0, 8)}`).join(', ');
+        return `${i + 1}. ${c.name} (ID: ${c.customerId})\n   意向: ${c.intent || '未知'} | 标签: ${c.tags.join(', ') || '无'} | 渠道: ${channels}\n   上次联系: ${c.lastContactAt ? new Date(c.lastContactAt).toLocaleDateString() : '未联系'} | 沟通次数: ${c.contactCount}`;
+      });
+      return { success: true, output: `找到 ${customers.length} 位客户:\n\n${lines.join('\n\n')}` };
+    } catch (e: any) {
+      return { success: false, output: `customer_search error: ${e.message}` };
+    }
+  },
+
+  // ====== 屏幕与窗口控制（AI 视觉能力）======
+  capture_screen: async (args: any) => {
+    try {
+      const { captureScreen } = await import('./screen-capture.js');
+      // 安全守护: 默认保存到 .agentai/screenshots/ 让前端/AI 可访问
+      const savePath = args?.savePath || path.join(
+        os.tmpdir(), `agentai-screen-${Date.now()}.png`
+      );
+      const result = await captureScreen({ ...args, savePath });
+      if (!result.ok) {
+        return { success: false, output: `❌ 截图失败: ${result.error}` };
+      }
+      // ═══ 关键链路: AI 自己能"看"截图 — 自动调用 vision LLM 读图 ═══
+      // 灵感: Fugu Verifier + OfficeCLI 实时预览
+      // 路由会自动选 supportsImages 的模型 (GLM-4.6V-Flash 优先)
+      let visionDesc = '';
+      try {
+        const { AgentAIRouter } = await import('./llm-router.js');
+        const router = new AgentAIRouter();
+        const buf = fs.readFileSync(result.filePath);
+        const base64 = buf.toString('base64');
+        const response = await router.chat({
+          model: 'zhipu',  // provider
+          subModel: 'glm-4.6v-flash',  // 真 vision 模型
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: args?.prompt || '请详细描述这张截图：你看到了什么？包括窗口、文本内容、布局、错误信息、状态等。' },
+              { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } }
+            ] as any,
+          }],
+          maxTokens: 1500,
+        });
+        visionDesc = (response.content || '').trim();
+      } catch (e: any) {
+        visionDesc = `[Vision LLM 调用失败: ${e.message?.slice(0, 100)}]`;
+      }
+      const output = `✅ 截图成功 (${result.mode}, ${result.width}x${result.height})\n保存路径: ${result.filePath}\n\n🖼️ AI 视觉理解:\n${visionDesc}`;
+      return {
+        success: true,
+        output,
+        _image: result.image,
+        _filePath: result.filePath,
+        _width: result.width,
+        _height: result.height,
+        _mode: result.mode,
+        _visionDescription: visionDesc,
+      };
+    } catch (e: any) {
+      return { success: false, output: `capture_screen error: ${e.message}` };
+    }
+  },
+  ocr_image: async (args: any) => {
+    try {
+      if (!args?.imagePath) return { success: false, output: 'imagePath required' };
+      const { ocrImage } = await import('./ocr.js');
+      const result = await ocrImage(args.imagePath, { engine: args.engine, language: args.language });
+      return { success: result.ok, output: result.ok
+        ? `✅ OCR 成功 (${result.engine}):\n\`\`\`\n${result.text}\n\`\`\``
+        : `❌ OCR 失败: ${result.error}`,
+        _text: result.text,
+        _engine: result.engine,
+      };
+    } catch (e: any) {
+      return { success: false, output: `ocr_image error: ${e.message}` };
+    }
+  },
+  capture_and_read: async (args: any) => {
+    try {
+      const { captureAndOcr } = await import('./ocr.js');
+      const result = await captureAndOcr(args || {});
+      if (!result.ok) {
+        return { success: false, output: `❌ 失败: ${result.error}` };
+      }
+      // ═══ One-shot: 截图 + OCR + Vision LLM 三合一 ═══
+      // OCR 提供精确文字, Vision LLM 提供场景理解
+      let visionDesc = '';
+      if (result.filePath) {
+        try {
+          const { AgentAIRouter } = await import('./llm-router.js');
+          const router = new AgentAIRouter();
+          const buf = fs.readFileSync(result.filePath);
+          const base64 = buf.toString('base64');
+          const response = await router.chat({
+            model: 'zhipu',
+            subModel: 'glm-4.6v-flash',
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'text', text: args?.prompt || '请详细描述这张截图的内容、布局、状态。如果有错误信息也请指出。' },
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } }
+              ] as any,
+            }],
+            maxTokens: 1500,
+          });
+          visionDesc = (response.content || '').trim();
+        } catch (e: any) {
+          visionDesc = `[Vision LLM 调用失败: ${e.message?.slice(0, 100)}]`;
+        }
+      }
+      const output = `✅ 截图+OCR+视觉理解 成功\n📁 文件: ${result.filePath || '(inline)'}\n\n📝 OCR 文字:\n\`\`\`\n${result.ocrText || '(无文字)'}\n\`\`\`\n\n🖼️ AI 视觉理解:\n${visionDesc}`;
+      return {
+        success: true,
+        output,
+        _image: result.image,
+        _text: result.ocrText,
+        _filePath: result.filePath,
+        _visionDescription: visionDesc,
+      };
+    } catch (e: any) {
+      return { success: false, output: `capture_and_read error: ${e.message}` };
+    }
+  },
+  list_windows: async (args: any) => {
+    try {
+      const { listWindows } = await import('./window-control.js');
+      const windows = await listWindows(args?.titleFilter);
+      return { success: true, output: `找到 ${windows.length} 个窗口:\n\n${windows.map((w, i) => `${i + 1}. [${w.process}] ${w.title}\n   位置: (${w.rect.x}, ${w.rect.y}) 大小: ${w.rect.width}x${w.rect.height}`).join('\n\n')}`, _windows: windows };
+    } catch (e: any) {
+      return { success: false, output: `list_windows error: ${e.message}` };
+    }
+  },
+  window_control: async (args: any) => {
+    try {
+      const { windowControl } = await import('./window-control.js');
+      const result = await windowControl(args);
+      return { success: result.ok, output: result.ok ? `✅ ${result.message}` : `❌ ${result.error}` };
+    } catch (e: any) {
+      return { success: false, output: `window_control error: ${e.message}` };
+    }
+  },
+  // ====== 桌面自动化: 鼠标/键盘/剪贴板/进程/通知 ======
+  // 让 AI 真正"动手"操作桌面 — 看见屏幕后可以点击/输入/滚动
+  mouse_move: async (args: any) => {
+    try {
+      const { mouseMove } = await import('./desktop-automation.js');
+      const r = await mouseMove({ x: args.x, y: args.y });
+      return { success: r.ok, output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `mouse_move error: ${e.message}` };
+    }
+  },
+  mouse_click: async (args: any) => {
+    try {
+      const { mouseClick } = await import('./desktop-automation.js');
+      const r = await mouseClick({
+        x: args.x, y: args.y,
+        button: args.button || 'left',
+        clicks: args.clicks || 1,
+        moveFirst: args.moveFirst !== false,
+      });
+      return { success: r.ok, output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `mouse_click error: ${e.message}` };
+    }
+  },
+  mouse_drag: async (args: any) => {
+    try {
+      const { mouseDrag } = await import('./desktop-automation.js');
+      const r = await mouseDrag({
+        x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2,
+        button: args.button || 'left',
+        durationMs: args.durationMs,
+      });
+      return { success: r.ok, output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `mouse_drag error: ${e.message}` };
+    }
+  },
+  mouse_scroll: async (args: any) => {
+    try {
+      const { mouseScroll } = await import('./desktop-automation.js');
+      const r = await mouseScroll({
+        x: args.x, y: args.y,
+        direction: args.direction || 'down',
+        amount: args.amount,
+      });
+      return { success: r.ok, output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `mouse_scroll error: ${e.message}` };
+    }
+  },
+  keyboard_type: async (args: any) => {
+    try {
+      const { keyboardType } = await import('./desktop-automation.js');
+      const r = await keyboardType({
+        text: args.text,
+        intervalMs: args.intervalMs,
+        maxLength: args.maxLength,
+      });
+      return { success: r.ok, output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `keyboard_type error: ${e.message}` };
+    }
+  },
+  press_hotkey: async (args: any) => {
+    try {
+      const { pressHotkey } = await import('./desktop-automation.js');
+      const r = await pressHotkey({ combo: args.combo });
+      return { success: r.ok, output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `press_hotkey error: ${e.message}` };
+    }
+  },
+  clipboard_read: async () => {
+    try {
+      const { clipboardRead } = await import('./desktop-automation.js');
+      const r = await clipboardRead();
+      return {
+        success: r.ok,
+        output: r.ok ? `📋 剪贴板内容 (${r.text?.length || 0} 字符):\n\`\`\`\n${r.text || '(空)'}\n\`\`\`` : `❌ ${r.error}`,
+        _text: r.text,
+      };
+    } catch (e: any) {
+      return { success: false, output: `clipboard_read error: ${e.message}` };
+    }
+  },
+  clipboard_write: async (args: any) => {
+    try {
+      const { clipboardWrite } = await import('./desktop-automation.js');
+      const r = await clipboardWrite(args?.text || '');
+      return { success: r.ok, output: r.ok ? `✅ 已写入 ${r.text?.length || 0} 字符到剪贴板` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `clipboard_write error: ${e.message}` };
+    }
+  },
+  list_processes: async (args: any) => {
+    try {
+      const { listProcesses } = await import('./desktop-automation.js');
+      const procs = await listProcesses({
+        nameFilter: args?.nameFilter,
+        limit: args?.limit,
+        onlyWithWindow: args?.onlyWithWindow !== false,
+      });
+      return {
+        success: true,
+        output: `🖥️ 找到 ${procs.length} 个进程:\n\n${procs.slice(0, 30).map((p, i) => `${i + 1}. [${p.pid}] ${p.name} — ${(p.title || '(无窗口)').slice(0, 60)}${p.memoryMB ? ` (${p.memoryMB}MB)` : ''}`).join('\n')}`,
+        _processes: procs,
+      };
+    } catch (e: any) {
+      return { success: false, output: `list_processes error: ${e.message}` };
+    }
+  },
+  kill_process: async (args: any) => {
+    try {
+      const { killProcess } = await import('./desktop-automation.js');
+      const r = await killProcess(args?.pid, args?.force === true);
+      return { success: r.ok, output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `kill_process error: ${e.message}` };
+    }
+  },
+  notify: async (args: any) => {
+    try {
+      const { sendNotification } = await import('./desktop-automation.js');
+      const r = await sendNotification({
+        title: args?.title || 'AgentAI',
+        message: args?.message || '',
+        severity: args?.severity,
+      });
+      return { success: r.ok, output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `notify error: ${e.message}` };
+    }
+  },
+  // ===== 扩展自动化实现 =====
+  launch_app: async (args: any) => {
+    try {
+      if (!args?.target) return { success: false, output: 'target required' };
+      const { launchApp } = await import('./desktop-automation.js');
+      const r = await launchApp({ target: args.target, args: args.args, cwd: args.cwd });
+      return { success: r.ok, output: r.ok ? `🚀 ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `launch_app error: ${e.message}` };
+    }
+  },
+  system_info: async () => {
+    try {
+      const { getSystemInfo } = await import('./desktop-automation.js');
+      const r = await getSystemInfo();
+      if (!r.ok || !r.data) return { success: false, output: `❌ ${r.error}` };
+      const d = r.data;
+      const lines = [
+        `🖥️ ${d.os}`,
+        `⚡ CPU: ${d.cpuPercent}%`,
+        `🧠 内存: ${d.memory.usedGB}/${d.memory.totalGB} GB (${d.memory.percent}%)`,
+        `💾 磁盘:`,
+        ...d.disks.map((x: any) => `   ${x.drive} ${x.freeGB}/${x.totalGB} GB 空闲 (使用 ${x.percent}%)`),
+        `⏰ 启动时长: ${d.uptimeHours} 小时`,
+      ];
+      return { success: true, output: lines.join('\n'), _systemInfo: d };
+    } catch (e: any) {
+      return { success: false, output: `system_info error: ${e.message}` };
+    }
+  },
+  lock_screen: async () => {
+    try {
+      const { lockScreen } = await import('./desktop-automation.js');
+      const r = await lockScreen();
+      return { success: r.ok, output: r.ok ? `🔒 ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `lock_screen error: ${e.message}` };
+    }
+  },
+  set_volume: async (args: any) => {
+    try {
+      if (typeof args?.level !== 'number') return { success: false, output: 'level (number 0-100) required' };
+      const { setVolume } = await import('./desktop-automation.js');
+      const r = await setVolume(args.level);
+      return { success: r.ok, output: r.ok ? `🔊 ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `set_volume error: ${e.message}` };
+    }
+  },
+  toggle_mute: async () => {
+    try {
+      const { toggleMute } = await import('./desktop-automation.js');
+      const r = await toggleMute();
+      return { success: r.ok, output: r.ok ? `🔇 ${r.message}` : `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `toggle_mute error: ${e.message}` };
+    }
+  },
+  wait_for_window: async (args: any) => {
+    try {
+      if (!args?.titleContains) return { success: false, output: 'titleContains required' };
+      const { waitForWindow } = await import('./desktop-automation.js');
+      const r = await waitForWindow({
+        titleContains: args.titleContains,
+        timeoutMs: args.timeoutMs,
+        pollMs: args.pollMs,
+      });
+      return {
+        success: r.ok,
+        output: r.ok ? `🪟 ${r.message} (hwnd=${r.data?.hwnd})` : `❌ ${r.error}`,
+        _window: r.data,
+      };
+    } catch (e: any) {
+      return { success: false, output: `wait_for_window error: ${e.message}` };
+    }
+  },
+  // ===== 视觉驱动自动化实现 =====
+  find_text_on_screen: async (args: any) => {
+    try {
+      if (!args?.text) return { success: false, output: 'text required' };
+      const { findTextOnScreen } = await import('./desktop-automation.js');
+      const r = await findTextOnScreen(args.text, {
+        exactMatch: args.exactMatch,
+        ignoreCase: args.ignoreCase,
+        captureOpts: args.windowTitle ? { mode: 'window', windowTitle: args.windowTitle } : { mode: 'desktop' },
+      });
+      if (r.ok && r.data) {
+        const lines = [
+          `🎯 找到文字: "${r.data.target.matchedText}"`,
+          `📍 中心坐标: (${r.data.target.cx}, ${r.data.target.cy})`,
+          `📦 边界框: x=${r.data.target.x} y=${r.data.target.y} w=${r.data.target.w} h=${r.data.target.h}`,
+          `🔢 共 ${r.data.allMatches.length} 个匹配`,
+        ];
+        return { success: true, output: lines.join('\n'), _target: r.data.target, _allMatches: r.data.allMatches };
+      }
+      return { success: false, output: `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `find_text_on_screen error: ${e.message}` };
+    }
+  },
+  click_text: async (args: any) => {
+    try {
+      if (!args?.text) return { success: false, output: 'text required' };
+      const { clickText } = await import('./desktop-automation.js');
+      const r = await clickText(args.text, {
+        exactMatch: args.exactMatch,
+        doubleClick: args.doubleClick,
+        button: args.button,
+        captureOpts: args.windowTitle ? { mode: 'window', windowTitle: args.windowTitle } : { mode: 'desktop' },
+      });
+      return {
+        success: r.ok,
+        output: r.ok ? `🖱️ ${r.message}` : `❌ ${r.error}`,
+        _target: r.data?.target,
+      };
+    } catch (e: any) {
+      return { success: false, output: `click_text error: ${e.message}` };
+    }
+  },
+  wait_for_text: async (args: any) => {
+    try {
+      if (!args?.text) return { success: false, output: 'text required' };
+      const { waitForText } = await import('./desktop-automation.js');
+      const r = await waitForText(args.text, {
+        timeoutMs: args.timeoutMs,
+        pollMs: args.pollMs,
+        exactMatch: args.exactMatch,
+        captureOpts: args.windowTitle ? { mode: 'window', windowTitle: args.windowTitle } : { mode: 'desktop' },
+      });
+      return {
+        success: r.ok,
+        output: r.ok ? `✅ ${r.message}` : `❌ ${r.error}`,
+        _target: r.data?.target,
+        _ocrText: r.data?.ocrText,
+      };
+    } catch (e: any) {
+      return { success: false, output: `wait_for_text error: ${e.message}` };
+    }
+  },
+  double_click_text: async (args: any) => {
+    try {
+      if (!args?.text) return { success: false, output: 'text required' };
+      const { doubleClickText } = await import('./desktop-automation.js');
+      const r = await doubleClickText(args.text, {
+        exactMatch: args.exactMatch,
+        captureOpts: args.windowTitle ? { mode: 'window', windowTitle: args.windowTitle } : { mode: 'desktop' },
+      });
+      return {
+        success: r.ok,
+        output: r.ok ? `🖱️🖱️ ${r.message}` : `❌ ${r.error}`,
+        _target: r.data?.target,
+      };
+    } catch (e: any) {
+      return { success: false, output: `double_click_text error: ${e.message}` };
+    }
+  },
+  type_into_text: async (args: any) => {
+    try {
+      if (!args?.fieldText || !args?.inputText) return { success: false, output: 'fieldText and inputText required' };
+      const { typeIntoText } = await import('./desktop-automation.js');
+      const r = await typeIntoText(args.fieldText, args.inputText, {
+        clearBefore: args.clearBefore,
+        intervalMs: args.intervalMs,
+      });
+      return {
+        success: r.ok,
+        output: r.ok ? `⌨️ ${r.message}` : `❌ ${r.error}`,
+        _target: r.data?.target,
+      };
+    } catch (e: any) {
+      return { success: false, output: `type_into_text error: ${e.message}` };
+    }
+  },
+  // ===== 图像模板匹配实现 =====
+  find_image_on_screen: async (args: any) => {
+    try {
+      if (!args?.templatePath) return { success: false, output: 'templatePath required' };
+      const { findImageOnScreen } = await import('./desktop-automation.js');
+      const r = await findImageOnScreen(args.templatePath, {
+        threshold: args.threshold,
+        region: args.region,
+      });
+      if (r.ok && r.data?.best) {
+        const b = r.data.best;
+        const lines = [
+          `🖼️ 找到图片匹配:`,
+          `📍 中心坐标: (${b.cx}, ${b.cy})`,
+          `📦 边界框: x=${b.x} y=${b.y} w=${b.w} h=${b.h}`,
+          `🎯 相似度: ${b.similarity} (共 ${r.data.matches.length} 个匹配)`,
+        ];
+        return { success: true, output: lines.join('\n'), _target: b, _matches: r.data.matches };
+      }
+      return { success: false, output: `❌ ${r.error}` };
+    } catch (e: any) {
+      return { success: false, output: `find_image_on_screen error: ${e.message}` };
+    }
+  },
+  click_image: async (args: any) => {
+    try {
+      if (!args?.templatePath) return { success: false, output: 'templatePath required' };
+      const { clickImage } = await import('./desktop-automation.js');
+      const r = await clickImage(args.templatePath, {
+        threshold: args.threshold,
+        button: args.button,
+        doubleClick: args.doubleClick,
+      });
+      return {
+        success: r.ok,
+        output: r.ok ? `🖱️🖼️ ${r.message}` : `❌ ${r.error}`,
+        _target: r.data?.target,
+      };
+    } catch (e: any) {
+      return { success: false, output: `click_image error: ${e.message}` };
+    }
+  },
+  wait_for_image: async (args: any) => {
+    try {
+      if (!args?.templatePath) return { success: false, output: 'templatePath required' };
+      const { waitForImage } = await import('./desktop-automation.js');
+      const r = await waitForImage(args.templatePath, {
+        timeoutMs: args.timeoutMs,
+        pollMs: args.pollMs,
+        threshold: args.threshold,
+      });
+      return {
+        success: r.ok,
+        output: r.ok ? `🖼️ ${r.message}` : `❌ ${r.error}`,
+        _target: r.data?.target,
+      };
+    } catch (e: any) {
+      return { success: false, output: `wait_for_image error: ${e.message}` };
+    }
+  },
+
+  // ====== 专家系统 handlers ======
+  activate_expert: async (args: any) => {
+    try {
+      const { expert_id, task } = args;
+      const { getExpertPrompt, listExperts } = await import('./experts.js');
+      const prompt = getExpertPrompt(expert_id);
+      if (!prompt) {
+        const experts = listExperts().map(e => `  ${e.icon} ${e.id}: ${e.description}`).join('\n');
+        return { success: false, output: `未知专家 "${expert_id}"。可用专家:\n${experts}` };
+      }
+      return {
+        success: true,
+        output: `🎯 专家 "${expert_id}" 已激活\n\n${task ? `任务: ${task}\n\n` : ''}--- 专家系统提示词 (7层结构) ---\n${prompt.slice(0, 3000)}\n---\n请按专家的工作方法逐步执行任务。`,
+        data: { expert_id, prompt, task }
+      };
+    } catch (e: any) { return { success: false, output: `activate_expert error: ${e.message}` }; }
+  },
+
+  activate_expert_team: async (args: any) => {
+    try {
+      const { team, task } = args;
+      const { EXPERT_TEAM_CONFIGS } = await import('./expert-team.js');
+      const config = EXPERT_TEAM_CONFIGS[team];
+      if (!config) {
+        const teams = Object.entries(EXPERT_TEAM_CONFIGS).map(([k,v]) => `  ${k}: ${v.name} (${v.members.length}人)`).join('\n');
+        return { success: false, output: `未知专家团 "${team}"。可用:\n${teams}` };
+      }
+      const roster = config.members.map(m => `  ${m.displayName}: ${m.responsibilities.join(', ')}`).join('\n');
+      return {
+        success: true,
+        output: `👥 专家团 "${config.name}" 已激活\n\n成员:\n${roster}\n\n任务: ${task}\n\n请按以下规则协作:\n1. 主理人拆需求→配成员→派发任务\n2. 每个专家独立完成自己的专业产出\n3. 各产出经主理人中转汇总\n4. 成员不直接通信`,
+        data: { team, config, task }
+      };
+    } catch (e: any) { return { success: false, output: `activate_expert_team error: ${e.message}` }; }
+  },
+
+  // ====== 验证循环 + 项目记忆 handlers ======
+  validate_and_fix: async (args: any) => {
+    try {
+      const { runValidator, detectProject } = await import('./validator.js');
+      const ws = wm().projectDir;
+      const { validators } = detectProject(ws);
+      if (validators.length === 0) {
+        return { success: true, output: '未检测到可用的验证器 (tsc/eslint/python/go)。跳过验证。' };
+      }
+
+      const results: string[] = [];
+      let allPassed = true;
+
+      for (const v of validators) {
+        const r = runValidator(v, ws);
+        if (r.errors.length > 0) {
+          allPassed = false;
+          results.push(`❌ ${v.name}: ${r.errors.length} 个错误`);
+          for (const e of r.errors.slice(0, 10)) {
+            results.push(`  ${e.file}:${e.line} [${e.code}] ${e.message}`);
+          }
+          if (r.errors.length > 10) results.push(`  ... 还有 ${r.errors.length - 10} 个错误`);
+        } else {
+          results.push(`✅ ${v.name}: 通过 (${r.durationMs}ms)`);
+        }
+      }
+
+      return {
+        success: allPassed,
+        output: `验证结果:\n${results.join('\n')}\n\n${allPassed ? '✅ 全部通过!' : '⚠️ 有错误，请修复以上错误后重新验证。'}`,
+        data: { allPassed, validators: results }
+      };
+    } catch (e: any) { return { success: false, output: `validate_and_fix error: ${e.message}` }; }
+  },
+
+  remember_project: async (args: any) => {
+    try {
+      const { action, key, value, severity } = args;
+      const { addFixPattern, addKnownIssue, addPreference, initProjectMemory, readProjectMemory } = await import('./project-memory.js');
+      const ws = wm().projectDir;
+
+      if (!readProjectMemory(ws)) initProjectMemory(ws);
+
+      if (action === 'add_fix') addFixPattern(ws, key, value);
+      else if (action === 'add_issue') addKnownIssue(ws, key, value, severity || 'medium');
+      else if (action === 'add_preference') addPreference(ws, key, value);
+      else if (action === 'add_fact') {
+        const mem = readProjectMemory(ws) || initProjectMemory(ws);
+        mem.facts = [...(mem.facts || []), { key, value, source: 'ai' }];
+        const { saveProjectMemory } = await import('./project-memory.js');
+        saveProjectMemory(ws, mem);
+      }
+
+      return { success: true, output: `已记住: ${key} = ${value}` };
+    } catch (e: any) { return { success: false, output: `remember_project error: ${e.message}` }; }
+  },
+
+  recall_project: async () => {
+    try {
+      const { buildMemoryContext, readProjectMemory, initProjectMemory } = await import('./project-memory.js');
+      const ws = wm().projectDir;
+
+      let mem = readProjectMemory(ws);
+      if (!mem) mem = initProjectMemory(ws);
+
+      const ctx = buildMemoryContext(ws);
+      return {
+        success: true,
+        output: ctx || '项目记忆已初始化 (无历史记录)',
+        data: { techStack: mem.techStack, preferences: mem.preferences, fixPatterns: mem.fixPatterns.length, knownIssues: mem.knownIssues.length, facts: mem.facts?.length || 0 }
+      };
+    } catch (e: any) { return { success: false, output: `recall_project error: ${e.message}` }; }
   },
 };

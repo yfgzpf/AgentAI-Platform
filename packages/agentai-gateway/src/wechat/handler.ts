@@ -18,6 +18,9 @@ import {
   findSessionByGatewayId,
   listLocalSessions,
 } from './session.js';
+import { userModel } from '../user-model.js';
+import { resolve as resolveChannel, type ChannelType } from '../channel-session-bridge.js';
+import * as customerStore from '../customer-store.js';
 
 const MAX_MESSAGE_LENGTH = 2048;
 let clientCounter = 0;
@@ -113,14 +116,29 @@ export async function handleMessage(
     }
   }
 
-  // Check if session is valid
+  // 自动绑定 gatewaySessionId (首次消息时) — A3: 通过 bridge 解析统一 sessionId
+  const channel: ChannelType = 'wechat';
+  const unifiedUserId = resolveChannel(channel, msg.from_user_id, {
+    label: `微信:${msg.from_user_id.slice(0, 8)}`,
+  });
   if (!session.gatewaySessionId) {
-    await sendReply(
-      msg.from_user_id,
-      msg.context_token || '',
-      '当前会话未绑定到 Gateway 会话\n请使用 /new 创建新会话'
-    );
-    return;
+    session.gatewaySessionId = unifiedUserId;
+    saveSession(handle.sessionId, session);
+  }
+
+  // ── 自动录入客户 + 注入跟进上下文 ──
+  // 客户发消息时: 1) 自动创建/更新客户档案 2) 记录旅程 3) 注入跟进提醒
+  let enrichedMessage = userText;
+  try {
+    customerStore.recordMessage(channel, msg.from_user_id, userText);
+    const ctx = customerStore.getCustomerContext(channel, msg.from_user_id);
+    if (ctx) {
+      enrichedMessage = `${ctx}\n用户消息: ${userText}`;
+      // 客户主动联系了, 清除跟进标记 (已自然完成跟进)
+      customerStore.clearFollowUp(channel, msg.from_user_id);
+    }
+  } catch (e: any) {
+    logger.warn('Customer context injection failed', { error: e?.message });
   }
 
   session.state = 'processing';
@@ -128,14 +146,29 @@ export async function handleMessage(
   addChatMessage(session, 'user', userText);
 
   try {
-    // Call AgentAI Gateway API
-    const gatewayUrl = `${ctx.gatewayUrl}/api/chat`;
+    // Call AgentAI Gateway API (使用 /v1/chat 端点) — A3: 使用统一 userId
+    const gatewayUrl = `${ctx.gatewayUrl}/v1/chat`;
+    
+    // 解析可靠的 workspace 路径 (优先使用环境变量, 避免 process.cwd() 在 Windows 上的问题)
+    const workspacePath = process.env.AGENTAI_WORKSPACE || process.env.PROJECT_ROOT || process.cwd();
+    
+    logger.info('Calling Gateway chat API', { 
+      url: gatewayUrl, 
+      userId: unifiedUserId,
+      workspace: workspacePath,
+      msgLen: enrichedMessage.length,
+    });
+
     const resp = await fetch(gatewayUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: userText,
-        sessionKey: session.gatewaySessionId,
+        message: enrichedMessage,  // 注入客户上下文后的消息
+        stream: false,
+        userId: unifiedUserId,  // A3: 使用统一 userId 而非 msg.from_user_id
+        workspace: workspacePath,
+        model: userModel.get(unifiedUserId).preferences.preferredModel || 'agentai',  // 同步用户在页面上选择的模型
+        _internal: true,  // 标记为内部调用, 绕过速率限制
       }),
       signal: AbortSignal.timeout(1800000), // 30 min timeout
     });
@@ -144,7 +177,7 @@ export async function handleMessage(
       const text = await resp.text();
       logger.error('Gateway API error', {
         status: resp.status,
-        body: text.substring(0, 200),
+        body: text.substring(0, 500),
       });
       await sendReply(
         msg.from_user_id,
@@ -153,8 +186,31 @@ export async function handleMessage(
       );
     } else {
       const data = (await resp.json()) as any;
+      
+      // 检查返回数据中是否包含错误信息
+      if (data.error && !data.content) {
+        logger.error('Gateway returned error in response body', {
+          error: data.error,
+          hint: data.hint,
+        });
+        await sendReply(
+          msg.from_user_id,
+          msg.context_token || '',
+          `AI 处理出错: ${String(data.error).slice(0, 100)}`
+        );
+        session.state = 'idle';
+        saveSession(handle.sessionId, session);
+        return;
+      }
+      
       const replyText =
         (data.content || data.answer || '无返回内容') as string;
+      
+      logger.info('Gateway reply received', {
+        len: replyText.length,
+        preview: replyText.slice(0, 80),
+      });
+      
       addChatMessage(session, 'assistant', replyText);
 
       // Split long messages

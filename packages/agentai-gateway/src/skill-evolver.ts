@@ -6,7 +6,15 @@
  * - 连续 10 次评分 < 3 → deprecated
  * - 功能重叠 > 70% → 建议合并
  * - 高质量 Skill 自动提升路由权重
+ *
+ * 新增 SkillOpt 风格训练流程：
+ * - 验证门控机制：只有严格提升验证分数才接受修改
+ * - 训练循环：rollout → reflect → aggregate → select → update → evaluate
+ * - 学习率预算：控制修改幅度
+ * - 拒绝编辑缓冲区：避免重复错误
  */
+
+import { SkillTrainer, EvaluateResult } from './skill-training.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,11 +86,37 @@ export class SkillEvolver {
   private config: EvolverConfig;
   private skillRegistry: Map<string, SkillMeta>;
   private usageBuffer: SkillUsageRecord[];
+  private trainer: SkillTrainer; // 新增：SkillOpt 风格训练器
 
   constructor(config?: Partial<EvolverConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.skillRegistry = new Map();
     this.usageBuffer = [];
+    this.trainer = new SkillTrainer(); // 初始化训练器
+  }
+
+  // ---- SkillOpt 风格训练 ----
+
+  /**
+   * 训练技能：使用验证门控和训练循环优化技能文档
+   */
+  async trainSkill(skillId: string, skillContent: string, validationTasks: string[]): Promise<EvaluateResult> {
+    console.log(`[SkillEvolver] 开始 SkillOpt 风格训练: ${skillId}`);
+    return await this.trainer.trainSkill(skillId, skillContent, validationTasks);
+  }
+
+  /**
+   * 获取拒绝编辑缓冲区
+   */
+  getRejectBuffer() {
+    return this.trainer.getRejectBuffer();
+  }
+
+  /**
+   * 清空拒绝编辑缓冲区
+   */
+  clearRejectBuffer() {
+    this.trainer.clearRejectBuffer();
   }
 
   // ---- 记录使用 ----

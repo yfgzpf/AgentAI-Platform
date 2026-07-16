@@ -68,8 +68,9 @@ export class SmartModelSwitcher {
     // 初始化商用API配置
     this._initCommercialApiConfigs();
 
+    const apis = Array.from(this.commercialApiConfigs.keys()).join(', ');
     console.log('[SmartModelSwitcher] 智能模型切换处理器已初始化');
-    console.log('[SmartModelSwitcher] 支持的商用API: deepseek, openai, zhipu');
+    console.log(`[SmartModelSwitcher] 支持的商用API: ${apis}`);
   }
 
   // ---------------------------------------------------------------------------
@@ -117,8 +118,8 @@ export class SmartModelSwitcher {
       };
     }
 
-    // 决定切换到哪个商用API
-    const targetProvider = this._selectCommercialProvider(taskComplexity);
+    // 决定切换到哪个商用API (自动排除当前 provider)
+    const targetProvider = this._selectCommercialProvider(taskComplexity, currentProvider);
 
     // 检查是否有密钥
     const hasApiKey = this._checkApiKey(targetProvider);
@@ -229,27 +230,18 @@ export class SmartModelSwitcher {
    * 初始化商用API配置
    */
   private _initCommercialApiConfigs(): void {
-    // DeepSeek配置
-    this.commercialApiConfigs.set('deepseek', {
-      provider: 'deepseek',
-      apiKeyEnvKey: 'DEEPSEEK_API_KEY',
-      endpoint: 'https://api.deepseek.com/v1',
-      model: 'deepseek-chat',
-      costPerRequest: 0.001, // ¥0.001每次请求
-      rateLimit: 60, // 每分钟60次
+    // AgentAI (Agnes AI) 免费模型 — 必须注册, 否则 _checkApiKey('agentai') 永远返回 false
+    // 导致切换决策把 agentai 当"无密钥"处理, 引发 agentai↔zhipu 死循环切换
+    this.commercialApiConfigs.set('agentai', {
+      provider: 'agentai',
+      apiKeyEnvKey: 'AGENTAI_API_KEY',
+      endpoint: 'https://apihub.agnes-ai.com/v1',
+      model: 'agnes-2.0-flash',
+      costPerRequest: 0,      // 免费
+      rateLimit: 60,
     });
 
-    // OpenAI配置
-    this.commercialApiConfigs.set('openai', {
-      provider: 'openai',
-      apiKeyEnvKey: 'OPENAI_API_KEY',
-      endpoint: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
-      costPerRequest: 0.002, // ¥0.002每次请求
-      rateLimit: 500, // 每分钟500次
-    });
-
-    // Zhipu配置
+    // Zhipu (智谱) 免费模型
     this.commercialApiConfigs.set('zhipu', {
       provider: 'zhipu',
       apiKeyEnvKey: 'ZHIPU_API_KEY',
@@ -258,49 +250,76 @@ export class SmartModelSwitcher {
       costPerRequest: 0.001, // ¥0.001每次请求
       rateLimit: 100, // 每分钟100次
     });
+
+    // SuperAPI 模型工厂 (第一优先: 用户指定先用 SuperAPI)
+    this.commercialApiConfigs.set('superapi', {
+      provider: 'superapi',
+      apiKeyEnvKey: 'SUPERAPI_API_KEY',
+      endpoint: 'https://superapi.vanguard.dpdns.org/v1',
+      model: 'deepseek-v4-flash',
+      costPerRequest: 0.001,
+      rateLimit: 120,
+    });
+
+    // DeepSeek配置
+    this.commercialApiConfigs.set('deepseek', {
+      provider: 'deepseek',
+      apiKeyEnvKey: 'DEEPSEEK_API_KEY',
+      endpoint: 'https://api.deepseek.com/v1',
+      model: 'deepseek-v4-flash',
+      costPerRequest: 0.001, // ¥0.001每次请求
+      rateLimit: 60, // 每分钟60次
+    });
+
+    // OpenAI配置 (最后: 成本高)
+    this.commercialApiConfigs.set('openai', {
+      provider: 'openai',
+      apiKeyEnvKey: 'OPENAI_API_KEY',
+      endpoint: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      costPerRequest: 0.002, // ¥0.002每次请求
+      rateLimit: 500, // 每分钟500次
+    });
   }
 
   /**
    * 选择商用provider
+   * 优先级: SuperAPI > DeepSeek > Zhipu > OpenAI
+   * 自动排除当前 provider (避免切到相同的)
+   *
+   * 2026-06-19 修复: 免费模型之间轮换
+   * - 当一个免费模型熔断时, 先尝试另一个免费模型
+   * - 两个都熔断时才切商业模型
+   * - 免费模型串行执行 (不调子智能体)
    */
-  private _selectCommercialProvider(taskComplexity: 'simple' | 'medium' | 'complex'): string {
-    // 根据任务复杂度选择provider
-    if (taskComplexity === 'complex') {
-      // 复杂任务：优先OpenAI（能力强）
-      if (this._checkApiKey('openai')) {
-        return 'openai';
+  private _selectCommercialProvider(taskComplexity: 'simple' | 'medium' | 'complex', excludeProvider?: string): string {
+    // 安全守护: H6 修复 — 免费池补全：sensenova/longcat/nvidia/dxnt 也支持免费额度
+    const freeProviders = ['agentai', 'zhipu', 'sensenova', 'longcat', 'nvidia', 'dxnt'];
+    for (const fp of freeProviders) {
+      if (fp === excludeProvider) continue;
+      if (this._checkApiKey(fp)) {
+        return fp;
       }
-      // 次选DeepSeek（性价比高）
-      if (this._checkApiKey('deepseek')) {
-        return 'deepseek';
-      }
-      // 最后选Zhipu（国产）
-      return 'zhipu';
     }
 
-    if (taskComplexity === 'medium') {
-      // 中等任务：优先DeepSeek（性价比高）
-      if (this._checkApiKey('deepseek')) {
-        return 'deepseek';
+    // 两个免费模型都不可用 → 尝试商业模型
+    const commercialOrder = ['superapi', 'deepseek', 'openai'];
+    for (const provider of commercialOrder) {
+      if (provider === excludeProvider) continue;
+      if (this._checkApiKey(provider)) {
+        return provider;
       }
-      // 次选Zhipu（国产）
-      if (this._checkApiKey('zhipu')) {
-        return 'zhipu';
-      }
-      // 最后选OpenAI（能力强）
-      return 'openai';
     }
 
-    // 简单任务：优先Zhipu（国产、便宜）
-    if (this._checkApiKey('zhipu')) {
-      return 'zhipu';
+    // 全部无密钥 → 返回另一个免费模型 (至少可以等冷却)
+    for (const fp of freeProviders) {
+      if (fp !== excludeProvider) return fp;
     }
-    // 次选DeepSeek（性价比高）
-    if (this._checkApiKey('deepseek')) {
-      return 'deepseek';
+    // 最终回退
+    for (const provider of commercialOrder) {
+      if (provider !== excludeProvider) return provider;
     }
-    // 最后选OpenAI（能力强）
-    return 'openai';
+    return 'agentai';
   }
 
   /**

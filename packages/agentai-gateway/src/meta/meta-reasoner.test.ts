@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { MetaReasoner, MetaReasoningContext } from './meta-reasoner.js';
 
 describe('MetaReasoner', () => {
@@ -84,7 +84,7 @@ describe('MetaReasoner', () => {
     expect(decision.toolName).toBe('search');
   });
 
-  it('decides ask_human when confidence is too low', () => {
+  it('decides retry_with_pua when confidence is low and puaLevel < 2', () => {
     const context: MetaReasoningContext = {
       taskDescription: 'test',
       currentPlan: ['step1'],
@@ -100,6 +100,31 @@ describe('MetaReasoner', () => {
       },
       maxSteps: 10,
       currentStep: 0,
+      puaLevel: 0,
+    };
+
+    const decision = metaReasoner.decide(context);
+    expect(decision.action).toBe('retry_with_pua');
+    expect(decision.puaPrompt).toBeDefined();
+  });
+
+  it('decides ask_human when confidence is low and puaLevel >= 2', () => {
+    const context: MetaReasoningContext = {
+      taskDescription: 'test',
+      currentPlan: ['step1'],
+      completedSteps: [],
+      pendingQuestions: ['unknown'],
+      lastToolResult: null,
+      confidenceReport: {
+        overallScore: 0.2,
+        level: 'very-low',
+        signals: [],
+        recommendation: 'retry_with_different_strategy',
+        details: {},
+      },
+      maxSteps: 10,
+      currentStep: 0,
+      puaLevel: 2,
     };
 
     const decision = metaReasoner.decide(context);

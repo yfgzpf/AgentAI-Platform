@@ -18,14 +18,16 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { WorkspaceManager } from '../workspace-manager.js';
 import type { SandboxRules } from './types.js';
 
 /** 默认规则 (首次启动生成) */
 export function defaultRules(): SandboxRules {
     const home = os.homedir();
+    const wm = WorkspaceManager.getInstance();
     return {
         allow: [
-            `${process.cwd()}/**`,
+            `${wm.projectDir}/**`,
             `${home}/Documents/**`,
             `${home}/Downloads/**`,
             `${home}/Desktop/**`,

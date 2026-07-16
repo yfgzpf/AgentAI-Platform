@@ -9,6 +9,7 @@ import { AgentAIRouter } from '../llm-router.js';
 import { CapabilityProbe } from '../capability-probe.js';
 
 interface AdminDeps {
+  [key: string]: any;  // 允许传入额外依赖 (app.ts 传入完整 deps 对象)
   frameworkSwitcher?: any;
   sessionManager?: any;
   router?: AgentAIRouter;

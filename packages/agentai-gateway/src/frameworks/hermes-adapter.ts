@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Hermes Framework Adapter (爱马仕适配器)
  * ----------------------------------------------------
@@ -116,12 +115,12 @@ export class HermesAdapter implements FrameworkAdapter {
     // 注入扫描 (Hermes 强项, 比 OpenClaw 严)
     const lastUser = [...messages].reverse().find((m) => m.role === 'user');
     if (lastUser) {
-      const scan = hermesInjectionScan(lastUser.content);
+      const scan = hermesInjectionScan(lastUser.content as string);  // v3.2 修复: MessageContent 强转 string
       if (!scan.clean) {
         console.warn(`[hermes] injection blocked: ${scan.reason}`);
         return {
           content: `⚠️ 检测到潜在的提示注入, 已拦截 (Hermes 防御模式)。\n原因: ${scan.reason}`,
-          usage: { promptTokens: 0, completionTokens: 0, cost: 0, cacheHit: false },
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },  // v3.2 修复: 补全字段
           provider: 'agentai', // fallback to enum value (Hermes-guard 内部已拦截, 不会再走 LLM)
           durationMs: 5,
         };

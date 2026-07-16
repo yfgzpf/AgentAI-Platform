@@ -1,5 +1,6 @@
 /**
  * Agent 自编程引擎 — 让 Agent 在安全边界内修改自己的工作代码
+ * TODO: 接入 evolution 流程, 需人工审批后才能执行自修改
  * 
  * 核心原则：
  * 1. 只允许修改标记为 MODIFIABLE 的区域
@@ -237,7 +238,7 @@ export class SelfModifier {
   }
 
   /** 编译验证（使用 Node.js --check 语法检查 + 括号匹配） */
-  private async _compileCheck(code: string, _filePath: string): Promise<{ passed: boolean; errors?: string[] }> {
+  private async _compileCheck(code: string, filePath: string): Promise<{ passed: boolean; errors?: string[] }> {
     const errors: string[] = [];
 
     // 1. 快速括号匹配检查
@@ -252,27 +253,46 @@ export class SelfModifier {
       errors.push(`Unmatched parentheses: ${openParens} open vs ${closeParens} close`);
     }
 
-    // 2. 使用 Node.js --check 进行语法检查（不执行代码）
-    try {
-      const { execFile } = await import('node:child_process');
-      const { promisify } = await import('node:util');
-      const fs = await import('node:fs');
-      const os = await import('node:os');
-      const nodePath = await import('node:path');
-
-      // 将代码写入临时文件做语法检查
-      const tmpFile = nodePath.join(os.tmpdir(), `selfmodify_check_${Date.now()}.js`);
-      fs.writeFileSync(tmpFile, code, 'utf-8');
+    // 2. 语法检查: TypeScript 文件用 tsc transpileModule (类型注解对 node --check 是语法错误);
+    //    纯 JS 文件用 node --check; 两者都不可用时退化为括号匹配。
+    const isTs = /\.(ts|tsx|mts|cts)$/.test(filePath);
+    if (isTs) {
       try {
-        await promisify(execFile)('node', ['--check', tmpFile], { timeout: 5000 });
-      } catch (err: any) {
-        const msg = err instanceof Error ? err.message : String(err);
-        errors.push(`Syntax error: ${msg}`);
-      } finally {
-        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        const ts = await import('typescript');
+        const out = ts.transpileModule(code, {
+          reportDiagnostics: true,
+          compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.Preserve, noEmit: false },
+        });
+        const syntaxDiags = (out.diagnostics ?? []).filter(
+          (d) => d.category === ts.DiagnosticCategory.Error,
+        );
+        for (const d of syntaxDiags) {
+          errors.push(`Syntax error: ${typeof d.messageText === 'string' ? d.messageText : ts.flattenDiagnosticMessageText(d.messageText, '\n')}`);
+        }
+      } catch {
+        // typescript 不可用 → 仅依赖括号匹配结果
       }
-    } catch {
-      // 如果 child_process 不可用，回退到括号匹配
+    } else {
+      try {
+        const { execFile } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const fs = await import('node:fs');
+        const os = await import('node:os');
+        const nodePath = await import('node:path');
+
+        const tmpFile = nodePath.join(os.tmpdir(), `selfmodify_check_${Date.now()}.js`);
+        fs.writeFileSync(tmpFile, code, 'utf-8');
+        try {
+          await promisify(execFile)('node', ['--check', tmpFile], { timeout: 5000 });
+        } catch (err: any) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`Syntax error: ${msg}`);
+        } finally {
+          try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        }
+      } catch {
+        // child_process 不可用 → 回退到括号匹配
+      }
     }
 
     return {
@@ -317,7 +337,6 @@ export class SelfModifier {
     };
   }
 
-  /** 计算差异（简化 diff） */
   private _computeDiff(oldCode: string, newCode: string): string {
     const oldLines = oldCode.split('\n');
     const newLines = newCode.split('\n');
@@ -327,9 +346,8 @@ export class SelfModifier {
       const oldLine = oldLines[i] ?? '(end of file)';
       const newLine = newLines[i] ?? '(end of file)';
       if (oldLine !== newLine) {
-          diff.push(`-${i + 1}: ${oldLine}`);
-          diff.push(`+${i + 1}: ${newLine}`);
-        }
+        diff.push(`-${i + 1}: ${oldLine}`);
+        diff.push(`+${i + 1}: ${newLine}`);
       }
     }
 

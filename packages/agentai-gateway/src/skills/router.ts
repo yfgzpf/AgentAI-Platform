@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * 技能发现 API 路由
  * ----------------------------------------------------
@@ -18,7 +17,7 @@ export function createSkillsRouter(): Router {
    * GET /v1/skills
    * 列出所有可用技能
    */
-  router.get('/', (_req: Request, res: Response) => {
+  router.get('/v1/skills', (_req: Request, res: Response) => {
     try {
       const skills = listAvailableSkills();
       res.json({
@@ -34,7 +33,7 @@ export function createSkillsRouter(): Router {
    * GET /v1/skills/:name
    * 获取技能详情
    */
-  router.get('/:name', (req: Request, res: Response) => {
+  router.get('/v1/skills/:name', (req: Request, res: Response) => {
     try {
       const skill = getSkill(req.params.name);
       if (!skill) {
@@ -51,7 +50,7 @@ export function createSkillsRouter(): Router {
    * 根据消息匹配技能
    * Body: { message: string, maxResults?: number }
    */
-  router.post('/match', (req: Request, res: Response) => {
+  router.post('/v1/skills/match', (req: Request, res: Response) => {
     try {
       const { message, maxResults = 5 } = req.body;
       if (!message) {

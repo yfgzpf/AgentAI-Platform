@@ -6,6 +6,7 @@ import { Router } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { WorkspaceManager } from '../workspace-manager.js';
+import { isPathAllowed } from '../safety/path-guard.js';
 
 export const filesRouter = Router();
 
@@ -159,17 +160,15 @@ filesRouter.get('/v1/fs/drives', (_req, res) => {
   }
 });
 
-/** 获取目录下的扁平文件列表 (Editor 兼容) */
+/** 获取目录下的扁平文件列表 (Editor 兼容 + 目录树选择器) */
 filesRouter.get('/v1/fs/list', (req, res) => {
   try {
     const dir = (req.query.dir as string) || process.cwd();
-    // 文件浏览接口: 放宽路径限制, 允许浏览任何存在的目录
-    // 只检查路径是否存在, 不做 allowedRoots 校验
-    const resolved = path.resolve(dir);
-    // 安全检查: 仅拒绝明显的路径穿越攻击 (如包含 ..)
-    if (resolved.includes('..')) {
-      return res.status(400).json({ error: 'Invalid path: parent directory traversal not allowed' });
+    // 只阻止路径遍历攻击 (UI浏览器需要访问任意存在的目录)
+    if (dir.includes('..')) {
+      return res.status(400).json({ error: 'Invalid path traversal' });
     }
+    const resolved = path.resolve(dir);
     if (!fs.existsSync(resolved)) return res.json({ entries: [] });
     // 确认是目录
     try {
@@ -291,21 +290,6 @@ filesRouter.get('/v1/files/read', (req, res) => {
   }
 });
 
-/** 读取文件内容 (JSON 响应, DiffViewer 用) */
-filesRouter.get('/v1/files/read', (req, res) => {
-  try {
-    const filePath = req.query.path as string;
-    if (!filePath) return res.status(400).json({ error: 'path required' });
-    const safe = path.resolve(filePath);
-    if (!fs.existsSync(safe)) return res.status(404).json({ error: 'file not found' });
-    if (fs.statSync(safe).isDirectory()) return res.status(400).json({ error: 'is a directory' });
-    const content = fs.readFileSync(safe, 'utf-8');
-    res.json({ ok: true, content, path: safe });
-  } catch (e: any) {
-    res.status(400).json({ ok: false, error: String(e) });
-  }
-});
-
 /** 读取文件最新备份 (.agentai/backups/) */
 filesRouter.get('/v1/files/backup', (req, res) => {
   try {
@@ -319,7 +303,7 @@ filesRouter.get('/v1/files/backup', (req, res) => {
       .filter(f => f.startsWith(fileName + '.') && f.endsWith('.bak'))
       .sort().reverse();
     if (backups.length === 0) return res.json({ ok: true, content: '', message: 'no backup for this file' });
-    const content = fs.readFileSync(path.join(backupDir, backups[0]), 'utf-8');
+    const content = fs.readFileSync(path.join(backupDir, backups[0]!), 'utf-8');
     res.json({ ok: true, content, backupFile: backups[0] });
   } catch (e: any) {
     res.status(400).json({ ok: false, error: String(e) });
@@ -331,14 +315,32 @@ filesRouter.get('/api/files/download', (req, res) => {
   try {
     const filePath = req.query.path as string;
     if (!filePath) return res.status(400).json({ error: 'path required' });
-    const safe = path.resolve(filePath);
+    let safe = path.resolve(filePath);
+    if (!fs.existsSync(safe)) {
+      // 回退: workspace 根目录 (AI 可能写到这里)
+      const wm = WorkspaceManager.getInstance();
+      const alt = path.resolve(wm.projectDir, '..', '..', path.basename(filePath));
+      if (fs.existsSync(alt)) { safe = alt; }
+    }
     if (!fs.existsSync(safe)) return res.status(404).json({ error: 'file not found' });
     const stat = fs.statSync(safe);
     if (stat.isDirectory()) return res.status(400).json({ error: 'is a directory' });
     if (stat.size > 50 * 1024 * 1024) return res.status(413).json({ error: 'file too large (>50MB)' });
     const filename = path.basename(safe);
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
+    const ext = path.extname(safe).toLowerCase();
+    // 图片类型: 内联显示 (让 <img> 标签能渲染)
+    const imageTypes: Record<string, string> = {
+      '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+      '.bmp': 'image/bmp', '.ico': 'image/x-icon',
+    };
+    if (imageTypes[ext]) {
+      res.setHeader('Content-Type', imageTypes[ext]);
+      // 图片不设 attachment, 浏览器内联渲染
+    } else {
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    }
     res.setHeader('Content-Length', stat.size);
     const stream = fs.createReadStream(safe);
     stream.pipe(res);
@@ -357,6 +359,29 @@ filesRouter.put('/v1/files/write', (req, res) => {
     fs.mkdirSync(path.dirname(safe), { recursive: true });
     fs.writeFileSync(safe, content, 'utf-8');
     res.json({ ok: true, path: safe, size: content.length });
+  } catch (e: any) {
+    res.status(400).json({ error: String(e) });
+  }
+});
+
+/** 在系统文件管理器中显示文件 (Windows: explorer /select; macOS: open -R; Linux: xdg-open) */
+filesRouter.post('/v1/fs/reveal', (req, res) => {
+  try {
+    const { path: filePath } = req.body || {};
+    if (!filePath) return res.status(400).json({ error: 'path required' });
+    const safe = sanitizePath(filePath);
+    if (!fs.existsSync(safe)) return res.status(404).json({ error: 'file not found' });
+    const dir = fs.statSync(safe).isDirectory() ? safe : path.dirname(safe);
+    const { exec } = require('child_process');
+    const platform = process.platform;
+    if (platform === 'win32') {
+      exec(`explorer /select,"${safe.replace(/\//g, '\\')}"`);
+    } else if (platform === 'darwin') {
+      exec(`open -R "${safe}"`);
+    } else {
+      exec(`xdg-open "${dir}"`);
+    }
+    res.json({ ok: true, dir });
   } catch (e: any) {
     res.status(400).json({ error: String(e) });
   }

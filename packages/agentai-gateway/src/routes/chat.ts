@@ -213,7 +213,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
   });
 
   r.post('/v1/chat', async (req: Request, res: Response) => {
-    const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile } = req.body;
+    const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile, taskId: requestTaskId } = req.body;
 
     console.log(`[chat] ➡️ POST /v1/chat | userId=${userId} stream=${stream} model=${requestModel || 'default'} msgLen=${(message || '').length}`);
 
@@ -390,10 +390,10 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           // 策略：先澄清
           if (diagnosisResult.strategy === 'clarify' && diagnosisResult.clarificationQuestions) {
             console.log(`[diagnosis] ⚠️ 需要澄清 | questions=${diagnosisResult.clarificationQuestions.length}`);
-            
+
             // 记录问阶段成本
             costTracker.recordPhase(taskId, 'ask', 0, 'template', 'rule_based');
-            
+
             if (!stream) {
               // 结束任务并返回
               const summary = costTracker.endTask(taskId);
@@ -404,11 +404,16 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
                 costSummary: summary,
               });
             }
-            // 流式模式下发送澄清事件
+            // 流式模式下发送澄清事件 + return（防止同时调 LLM）
             sendEvent('clarification_needed', {
               questions: diagnosisResult.clarificationQuestions,
               reason: diagnosisResult.reason,
             });
+            // 安全守护: H1 修复 — 真阻塞，避免用户看到追问卡片但 AI 自行作答
+            if (stream && res.writableEnded === false) {
+              try { res.end(); } catch {}
+            }
+            return; // 关键：不再继续 LLM
           }
           
         } catch (err: any) {
@@ -470,7 +475,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
 
         // ====== 模型映射: 前端 ID → provider + subModel ======
         const MODEL_MAP: Record<string, { provider: string; subModel?: string; label: string; baseURL?: string }> = {
-          'agentai': { provider: 'agentai', label: 'Atlas Free (Flash)' },
+          'agentai': { provider: 'agentai', label: 'PulseFlow Free (Flash)' },
           'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
           'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
           'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
@@ -595,6 +600,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             thinkingBudget: thinking ? 4096 : undefined,
             modelConfig: selected.baseURL ? { baseURL: selected.baseURL, modelName: selected.subModel || '', provider: selected.provider } : modelConfig,
             activeFile,
+            taskId: requestTaskId,  // 长任务快照: 透传 taskId, 支持跨会话恢复
           });
           const master = new MasterController({
             router, registry, userId, workspace,
@@ -637,31 +643,79 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         }
         const resSessionId = sessionId;
         // 使用的模型显示名
-        const displayModel = MODEL_MAP[requestModel]?.label || (requestModel || 'Atlas');
+        const displayModel = MODEL_MAP[requestModel]?.label || (requestModel || 'PulseFlow');
 
         // 立即发送 thinking 事件 (消除空白等待感)
         sendEvent('thinking', { msg: '正在思考...' });
 
         // ====== 跨会话记忆注入: 仅在首轮加载 (避免重复注入) ======
+        // v3.1 (2026-07-15) 升级: 富上下文注入, 解决"AI不记得上轮做了什么"
+        //   - 注入 5 条 user + 5 条 assistant (而不是 3 条 150 字符)
+        //   - 包含工具调用摘要 (file_write / generate_image / web_search 等)
+        //   - 重复查询检测 (如果用户问类似问题, 提示 AI "你上次已经回答过")
         if (persistentMemory && sessionId) {
           try {
             const sessionData_ = sessionManager.get(sessionKey);
             const callCount = sessionData_?.callCount || 0;
-            // 只在首轮 (callCount <= 1) 注入历史, 避免每轮重复
             if (callCount <= 1) {
               const lastMsgs = persistentMemory.getMessages(sessionId);
               if (lastMsgs?.length) {
-                const recent = lastMsgs.slice(-10); // 最近 10 条(5 轮对话)
-                // 只提取 assistant 的操作摘要, 不注入旧 user 消息 (防止 AI 回复旧问题)
-                const assistantSummaries = recent
-                  .filter((m:any) => m.role === 'assistant')
-                  .map((m:any) => `- ${(typeof m.content === 'string' ? m.content : '').slice(0, 150)}`)
-                  .slice(-3); // 最多 3 条 AI 操作记录
-                if (assistantSummaries.length > 0) {
-                  const isContinuation = /^(继续|接着|接着做|上次|之前|刚才|那个|go on|continue)/i.test(message.trim());
+                // ── 1. 提取最近 5 轮对话 ──
+                const recent = lastMsgs.slice(-20); // 最近 20 条
+                const userTurns = recent.filter((m:any) => m.role === 'user');
+                const assistantTurns = recent.filter((m:any) => m.role === 'assistant');
+                const toolTurns = recent.filter((m:any) => m.role === 'tool');
+
+                // ── 2. 工具调用摘要 (从 tool 消息中提取工具名) ──
+                const toolSummary = toolTurns
+                  .map((m:any) => m.name || (typeof m.content === 'string' ? m.content.match(/^\[(\w+)\]/)?.[1] : '') || '')
+                  .filter(Boolean)
+                  .filter((n: string) => !n.startsWith('error'))
+                  .reduce((acc: string[], n: string) => {
+                    if (!acc.includes(n)) acc.push(n);
+                    return acc;
+                  }, [])
+                  .slice(0, 10);
+
+                // ── 3. 重复查询检测 ──
+                const normalize = (s: string) => s.toLowerCase().replace(/[^\w\u4e00-\u9fa5]/g, '').slice(0, 30);
+                const currentQ = normalize(message);
+                const isDuplicate = userTurns.some((um: any) => {
+                  const oldQ = normalize(typeof um.content === 'string' ? um.content : '');
+                  return oldQ && currentQ && (oldQ === currentQ || (oldQ.length >= 8 && currentQ.includes(oldQ.slice(0, 12))));
+                });
+
+                // ── 4. 构建富上下文 ──
+                const lastUserMsgs = userTurns.slice(-3).map((m: any, i: number) =>
+                  `${i + 1}. [用户] ${(typeof m.content === 'string' ? m.content : '[多媒体]').slice(0, 200)}`
+                ).join('\n');
+                const lastAssistantMsgs = assistantTurns.slice(-3).map((m: any, i: number) =>
+                  `${i + 1}. [AI] ${(typeof m.content === 'string' ? m.content : '').slice(0, 300)}...`
+                ).join('\n\n');
+
+                const isContinuation = /^(继续|接着|接着做|上次|之前|刚才|那个|go on|continue)/i.test(message.trim());
+
+                const ctxLines: string[] = [
+                  `## 📚 上一轮会话上下文 (${lastMsgs.length} 条历史, 这里是上次的真实操作, 不是新任务)`,
+                ];
+                if (lastUserMsgs) ctxLines.push(`\n**用户最近 3 次提问**:\n${lastUserMsgs}`);
+                if (lastAssistantMsgs) ctxLines.push(`\n**AI 最近 3 次回复** (开头 300 字符):\n${lastAssistantMsgs}`);
+                if (toolSummary.length > 0) {
+                  ctxLines.push(`\n**上轮使用过的工具**: ${toolSummary.join(', ')}`);
+                }
+                if (isDuplicate) {
+                  ctxLines.push(`\n⚠️ **检测到重复查询**: 用户刚才问过类似问题, 请检查你之前是否已经回答/生成了内容。如果是, 直接给结果而不是重新询问。`);
+                }
+                if (isContinuation) {
+                  ctxLines.push(`\n💡 用户说"继续", 表明是接续上轮任务, 请直接基于上文继续。`);
+                } else {
+                  ctxLines.push(`\n以上是历史参考, 用户当前的新消息见下方 user 消息。`);
+                }
+
+                if (lastUserMsgs || lastAssistantMsgs) {
                   loop.context?.appendOnlyLog?.push({
                     role: 'system',
-                    content: `[上次会话摘要 — 这些是历史记录, 不是当前消息]\n${assistantSummaries.join('\n')}\n\n${isContinuation ? '用户说"继续"，请基于以上上下文继续执行未完成的任务。' : '以上是上一轮会话的AI操作摘要，仅供参考。请只回复当前用户的新消息。'}`,
+                    content: ctxLines.join('\n'),
                   });
                 }
               }
@@ -755,6 +809,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             originalMessage: info.originalMessage,
             questions: info.questions,
             ambiguities: info.ambiguities,
+            source: info.source || 'intent_clarifier',
           });
         });
 
@@ -1114,7 +1169,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
 
       // ====== 模型映射 (非流式路径共用) ======
       const nss_MODEL_MAP: Record<string, { provider: string; subModel?: string; label: string }> = {
-        'agentai': { provider: 'agentai', label: 'Atlas Free (Flash)' },
+        'agentai': { provider: 'agentai', label: 'PulseFlow Free (Flash)' },
         'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
         'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
         'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
@@ -1176,6 +1231,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             thinking: !!thinking,
             thinkingBudget: thinking ? 4096 : undefined,
             activeFile,
+            taskId: requestTaskId,  // 长任务快照: 透传 taskId
           });
         } else {
           // 未指定模型或模型不在 MODEL_MAP 中: 优先读取用户偏好, 默认 agentai (免费)
@@ -1196,6 +1252,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             maxIterations: 10, userId, workspace, mode, model: chatModel, modelName, persistentMemory, emotion,
             thinking: !!thinking,
             thinkingBudget: thinking ? 4096 : undefined,
+            taskId: requestTaskId,  // 长任务快照: 透传 taskId
           });
         }
         sessionManager.set(sessionKey, { loop, userId, workspace, callCount: 1 });

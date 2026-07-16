@@ -71,6 +71,14 @@ export function loadLatestAccount(): AccountData | null {
   return latest;
 }
 
+export function deleteAccount(accountId: string): boolean {
+  const filePath = path.join(ACCOUNTS_DIR, `${accountId}.json`);
+  if (!fs.existsSync(filePath)) return false;
+  fs.unlinkSync(filePath);
+  logger.info('Account deleted', { accountId });
+  return true;
+}
+
 export function listAccounts(): AccountData[] {
   if (!fs.existsSync(ACCOUNTS_DIR)) {
     return [];

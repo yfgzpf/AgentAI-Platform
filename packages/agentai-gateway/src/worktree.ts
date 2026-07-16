@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Git Worktree 隔离并行任务
  * ----------------------------------------------------
@@ -32,7 +31,7 @@ export interface WorktreeInfo {
  * @param branchPrefix 分支名前缀 (默认 task-)
  * @returns 新工作树路径和分支名
  */
-export function worktreeCreate(basePath: string, branchPrefix = 'task-'): { worktreePath: string; branch: string } {
+export async function worktreeCreate(basePath: string, branchPrefix = 'task-'): Promise<{ worktreePath: string; branch: string }> {  // v3.2 修复: 改为 async
     if (!fs.existsSync(path.join(basePath, '.git'))) {
         throw new Error('Not a git repository: ' + basePath);
     }
@@ -44,6 +43,9 @@ export function worktreeCreate(basePath: string, branchPrefix = 'task-'): { work
     // 验证分支名安全性
     const { validateBranchName } = await import('./sanitize.js');
     const branchCheck = validateBranchName(rawBranch);
+    // 工作树目录: ~/.agentai/worktrees/<branch>  (v3.2 修复: 提前声明, 避免使用前未定义)
+    const cwd = basePath;
+    const wdir = path.join(os.homedir(), '.agentai', 'worktrees', rawBranch);
     if (!branchCheck.valid) {
       // 使用备用名称
       const safeBranch = rawBranch.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 200);
@@ -53,14 +55,10 @@ export function worktreeCreate(basePath: string, branchPrefix = 'task-'): { work
     }
     const branch = rawBranch;
 
-    // 工作树目录: ~/.agentai/worktrees/<branch>
-    const wdir = path.join(os.homedir(), '.agentai', 'worktrees', branch);
-
     if (fs.existsSync(wdir)) {
         throw new Error(`Worktree path already exists: ${wdir}`);
     }
 
-    const cwd = basePath;
     execSync(`git worktree add "${wdir}" -b "${branch}"`, { cwd, encoding: 'utf-8', timeout: 30000 });
 
     // Symlink node_modules (复用主工作树的依赖, 不用重新 pnpm install)

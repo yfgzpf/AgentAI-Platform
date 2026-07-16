@@ -10,7 +10,8 @@
  */
 
 import { EventEmitter } from 'events';
-import { parseExpression } from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
+const parseExpression = CronExpressionParser.parse;
 
 export class CronJob extends EventEmitter {
   private timer: ReturnType<typeof setTimeout> | null = null;

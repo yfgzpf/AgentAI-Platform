@@ -22,7 +22,16 @@ export interface FailureMode {
   lastSeen: string;     // ISO timestamp
 }
 
-export interface CognitiveProfile {
+/**
+ * CognitiveProfile — a cognitive fingerprint for an agent.
+ *
+ * Implemented as a class so that the same instance exposes both the raw
+ * data fields (dimensions/toolPatterns/failureModes) and the derived
+ * `getTop*` query helpers. Callers throughout the meta-cognitive system
+ * rely on `.getTopTools()`, `.getTopDimensions()`, `.getTopFailureModes()`
+ * being available on the profile object itself (not only on the builder).
+ */
+export class CognitiveProfile {
   agentId: string;
   personasUsed: string[];        // which personas this agent has tried
   dimensions: CognitiveDimension[];
@@ -30,6 +39,39 @@ export interface CognitiveProfile {
   failureModes: FailureMode[];
   createdAt: string;
   updatedAt: string;
+
+  constructor(data: {
+    agentId: string;
+    personasUsed: string[];
+    dimensions: CognitiveDimension[];
+    toolPatterns: ToolUsagePattern[];
+    failureModes: FailureMode[];
+    createdAt: string;
+    updatedAt: string;
+  }) {
+    this.agentId = data.agentId;
+    this.personasUsed = data.personasUsed;
+    this.dimensions = data.dimensions;
+    this.toolPatterns = data.toolPatterns;
+    this.failureModes = data.failureModes;
+    this.createdAt = data.createdAt;
+    this.updatedAt = data.updatedAt;
+  }
+
+  /** Top-N strongest cognitive dimensions (by descending strength). */
+  getTopDimensions(n = 3): CognitiveDimension[] {
+    return [...this.dimensions].sort((a, b) => b.strength - a.strength).slice(0, n);
+  }
+
+  /** Top-N best-performing tools (by descending average score). */
+  getTopTools(n = 3): ToolUsagePattern[] {
+    return [...this.toolPatterns].sort((a, b) => b.avgScore - a.avgScore).slice(0, n);
+  }
+
+  /** Top-N most frequent failure modes (by descending count). */
+  getTopFailureModes(n = 3): FailureMode[] {
+    return [...this.failureModes].sort((a, b) => b.count - a.count).slice(0, n);
+  }
 }
 
 export class CognitiveProfileBuilder {
@@ -48,8 +90,8 @@ export class CognitiveProfileBuilder {
     });
   }
 
-  private constructor(profile: CognitiveProfile) {
-    this.profile = profile;
+  private constructor(data: ConstructorParameters<typeof CognitiveProfile>[0]) {
+    this.profile = new CognitiveProfile(data);
   }
 
   /** Update a dimension's strength using exponential moving average. */
@@ -105,24 +147,21 @@ export class CognitiveProfileBuilder {
   }
 
   build(): CognitiveProfile {
-    return { ...this.profile };
+    // Return a real CognitiveProfile instance so callers get the `getTop*`
+    // query helpers along with the data fields.
+    return new CognitiveProfile({ ...this.profile, dimensions: [...this.profile.dimensions], toolPatterns: [...this.profile.toolPatterns], failureModes: [...this.profile.failureModes], personasUsed: [...this.profile.personasUsed] });
   }
 
+  /** Delegate to the built profile so existing builder-based callers keep working. */
   getTopDimensions(n = 3): CognitiveDimension[] {
-    return [...this.profile.dimensions]
-      .sort((a, b) => b.strength - a.strength)
-      .slice(0, n);
+    return this.build().getTopDimensions(n);
   }
 
   getTopTools(n = 3): ToolUsagePattern[] {
-    return [...this.profile.toolPatterns]
-      .sort((a, b) => b.avgScore - a.avgScore)
-      .slice(0, n);
+    return this.build().getTopTools(n);
   }
 
   getTopFailureModes(n = 3): FailureMode[] {
-    return [...this.profile.failureModes]
-      .sort((a, b) => b.count - a.count)
-      .slice(0, n);
+    return this.build().getTopFailureModes(n);
   }
 }

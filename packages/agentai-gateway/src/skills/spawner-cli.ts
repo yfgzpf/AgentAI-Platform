@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Skill Spawner CLI - 独立运行技能执行
  * 用法: npx tsx skills/spawner-cli.ts <skill-name> [message] [target-file]
@@ -28,21 +27,17 @@ export async function runCLI() {
       description: spec.description,
       parameters: spec.parameters,
       parallelSafe: spec.parallelSafe,
-      riskLevel: spec.riskLevel,
+      riskLevel: spec.riskLevel as any,  // v3.2 修复: spec.riskLevel 是 string, ToolEntry 要求 RiskLevel 联合类型
       handler: EXTRA_HANDLERS[spec.name],
     });
   }
 
   try {
-    const result = await executeSkill({
-      skillName,
-      message,
-      targetFile,
-      router,
+    const result = await executeSkill(
+      { skillName, message, targetFile, userId: 'cli', workspace: process.cwd() },
+      router,  // v3.2 修复: executeSkill 接受 3 个参数 (opts, router, registry)
       registry,
-      userId: 'cli',
-      workspace: process.cwd(),
-    });
+    );
     console.log(JSON.stringify(result, null, 2));
     process.exit(result.success ? 0 : 1);
   } catch (e: any) {

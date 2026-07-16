@@ -321,13 +321,15 @@ export class MCPClient extends EventEmitter {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data: any = await response.json();
       
       if (data.error) {
-        throw new Error(data.error.message || 'RPC Error');
+        throw new Error(data.error?.message || 'RPC Error');
       }
 
       return data;
+    } catch (error: any) {
+      throw error;
     } finally {
       clearTimeout(timeoutId);
     }

@@ -188,7 +188,33 @@ export class CronDispatcher extends EventEmitter {
       }
     }));
 
-    // 8. 每周深度评估报告 — 每周一早上 9 点
+    // 8. 自动清理系统 — 每 4 小时
+    this.jobs.push(new CronJob('0 */4 * * *', async () => {
+      console.log('[cron] 4h: running auto-cleanup');
+      try {
+        const { autoCleanup } = await import('./auto-cleanup.js');
+        const result = await autoCleanup.runCleanup();
+        
+        console.log('[cron] cleanup result:', {
+          tempFiles: result.tempFiles.deleted,
+          logsRotated: result.logs.rotated,
+          cacheFiles: result.cache.deleted,
+          diskBefore: result.disk.beforeUsage + '%',
+          diskAfter: result.disk.afterUsage + '%',
+        });
+        
+        // 如果磁盘使用率过高，发送告警
+        if (result.disk.status === 'emergency') {
+          this.emit('cleanup:emergency', result);
+        }
+        
+        this.emit('cleanup:complete', result);
+      } catch (e: any) {
+        console.warn(`[cron] auto-cleanup failed: ${e.message}`);
+      }
+    }));
+
+    // 9. 每周深度评估报告 — 每周一早上 9 点
     this.jobs.push(new CronJob('0 9 * * 1', async () => {
       console.log('[cron] weekly: generating deep evaluation report');
       try {

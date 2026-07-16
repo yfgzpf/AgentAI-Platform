@@ -43,7 +43,7 @@ export function register3DRoutes(router: Router) {
             content,
           }),
         });
-        const data = await resp.json();
+        const data: any = await resp.json();
         if (!resp.ok) return res.json({ error: data.error?.message || JSON.stringify(data) });
         return res.json({ taskId: data.id, provider: 'doubao' });
 
@@ -73,7 +73,7 @@ export function register3DRoutes(router: Router) {
 
         // TC3 签名
         const timestamp = Math.floor(Date.now() / 1000);
-        const date = new Date(timestamp * 1000).toISOString().split('T')[0];
+        const date = new Date(timestamp * 1000).toISOString().split('T')[0]!;
         const credentialScope = `${date}/${service}/tc3_request`;
 
         // CanonicalRequest
@@ -93,7 +93,7 @@ export function register3DRoutes(router: Router) {
         const stringToSign = `TC3-HMAC-SHA256\n${timestamp}\n${credentialScope}\n${hashedCanonical}`;
 
         // Signature
-        const kDate = crypto.createHmac('sha256', Buffer.from(`TC3${secretKey}`)).update(date).digest();
+        const kDate = crypto.createHmac('sha256', Buffer.from(`TC3${String(secretKey)}`)).update(date).digest();
         const kService = crypto.createHmac('sha256', kDate).update(service).digest();
         const kSigning = crypto.createHmac('sha256', kService).update('tc3_request').digest();
         const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
@@ -113,7 +113,7 @@ export function register3DRoutes(router: Router) {
           },
           body: payloadStr,
         });
-        const data = await resp.json();
+        const data: any = await resp.json();
         if (data.Response?.Error) {
           return res.json({ error: `${data.Response.Error.Code}: ${data.Response.Error.Message}` });
         }
@@ -141,7 +141,7 @@ export function register3DRoutes(router: Router) {
         const resp = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${taskId}`, {
           headers: { 'Authorization': `Bearer ${apiKey}` },
         });
-        const data = await resp.json();
+        const data: any = await resp.json();
         return res.json({
           status: data.status, // queued/running/succeeded/failed
           fileUrl: data.content?.file_url,
@@ -160,7 +160,7 @@ export function register3DRoutes(router: Router) {
 
         const payload = JSON.stringify({ JobId: taskId });
         const timestamp = Math.floor(Date.now() / 1000);
-        const date = new Date(timestamp * 1000).toISOString().split('T')[0];
+        const date = new Date(timestamp * 1000).toISOString().split('T')[0]!;
         const credentialScope = `${date}/${service}/tc3_request`;
 
         const hashedPayload = crypto.createHash('sha256').update(payload).digest('hex');
@@ -177,7 +177,7 @@ export function register3DRoutes(router: Router) {
         const hashedCanonical = crypto.createHash('sha256').update(canonicalRequest).digest('hex');
         const stringToSign = `TC3-HMAC-SHA256\n${timestamp}\n${credentialScope}\n${hashedCanonical}`;
 
-        const kDate = crypto.createHmac('sha256', Buffer.from(`TC3${secretKey}`)).update(date).digest();
+        const kDate = crypto.createHmac('sha256', Buffer.from(`TC3${String(secretKey)}`)).update(date).digest();
         const kService = crypto.createHmac('sha256', kDate).update(service).digest();
         const kSigning = crypto.createHmac('sha256', kService).update('tc3_request').digest();
         const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
@@ -197,7 +197,7 @@ export function register3DRoutes(router: Router) {
           },
           body: payload,
         });
-        const data = await resp.json();
+        const data: any = await resp.json();
         const job = data.Response;
         if (job?.Error) return res.json({ error: `${job.Error.Code}: ${job.Error.Message}` });
 

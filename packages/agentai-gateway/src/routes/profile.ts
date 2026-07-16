@@ -11,8 +11,10 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { userModel } from '../user-model.js';
+import { industryEngine } from '../industry-engine.js';
+import { WorkspaceManager } from '../workspace-manager.js';
 
-let _industryEngine: any = null;
+let _industryEngine: any = industryEngine;
 
 /** 注入行业引擎 (由 index.ts 调用) */
 export function setIndustryEngine(ie: any) { _industryEngine = ie; }
@@ -26,9 +28,10 @@ export function createProfileRouter(): Router {
    * GET /v1/profile
    * 读取当前用户模型的完整数据
    */
-  router.get('/', (_req: Request, res: Response) => {
+  router.get('/', (req: Request, res: Response) => {
     try {
-      const model = userModel.get();
+      const uid = (req.query.userId as string) || 'default';
+      const model = userModel.get(uid);
       res.json({ ok: true, profile: model });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err?.message || '读取用户档案失败' });
@@ -43,9 +46,10 @@ export function createProfileRouter(): Router {
   router.post('/', (req: Request, res: Response) => {
     try {
       const { name, industry, useCase, questionnaire, industrySkills, onboardedAt } = req.body || {};
+      const uid = req.body.userId || 'default';
 
       if (name || industry || useCase || industrySkills) {
-        userModel.setIdentity({
+        userModel.setIdentity(uid, {
           ...(name ? { name } : {}),
           ...(industry ? { industry } : {}),
           ...(useCase ? { role: useCase } : {}),
@@ -71,14 +75,14 @@ export function createProfileRouter(): Router {
         }, null, 2), 'utf-8');
 
         // 同时写入 UserModel 的 identity (用于 system prompt 注入)
-        userModel.setIdentity({ questionnaire });
+        userModel.setIdentity(uid, { questionnaire });
       }
 
       // 开发偏好持久化到项目 .agentai/profile.json
       const { devPrefs } = req.body || {};
       if (devPrefs && typeof devPrefs === 'object') {
         try {
-          const ws = require('../workspace-manager.js').WorkspaceManager.getInstance().projectDir;
+          const ws = WorkspaceManager.getInstance().projectDir;
           const profileDir = path.join(ws, '.agentai');
           if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
           const profilePath = path.join(profileDir, 'profile.json');
@@ -91,10 +95,60 @@ export function createProfileRouter(): Router {
         } catch (e: any) { console.warn('[profile] devPrefs save failed:', e?.message); }
       }
 
-      const updated = userModel.get();
+      const updated = userModel.get(uid);
       res.json({ ok: true, profile: updated.identity });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err?.message || '更新用户档案失败' });
+    }
+  });
+
+  /**
+   * GET /v1/industries
+   * 返回所有行业配置列表 (含主题色/图标/技能数)
+   */
+  router.get('/industries', (req: Request, res: Response) => {
+    try {
+      const all = _industryEngine?.getAllIndustries?.() || [];
+      const list = all.map((c: any) => ({
+        id: c.id,
+        label: c.label,
+        theme: c.theme || null,
+        skillCount: c.skills?.length || 0,
+        supportedFormats: c.supportedFormats || [],
+      }));
+      res.json({ ok: true, industries: list });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || '获取行业列表失败' });
+    }
+  });
+
+  /**
+   * POST /v1/profile/update
+   * 轻量更新用户偏好 (模型选择等), 不触发行业引擎切换
+   * Body: { preferredModel, replyStyle, userId }
+   */
+  router.post('/update', (req: Request, res: Response) => {
+    try {
+      const { preferredModel, replyStyle, userId, syncAll } = req.body || {};
+      const uid = userId || 'default';
+      if (preferredModel) {
+        // syncAll: 同步到所有已知用户 (GUI 切换模型时需要同步微信/QQ 远程渠道)
+        if (syncAll) {
+          const allIds = userModel.listUserIds();
+          for (const id of ['default', ...allIds]) {
+            userModel.setPreference(id, 'preferredModel', preferredModel);
+          }
+          console.log(`[profile] synced preferredModel=${preferredModel} to all users (count=${allIds.length + 1})`);
+        } else {
+          userModel.setPreference(uid, 'preferredModel', preferredModel);
+        }
+      }
+      if (replyStyle) {
+        userModel.setPreference(uid, 'replyStyle', replyStyle);
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || '更新偏好失败' });
     }
   });
 

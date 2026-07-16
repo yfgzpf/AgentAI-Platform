@@ -8,18 +8,13 @@ import type {
   SendMessageResp,
 } from './types.js';
 import { logger } from './logger.js';
+import crypto from 'crypto';
 
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 
 function generateUin(): string {
   const buf = new Uint8Array(4);
-  // Node.js global crypto or require('crypto') fallback
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(buf);
-  } else {
-    const cryptoModule = require('crypto');
-    cryptoModule.randomFillSync(buf);
-  }
+  crypto.randomFillSync(buf);
   return Buffer.from(buf).toString('base64');
 }
 

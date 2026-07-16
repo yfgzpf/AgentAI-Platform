@@ -61,9 +61,9 @@ const DEFAULT_RATE_LIMITS: Record<string, RateLimitConfig> = {
   },
   agentai: {
     provider: 'agentai',
-    rpm: 30, // Agnes AI: 30 RPM（免费版）
-    tpm: 30000,
-    rph: 1800,
+    rpm: 20, // Agnes AI: 20 RPM（API实际限速）
+    tpm: 20000,
+    rph: 1200,
     resetAfter: 60,
   },
   deepseek: {
@@ -71,13 +71,6 @@ const DEFAULT_RATE_LIMITS: Record<string, RateLimitConfig> = {
     rpm: 100, // DeepSeek: 100 RPM（付费版）
     tpm: 100000,
     rph: 6000,
-    resetAfter: 60,
-  },
-  cline: {
-    provider: 'cline',
-    rpm: 50, // Cline.bot: 50 RPM（免费版）
-    tpm: 50000,
-    rph: 3000,
     resetAfter: 60,
   },
   openai: {
@@ -91,7 +84,9 @@ const DEFAULT_RATE_LIMITS: Record<string, RateLimitConfig> = {
 
 export class RateLimiter {
   private usageRecords: UsageRecord[] = [];
-  private rateLimits: Record<string, RateLimitConfig>;
+  // v3.2 修复: 改为 public 以供 router-rate-limiter 读取
+  // 否则: 'rateLimits' is private and only accessible within class 'RateLimiter'
+  rateLimits: Record<string, RateLimitConfig>;
   private lastCleanup: number = Date.now();
 
   constructor(customLimits?: Record<string, RateLimitConfig>) {

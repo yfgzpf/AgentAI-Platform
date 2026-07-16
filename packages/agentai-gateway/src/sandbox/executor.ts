@@ -40,6 +40,8 @@ export class CodeRunner {
     maxOutputBytes: number;
     maxMemoryBytes: number;
   };
+  /** 缓存 Python 路径 */
+  private pythonPath: string | null = null;
 
   constructor(limits: SandboxLimits = {}) {
     this.limits = {
@@ -47,6 +49,25 @@ export class CodeRunner {
       maxOutputBytes: limits.maxOutputBytes ?? 1024 * 1024,
       maxMemoryBytes: limits.maxMemoryBytes ?? 64 * 1024 * 1024,
     };
+  }
+
+  /** 自动查找 Python 路径 */
+  private findPython(): string {
+    if (this.pythonPath) return this.pythonPath;
+    // 常见 Windows 安装路径
+    const common = [
+      'C:/Python314/python.exe', 'C:/Python313/python.exe',
+      'C:/Python312/python.exe', 'C:/Python311/python.exe',
+    ];
+    for (const p of common) {
+      try { if (fs.existsSync(p)) { this.pythonPath = p; return p; } } catch {}
+    }
+    // PATH 查找: Windows 优先 py/ python, Unix 优先 python3
+    const candidates = process.platform === 'win32'
+      ? ['py', 'python', 'python3']
+      : ['python3', 'python'];
+    this.pythonPath = candidates[0]; // 兜底
+    return this.pythonPath;
   }
 
   /**
@@ -104,7 +125,7 @@ export class CodeRunner {
     try {
       const result = await util.promisify(execFile)('node', ['-e', runnerCode], {
         timeout: this.limits.timeoutMs,
-        maxBuffer: Math.max(this.limits.maxOutputBytes * 2, 1024 * 1024), // 至少 1MB
+        maxBuffer: Math.max(this.limits.maxOutputBytes * 2, 1024 * 1024),
         env,
       });
 
@@ -129,7 +150,69 @@ export class CodeRunner {
         timedOut: isTimeout,
       };
     } finally {
-      // 始终清理临时文件，无论成功还是失败
+      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * 在沙盒中执行 Python 代码
+   * @param code - Python 代码字符串
+   * @param context - 可选的上下文变量（通过环境变量传入）
+   */
+  async executePython(code: string, context?: Record<string, unknown>): Promise<ExecResult> {
+    const startTime = Date.now();
+    const pyExe = this.findPython();
+
+    // 1. 写临时 .py 文件
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `sandbox_py_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.py`,
+    );
+    const header = ['#!/usr/bin/env python3', '# -*- coding: utf-8 -*-', '', 'import sys, json, os'];
+    if (context) {
+      header.push('');
+      header.push('# Context from sandbox');
+      header.push(`_CTX = json.loads(os.environ.get('__SANDBOX_CTX__', 'null')) or {}`);
+      header.push('');
+    }
+    fs.writeFileSync(tmpFile, [...header, code].join('\n'), 'utf-8');
+
+    // 2. 执行
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      NODE_ENV: 'sandbox',
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+    };
+    if (context) {
+      env['__SANDBOX_CTX__'] = JSON.stringify(context);
+    }
+
+    try {
+      const result = await util.promisify(execFile)(pyExe, [tmpFile], {
+        timeout: this.limits.timeoutMs,
+        maxBuffer: Math.max(this.limits.maxOutputBytes * 2, 1024 * 1024),
+        env,
+      });
+
+      return {
+        success: true,
+        output: ((result.stdout as string) || '') + ((result.stderr as string) || ''),
+        error: '',
+        durationMs: Date.now() - startTime,
+        timedOut: false,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTimeout = msg.includes('timeout') || msg.includes('ETIMEDOUT');
+      return {
+        success: false,
+        output: '',
+        error: msg,
+        durationMs: Date.now() - startTime,
+        timedOut: isTimeout,
+      };
+    } finally {
       try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
     }
   }

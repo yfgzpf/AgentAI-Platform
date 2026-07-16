@@ -359,7 +359,7 @@ function compressCode(text: string): string {
       if (importBlock.length <= 3) {
         result.push(...importBlock);
       } else {
-        result.push(importBlock[0]);
+        result.push(importBlock[0]!);
         result.push(`// ... ${importBlock.length - 1} more imports`);
       }
       importBlock = [];
@@ -373,7 +373,7 @@ function compressCode(text: string): string {
     if (importBlock.length <= 3) {
       result.push(...importBlock);
     } else {
-      result.push(importBlock[0]);
+      result.push(importBlock[0]!);
       result.push(`// ... ${importBlock.length - 1} more imports`);
     }
   }

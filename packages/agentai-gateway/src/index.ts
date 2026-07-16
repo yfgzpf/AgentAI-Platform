@@ -8,6 +8,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';  // v3.2 修复: ESM 兼容 __dirname/__filename
 import { createApp, createServerHandle, startBackgroundJobs } from './app.js';
 import { AgentAIRouter } from './llm-router.js';
 import { ToolRegistry } from './tool-registry.js';
@@ -23,12 +24,17 @@ import { MCPHost } from './mcp/host.js';
 import { getSessionManager } from './session-manager.js';
 import { getPersistentMemory } from './persistent-memory.js';
 import { getPromptEngine } from './prompts/engine.js';
+
+// v3.2 修复: ESM 下 __dirname/__filename 不存在, 必须用 import.meta.url 推导
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import { getKnowledgeCache } from './knowledge-cache.js';
 import { getSkillEvolver } from './skill-evolver.js';
 // Deleted 2026-06-26: RouterOptimizer, UserBehaviorPredictor, DataPredictor (死代码清理)
 import { fts5Memory } from './fts5-memory.js';
 import { SmartModelSwitcher } from './smart-model-switcher.js';
 import { builtInToolsManager } from './builtin-tools-manager.js';
+import { createToolFactory } from './tool-factory.js';
 import { globalRateLimiter } from './rate-limiter.js';
 import { userModel } from './user-model.js';
 import { DeepSeekCacheStrategy } from './deepseek-cache-strategy.js';
@@ -147,8 +153,16 @@ try {
     let loaded = 0;
     for (const [toolName, spec] of Object.entries(customRegistry)) {
       const ts = spec as any;
+      // v3.2 修复: 如果 spec 没有 scriptFile 字段, 跳过 (registry 可能还没更新)
+      if (!ts.scriptFile) {
+        console.warn(`[custom-tools] 跳过 ${toolName}: 缺少 scriptFile 字段`);
+        continue;
+      }
       const scriptPath = path.join(customToolsDir, ts.scriptFile);
-      if (!fs.existsSync(scriptPath)) continue;
+      if (!fs.existsSync(scriptPath)) {
+        console.warn(`[custom-tools] 跳过 ${toolName}: 脚本不存在 ${scriptPath}`);
+        continue;
+      }
       registry.register({
         name: toolName,
         description: ts.description || `Custom tool: ${toolName}`,
@@ -176,6 +190,12 @@ try {
 } catch (e: any) {
   console.warn('[custom-tools] 加载失败:', e?.message);
 }
+
+// ===== 工具自发明工厂 (v2: LLM 驱动) =====
+// ToolFactory 允许 AI 在运行时遇到现有工具无法完成的任务时，
+// 自动调用 LLM 生成新工具并注册到 registry
+const toolFactory = createToolFactory(registry, router);
+console.log('[tool-factory] 工具自发明工厂已初始化 (LLM-driven)');
 
 const sessionManager = getSessionManager();
 
@@ -280,6 +300,7 @@ console.log(`[workspace] project dir: ${wm.projectDir}`);
 // 沙箱初始化: 在 createApp 之前同步启动, 确保 app.ts 中 getGlobalSandbox() 可用
 try {
   const sb = await initGlobalSandbox({
+    enabled: true, // 显式启用, 保护用户文件
     audit: (e: any) => console.log(`[sandbox] ${e.type} ${e.verdict || ''} ${e.path || ''} ${e.reason || ''}`),
   });
   console.log(`[sandbox] ready (rules: ${sb.getRulesPath()}, enabled: ${sb.isEnabled()})`);
@@ -474,7 +495,7 @@ function tryListenWithRetry(): void {
 
   // 后台任务 (skills watcher, evolution cleanup, cron dispatcher)
   try {
-    startBackgroundJobs(path.join(process.cwd(), 'packages', 'agentai-skills'));
+    startBackgroundJobs(path.join(process.cwd(), 'packages', 'agentai-skills'), deps.io);
   } catch (e: any) {
     console.warn('[background] jobs failed to start:', e?.message);
   }

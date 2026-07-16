@@ -23,7 +23,7 @@ export function validateCommand(
   if (!cmd || typeof cmd !== 'string') {
     return { ok: false, reason: 'Empty or invalid command' };
   }
-  const base = cmd.trim().split(/\s+/)[0];
+  const base = cmd.trim().split(/\s+/)[0] || '';
   if (!ALLOWED_COMMANDS.has(base)) {
     return { ok: false, reason: `Command '${base}' not in whitelist` };
   }

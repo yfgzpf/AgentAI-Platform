@@ -70,6 +70,7 @@ export function createGoalRouter(deps: GoalRouterDeps): Router {
     const workspace = wm.projectDir;
 
     // ====== SSE 流式 ======
+    req.socket?.setNoDelay?.();
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');

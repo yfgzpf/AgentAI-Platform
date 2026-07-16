@@ -1,9 +1,8 @@
-// @ts-nocheck
 /**
  * Health Routes - 健康检查 / 工具列表
  * 提取自 index.ts
  */
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import type { AgentAIRouter } from '../llm-router.js';
 import type { ToolRegistry } from '../tool-registry.js';
 import { getSummary } from '../evolution.js';
@@ -20,7 +19,7 @@ export function createHealthRouter(deps: HealthRouterDeps): Router {
   const { router, registry } = deps;
 
   r.get('/v1/health', (_req, res) => {
-    const providerStats = typeof router.getProviderStats === 'function' ? router.getProviderStats() : {};
+    const providerStats = typeof (router as any).getProviderStats === 'function' ? (router as any).getProviderStats() : {};
     const evolutionSummary = getSummary();
     const sessionStats = getSessionManager().stats();
     // 速率限制可观测性: 暴露各 provider 的 RPM/TPM 配额使用情况

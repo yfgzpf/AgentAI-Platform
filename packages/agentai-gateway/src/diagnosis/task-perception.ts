@@ -21,6 +21,7 @@ import {
   DiagnosisConfig,
   ComplexityLevel,
 } from '../types/diagnosis.js';
+export type { TaskPerceptionReport, InformationGap, TaskType, ActionType, ComplexityLevel, DiagnosisContext, DiagnosisConfig } from '../types/diagnosis.js';
 import {
   TASK_TYPE_KEYWORDS,
   COMPLEXITY_KEYWORDS,
@@ -70,7 +71,7 @@ export async function perceiveTask(
   const ambiguity = calculateAmbiguity(gaps, complexity, userText);
   
   // 5. 决定行动
-  const suggestedAction = determineAction(gaps, ambiguity, complexity, cfg);
+  const suggestedAction = determineAction(gaps, ambiguity, complexity, cfg as any);
   
   // 6. 提取关键实体
   const entities = extractEntities(userText);

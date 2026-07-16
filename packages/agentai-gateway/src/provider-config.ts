@@ -44,9 +44,9 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderProtocolConfig> = {
   },
   deepseek: {
     standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools', 'reasoning_content'],
-    extensionFields: [],
+    extensionFields: ['thinking', 'reasoning_effort'],
     supportsTools: true,
-    supportsThinking: false,
+    supportsThinking: true,  // DeepSeek V4: thinking + reasoning_effort 参数
     supportsImages: false,
     supportsStreamToolCalls: false,
   },
@@ -54,7 +54,7 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderProtocolConfig> = {
     standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools', 'modalities', 'prediction'],
     extensionFields: ['parallel_tool_calls', 'store', 'metadata', 'service_tier'],
     supportsTools: true,
-    supportsThinking: false,
+    supportsThinking: true,  // o1/o3 系列自带推理
     supportsImages: true,
     supportsStreamToolCalls: true,
   },
@@ -62,8 +62,32 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderProtocolConfig> = {
     standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools'],
     extensionFields: ['reasoning', 'reasoning_details'],
     supportsTools: true,
-    supportsThinking: false,  // cline 有 reasoning 但不是 thinking 模式
+    supportsThinking: true,  // cline 支持 reasoning 扩展字段
     supportsImages: false,
+    supportsStreamToolCalls: true,
+  },
+  sensenova: {
+    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools', 'n', 'stop', 'frequency_penalty', 'presence_penalty'],
+    extensionFields: ['reasoning_effort', 'response_format', 'stream_options', 'tool_choice', 'parallel_tool_calls', 'seed'],
+    supportsTools: true,
+    supportsThinking: true,  // 支持 reasoning_effort: low/medium/high/none
+    supportsImages: true,    // sensenova-6.7-flash-lite 支持图像输入
+    supportsStreamToolCalls: true,
+  },
+  longcat: {
+    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools'],
+    extensionFields: ['tool_choice', 'parallel_tool_calls', 'response_format'],
+    supportsTools: true,
+    supportsThinking: false,
+    supportsImages: true,    // LongCat-2.0 是多模态模型
+    supportsStreamToolCalls: true,
+  },
+  nvidia: {
+    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools', 'top_p', 'frequency_penalty', 'presence_penalty', 'stop', 'seed'],
+    extensionFields: ['tool_choice', 'parallel_tool_calls', 'response_format', 'stream_options'],
+    supportsTools: true,
+    supportsThinking: false,  // NVIDIA NIM 模型自带推理, 无需额外参数
+    supportsImages: true,     // 多模态模型 (Nemotron Omni, Cosmos) 支持图片输入
     supportsStreamToolCalls: true,
   },
 };
@@ -103,7 +127,7 @@ export function filterRequestFields(
 }
 
 /**
- * 构建 thinking 扩展字段 (仅对支持的 provider)
+ * 构建 thinking 扩展字段 (根据 provider 自动选择思考机制)
  */
 export function buildThinkingExtension(
   providerId: ProviderId,
@@ -111,14 +135,20 @@ export function buildThinkingExtension(
   budget?: number,
 ): Record<string, unknown> | null {
   const config = PROVIDER_CONFIGS[providerId];
-  if (!config || !config.supportsThinking) return null;
+  if (!config || !config.supportsThinking || !enabled) return null;
 
-  // 仅 agentai 支持
-  if (providerId !== 'agentai') return null;
-
-  const ext: Record<string, unknown> = { enable_thinking: enabled };
-  if (budget && budget > 0) {
-    ext.thinking_budget = budget;
+  if (providerId === 'agentai') {
+    const ext: Record<string, unknown> = { enable_thinking: true };
+    if (budget && budget > 0) {
+      ext.thinking_budget = budget;
+    }
+    return { chat_template_kwargs: ext };
   }
-  return { chat_template_kwargs: ext };
+
+  if (providerId === 'deepseek') {
+    return { thinking: { type: 'enabled' }, reasoning_effort: 'high' };
+  }
+
+  // OpenAI: o1/o3 自带推理能力, 无需额外参数
+  return null;
 }

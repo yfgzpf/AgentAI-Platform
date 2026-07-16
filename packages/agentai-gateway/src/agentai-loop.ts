@@ -2549,7 +2549,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             recordCall(this.opts.workspace || process.cwd(), {
               timestamp: Date.now(),
               tool: r.name,
-              success: r.output && !r.output.startsWith('Error:'),
+              success: !!(r.output && !r.output.startsWith('Error:')),  // v3.2 修复: 显式 boolean
               durationMs: 0,
               userId: this.opts.userId,
             });
@@ -2665,15 +2665,15 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
                 const lastUser = [...this.context.appendOnlyLog]
                   .reverse()
                   .find((m: any) => m.role === 'user' && typeof m.content === 'string');
-                const userGoal = (lastUser?.content || '').slice(0, 200);
-                const summary = (lastAssistant?.content || '').slice(0, 500);
+                const userGoal = ((typeof lastUser?.content === 'string' ? lastUser.content : '') || '').slice(0, 200);  // v3.2 修复: 显式 string
+                const summary = (typeof lastAssistant?.content === 'string' ? lastAssistant.content : '').slice(0, 500);
                 if (userGoal || summary) {
                   pm.saveSessionSummary(this.opts.workspace, {
                     userGoal,
                     toolsUsed: recentTools,
                     filesModified: [], // 实时模式先不抓, 最后再总结
                     summary: `[实时] 最近工具: ${recentTools.slice(0, 5).join(', ')} | ${summary}`,
-                    taskType: detectTaskType(userGoal),
+                    taskType: detectTaskType(userGoal as any),  // v3.2 修复: userGoal 可能是 string | block[], 传 any
                   });
                 }
               } catch { /* live save optional */ }

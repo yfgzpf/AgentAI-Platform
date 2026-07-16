@@ -555,12 +555,16 @@ sys.stdout.flush()
     }
     if (this.process) {
       console.log('[moss-tts] 停止服务...');
-      this.process.kill('SIGTERM');
-      setTimeout(() => {
-        if (this.process) {
-          try { this.process.kill('SIGKILL'); } catch { /* 已退出 */ }
+      const pid = this.process.pid;
+      // 使用 taskkill 终止进程树 (遵循 AGENTS.md: 禁止 process.kill)
+      if (pid) {
+        try {
+          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+        } catch {
+          // 进程可能已退出, 忽略错误
         }
-      }, 3000);
+      }
+      // 确保进程对象被清理
       this.process = null;
     }
   }

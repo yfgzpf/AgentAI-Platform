@@ -84,6 +84,7 @@ export class SessionManager {
 
   /**
    * 直接获取 (不创建)
+   * 注意: 返回对象不包含 master 等扩展字段 — 路由需要 master 时请用 getWithExtra。
    */
   get(key: string): { loop: AgentAILoop; userId: string; workspace: string } | undefined {
     const meta = this.map.get(key);
@@ -92,6 +93,44 @@ export class SessionManager {
     this.map.delete(key);
     this.map.set(key, meta);
     return { loop: meta.loop, userId: meta.userId, workspace: meta.workspace };
+  }
+
+  /**
+   * 显式写入/覆盖一个 session (含扩展字段, 如 MasterController 引用)。
+   * 取代路由层直接操作 sessionManager['map'].set(...) 的写法,
+   * 由 SessionManager 统一负责容量管理与 LRU 语义。
+   */
+  set(
+    key: string,
+    data: { loop: AgentAILoop; userId: string; workspace: string; master?: any; callCount?: number },
+  ): void {
+    // 容量检查 (新建 key 时)
+    if (!this.map.has(key) && this.map.size >= this.capacity) {
+      this.evictLeastRecentlyUsed();
+    }
+    const prev = this.map.get(key);
+    const meta: SessionMeta & { master?: any } = {
+      loop: data.loop,
+      lastAccessedAt: Date.now(),
+      createdAt: prev?.createdAt ?? Date.now(),
+      userId: data.userId,
+      workspace: data.workspace,
+      callCount: data.callCount ?? prev?.callCount ?? 1,
+      ...(data.master !== undefined ? { master: data.master } : {}),
+    };
+    this.map.set(key, meta as SessionMeta);
+  }
+
+  /**
+   * 获取 session 及其扩展字段 (master 等), 用于路由层复用已创建的编排器。
+   */
+  getWithExtra<T = any>(key: string): { loop: AgentAILoop; userId: string; workspace: string; master?: T } | undefined {
+    const meta = this.map.get(key) as (SessionMeta & { master?: any }) | undefined;
+    if (!meta) return undefined;
+    meta.lastAccessedAt = Date.now();
+    this.map.delete(key);
+    this.map.set(key, meta);
+    return { loop: meta.loop, userId: meta.userId, workspace: meta.workspace, ...(meta.master !== undefined ? { master: meta.master } : {}) };
   }
 
   /**

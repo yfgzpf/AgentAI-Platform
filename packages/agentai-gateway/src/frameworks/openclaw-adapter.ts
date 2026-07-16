@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * OpenClaw 框架适配器
  * ----------------------------------------------------
@@ -17,7 +16,7 @@
 import { EventEmitter } from 'events';
 import type { ChatMessage, ChatResponse } from '../llm-router.js';
 import { AgentAIRouter } from '../llm-router.js';
-import { scanPromptInjection, computeUsage } from './openclaw-helpers.js';
+import { computeUsage } from './openclaw-helpers.js';
 import type { FrameworkAdapter, FrameworkContext, FrameworkCapabilities } from './types.js';
 
 /** 共享 router (单例) */
@@ -47,15 +46,7 @@ export class OpenClawAdapter extends EventEmitter implements FrameworkAdapter {
   }
 
   async chat(messages: ChatMessage[], ctx: FrameworkContext): Promise<ChatResponse> {
-    // === 1. 中文注入扫描 (学 Hermes + 自创) ===
-    const joined = messages.map(m => m.content).join('\n');
-    const scan = scanPromptInjection(joined);
-    if (!scan.safe) {
-      this.emit('security:threat', scan.threats);
-      throw new Error(`OpenClaw 拦截: 检测到 ${scan.threats.length} 个提示注入`);
-    }
-
-    // === 2. OpenClaw AgentSession 风格累加 (学 zhiy-agent-core.ts) ===
+    // === 1. OpenClaw AgentSession 风格累加 (学 zhiy-agent-core.ts) ===
     const sessionKey = `${ctx.userId}:${ctx.workspace}`;
     let acc = this.sessions.get(sessionKey);
     if (!acc) {
@@ -92,7 +83,7 @@ export class OpenClawAdapter extends EventEmitter implements FrameworkAdapter {
         ).join('')}</openclaw_skills>`
       : '';
 
-    if (skillsXml && !systemMsgs.some(m => m.content.includes('<openclaw_skills>'))) {
+    if (skillsXml && !systemMsgs.some(m => (m.content as string).includes('<openclaw_skills>'))) {  // v3.2 修复: content 是 MessageContent
       systemMsgs.push({
         role: 'system',
         content: `# OpenClaw AgentSession\n${skillsXml}\n\nUse the above tools. Reply with tool_calls in JSON.`,

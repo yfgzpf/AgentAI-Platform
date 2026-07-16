@@ -118,6 +118,37 @@ export class WorkspaceManager {
     return this;
   }
 
+  // ========================
+  // 持久化: 工作区路径跨进程保存
+  // ========================
+
+  /** 持久化工作区配置到文件 (重启后恢复) */
+  private _saveWorkspaceConfig(): void {
+    const configDir = path.join(this.aiWorkDir, 'config');
+    try {
+      if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'workspace.json'),
+        JSON.stringify({ projectDir: this.projectDir }, null, 2),
+        'utf-8',
+      );
+    } catch (e) {
+      console.error('[workspace-manager] persist workspace config failed:', e);
+    }
+  }
+
+  /** 从持久化文件恢复工作区路径 */
+  private _loadWorkspaceConfig(): string | null {
+    const configPath = path.join(this.aiWorkDir, 'config', 'workspace.json');
+    try {
+      if (fs.existsSync(configPath)) {
+        const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        return data.projectDir || null;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }
+
   /** 是否已初始化 */
   get initialized(): boolean { return this._initialized; }
 
@@ -161,7 +192,7 @@ export class WorkspaceManager {
 
   /**
    * 设置当前项目目录 (前端选择后调用)
-   * 自动创建项目级 .agentai/ 子目录
+   * 自动创建项目级 .agentai/ 子目录, 并持久化到磁盘
    */
   setProjectDir(dir: string): void {
     if (!fs.existsSync(dir)) {
@@ -170,6 +201,8 @@ export class WorkspaceManager {
     this.projectDir = path.resolve(dir);
     // 创建项目级记忆目录
     ensureDir(path.join(this.projectDir, '.agentai', 'memory'));
+    // 持久化 (重启后恢复)
+    this._saveWorkspaceConfig();
   }
 
   // ========================
@@ -238,6 +271,14 @@ export class WorkspaceManager {
   static getInstance(): WorkspaceManager {
     if (!_instance) {
       _instance = new WorkspaceManager();
+      // 尝试从持久化文件恢复上次的工作区路径
+      try {
+        const saved = _instance._loadWorkspaceConfig();
+        if (saved && fs.existsSync(saved)) {
+          _instance.projectDir = saved;
+          console.log(`[workspace-manager] 已从配置文件恢复工作区: ${saved}`);
+        }
+      } catch { /* ignore */ }
     }
     return _instance;
   }

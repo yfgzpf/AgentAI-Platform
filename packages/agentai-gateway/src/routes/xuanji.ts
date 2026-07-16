@@ -121,6 +121,10 @@ export function createXuanjiRouter(): Router {
   r.get('/v1/xuanji/cases/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      if (!id) {
+        res.status(400).json({ error: 'Missing case id' });
+        return;
+      }
       const medicalCase = medicalCaseManager.getCase(id);
       
       if (!medicalCase) {
@@ -169,6 +173,10 @@ export function createXuanjiRouter(): Router {
   r.post('/v1/xuanji/cases/:id/feedback', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      if (!id) {
+        res.status(400).json({ error: 'Missing case id' });
+        return;
+      }
       const { tags, lessons } = req.body || {};
       
       const medicalCase = medicalCaseManager.getCase(id);

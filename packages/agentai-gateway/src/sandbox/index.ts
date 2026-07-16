@@ -9,11 +9,12 @@
  *   - 记录审计日志
  */
 
-import * as fs from 'fs';
 import * as fsp from 'fs/promises';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { load, save, validate } from './rules.js';
+import { WorkspaceManager } from '../workspace-manager.js';
+import { load, save, validate, defaultRules } from './rules.js';
 import { check } from './checker.js';
 import type { SandboxCheckRequest, SandboxCheckResult, SandboxRules, SandboxRulesResponse } from './types.js';
 
@@ -50,12 +51,12 @@ export class Sandbox {
     private enabled: boolean;
 
     constructor(cfg: SandboxConfig = {}) {
-        this.rulesPath = cfg.rulesPath || path.join(os.homedir(), '.agentai', 'sandbox-rules.json');
+        this.rulesPath = cfg.rulesPath || WorkspaceManager.getInstance().sandboxRulesPath;
         this.audit = cfg.audit || (() => {});
         this.reloadMs = cfg.reloadIntervalMs ?? 1000;
-        this.enabled = cfg.enabled ?? false; // 默认关闭, 用户需显式启用
-        // 初始占位, 启动时覆盖
-        this.rules = { allow: [], deny: [], prompt: [] };
+        this.enabled = cfg.enabled ?? false; // opt-in: 默认禁用, 需显式启用
+        // disabled 时规则为空, enabled 时使用 defaultRules() 防 start() 未执行时 check() 使用不安全规则
+        this.rules = this.enabled ? defaultRules() : { allow: [], deny: [], prompt: [] };
     }
 
     /**
@@ -245,11 +246,11 @@ function statePath(rulesPath: string): string {
 
 export async function initGlobalSandbox(cfg: SandboxConfig = {}): Promise<Sandbox> {
     if (globalSandbox) return globalSandbox;
-    // 尝试从 state 文件读 enabled
+    // 沙箱 opt-in: 默认禁用, index.ts 启动时显式传 enabled: true
     let enabled = cfg.enabled ?? false;
     if (cfg.enabled === undefined) {
         try {
-            const text = await fsp.readFile(statePath(cfg.rulesPath || path.join(os.homedir(), '.agentai', 'sandbox-rules.json')), 'utf-8');
+            const text = await fsp.readFile(statePath(cfg.rulesPath || WorkspaceManager.getInstance().sandboxRulesPath), 'utf-8');
             const j = JSON.parse(text);
             if (typeof j.enabled === 'boolean') enabled = j.enabled;
         } catch { /* 文件不存在, 用默认 false */ }

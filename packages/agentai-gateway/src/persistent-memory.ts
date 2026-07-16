@@ -21,6 +21,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
+import { WorkspaceManager } from './workspace-manager.js';
 
 // ===== 类型定义 =====
 
@@ -93,14 +95,17 @@ export interface Pattern {
   lastTriggered: number;
 }
 
-// ===== 配置常量 =====
+// ===== 路径常量 (通过 WorkspaceManager 动态解析) =====
 
-const AGENTAI_DIR = path.join(
-  process.env.HOME || process.env.USERPROFILE || '.',
-  '.agentai'
-);
-const SESSIONS_DIR = path.join(AGENTAI_DIR, 'sessions');
-const GLOBAL_MEMORY_FILE = path.join(AGENTAI_DIR, 'global-memory.json');
+function getAgentaiDir(): string {
+  return WorkspaceManager.getInstance().aiWorkDir;
+}
+function getSessionsDir(): string {
+  return WorkspaceManager.getInstance().subdir('sessions');
+}
+function getGlobalMemoryFile(): string {
+  return WorkspaceManager.getInstance().globalMemoryPath;
+}
 const MAX_MESSAGES_PER_CHECKPOINT = 200;
 const AUTO_SAVE_INTERVAL_MS = 30_000; // 30 秒自动保存一次
 
@@ -110,8 +115,16 @@ function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function ensureDir(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
+function ensureDir(dir: string): boolean {
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    return true;
+  } catch (err: any) {
+    console.warn(`[persistent-memory] cannot create dir ${dir}: ${err.message}`);
+    return false;
+  }
 }
 
 function safeReadJson<T>(filePath: string, fallback: T): T {
@@ -129,10 +142,15 @@ export class PersistentMemory {
   private saveTimer: ReturnType<typeof setInterval> | null = null;
   private checkpointCache = new Map<string, SessionCheckpoint | undefined>();
   private dirtySessions = new Set<string>();
+  private diskAvailable: boolean;
 
   constructor() {
-    ensureDir(AGENTAI_DIR);
-    ensureDir(SESSIONS_DIR);
+    const dirOk = ensureDir(getAgentaiDir());
+    const sessOk = ensureDir(getSessionsDir());
+    this.diskAvailable = dirOk && sessOk;
+    if (!this.diskAvailable) {
+      console.warn('[persistent-memory] 磁盘不可写, 会话不会持久化到磁盘 (不影响对话)');
+    }
     // 启动后台自动保存
     this.startAutoSave();
   }
@@ -268,8 +286,9 @@ export class PersistentMemory {
     sessionId: string,
     checkpoint: SessionCheckpoint,
   ): void {
+    if (!this.diskAvailable) return;
     const dir = this.getCheckpointDir(sessionId);
-    ensureDir(dir);
+    if (!ensureDir(dir)) return;
     const filePath = path.join(dir, 'checkpoint.json');
     try {
       fs.writeFileSync(filePath, JSON.stringify(checkpoint, null, 2));
@@ -289,7 +308,7 @@ export class PersistentMemory {
   }
 
   private getCheckpointDir(sessionId: string): string {
-    return path.join(SESSIONS_DIR, sessionId);
+    return path.join(getSessionsDir(), sessionId);
   }
 
   // ========================
@@ -352,10 +371,9 @@ export class PersistentMemory {
       messageCount: number;
     }> = [];
 
-    if (!fs.existsSync(SESSIONS_DIR)) return result;
-
-    const dirs = fs.readdirSync(SESSIONS_DIR).filter(d => {
-      const dirPath = path.join(SESSIONS_DIR, d);
+    if (!fs.existsSync(getSessionsDir())) return result;
+    const dirs = fs.readdirSync(getSessionsDir()).filter(d => {
+      const dirPath = path.join(getSessionsDir(), d);
       return fs.statSync(dirPath).isDirectory();
     });
 
@@ -379,6 +397,40 @@ export class PersistentMemory {
     return result;
   }
 
+  /**
+   * 列出最近的 sessions (用于注入上下文)
+   * @param userId 过滤用户
+   * @param limit 最大返回数量
+   */
+  listRecentSessions(userId?: string, limit = 5): Array<{
+    sessionId: string;
+    summary?: string;
+    createdAt: number;
+    updatedAt: number;
+    callCount: number;
+  }> {
+    const all = this.listCheckpoints();
+    const filtered = userId
+      ? all.filter(s => s.userId === userId)
+      : all;
+    return filtered.slice(0, limit).map(s => {
+      const cp = this.getCheckpoint(s.sessionId);
+      // 生成更有意义的摘要: 取最近5条用户/助手消息
+      const recentMsgs = (cp?.messages || [])
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .slice(-5)
+        .map(m => `[${m.role}]: ${(m.content || '').slice(0, 80)}`)
+        .join(' | ');
+      return {
+        sessionId: s.sessionId,
+        summary: recentMsgs.slice(0, 300) || undefined,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        callCount: s.messageCount,
+      };
+    });
+  }
+
   // ========================
   // 全局记忆 (Global Memory)
   // ========================
@@ -387,7 +439,7 @@ export class PersistentMemory {
    * 加载全局记忆
    */
   loadGlobalMemory(): GlobalMemory {
-    return safeReadJson<GlobalMemory>(GLOBAL_MEMORY_FILE, {
+    return safeReadJson<GlobalMemory>(getGlobalMemoryFile(), {
       preferences: {},
       commonPatterns: [],
       updatedAt: Date.now(),
@@ -400,7 +452,7 @@ export class PersistentMemory {
   saveGlobalMemory(memory: GlobalMemory): void {
     memory.updatedAt = Date.now();
     try {
-      fs.writeFileSync(GLOBAL_MEMORY_FILE, JSON.stringify(memory, null, 2));
+      fs.writeFileSync(getGlobalMemoryFile(), JSON.stringify(memory, null, 2));
     } catch (err) {
       console.warn('[persistent-memory] global memory save failed:', err);
     }
@@ -473,6 +525,52 @@ export class PersistentMemory {
   }
 
   /**
+   * v3.1: 跨会话记忆统计 (供 GUI 注入上下文面板使用)
+   * 返回: 项目级 + 用户级 + 总记忆条数
+   * 数据源:
+   *   - 项目级: {workspace}/.agentai/MEMORY.md (loadProjectMemory)
+   *   - 用户级: ~/.agentai/memory/global.jsonl (NDJSON)
+   */
+  getMemoryStats(opts: { workspace?: string; userId?: string } = {}): {
+    projectCount: number;
+    userCount: number;
+    totalCount: number;
+    lastUpdated: number;
+  } {
+    let projectCount = 0;
+    let userCount = 0;
+    let lastUpdated = 0;
+
+    // 1. 项目级记忆
+    if (opts.workspace) {
+      try {
+        const pm = this.loadProjectMemory(opts.workspace);
+        projectCount = pm.entries.length;
+        if (pm.updatedAt > lastUpdated) lastUpdated = pm.updatedAt;
+      } catch { /* silent */ }
+    }
+
+    // 2. 用户级记忆 (全局 NDJSON)
+    const globalDir = path.join(os.homedir(), '.agentai', 'memory');
+    const globalFile = path.join(globalDir, 'global.jsonl');
+    try {
+      if (fs.existsSync(globalFile)) {
+        const lines = fs.readFileSync(globalFile, 'utf-8').split('\n').filter(l => l.trim());
+        userCount = lines.length;
+        const stat = fs.statSync(globalFile);
+        if (stat.mtimeMs > lastUpdated) lastUpdated = stat.mtimeMs;
+      }
+    } catch { /* silent */ }
+
+    return {
+      projectCount,
+      userCount,
+      totalCount: projectCount + userCount,
+      lastUpdated: lastUpdated || Date.now(),
+    };
+  }
+
+  /**
    * 保存项目记忆条目
    */
   saveProjectEntry(projectPath: string, entry: Omit<MemoryEntry, 'id' | 'createdAt' | 'lastUsedAt' | 'useCount'>): void {
@@ -484,6 +582,52 @@ export class PersistentMemory {
   }
 
   // ========================
+  // 会话摘要 (跨会话连续记忆)
+  // ========================
+
+  /**
+   * 保存会话摘要 (任务结束时调用)
+   * 存储到 {workspace}/.agentai/last-session.json
+   */
+  saveSessionSummary(workspace: string, summary: {
+    userGoal: string;
+    toolsUsed: string[];
+    filesModified: string[];
+    summary: string;
+    taskType?: string;
+  }): void {
+    try {
+      const dir = path.join(workspace, '.agentai');
+      ensureDir(dir);
+      const file = path.join(dir, 'last-session.json');
+      const data = { ...summary, timestamp: Date.now() };
+      fs.writeFileSync(file, JSON.stringify(data, null, 2));
+    } catch (e: any) {
+      console.warn('[persistent-memory] saveSessionSummary failed:', e?.message);
+    }
+  }
+
+  /**
+   * 读取上次会话摘要 (新会话启动时注入上下文)
+   */
+  getLastSessionSummary(workspace: string): {
+    userGoal: string;
+    toolsUsed: string[];
+    filesModified: string[];
+    summary: string;
+    taskType?: string;
+    timestamp: number;
+  } | null {
+    try {
+      const file = path.join(workspace, '.agentai', 'last-session.json');
+      if (!fs.existsSync(file)) return null;
+      return JSON.parse(fs.readFileSync(file, 'utf-8'));
+    } catch {
+      return null;
+    }
+  }
+
+  // ========================
   // 清理 (Dream/Distill)
   // ========================
 
@@ -491,13 +635,13 @@ export class PersistentMemory {
    * 清理过期 checkpoint (借鉴 MiMo Code Dream: 7天合并去重)
    */
   cleanupOldCheckpoints(days: number = 7): number {
-    if (!fs.existsSync(SESSIONS_DIR)) return 0;
+    if (!fs.existsSync(getSessionsDir())) return 0;
 
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
     let deleted = 0;
 
-    const dirs = fs.readdirSync(SESSIONS_DIR).filter(d => {
-      const dirPath = path.join(SESSIONS_DIR, d);
+    const dirs = fs.readdirSync(getSessionsDir()).filter(d => {
+      const dirPath = path.join(getSessionsDir(), d);
       return fs.statSync(dirPath).isDirectory();
     });
 
@@ -505,7 +649,7 @@ export class PersistentMemory {
       const checkpoint = this.loadCheckpointFromFile(dir);
       if (checkpoint && checkpoint.updatedAt < cutoff && !checkpoint.pinned) {
         try {
-          fs.rmSync(path.join(SESSIONS_DIR, dir), { recursive: true, force: true });
+          fs.rmSync(path.join(getSessionsDir(), dir), { recursive: true, force: true });
           this.checkpointCache.delete(dir);
           deleted++;
         } catch {

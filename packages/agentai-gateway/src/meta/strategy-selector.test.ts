@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { StrategySelector, StrategyConfig, TaskProfile } from './strategy-selector.js';
+import { CognitiveProfile } from './cognitive-profile.js';
 
 describe('StrategySelector', () => {
   const selector = new StrategySelector();
@@ -65,13 +66,17 @@ describe('StrategySelector', () => {
   });
 
   it('adjusts based on weak cognitive profile', () => {
-    const profile = {
+    const profile = new CognitiveProfile({
+      agentId: 'weak-agent',
+      personasUsed: [],
       dimensions: [
         { label: 'coding', strength: 0.3, trialCount: 5 },
       ],
+      toolPatterns: [],
       failureModes: [{ pattern: 'misses_edge_cases', count: 3, lastSeen: new Date().toISOString() }],
-      getTopFailureModes: (n: number) => [{ pattern: 'misses_edge_cases', count: 3, lastSeen: new Date().toISOString() }].slice(0, n),
-    } as any;
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
 
     const strategy = selector.select(makeTask({ taskType: 'coding' }), profile);
 
@@ -81,11 +86,17 @@ describe('StrategySelector', () => {
   });
 
   it('adjusts based on strong cognitive profile', () => {
-    const profile = {
+    const profile = new CognitiveProfile({
+      agentId: 'strong-agent',
+      personasUsed: [],
       dimensions: [
         { label: 'coding', strength: 0.9, trialCount: 20 },
       ],
-    } as any;
+      toolPatterns: [],
+      failureModes: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
 
     const strategy = selector.select(makeTask({ taskType: 'coding' }), profile);
 

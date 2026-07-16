@@ -81,87 +81,101 @@ export class SkillOrchestrator extends EventEmitter {
     if (!fs.existsSync(dir)) return 0;
     let count = 0;
     try {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        const skillMd = path.join(dir, entry.name, 'SKILL.md');
-        if (!fs.existsSync(skillMd)) continue;
-
-        const meta = this.parseSkillMd(skillMd);
-        if (!meta.name) continue;
-
-        const handlerPy = path.join(dir, entry.name, 'handler.py');
-        const handlerTs = path.join(dir, entry.name, 'handler.ts');
-        const handlerJs = path.join(dir, entry.name, 'index.js');
-        const mainPy = path.join(dir, entry.name, 'main.py');
-
-        // 动态构建 handler — 发现脚本文件后自动绑定执行器
-        let handler: SkillDescriptor['handler'] | undefined;
-        let handlerPath: string | undefined;
-
-        if (fs.existsSync(handlerPy)) {
-          handlerPath = handlerPy;
-          handler = async (args: any) => {
-            try {
-              const { callPython } = await import('./python-bridge.js');
-              return await callPython(handlerPy!, args);
-            } catch (e: any) {
-              return { success: false, output: `Python skill error: ${e.message}` };
-            }
-          };
-        } else if (fs.existsSync(mainPy)) {
-          handlerPath = mainPy;
-          handler = async (args: any) => {
-            try {
-              const { callPython } = await import('./python-bridge.js');
-              return await callPython(mainPy, args);
-            } catch (e: any) {
-              return { success: false, output: `Python skill error: ${e.message}` };
-            }
-          };
-        } else if (fs.existsSync(handlerTs)) {
-          handlerPath = handlerTs;
-          handler = async (args: any) => {
-            try {
-              const mod = await import(handlerTs!);
-              const fn = typeof mod === 'function' ? mod : mod.default || mod.handler || mod.execute;
-              if (typeof fn === 'function') return await fn(args);
-              return { success: false, output: `TS skill has no executable export` };
-            } catch (e: any) {
-              return { success: false, output: `TS skill error: ${e.message}` };
-            }
-          };
-        } else if (fs.existsSync(handlerJs)) {
-          handlerPath = handlerJs;
-          handler = async (args: any) => {
-            try {
-              const mod = await import(handlerJs!);
-              const fn = typeof mod === 'function' ? mod : mod.default || mod.handler || mod.execute;
-              if (typeof fn === 'function') return await fn(args);
-              return { success: false, output: `JS skill has no executable export` };
-            } catch (e: any) {
-              return { success: false, output: `JS skill error: ${e.message}` };
-            }
-          };
+      // 递归扫描 (最多 2 层): skills/<category>/<skill>/SKILL.md
+      const walk = (currentDir: string, depth: number) => {
+        if (depth > 2) return;
+        for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '_lib') continue;
+          const subDir = path.join(currentDir, entry.name);
+          const skillMd = path.join(subDir, 'SKILL.md');
+          if (fs.existsSync(skillMd)) {
+            const registered = this._registerFromDir(subDir, skillMd);
+            count += registered;
+          } else {
+            walk(subDir, depth + 1);
+          }
         }
-
-        this.register({
-          name: meta.name,
-          description: meta.description || meta.name,
-          category: meta.category || 'uncategorized',
-          tags: meta.tags || [],
-          handlerPath,
-          handler,
-          parameters: meta.parameters,
-          parallelSafe: true,
-          riskLevel: 'low',
-          // @ts-ignore - 扩展字段
-          triggers: meta.triggers || [],
-        });
-        count++;
-      }
+      };
+      walk(dir, 0);
     } catch {}
     if (count > 0) console.log(`[orchestrator] scanned ${count} skills from ${dir}`);
     return count;
+  }
+
+  private _registerFromDir(skillDir: string, skillMd: string): number {
+    const meta = this.parseSkillMd(skillMd);
+    if (!meta.name) return 0;
+
+    const handlerPy = path.join(skillDir, 'handler.py');
+    const handlerTs = path.join(skillDir, 'handler.ts');
+    const handlerJs = path.join(skillDir, 'index.js');
+    const mainPy = path.join(skillDir, 'main.py');
+
+    // 动态构建 handler — 发现脚本文件后自动绑定执行器
+    let handler: SkillDescriptor['handler'] | undefined;
+    let handlerPath: string | undefined;
+
+    if (fs.existsSync(handlerPy)) {
+      handlerPath = handlerPy;
+      handler = async (args: any) => {
+        try {
+          const { callPython } = await import('./python-bridge.js');
+          return await callPython(handlerPy!, args);
+        } catch (e: any) {
+          return { success: false, output: `Python skill error: ${e.message}` };
+        }
+      };
+    } else if (fs.existsSync(mainPy)) {
+      handlerPath = mainPy;
+      handler = async (args: any) => {
+        try {
+          const { callPython } = await import('./python-bridge.js');
+          return await callPython(mainPy, args);
+        } catch (e: any) {
+          return { success: false, output: `Python skill error: ${e.message}` };
+        }
+      };
+    } else if (fs.existsSync(handlerTs)) {
+      handlerPath = handlerTs;
+      handler = async (args: any) => {
+        try {
+          const mod = await import(handlerTs!);
+          const fn = typeof mod === 'function' ? mod : mod.default || mod.handler || mod.execute;
+          if (typeof fn === 'function') return await fn(args);
+          return { success: false, output: `TS skill has no executable export` };
+        } catch (e: any) {
+          return { success: false, output: `TS skill error: ${e.message}` };
+        }
+      };
+    } else if (fs.existsSync(handlerJs)) {
+      handlerPath = handlerJs;
+      handler = async (args: any) => {
+        try {
+          const mod = await import(handlerJs!);
+          const fn = typeof mod === 'function' ? mod : mod.default || mod.handler || mod.execute;
+          if (typeof fn === 'function') return await fn(args);
+          return { success: false, output: `JS skill has no executable export` };
+        } catch (e: any) {
+          return { success: false, output: `JS skill error: ${e.message}` };
+        }
+      };
+    }
+
+    this.register({
+      name: meta.name,
+      description: meta.description || meta.name,
+      category: meta.category || 'uncategorized',
+      tags: meta.tags || [],
+      handlerPath,
+      handler,
+      parameters: meta.parameters,
+      parallelSafe: true,
+      riskLevel: 'low',
+      // @ts-ignore - 扩展字段
+      triggers: meta.triggers || [],
+    });
+    return 1;
   }
 
   /**
@@ -306,7 +320,7 @@ export class SkillOrchestrator extends EventEmitter {
         // 解析 metadata.triggers
         const triggersMatch = fmContent.match(/triggers:\s*([\s\S]*?)(?=\n\w|$)/);
         if (triggersMatch) {
-          const triggersText = triggersMatch[1];
+          const triggersText: string = triggersMatch[1] || '';
           result.triggers = triggersText
             .split('\n')
             .map(line => line.trim())
@@ -319,35 +333,34 @@ export class SkillOrchestrator extends EventEmitter {
     } catch { return {}; }
   }
 
-/**
- * 执行技能 (供 WorkflowOrchestrator 调用)
- */
-async executeSkill(skillName: string, params: any): Promise<{ success: boolean; output: string; data?: any }> {
-  console.log(`[skill] 🚀 执行技能: ${skillName}, 参数: ${JSON.stringify(params).slice(0, 200)}`);
-  
-  // 查找技能
-  const skill = this.skills.get(skillName);
-  if (!skill) {
-    console.error(`[skill] ❌ 技能不存在: ${skillName}`);
-    return { success: false, output: `技能 "${skillName}" 不存在` };
+  /**
+   * 执行技能 (供 WorkflowOrchestrator 调用)
+   */
+  async executeSkill(skillName: string, params: any): Promise<{ success: boolean; output: string; data?: any }> {
+    console.log(`[skill] 🚀 执行技能: ${skillName}, 参数: ${JSON.stringify(params).slice(0, 200)}`);
+
+    const skill = this.skills.get(skillName);
+    if (!skill) {
+      console.error(`[skill] ❌ 技能不存在: ${skillName}`);
+      return { success: false, output: `技能 "${skillName}" 不存在` };
+    }
+    if (!skill.handler) {
+      console.error(`[skill] ❌ 技能没有 handler: ${skillName}`);
+      return { success: false, output: `技能 "${skillName}" 没有实现 handler` };
+    }
+
+    const startTime = Date.now();
+    try {
+      const result = await skill.handler(params, {});
+      const duration = Date.now() - startTime;
+      console.log(`[skill] ✅ 技能执行成功: ${skillName}, 耗时: ${duration}ms, 结果: ${result.success}`);
+      return result;
+    } catch (err: any) {
+      const duration = Date.now() - startTime;
+      console.error(`[skill] ❌ 技能执行失败: ${skillName}, 耗时: ${duration}ms, 错误: ${err.message}`);
+      return { success: false, output: `技能执行失败: ${err.message}` };
+    }
   }
-  if (!skill.handler) {
-    console.error(`[skill] ❌ 技能没有 handler: ${skillName}`);
-    return { success: false, output: `技能 "${skillName}" 没有实现 handler` };
-  }
-  
-  const startTime = Date.now();
-  try {
-    const result = await skill.handler(params, {});
-    const duration = Date.now() - startTime;
-    console.log(`[skill] ✅ 技能执行成功: ${skillName}, 耗时: ${duration}ms, 结果: ${result.success}`);
-    return result;
-  } catch (err: any) {
-    const duration = Date.now() - startTime;
-    console.error(`[skill] ❌ 技能执行失败: ${skillName}, 耗时: ${duration}ms, 错误: ${err.message}`);
-    return { success: false, output: `技能执行失败: ${err.message}` };
-  }
-}
 }
 
 export const skillOrchestrator = new SkillOrchestrator();

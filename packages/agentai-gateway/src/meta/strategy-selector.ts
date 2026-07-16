@@ -71,19 +71,30 @@ export class StrategySelector {
    * Select a strategy based on task profile and agent's cognitive profile.
    */
   select(task: TaskProfile, profile?: CognitiveProfile): StrategyConfig {
-    // Step 1: Look up default for task type
-    const defaultConfig = this.defaultStrategies[task.taskType];
-    if (!defaultConfig) {
-      // Fallback to generic strategy
-      return this.genericStrategy(task);
-    }
+    // Step 1: Look up default for task type, scaling effort by complexity.
+    const known = this.defaultStrategies[task.taskType];
+    const baseConfig: StrategyConfig = known
+      ? this.scaleByComplexity({ ...known }, task.complexity)
+      : this.genericStrategy(task);
 
     // Step 2: If agent has cognitive profile, adjust based on strengths/weaknesses
     if (profile) {
-      return this.adjustBasedOnProfile(defaultConfig, profile, task);
+      return this.adjustBasedOnProfile(baseConfig, profile, task);
     }
 
-    return defaultConfig;
+    return baseConfig;
+  }
+
+  /**
+   * Scale a known task-type strategy's effort by complexity.
+   * high → +50% tool calls & reasoning, low → −50%.
+   */
+  private scaleByComplexity(config: StrategyConfig, complexity: TaskProfile['complexity']): StrategyConfig {
+    if (complexity === 'medium') return config;
+    const m = complexity === 'high' ? 1.5 : 0.5;
+    config.maxToolCalls = Math.max(1, Math.round(config.maxToolCalls * m));
+    config.maxReasoningSteps = Math.max(1, Math.round(config.maxReasoningSteps * m));
+    return config;
   }
 
   /**
@@ -133,10 +144,10 @@ export class StrategySelector {
         config.preferTools = true;
       }
 
-      // If agent is strong, rely more on reasoning
+      // If agent is strong, rely more on reasoning (fewer tool calls, more steps)
       if (avgStrength >= 0.8) {
-        config.maxToolCalls = Math.round(config.maxToolCalls * 0.7);
-        config.maxReasoningSteps = Math.round(config.maxReasoningSteps * 1.3);
+        config.maxToolCalls = Math.max(1, Math.round(config.maxToolCalls * 0.7));
+        config.maxReasoningSteps = config.maxReasoningSteps + 2;
       }
     }
 

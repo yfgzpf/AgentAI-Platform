@@ -18,6 +18,7 @@ import {
   TreatmentApproach,
   RiskLevel,
 } from '../types/diagnosis.js';
+export type { TaskPerceptionReport, DiagnosisReport, DiagnosisContext, DiagnosisConfig, TreatmentApproach, RiskLevel } from '../types/diagnosis.js';
 import {
   DEFAULT_DIAGNOSIS_CONFIG,
   TREATMENT_APPROACH_MATRIX,
@@ -49,7 +50,7 @@ export async function diagnoseTask(
   const risk = analyzeRisk(perception, confidence);
   
   // 3. 选择治法（施治）
-  const approach = selectTreatmentApproach(perception, risk, cfg);
+  const approach = selectTreatmentApproach(perception, risk, cfg as any);
   
   // 4. 预估步骤数
   const estimatedSteps = estimateSteps(perception, approach);

@@ -18,6 +18,8 @@ import {
   DiagnosisContext,
 } from '../types/diagnosis.js';
 
+export type GapAnalysisReport = InformationGap[];
+
 // ═══════════════════════════════════════════════════════════
 // 缺口模式库
 // ═══════════════════════════════════════════════════════════

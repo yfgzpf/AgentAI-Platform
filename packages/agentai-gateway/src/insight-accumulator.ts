@@ -119,6 +119,38 @@ const INDUSTRY_KEYWORDS: Record<string, {
     tools: ['HIS系统', 'PACS影像', '电子病历', '远程医疗'],
     painPoints: ['医疗资源不均', '误诊风险', '数据孤岛', '患者依从性'],
   },
+  'comic': {
+    name: '漫剧创作',
+    keywords: ['漫画', '短剧', '剧本', '分镜', '角色设计', '动画', '创作', '连载', '漫画家'],
+    coreConcepts: ['分镜设计', '角色弧光', '叙事节奏', '视觉叙事', '对白技巧'],
+    workflows: ['构思→大纲→分镜→绘制→后期', '剧本创作流程', '角色设定流程'],
+    tools: ['Clip Studio Paint', 'Procreate', 'Photoshop', 'AI绘图工具'],
+    painPoints: ['创意枯竭', '连载压力', '读者留存', '版权保护'],
+  },
+  'real_estate': {
+    name: '房地产',
+    keywords: ['房产', '楼盘', '户型', '房价', '购房', '租房', '学区房', '物业', '中介', '房产证'],
+    coreConcepts: ['市场分析', '户型评价', '区位价值', '投资回报', '政策影响'],
+    workflows: ['看房→评估→议价→签约→过户', '房产估值流程', '市场调研'],
+    tools: ['房产APP', 'GIS系统', '估价模型', 'CRM系统'],
+    painPoints: ['信息不对称', '价格波动', '政策风险', '交易流程复杂'],
+  },
+  'legal': {
+    name: '法律',
+    keywords: ['法律', '合同', '诉讼', '律师', '法规', '条款', '纠纷', '仲裁', '合规', '知识产权'],
+    coreConcepts: ['合同审查', '法律风险', '证据链', '诉讼策略', '合规管理'],
+    workflows: ['咨询→调研→起草→审查→签署', '诉讼流程', '合规审查流程'],
+    tools: ['法律数据库', '合同模板库', '案例检索', '电子签章'],
+    painPoints: ['法律条文复杂', '证据收集难', '诉讼周期长', '合规成本高'],
+  },
+  'manufacturing': {
+    name: '制造业',
+    keywords: ['生产', '制造', '工艺', '质检', '车间', '产线', 'BOM', '物料', '设备', '良率'],
+    coreConcepts: ['精益生产', '质量控制', '供应链管理', '设备维护', '工艺优化'],
+    workflows: ['订单→排产→采购→生产→质检→出货', '工艺改进流程', '质量异常处理'],
+    tools: ['ERP系统', 'MES系统', 'PLC', 'SCADA', '质量检测设备'],
+    painPoints: ['产能瓶颈', '质量波动', '物料短缺', '设备故障', '成本控制'],
+  },
 };
 
 // ===== 核心引擎 =====
@@ -263,7 +295,7 @@ export class InsightAccumulator extends EventEmitter {
     if (profile.latestInsights.length > 0) {
       lines.push(`最近洞察:`);
       for (const ins of profile.latestInsights.slice(0, 3)) {
-        lines.push(`  - [${ins.category}] ${ins.content.slice(0, 100)}`);
+        lines.push(`  - [${ins.category}] ${(ins.content || '').slice(0, 100)}`);
       }
     }
 

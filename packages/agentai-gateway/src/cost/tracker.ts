@@ -44,7 +44,7 @@ export class CostTracker extends EventEmitter {
     super();
     this.activeTasks = new Map();
     this.dailyStats = {
-      date: new Date().toISOString().split('T')[0],
+      date: new Date().toISOString().slice(0, 10),
       totalTokens: 0,
       taskCount: 0,
     };
@@ -282,7 +282,7 @@ export class CostTracker extends EventEmitter {
     setTimeout(() => {
       console.log(`[cost] 🌅 日统计重置 | 昨日: ${this.dailyStats.totalTokens} tokens, ${this.dailyStats.taskCount} 任务`);
       this.dailyStats = {
-        date: new Date().toISOString().split('T')[0],
+        date: new Date().toISOString().slice(0, 10),
         totalTokens: 0,
         taskCount: 0,
       };

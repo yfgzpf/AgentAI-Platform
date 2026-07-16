@@ -93,9 +93,16 @@ const QUOTATION_FIELDS = [
 
 // ======================== 行业配置 ========================
 
+export interface IndustryTheme {
+  color: string;        // 主题色 (hex)
+  icon: string;         // 图标 emoji
+  bgColor: string;      // 背景色 (hex, 半透明)
+}
+
 export interface IndustryConfig {
   id: string;
   label: string;
+  theme: IndustryTheme;
   supportedFormats: string[];
   knowledgeFiles: string[];
   skills: IndustrySkillDef[];
@@ -109,10 +116,24 @@ export interface IndustrySkillDef {
   handler: (args: any, ctx?: any) => Promise<{ success: boolean; output: string; data?: any }>;
 }
 
+// 行业主题色映射表 (前端徽章显示用)
+const INDUSTRY_THEMES: Record<string, IndustryTheme> = {
+  decoration: { color: '#e67e22', icon: '🔨', bgColor: 'rgba(230,126,34,0.12)' },
+  real_estate: { color: '#2ecc71', icon: '🏠', bgColor: 'rgba(46,204,113,0.12)' },
+  ecommerce: { color: '#e74c3c', icon: '🛒', bgColor: 'rgba(231,76,60,0.12)' },
+  education: { color: '#3498db', icon: '📚', bgColor: 'rgba(52,152,219,0.12)' },
+  developer: { color: '#9b59b6', icon: '💻', bgColor: 'rgba(155,89,182,0.12)' },
+  comic: { color: '#f39c12', icon: '🎬', bgColor: 'rgba(243,156,18,0.12)' },
+  medical: { color: '#1abc9c', icon: '🏥', bgColor: 'rgba(26,188,156,0.12)' },
+  legal: { color: '#34495e', icon: '⚖️', bgColor: 'rgba(52,73,94,0.12)' },
+  manufacturing: { color: '#e67e22', icon: '🏭', bgColor: 'rgba(230,126,34,0.12)' },
+};
+
 const INDUSTRY_CONFIGS: Record<string, IndustryConfig> = {
   decoration: {
     id: 'decoration',
     label: '装修建材',
+    theme: INDUSTRY_THEMES.decoration!,
     supportedFormats: ['.dwg', '.dxf', '.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png', '.bmp', '.xlsx'],
     knowledgeFiles: ['decoration/报价模板.json', 'decoration/施工规范.md', 'decoration/材料清单.json', 'decoration/设计风格索引.md'],
     skills: [
@@ -298,6 +319,331 @@ const INDUSTRY_CONFIGS: Record<string, IndustryConfig> = {
       },
     ],
   },
+
+  // ==================== 电商营销 ====================
+  ecommerce: {
+    id: 'ecommerce',
+    label: '电商营销',
+    theme: INDUSTRY_THEMES.ecommerce!,
+    supportedFormats: ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.mp4', '.mov', '.xlsx', '.csv', '.pdf', '.docx'],
+    knowledgeFiles: ['ecommerce/商品品类.md', 'ecommerce/营销术语.md', 'ecommerce/平台规则.md'],
+    skills: [
+      {
+        name: 'generate_product_copy',
+        description: '生成商品详情文案，包含卖点提炼/场景描述/规格说明',
+        category: 'workflow',
+        handler: async (args) => {
+          const product = args.product || args.name || '';
+          const features = args.features || '';
+          return {
+            success: true,
+            output: `[商品文案] 为"${product}"生成文案\n核心卖点: ${features || '请描述商品特点'}\n\n建议结构:\n1. 标题(15字以内, 含核心关键词)\n2. 副标题(痛点+解决方案)\n3. 详情(规格参数/材质/尺寸)\n4. 使用场景(3个场景描述)\n5. 售后承诺`,
+            data: { product, features },
+          };
+        },
+      },
+      {
+        name: 'analyze_sales_data',
+        description: '分析店铺销售数据(Excel/CSV), 输出商品排行/趋势/转化率',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[销售分析] 请上传销售数据文件(.xlsx/.csv)，我将分析商品排行、转化率、退货率趋势', data: { status: 'awaiting_file' } };
+        },
+      },
+      {
+        name: 'generate_marketing_plan',
+        description: '制定营销推广方案，含目标/渠道/预算/排期/KPI',
+        category: 'workflow',
+        handler: async (args) => {
+          const budget = args.budget || '待定';
+          const platform = args.platform || '抖音+小红书+淘宝';
+          return {
+            success: true,
+            output: `[营销方案] 预算${budget} | 平台: ${platform}\n\n推荐结构:\n1. 竞品分析 (3个对标品牌)\n2. 目标人群画像\n3. 内容策略 (图文/短视频/直播)\n4. 预算分配 (投流/达人/KOC)\n5. 排期表 (周维度)\n6. KPI (曝光/点击/转化/ROI)`,
+            data: { budget, platform },
+          };
+        },
+      },
+      {
+        name: 'generate_product_image_prompt',
+        description: '生成商品图/主图/场景图的AI绘图提示词',
+        category: 'workflow',
+        handler: async (args) => {
+          const product = args.product || '商品';
+          const style = args.style || '白底图';
+          return { success: true, output: `[商品图提示词] ${product} - ${style}\n\nprompt: ${product}, product photography, ${style === '白底图' ? 'white background, studio lighting, 8k' : 'lifestyle scene, natural lighting, shallow depth of field'}, commercial photography, high detail\n\nnegative: distorted, low quality, watermark, text, logo`, data: { product, style } };
+        },
+      },
+    ],
+  },
+
+  // ==================== 教育 ====================
+  education: {
+    id: 'education',
+    label: '教育',
+    theme: INDUSTRY_THEMES.education!,
+    supportedFormats: ['.pdf', '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.md', '.txt'],
+    knowledgeFiles: ['education/教学大纲模板.md', 'education/评分标准.md'],
+    skills: [
+      {
+        name: 'generate_lesson_plan',
+        description: '生成教学教案，含教学目标/重难点/教学过程/作业布置',
+        category: 'workflow',
+        handler: async (args) => {
+          const subject = args.subject || '';
+          const grade = args.grade || '';
+          return { success: true, output: `[教案] ${grade} ${subject}\n\n结构:\n1. 教学目标 (知识/能力/情感)\n2. 教学重难点\n3. 教学准备 (教具/资料)\n4. 教学过程 (导入→新授→练习→小结)\n5. 板书设计\n6. 作业布置`, data: { subject, grade } };
+        },
+      },
+      {
+        name: 'generate_exam',
+        description: '出题/组卷，支持单选/多选/判断/填空/简答',
+        category: 'workflow',
+        handler: async (args) => {
+          const subject = args.subject || '';
+          const count = args.count || 20;
+          return { success: true, output: `[试卷] ${subject} (${count}题)\n\n题型分配建议:\n- 选择题: ${Math.round(count*0.4)}题\n- 填空题: ${Math.round(count*0.2)}题\n- 判断题: ${Math.round(count*0.15)}题\n- 简答题: ${Math.round(count*0.25)}题\n\n请指定: 年级/单元/难度`, data: { subject, count } };
+        },
+      },
+      {
+        name: 'analyze_student_scores',
+        description: '分析学生成绩数据，输出平均分/分布/进退步/薄弱点',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[成绩分析] 请上传成绩表(.xlsx)，我将分析: 班级平均分、分数段分布、进退步名单、知识点薄弱项', data: { status: 'awaiting_file' } };
+        },
+      },
+      {
+        name: 'generate_course_outline',
+        description: '制定课程大纲，含章节/学时/教学目标/参考书目',
+        category: 'workflow',
+        handler: async (args) => {
+          const course = args.course || '';
+          const hours = args.hours || 32;
+          return { success: true, output: `[课程大纲] ${course} (${hours}学时)\n\n章节数建议: ${Math.round(hours/4)}章\n格式: 章节名→学时→教学目标→教学方式→作业`, data: { course, hours } };
+        },
+      },
+    ],
+  },
+
+  // ==================== 开发者 ====================
+  developer: {
+    id: 'developer',
+    label: '开发者',
+    theme: INDUSTRY_THEMES.developer!,
+    supportedFormats: ['.ts', '.js', '.py', '.go', '.rs', '.java', '.cpp', '.json', '.yaml', '.md', '.toml'],
+    knowledgeFiles: ['developer/代码规范.md', 'developer/架构模式.md'],
+    skills: [
+      {
+        name: 'review_code',
+        description: '审查代码质量，检查命名/结构/安全/性能问题',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[代码审查] 请提供代码文件路径或粘贴代码，我将检查: 命名规范、类型安全、潜在bug、性能瓶颈、安全漏洞', data: {} };
+        },
+      },
+      {
+        name: 'analyze_architecture',
+        description: '分析项目架构，生成模块依赖图/数据流图/架构评估',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[架构分析] 请提供项目根目录，我将分析: 模块划分、依赖关系、数据流向、架构模式、改进建议', data: {} };
+        },
+      },
+      {
+        name: 'debug_issue',
+        description: '排查和修复bug，分析错误日志/堆栈跟踪/复现步骤',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[Bug修复] 请提供错误信息/堆栈/复现步骤，我将: 分析根因→给出修复方案→生成修复代码', data: {} };
+        },
+      },
+      {
+        name: 'performance_optimize',
+        description: '分析和优化性能瓶颈，含CPU/内存/网络/渲染',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[性能优化] 请描述性能问题场景，我将分析: 瓶颈定位→优化方案→预期提升幅度', data: {} };
+        },
+      },
+    ],
+  },
+
+  // ==================== 漫剧创作 ====================
+  comic: {
+    id: 'comic',
+    label: '漫剧创作',
+    theme: INDUSTRY_THEMES.comic!,
+    supportedFormats: ['.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.md', '.txt', '.pdf'],
+    knowledgeFiles: ['comic/分镜模板.md', 'comic/角色设定指南.md'],
+    skills: [
+      {
+        name: 'generate_script',
+        description: '生成漫画/短剧剧本，含角色/场景/对白/分镜',
+        category: 'workflow',
+        handler: async (args) => {
+          const genre = args.genre || '';
+          return { success: true, output: `[剧本创作] 类型: ${genre || '未指定'}\n\n结构:\n1. 故事梗概 (3句话)\n2. 角色设定 (姓名/性格/外貌/背景)\n3. 场景设定\n4. 分集大纲 (每集3-5页)\n5. 对白脚本`, data: { genre } };
+        },
+      },
+      {
+        name: 'design_character',
+        description: '设计漫画角色，含外观/性格/背景/关系网',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[角色设计] 请描述角色设定，我将生成: 外观描述、性格特质、背景故事、角色关系、AI绘图提示词', data: {} };
+        },
+      },
+      {
+        name: 'generate_storyboard',
+        description: '生成漫画分镜脚本，含镜头/构图/对白/时长',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[分镜脚本] 请提供剧本片段，我将生成: 镜头编号、画面描述、景别、对白、建议时长、AI绘图提示词', data: {} };
+        },
+      },
+    ],
+  },
+
+  // ==================== 房地产 ====================
+  real_estate: {
+    id: 'real_estate',
+    label: '房地产',
+    theme: INDUSTRY_THEMES.real_estate!,
+    supportedFormats: ['.pdf', '.docx', '.doc', '.xlsx', '.jpg', '.jpeg', '.png', '.dwg', '.dxf'],
+    knowledgeFiles: ['real_estate/户型术语.md', 'real_estate/营销话术.md'],
+    skills: [
+      {
+        name: 'generate_property_desc',
+        description: '生成房产描述文案，含户型/配套/交通/卖点',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[房源描述] 请提供户型/面积/位置/配套等信息，我将生成: 卖点提炼、户型描述、配套介绍、投资价值分析', data: {} };
+        },
+      },
+      {
+        name: 'analyze_property_value',
+        description: '分析房产价值，含周边房价对比/升值潜力/租金回报',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[房产估值] 请提供楼盘名称/户型/面积/位置，我将分析: 周边均价对比、升值潜力、租金回报率、税费估算', data: {} };
+        },
+      },
+      {
+        name: 'generate_floor_plan_desc',
+        description: '分析户型图，输出各功能区/动线/通风/采光评价',
+        category: 'format',
+        handler: async (args) => {
+          return { success: true, output: '[户型分析] 请上传户型图，我将分析: 功能分区、动线设计、通风采光、空间利用率、改造建议', data: {} };
+        },
+      },
+    ],
+  },
+
+  // ==================== 医疗 ====================
+  medical: {
+    id: 'medical',
+    label: '医疗健康',
+    theme: INDUSTRY_THEMES.medical!,
+    supportedFormats: ['.pdf', '.docx', '.doc', '.xlsx', '.csv', '.jpg', '.jpeg', '.dcm'],
+    knowledgeFiles: ['medical/常见病症.md', 'medical/药品目录.md'],
+    skills: [
+      {
+        name: 'analyze_symptom',
+        description: '分析症状描述，提供可能的病因和就医建议（非诊断）',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[症状分析] ⚠️ 重要提示: 此分析仅供参考，不作为诊断依据。请提供症状描述(部位/性质/持续时间)，我将给出可能的病因方向和就医建议', data: {} };
+        },
+      },
+      {
+        name: 'generate_health_report',
+        description: '生成健康报告解读，含体检指标分析/风险评估/改善建议',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[报告解读] 请上传体检报告/检验单，我将分析: 异常指标解读、风险评估、改善建议、复查建议', data: {} };
+        },
+      },
+      {
+        name: 'query_drug_info',
+        description: '查询药品信息，含成分/适应症/用法/禁忌/不良反应',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[药品查询] 请输入药品名称，我将提供: 主要成分、适应症、用法用量、禁忌人群、不良反应、药物相互作用', data: {} };
+        },
+      },
+    ],
+  },
+
+  // ==================== 法律 ====================
+  legal: {
+    id: 'legal',
+    label: '法律',
+    theme: INDUSTRY_THEMES.legal!,
+    supportedFormats: ['.pdf', '.docx', '.doc', '.md', '.txt'],
+    knowledgeFiles: ['legal/法律法规索引.md', 'legal/合同模板.md'],
+    skills: [
+      {
+        name: 'draft_contract',
+        description: '起草合同文本，支持租赁/劳务/买卖/服务等类型',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[合同起草] 请提供合同类型和关键条款，我将生成: 合同正文、关键条款说明、风险提示', data: {} };
+        },
+      },
+      {
+        name: 'analyze_legal_risk',
+        description: '分析法律风险，检查合同/行为的合规性',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[法律风险分析] 请提供合同文本或行为描述，我将分析: 合规性检查、风险点识别、规避建议、相关法条引用', data: {} };
+        },
+      },
+      {
+        name: 'query_law',
+        description: '查询法律法规，支持按关键词/领域/效力级别检索',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[法律查询] 请输入查询关键词或法律领域，我将提供: 相关法律法规、核心条款、司法解释、典型案例', data: {} };
+        },
+      },
+    ],
+  },
+
+  // ==================== 制造业 ====================
+  manufacturing: {
+    id: 'manufacturing',
+    label: '制造业',
+    theme: INDUSTRY_THEMES.manufacturing!,
+    supportedFormats: ['.pdf', '.xlsx', '.csv', '.dwg', '.dxf', '.stp', '.step', '.md'],
+    knowledgeFiles: ['manufacturing/工艺标准.md', 'manufacturing/质检规范.md'],
+    skills: [
+      {
+        name: 'generate_process_flow',
+        description: '生成生产工艺流程，含工序/参数/设备/质检点',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[工艺流程] 请提供产品类型和工艺要求，我将生成: 工序流程图、关键工艺参数、设备清单、质检控制点', data: {} };
+        },
+      },
+      {
+        name: 'analyze_quality_data',
+        description: '分析质检数据，输出合格率/缺陷分布/趋势/改进建议',
+        category: 'knowledge',
+        handler: async (args) => {
+          return { success: true, output: '[质检分析] 请上传质检数据(.xlsx/.csv)，我将分析: 合格率统计、缺陷类型分布、趋势分析、改进建议', data: {} };
+        },
+      },
+      {
+        name: 'estimate_production_cost',
+        description: '估算生产成本，含材料/人工/设备/管理费',
+        category: 'workflow',
+        handler: async (args) => {
+          return { success: true, output: '[成本估算] 请提供产品BOM和工艺信息，我将估算: 材料成本、人工成本、设备折旧、管理费、总成本', data: {} };
+        },
+      },
+    ],
+  },
 };
 
 // ======================== 公共函数 ========================
@@ -341,7 +687,9 @@ export class IndustryEngine {
     try {
       const kbDir = path.join(AGENTAI_DIR, 'knowledge', industryId);
       if (!fs.existsSync(kbDir)) fs.mkdirSync(kbDir, { recursive: true });
-    } catch {}
+    } catch (kbDirErr: any) {
+      console.warn('[industry-engine:activate] knowledge dir creation failed:', kbDirErr?.message);
+    }
 
     // 创建知识库模板
     for (const kf of config.knowledgeFiles) {
@@ -351,9 +699,13 @@ export class IndustryEngine {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         if (!fs.existsSync(fp)) {
           const tmpl = kf.endsWith('.json') ? '{}' : kf.endsWith('.md') ? `# ${path.basename(kf, path.extname(kf))}\n` : '';
-          try { fs.writeFileSync(fp, tmpl, 'utf-8'); } catch {}
+          try { fs.writeFileSync(fp, tmpl, 'utf-8'); } catch (tmplErr: any) {
+            console.warn('[industry-engine:activate] template write failed for', fp, tmplErr?.message);
+          }
         }
-      } catch {}
+      } catch (kfErr: any) {
+        console.warn('[industry-engine:activate] knowledge file init failed for', kf, kfErr?.message);
+      }
     }
 
     console.log(`[industry] activated ${industryId}: ${config.skills.length} skills, ${config.supportedFormats.length} formats`);
@@ -371,6 +723,14 @@ export class IndustryEngine {
     return this.getActive()?.supportedFormats || [];
   }
 
+  getAllIndustries(): IndustryConfig[] {
+    return Object.values(INDUSTRY_CONFIGS);
+  }
+
+  getIndustryTheme(industryId: string): IndustryTheme | null {
+    return INDUSTRY_THEMES[industryId] || null;
+  }
+
   buildSystemPromptFragment(): string {
     const config = this.getActive();
     if (!config) return '';
@@ -379,51 +739,17 @@ export class IndustryEngine {
     const formatList = config.supportedFormats.map(f => `- \`${f}\``).join('\n');
 
     return `
-# 行业: ${config.label}
+# 行业: ${config.label} (${config.theme.icon})
 ## 支持的文件格式
 ${formatList}
 
 ## 行业技能
 ${skillList}
 
-## 报价生成必读 (3个上下文文件)
-生成报价前，必须先使用 \`read_file\` 读取以下3个文件注入上下文:
-1. \`packages/agentai-skills/decoration-quote/legend-recognition.json\` — 图例识别参照表
-2. \`packages/agentai-skills/decoration-quote/price-reference.json\` — 4档次价格表
-3. \`packages/agentai-skills/decoration-quote/quotation-template.json\` — Excel样式规范
-
-## 6 大工作流
-1. **图纸识别**: 收到文件用 \`recognize_blueprint\` → 对照 legend-recognition.json 识别图例
-2. **需求解析**: 用 \`parse_requirement\` 提取面积/材料/预算
-3. **报价生成**: 加载3个上下文文件 → 对照 price-reference.json 查价 → 按 quotation-template.json 样式生成
-4. **材料计算**: 用 \`measure_materials\` 精确计算用量
-5. **CAD出图**: 用 \`parse_dxf\`/\`generate_cad_drawing\`
-6. **知识查询**: 用 \`query_materials_library\` 查建材/工艺/人工费
-
-## 图例识别规则
-- **中文标注优先**: 图纸有中文标注时直接使用，不猜测
-- **门编号**: M+宽+高 (如M0921=宽900×高2100)
-- **窗编号**: C+宽+高 (如C1215=宽1200×高1500)
-- **衣柜**: 矩形框内标"X"(挂衣杆)+尺寸"1845×600"
-- **图例不明**: 停止并调 \`ask_user\` 展示追问表单，列出候选图例让用户确认。表单支持语音输入。
-
-## 实用计算规则
-- 美缝: 面积×系数(800×800=5.0m/m², 750×1500=4.0m/m²)
-- 乳胶漆: 地面面积×3.2
-- 地面损耗: 面积×1.05
-- 防水: 地面×1.2+墙面1.8m高
-- 衣柜: 宽度(m)×2.4m(标准高)=投影面积
-- Excel公式: 小计=H×I, 汇总=SUMIF+管理费
-
-## 文件输出
-- 生成的Excel/报告保存到工作区目录
-- 用户可在右侧文件树点击打开
-- 报价表用 \`xlsx\` 技能生成，带完整公式
-
-## 追问规则
-- 报价信息不足调 \`quotation_form\` (11字段)
-- 图例不明调 \`ask_user\` 追问表单 (支持语音)
-- 缺少图纸追问 \`ask_user\` 是否上传或文字描述
+## 行业规则
+- 请根据当前行业 ${config.label} 的规范开展工作
+- 使用行业技能完成专业任务
+- 文件格式不符时告知用户支持的格式
 `;
   }
 

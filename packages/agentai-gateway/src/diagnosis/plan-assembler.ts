@@ -119,7 +119,7 @@ function createDirectStep(perception: TaskPerceptionReport): TreatmentStep {
     description: `直接执行: ${perception.intentSummary}`,
     expectedOutput: getExpectedOutput(perception.taskType),
     verificationMethod: '检查结果是否符合预期',
-    fallbackAction: '重新分析需求',
+    rollbackAction: '重新分析需求',
     estimatedTokens: 2000,
     parallelizable: false,
   };
@@ -135,7 +135,7 @@ function createPlanningStep(perception: TaskPerceptionReport): TreatmentStep {
     description: '分析需求并制定执行计划',
     expectedOutput: '详细的执行步骤和预期结果',
     verificationMethod: '检查计划是否完整覆盖需求',
-    fallbackAction: '简化计划，先解决核心问题',
+    rollbackAction: '简化计划，先解决核心问题',
     estimatedTokens: 1500,
     parallelizable: false,
   };
@@ -151,7 +151,7 @@ function createResearchStep(perception: TaskPerceptionReport): TreatmentStep {
     description: '调研技术方案和最佳实践',
     expectedOutput: '技术选型报告和方案对比',
     verificationMethod: '检查方案是否满足约束条件',
-    fallbackAction: '使用保守的成熟方案',
+    rollbackAction: '使用保守的成熟方案',
     estimatedTokens: 2000,
     parallelizable: true,
   };
@@ -167,7 +167,7 @@ function createDesignStep(perception: TaskPerceptionReport): TreatmentStep {
     description: '设计具体实现方案',
     expectedOutput: '详细设计文档和接口定义',
     verificationMethod: '检查设计是否满足需求',
-    fallbackAction: '简化设计，先实现MVP',
+    rollbackAction: '简化设计，先实现MVP',
     estimatedTokens: 2000,
     parallelizable: false,
   };
@@ -183,7 +183,7 @@ function createExecutionStep(perception: TaskPerceptionReport): TreatmentStep {
     description: `执行: ${perception.intentSummary}`,
     expectedOutput: getExpectedOutput(perception.taskType),
     verificationMethod: getVerificationMethod(perception.taskType),
-    fallbackAction: '回滚到上一步，重新分析',
+    rollbackAction: '回滚到上一步，重新分析',
     estimatedTokens: 3000,
     parallelizable: false,
   };
@@ -375,7 +375,7 @@ export function adjustPlan(
     return plan;
   }
   
-  const failedStep = adjustedSteps[failedIndex];
+  const failedStep = adjustedSteps[failedIndex]!;
   
   // 根据失败原因调整
   if (reason.includes('too complex')) {
@@ -390,7 +390,7 @@ export function adjustPlan(
       description: `补充调研: ${failedStep.description}`,
       expectedOutput: '补充必要的信息和上下文',
       verificationMethod: '检查信息是否足够',
-      fallbackAction: '简化需求，先解决核心问题',
+      rollbackAction: '简化需求，先解决核心问题',
       estimatedTokens: 1000,
       parallelizable: false,
     };
