@@ -17,6 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { EventEmitter } from 'events';
 import { CronJob } from './cron-job.js';
 
 // ===== 类型定义 =====
@@ -109,7 +110,7 @@ function ensureFile(): void {
 
 // ===== 调度器 =====
 
-class TaskScheduler {
+class TaskScheduler extends EventEmitter {
   private schedules: Map<string, TaskSchedule> = new Map();
   private jobs: Map<string, CronJob> = new Map();
   private gatewayUrl: string = 'http://127.0.0.1:18789';
@@ -264,6 +265,15 @@ class TaskScheduler {
     const startTime = Date.now();
     console.log(`[task-scheduler] 执行: ${schedule.name} (${schedule.type})`);
 
+    // 记录执行开始
+    const { executionHistory } = await import('./execution-history.js');
+    const executionId = executionHistory.recordStart(
+      schedule.id,
+      schedule.name,
+      schedule.type,
+      'cron'
+    );
+
     let result: ScheduleExecutionResult | undefined;
     let attempts = 0;
     const maxRetries = schedule.maxRetries || 0;
@@ -335,6 +345,28 @@ class TaskScheduler {
 
     const retryInfo = attempts > 1 ? ` (重试${attempts - 1}次)` : '';
     console.log(`[task-scheduler] 完成: ${schedule.name} → ${safeResult.success ? '✅' : '❌'}${retryInfo} (${safeResult.durationMs}ms)`);
+
+    // 记录执行完成
+    executionHistory.recordComplete(
+      executionId,
+      safeResult.success ? 'success' : (safeResult.error?.includes('超时') ? 'timeout' : 'failed'),
+      safeResult.output,
+      safeResult.error
+    );
+
+    // 发射统一 execution:result 事件 (前端 ChatView/TaskCenterPanel 接收)
+    this.emit('execution:result', {
+      source: 'cron',
+      event: 'done',
+      id: schedule.id,
+      name: schedule.name,
+      success: safeResult.success,
+      status: safeResult.success ? 'completed' : 'failed',
+      durationMs: safeResult.durationMs,
+      error: safeResult.error,
+      output: safeResult.output,
+      type: schedule.type,
+    });
     return safeResult;
   }
 
