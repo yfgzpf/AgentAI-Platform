@@ -15,11 +15,10 @@ import { EventEmitter } from 'events';
 // ═══════════════════════════════════════════════════════════
 
 const SKILL_MARKET_CONFIG = {
-  apiKey: 'sk_live_skillsmp_-N5eZkkHAHhGmM3EVjmRlLAEmHzseZCv5xBJ8lxh3rM',
-  baseUrl: 'https://api.skillsmp.com/v1',
+  apiKey: 'sk_live_skillsmp_pdfxyKqllhCy51DrF6Gi81yho8L3Y_lLwceKzqofcak',
+  baseUrl: 'https://skillsmp.com/api/v1',
   // 备用端点
   fallbackUrls: [
-    'https://skillsmp.com/api/v1',
     'https://www.skillsmp.com/api/v1',
   ],
 };
@@ -106,11 +105,12 @@ export class SkillMarketClient extends EventEmitter {
         timeout: 30000,
       });
 
+      const data = response.data.data || {};
       return {
-        skills: response.data.skills || [],
-        total: response.data.total || 0,
-        page: response.data.page || 1,
-        pageSize: response.data.page_size || 20,
+        skills: data.skills || [],
+        total: data.pagination?.total || 0,
+        page: data.pagination?.page || 1,
+        pageSize: data.pagination?.limit || 20,
       };
     } catch (error: any) {
       console.error('[SkillMarket] 搜索技能失败:', error.response?.data || error.message);
