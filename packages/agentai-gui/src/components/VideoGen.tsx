@@ -111,7 +111,10 @@ export const VideoGen: React.FC = () => {
         frame_rate: dur?.fps || 24,
         model,
       };
-      if (imageUrl) body.image = imageUrl;
+      // 优先使用直传参数, 否则使用首帧状态
+      const img = imageUrl || firstFrame;
+      if (img) body.image = img;
+      if (lastFrame) body.end_frame = lastFrame;
       const r = await fetch(httpUrl + '/v1/video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -119,9 +122,10 @@ export const VideoGen: React.FC = () => {
       });
       const data = await r.json();
       if (data.error) { message.error('提交失败: ' + data.error); setBusy(false); return; }
+      const modeLabel = lastFrame ? '[首尾帧]' : img ? '[图生视频]' : '';
       const item: HistoryItem = {
         id: `${Date.now()}`,
-        prompt: imageUrl ? `[图生视频] ${prompt}` : prompt,
+        prompt: modeLabel ? `${modeLabel} ${prompt}` : prompt,
         taskId: data.taskId || `${Date.now()}`,
         videoUrl: null,
         status: 'queued',

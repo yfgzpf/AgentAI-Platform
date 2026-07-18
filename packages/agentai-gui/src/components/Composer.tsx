@@ -9,8 +9,8 @@
  *   - Excel/文档: 解析内容后作为附件发送
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback, useImperativeHandle, type KeyboardEvent, type RefObject, type DragEvent } from 'react';
-import { Tooltip, Select, Image, message } from 'antd';
-import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, SoundOutlined, BellOutlined, BulbOutlined } from '@ant-design/icons';
+import { Tooltip, Select, Image, message, Dropdown } from 'antd';
+import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, SoundOutlined, BellOutlined, BulbOutlined, MoreOutlined } from '@ant-design/icons';
 import { useModeStore, MODE_CONFIG, MODE_ORDER } from '../store/modeStore';
 import { useModelStore } from '../store/modelStore';
 import { GATEWAY_HTTP } from '../services/config';
@@ -72,7 +72,7 @@ const ComposerBase = ({
 }: Props, ref: React.Ref<ComposerHandle>) => {
   const { mode, setMode, suggestedMode, suggestionReason, acceptSuggestion, clearSuggestion } = useModeStore();
   const activeModeConfig = MODE_CONFIG[mode];
-  const { activeModelId, setActive: setActiveModel, models } = useModelStore();
+  const { activeModelId, setActive: setActiveModel, models, commercialKeys } = useModelStore();
   const [draft, setDraft] = useState('');
   const [popup, setPopup] = useState<PopupKind>(null);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -107,6 +107,8 @@ const ComposerBase = ({
   }, [draft]);
   const [ttsOn, setTtsOn] = useState(isTtsEnabled());
   const [wakeOn, setWakeOn] = useState(isWakeEnabled());
+  const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsState>(() => {
     try {
       const raw = localStorage.getItem('agentai.tts.settings');
@@ -400,7 +402,9 @@ const ComposerBase = ({
         </div>
       )}
 
-      <div style={{
+      <div
+        className="composer-focus-container"
+        style={{
         margin: '6px 12px 8px',
         borderRadius: 12,
         border: mode !== 'auto' ? `1px solid ${activeModeConfig.color}44` : '1px solid var(--border)',
@@ -499,7 +503,7 @@ const ComposerBase = ({
           </div>
         )}
 
-        {/* ═══ Bottom Bar (图标在对话框内底部) ═══ */}
+        {/* ═══ Bottom Bar (精简版: 5核心控件 + 更多菜单) ═══ */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 2,
           padding: '4px 8px 6px',
@@ -528,100 +532,175 @@ const ComposerBase = ({
               e.target.value = '';
             }} />
 
-          {/* Left: 附件/图片/语音 */}
+          {/* ── 核心控件 (左): 附件 + 图片 + 更多 ── */}
           <Tooltip title="上传文件">
-            <button style={iconBtn} onClick={() => fileInputRef.current?.click()}>
+            <button className="icon-btn-sm" onClick={() => fileInputRef.current?.click()}>
               <PaperClipOutlined style={{ fontSize: 12 }} />
             </button>
           </Tooltip>
           <Tooltip title="插入图片">
-            <button style={iconBtn} onClick={() => imageInputRef.current?.click()}>
+            <button className="icon-btn-sm" onClick={() => imageInputRef.current?.click()}>
               <PictureOutlined style={{ fontSize: 12 }} />
             </button>
           </Tooltip>
-          <Tooltip title={webSearch ? '关闭联网搜索' : '开启联网搜索'}>
-            <button onClick={() => setWebSearch(v => !v)} style={{
-              ...iconBtn,
-              color: webSearch ? '#4ade80' : undefined,
-              background: webSearch ? 'rgba(74,222,128,0.12)' : undefined,
-            }}>
-              <GlobalOutlined style={{ fontSize: 12 }} />
-            </button>
-          </Tooltip>
-          {/* 提示词优化: 与其他图标并齐 */}
-          <PromptOptimizer
-            draft={draft}
-            onApply={(text) => setDraft(text)}
-            disabled={optimizeDisabled}
-          />
-          {srSupported && (
-            <Tooltip title={recording ? '停止' : '语音输入'}>
-              <button onClick={handleVoiceToggle} style={{
-                ...iconBtn,
-                color: recording ? '#ef4444' : undefined,
-                animation: recording ? 'pulse 1.2s ease-out infinite' : undefined,
+
+          {/* ── 更多菜单 (收给低频控件) ── */}
+          <Dropdown
+            trigger={['click']}
+            placement="topLeft"
+            menu={{
+              items: [
+                {
+                  key: 'websearch',
+                  label: (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <GlobalOutlined style={{ color: webSearch ? '#4ade80' : 'var(--muted-2)' }} />
+                      {webSearch ? '关闭联网搜索' : '开启联网搜索'}
+                    </span>
+                  ),
+                  onClick: () => setWebSearch(v => !v),
+                },
+                {
+                  key: 'thinking',
+                  label: (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <BulbOutlined style={{ color: thinking ? '#8B5CF6' : 'var(--muted-2)' }} />
+                      {thinking ? '关闭深度思考' : '开启深度思考'}
+                    </span>
+                  ),
+                  onClick: () => onThinkingChange?.(!thinking),
+                },
+                ...(srSupported ? [{
+                  key: 'voice',
+                  label: (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <AudioOutlined style={{ color: recording ? '#ef4444' : 'var(--muted-2)' }} />
+                      {recording ? '停止语音输入' : '开始语音输入'}
+                    </span>
+                  ),
+                  onClick: handleVoiceToggle,
+                }] : []),
+                {
+                  key: 'optimize',
+                  label: (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <BulbOutlined style={{ color: 'var(--muted-2)' }} />
+                      优化提示词
+                    </span>
+                  ),
+                  onClick: () => {
+                    setOptimizeOpen(true);
+                  },
+                  disabled: optimizeDisabled || !draft.trim(),
+                },
+                { type: 'divider' as const },
+                {
+                  key: 'tts',
+                  label: (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <SoundOutlined style={{ color: ttsOn ? 'var(--accent)' : 'var(--muted-2)' }} />
+                      {ttsOn ? '关闭语音播报' : '开启语音播报'}
+                    </span>
+                  ),
+                  onClick: () => {
+                    const next = !ttsOn;
+                    setTtsEnabled(next); setTtsOn(next);
+                  },
+                },
+                {
+                  key: 'wake',
+                  label: (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <BellOutlined style={{ color: wakeOn ? '#F59E0B' : 'var(--muted-2)' }} />
+                      {wakeOn ? '关闭语音唤醒' : '开启语音唤醒'}
+                    </span>
+                  ),
+                  onClick: () => {
+                    const v = !wakeOn; v ? startWakeWord() : stopWakeWord(); setWakeOn(v);
+                  },
+                },
+                {
+                  key: 'voicesettings',
+                  label: (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <SoundOutlined style={{ color: 'var(--muted-2)' }} />
+                      语音设置...
+                    </span>
+                  ),
+                  onClick: () => setVoiceSettingsOpen(true),
+                },
+              ],
+            }}
+          >
+            <Tooltip title="更多功能">
+              <button className="icon-btn-sm" style={{
+                color: (webSearch || thinking || recording || ttsOn || wakeOn) ? 'var(--accent)' : undefined,
               }}>
-                <AudioOutlined style={{ fontSize: 12 }} />
+                <MoreOutlined style={{ fontSize: 12 }} />
               </button>
             </Tooltip>
-          )}
-          {/* 音色选择设置 */}
-          <VoiceSettings
-            state={voiceSettings}
-            onChange={(s) => {
-              setVoiceSettings(s);
-              setTtsOn(s.enabled);
-            }}
-          />
-          {/* 语音唤醒开关 */}
-          <Tooltip title={wakeOn ? '关闭语音唤醒' : '开启语音唤醒'}>
-            <button onClick={() => { const v = !wakeOn; v ? startWakeWord() : stopWakeWord(); setWakeOn(v); }} style={{
-              ...iconBtn,
-              color: wakeOn ? '#F59E0B' : undefined,
-              background: wakeOn ? 'rgba(245,158,11,0.12)' : undefined,
-            }}>
-              <BellOutlined style={{ fontSize: 12 }} />
-            </button>
-          </Tooltip>
-          {/* 思考模式开关 (通用: 根据模型自动适配思考机制) */}
-          <Tooltip title={thinking ? '关闭深度思考' : '开启深度思考 (编码/推理/Agent任务推荐)'}>
-            <button onClick={() => onThinkingChange?.(!thinking)} style={{
-              ...iconBtn,
-              color: thinking ? '#8B5CF6' : undefined,
-              background: thinking ? 'rgba(139,92,246,0.12)' : undefined,
-            }}>
-              <BulbOutlined style={{ fontSize: 12 }} />
-            </button>
-          </Tooltip>
+          </Dropdown>
 
-          <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 4px' }} />
+          <span className="ui-divider" />
 
-          {/* 模型选择器 (拉宽显示完整模型名) */}
-          {models.length > 0 && (
-            <Select
-              size="small"
-              value={activeModelId}
-              onChange={handleModelChange}
-              style={{ width: 180, fontSize: 11 }}
-              variant="borderless"
-              options={models.map(m => ({
-                value: m.id,
-                label: (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                    <span style={{
-                      width: 5, height: 5, borderRadius: '50%',
-                      background: m.color || '#888', display: 'inline-block',
-                    }} />
-                    {m.label}
-                  </span>
-                ),
-              }))}
-            />
-          )}
+          {/* ── 模型选择器 (有密钥即显示, 工厂组折叠) ── */}
+          {(() => {
+            // 过滤: 免费或有密钥或已启用的自定义模型
+            const isFree = (m: typeof models[0]) => m.id === 'agentai' || m.id === 'zhipu';
+            const hasKey = (m: typeof models[0]) => {
+              const envVar = m.apiKeyEnv || `${m.id.toUpperCase()}_API_KEY`;
+              return !!commercialKeys[envVar] || !!localStorage.getItem(envVar) || !!localStorage.getItem(`__agentai_key_${m.provider || m.id}`);
+            };
+            const visibleModels = models.filter(m => isFree(m) || hasKey(m) || m.enabled);
+            if (visibleModels.length === 0) return null;
+
+            // 工厂组按 provider 聚合, 独立模型各自一组
+            const isFactory = (m: typeof models[0]) => ['superapi', 'nvidia', 'sensenova', 'longcat'].includes(m.provider || '');
+            const groupMap = new Map<string, { label: string; color: string; models: typeof models; isFactory: boolean }>();
+            for (const m of visibleModels) {
+              const factory = isFactory(m);
+              const gKey = factory ? (m.provider || 'other') : m.id;
+              const gLabel = factory ? (m.groupLabel || m.label) : m.label;
+              if (!groupMap.has(gKey)) groupMap.set(gKey, { label: gLabel, color: m.color, models: [], isFactory: factory });
+              groupMap.get(gKey)!.models.push(m);
+            }
+            const groupedArr = Array.from(groupMap.entries());
+
+            return (
+              <Select
+                size="small"
+                value={visibleModels.some(m => m.id === activeModelId) ? activeModelId : visibleModels[0]?.id}
+                onChange={handleModelChange}
+                style={{ width: 170, fontSize: 11 }}
+                variant="borderless"
+                popupMatchSelectWidth={false}
+                options={groupedArr.map(([gKey, g]) => ({
+                  label: <span style={{ fontSize: 9, color: 'var(--muted-2)', fontWeight: 600 }}>{g.label} ({g.models.length})</span>,
+                  title: g.label,
+                  options: [
+                    // NVIDIA 组添加 Auto 选项
+                    ...(gKey === 'nvidia' ? [{
+                      value: 'nvidia-auto',
+                      label: <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 5, height: 5, borderRadius: '50%', background: '#76B900', display: 'inline-block' }} />NVIDIA Auto (智能择优)</span>,
+                    }] : []),
+                    ...g.models.map(m => ({
+                      value: m.id,
+                      label: (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: m.color || '#888', display: 'inline-block' }} />
+                          {m.label}
+                        </span>
+                      ),
+                    })),
+                  ],
+                }))}
+              />
+            );
+          })()}
 
           <span style={{ flex: 1 }} />
 
-          {/* 右侧: 模式切换 + 发送/中止 */}
+          {/* ── 模式切换 (紧凑) ── */}
           {MODE_ENTRIES.map(({ k, label, dot }) => (
             <button
               key={k}
@@ -638,19 +717,19 @@ const ComposerBase = ({
             </button>
           ))}
 
-          <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 4px' }} />
+          <span className="ui-divider" />
 
-          {/* 发送/中止 */}
+          {/* ── 发送/中止 ── */}
           {busy ? (
-            <button onClick={onAbort} style={sendBtnStyle}>
-              <StopOutlined style={{ fontSize: 14 }} />
+            <button onClick={onAbort} className="send-btn" style={{ background: 'var(--danger)' }}>
+              <StopOutlined style={{ fontSize: 14, color: '#fff' }} />
             </button>
           ) : (
             <button
               onClick={() => { onSend(draft); setDraft(''); }}
               disabled={disabled || (!draft.trim() && attachments.length === 0)}
+              className="send-btn"
               style={{
-                ...sendBtnStyle,
                 background: draft.trim() || attachments.length > 0 ? 'var(--accent)' : 'var(--panel)',
                 color: draft.trim() || attachments.length > 0 ? '#fff' : 'var(--muted-2)',
               }}
@@ -660,6 +739,18 @@ const ComposerBase = ({
           )}
         </div>
       </div>
+
+      {/* ── PromptOptimizer 浮窗 ── */}
+      {optimizeOpen && (
+        <PromptOptimizer
+          draft={draft}
+          onApply={(text) => { setDraft(text); setOptimizeOpen(false); }}
+          disabled={optimizeDisabled}
+        />
+      )}
+
+      {/* ── VoiceSettings 浮窗 ── */}
+      <VoiceSettings state={voiceSettings} onChange={setVoiceSettings} externalOpen={voiceSettingsOpen} onExternalOpenConsumed={() => setVoiceSettingsOpen(false)} />
 
       {/* --- Popup overlay --- */}
       {popup && items.length > 0 && (

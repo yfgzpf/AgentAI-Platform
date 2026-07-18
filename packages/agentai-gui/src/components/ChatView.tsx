@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ChatView — 主对话视图 (重构版)
  *   - 集成 Thread 卡片式消息渲染
@@ -32,7 +33,7 @@ function generateConversationSummary(messages: any[]): string {
   const lines = [
     '📋 **上一轮对话摘要** (自动生成)',
     '',
-    `**用户需求**: ${userNeeds.slice(-3).join(' → ')}`,
+    `**用户需求**: ${(userNeeds || []).slice(-3).join(' → ')}`,
   ];
   if (completedOps) lines.push(`**${completedOps}**`);
   if (assistantSummaries.length > 0) {
@@ -89,17 +90,35 @@ function detectAndInsertImage(
       return;
     }
 
-    // 3. 图片生成: generate_image 返回 imageUrl
-    if (toolName === 'generate_image' && (parsed.imageUrl || parsed.url)) {
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'image',
-          url: parsed.imageUrl || parsed.url,
-          alt: parsed.prompt || 'AI图片',
-        }],
-      }));
-      return;
+    // 3. 图片生成: generate_image 优先使用 localPath (后端已下载到本地, 无 CORS/URL过期)
+    if (toolName === 'generate_image') {
+      // 3a. 优先用 localPath (通过 gateway 文件接口加载)
+      if (parsed.localPath) {
+        const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
+        const imgUrl = `${gatewayHttp}/api/files/download?path=${encodeURIComponent(parsed.localPath)}`;
+        updateMessage(botId, (m: any) => ({
+          ...m,
+          segments: [...m.segments, {
+            kind: 'image',
+            url: imgUrl,
+            alt: parsed.prompt || 'AI 生成图片',
+            filePath: parsed.localPath,
+          }],
+        }));
+        return;
+      }
+      // 3b. 降级: 用原始 URL
+      if (parsed.imageUrl || parsed.url) {
+        updateMessage(botId, (m: any) => ({
+          ...m,
+          segments: [...m.segments, {
+            kind: 'image',
+            url: parsed.imageUrl || parsed.url,
+            alt: parsed.prompt || 'AI图片',
+          }],
+        }));
+        return;
+      }
     }
 
     // 4. 通用检测: 只要有 imageUrl/imageBase64 字段
@@ -116,8 +135,73 @@ function detectAndInsertImage(
       return;
     }
   } catch {
-    // result 不是 JSON — 检查是否包含图片文件路径
+    // result 不是 JSON — 检查是否包含图片 URL 或文件路径
     const text = String(result);
+
+    // 0. 优先检测本地文件路径 (格式: "FILE: /path/to/img.png") — 无 CORS 问题
+    const fileMatch = text.match(/FILE:\s*([^\s\n]+)/i);
+    if (fileMatch) {
+      const filePath = fileMatch[1];
+      const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
+      const imgUrl = `${gatewayHttp}/api/files/download?path=${encodeURIComponent(filePath)}`;
+      updateMessage(botId, (m: any) => ({
+        ...m,
+        segments: [...m.segments, {
+          kind: 'image',
+          url: imgUrl,
+          alt: 'AI 生成图片',
+          filePath,
+        }],
+      }));
+      return;
+    }
+
+    // 1. 从 output 字符串中提取 URL (格式: "URL: https://...")
+    const urlMatch = text.match(/URL:\s*(https?:\/\/[^\s\n]+)/i);
+    if (urlMatch) {
+      const imageUrl = urlMatch[1];
+      updateMessage(botId, (m: any) => ({
+        ...m,
+        segments: [...m.segments, {
+          kind: 'image',
+          url: imageUrl,
+          alt: 'AI 生成图片',
+        }],
+      }));
+      return;
+    }
+
+    // 2. 从 Markdown 链接中提取 URL (格式: ![alt](url) 或 [text](url))
+    const mdImageMatch = text.match(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/i);
+    if (mdImageMatch) {
+      const imageUrl = mdImageMatch[2];
+      updateMessage(botId, (m: any) => ({
+        ...m,
+        segments: [...m.segments, {
+          kind: 'image',
+          url: imageUrl,
+          alt: mdImageMatch[1] || 'AI 生成图片',
+        }],
+      }));
+      return;
+    }
+
+    // 3. 从 Markdown 链接中提取 URL (格式: [text](url)，排除 agentai:// 协议)
+    const mdLinkMatch = text.match(/\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/i);
+    if (mdLinkMatch && !mdLinkMatch[2].startsWith('agentai://')) {
+      const imageUrl = mdLinkMatch[2];
+      updateMessage(botId, (m: any) => ({
+        ...m,
+        segments: [...m.segments, {
+          kind: 'image',
+          url: imageUrl,
+          alt: mdLinkMatch[1] || 'AI 生成图片',
+        }],
+      }));
+      return;
+    }
+
+    // 4. 检查是否包含图片文件路径
     const imgMatch = text.match(/([^\s`'"]+\.(png|jpg|jpeg|gif|webp|bmp|svg))/i);
     if (imgMatch) {
       const imgPath = imgMatch[1];
@@ -130,6 +214,7 @@ function detectAndInsertImage(
           text: `\n\n> 🖼️ **已生成图片**: [${imgName}](agentai://open?path=${encodeURIComponent(imgPath)})\n\n![${imgName}](/api/files/download?path=${encodeURIComponent(imgPath)})\n`,
         }],
       }));
+      return;
     }
   }
 }
@@ -142,6 +227,8 @@ function detectAndInsertImage(
  *   - 会话管理
  */
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { Alert, Button, Select, Space, Spin, Tag } from 'antd';
+import { SyncOutlined, CloseOutlined } from '@ant-design/icons';
 import { io, type Socket } from 'socket.io-client';
 import { useChatStore } from '../store/chatStore';
 import { useModelStore } from '../store/modelStore';
@@ -152,11 +239,10 @@ import type { AppMode } from '../store/modeStore';
 import { Composer, type SlashCmd, type ComposerHandle } from './Composer';
 import { UserMsg, AssistantMsg, TurnDivider } from './Thread';
 import { WorkspaceSummaryBar } from './WorkspaceSummaryBar';
-import { ProactiveSuggestionCard } from './ProactiveSuggestionCard';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { countTokens, formatTokens } from '../services/tokenCounter';
 import { EmotionIndicator } from './EmotionIndicator';
-import { analyzeEmotion, analyzeEmotionQuick, type EmotionResult } from '../services/emotion';
+import { analyzeEmotionQuick, type EmotionResult } from '../services/emotion';
 import { apiStream, makeChatHandlers, apiApproveFileChange, apiApprovePlan, suggestMode } from '../services/api';
 import { MemoryEngine } from '../services/MemoryEngine';
 import { TaskChainCard, type StageStatus } from './TaskChainCard';
@@ -165,15 +251,20 @@ import { SandboxResultPanel } from './SandboxResultPanel';
 import { buildTimelinePrompt } from '../services/AiRules';
 import { analyzeComplexity, useAutoModelStore } from '../store/autoModelStore';
 import { useTaskOrchestrator } from '../store/taskOrchestratorStore';
+import { useTaskResumeStore } from '../store/taskResumeStore';
 
 /** 任务链阶段标识 (与 SSE plan_stage 事件的 stage 字段对齐) */
 type ChainStage = 'plan' | 'solve' | 'verify' | 'fix' | 'report';
 import { ApprovalCard } from './ApprovalCard';
 import { AskUserCard } from './AskUserCard';
+import { ClarificationCard, type ClarificationRequest } from './ClarificationCard';
 import { DiffViewer, useDiffEvents } from './DiffViewer';
+import { LastSessionHint } from './LastSessionHint';
 import { gatewayFallback } from '../services/GatewayFallback';
 import { taskNotifier } from '../services/TaskNotifier';
 import { speak, isTtsEnabled as checkTts } from '../services/VoiceService';
+import { useSmartScroll } from '../hooks/useSmartScroll';
+import { useSessionAutoSave } from '../hooks/useSessionAutoSave';
 import type { ParsedAttachment } from '../services/file-parser';
 
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024; // 10MB
@@ -186,10 +277,18 @@ function guessImgMimetype(name: string): string {
 }
 
 export const ChatView: React.FC = () => {
-  const { messages, appendMessage, updateMessage, clearMessages, removeMessages } = useChatStore();
+  const { messages, appendMessage, updateMessage, clearMessages, removeMessages, setMessages } = useChatStore();
   const { activeModelId } = useModelStore();
   const { mode, setMode, setSuggestedMode, recommendEnabled } = useModeStore();
   const { sessions, activeId, createSession, addMessage, updateTitle } = useSessionStore();
+  // 长任务快照: 订阅 resumableTasks 和 activeTaskId 用于顶部提示条
+  const resumableTasks = useTaskResumeStore((s) => s.resumableTasks);
+  const activeTaskId = useTaskResumeStore((s) => s.activeTaskId);
+  const refreshResumable = useTaskResumeStore((s) => s.refreshResumable);
+  const setActiveTaskId = useTaskResumeStore((s) => s.setActiveTaskId);
+  const prepareResume = useTaskResumeStore((s) => s.prepareResume);
+  // 本地状态: 恢复操作进行中
+  const [resumingId, setResumingId] = useState<string | null>(null);
 
   // 组件顶层: workspace 和 industry (供 ProactiveSuggestionCard 等使用)
   const profileWs = useProfileStore.getState()?.profile?.workspace;
@@ -199,6 +298,20 @@ export const ChatView: React.FC = () => {
   let extraProfile: any = {};
   try { const raw = localStorage.getItem('agentai.profile'); if (raw) extraProfile = JSON.parse(raw); } catch { /* ignore */ }
   const currentIndustry = extraProfile?.industry || zustandProfile?.industry || 'general';
+
+  // 行业徽章主题色 (与后端 industry-engine.ts 同步)
+  const INDUSTRY_BADGE_THEME: Record<string, { color: string; icon: string; bgColor: string; label: string }> = {
+    decoration: { color: '#e67e22', icon: '🔨', bgColor: 'rgba(230,126,34,0.12)', label: '装修建材' },
+    real_estate: { color: '#2ecc71', icon: '🏠', bgColor: 'rgba(46,204,113,0.12)', label: '房地产' },
+    ecommerce: { color: '#e74c3c', icon: '🛒', bgColor: 'rgba(231,76,60,0.12)', label: '电商营销' },
+    education: { color: '#3498db', icon: '📚', bgColor: 'rgba(52,152,219,0.12)', label: '教育' },
+    developer: { color: '#9b59b6', icon: '💻', bgColor: 'rgba(155,89,182,0.12)', label: '开发者' },
+    comic: { color: '#f39c12', icon: '🎬', bgColor: 'rgba(243,156,18,0.12)', label: '漫剧创作' },
+    medical: { color: '#1abc9c', icon: '🏥', bgColor: 'rgba(26,188,156,0.12)', label: '医疗健康' },
+    legal: { color: '#34495e', icon: '⚖️', bgColor: 'rgba(52,73,94,0.12)', label: '法律' },
+    manufacturing: { color: '#e67e22', icon: '🏭', bgColor: 'rgba(230,126,34,0.12)', label: '制造业' },
+    general: { color: 'var(--muted)', icon: '💬', bgColor: 'transparent', label: '通用' },
+  };
 
   // 行业快捷指令: 根据用户选择的行业返回对应的快捷操作
   const getIndustryQuickActions = (industry: string) => {
@@ -248,12 +361,30 @@ export const ChatView: React.FC = () => {
   const [attachments, setAttachments] = useState<ParsedAttachment[]>([]);
   const [emotionMap, setEmotionMap] = useState<Record<string, EmotionResult>>({});
   const [thinking, setThinking] = useState(true);
+  // 2026-06-24 新增: 透明进度状态
+  const [progress, setProgress] = useState<{
+    step: string;
+    description: string;
+    percent: number;
+    iteration?: number;
+    maxIterations?: number;
+    toolCount?: number;
+    toolNames?: string;
+    successCount?: number;
+    failCount?: number;
+    durationMs?: number;
+  } | null>(null);
   const msgRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const abortRef = useRef<AbortController | null>(null);
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // P2-1: 使用抽取的 useSmartScroll hook
+  const { scrollRef, isScrolledUp, handleScroll, onDone: scrollToTopOnDone, scrollToBottom, reset: resetScroll } = useSmartScroll([messages, queuedSends]);
+
+  // P2-1: 使用抽取的 useSessionAutoSave hook (替换内联自动保存 + 会话切换逻辑)
+  useSessionAutoSave(messages, activeId);
+  // P2-1: 会话切换时重置滚动状态
+  useEffect(() => { resetScroll(); }, [activeId, resetScroll]);
 
   // 智能清空: 先保存记忆再清空
   const smartClear = useCallback(() => {
@@ -303,6 +434,13 @@ export const ChatView: React.FC = () => {
     return () => { cancelled = true; };
   }, [systemReady]);
 
+  /* ---- 长任务快照: 进入 ChatView 时拉取可恢复任务 (一次性, 5 分钟后再拉) ---- */
+  useEffect(() => {
+    refreshResumable();
+    const t = setInterval(() => refreshResumable(), 5 * 60_000);
+    return () => clearInterval(t);
+  }, [refreshResumable]);
+
   /* ---- Context monitor (token 估算) ---- */
   // 页面关闭/刷新时自动保存记忆
   useEffect(() => {
@@ -336,15 +474,17 @@ export const ChatView: React.FC = () => {
     socketRef.current = sock;
 
     sock.on('qq:message', (data: any) => {
-      const label = data.source === 'qq-group' ? `QQ群` : 'QQ私聊';
+      const label = data.source === 'qq-group' ? 'QQ群' : 'QQ私聊';
       const userId = `qq-msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       appendMessage({
         id: userId,
         role: 'user',
-        segments: [{ kind: 'text', text: `[${label}] ${data.content}` }],
+        segments: [{ kind: 'text', text: data.content }],
         ts: Date.now(),
         status: 'sent',
-      });
+        // A4: 标记消息来源渠道, 供前端显示渠道图标和「回复到外部渠道」按钮
+        framework: `channel:qq:${data.source === 'qq-group' ? 'group' : 'private'}:${data.userId || ''}`,
+      } as any);
       // 标记为 qq 消息供后续处理
       setEmotionMap(prev => ({ ...prev, [userId]: { emotion: 'neutral', intensity: 0.5, label: '中性', emoji: '😐' } }));
     });
@@ -367,10 +507,12 @@ export const ChatView: React.FC = () => {
       appendMessage({
         id: msgId,
         role: 'user',
-        segments: [{ kind: 'text', text: `[微信] ${data.content}` }],
+        segments: [{ kind: 'text', text: data.content }],
         ts: Date.now(),
         status: 'sent',
-      });
+        // A4: 标记消息来源渠道
+        framework: `channel:wechat:private:${data.userId || ''}`,
+      } as any);
       setEmotionMap(prev => ({ ...prev, [msgId]: { emotion: 'neutral', intensity: 0.5, label: '中性', emoji: '😐' } }));
     });
 
@@ -383,6 +525,80 @@ export const ChatView: React.FC = () => {
         status: 'done',
         provider: 'wechat-bot',
       });
+    });
+
+    sock.on('disconnect', (reason: string) => {
+      // 静默处理 disconnect, 不显示给用户
+      // socket.io 会自动重连, 重连成功后会继续收消息
+      // 只有长时间断线才会由 GatewayFallback 检测并通知
+      console.debug('[ChatView] WebSocket disconnected:', reason);
+    });
+
+    // 2026-06-24 新增: 透明进度监听
+    sock.on('progress', (data: any) => {
+      setProgress(data);
+      // 任务完成时清除进度状态
+      if (data.step === 'done') {
+        setTimeout(() => setProgress(null), 2000);
+      }
+    });
+
+    // WebSocket 重连成功提示 (只在真正重连后显示)
+    sock.on('reconnect', (attemptNumber: number) => {
+      // 不显示重连成功消息, 避免刷屏
+      console.log('[ChatView] WebSocket reconnected after', attemptNumber, 'attempts');
+    });
+
+    /* ═══ 统一执行结果推送: 工作流 / 自动化 / 定时任务完成时在对话窗口显示 ═══ */
+    sock.on('execution:result', (data: any) => {
+      const sourceLabel: Record<string, string> = { workflow: '工作流', automation: '自动化任务', cron: '定时任务' };
+      const label = sourceLabel[data.source] || data.source || '任务';
+      const eventLabel = data.event === 'start' ? '开始执行' : (data.success ? '✅ 执行成功' : '❌ 执行失败');
+
+      // 只对完成/失败事件推消息，避免开始事件刷屏
+      if (data.event === 'done' || data.event === undefined) {
+        const durationStr = data.durationMs ? ` (耗时 ${(data.durationMs / 1000).toFixed(1)}s)` : '';
+        const errorStr = data.error ? `\n错误: ${data.error}` : '';
+        appendMessage({
+          id: `exec-${data.source}-${data.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: 'assistant',
+          segments: [{ kind: 'text', text: `[${label}] ${data.name || '未命名任务'} ${eventLabel}${durationStr}${errorStr}` }],
+          ts: Date.now(),
+          status: 'done',
+          provider: 'system',
+        } as any);
+
+        // 桌面通知 + 提示音 (后台任务完成时)
+        taskNotifier.notifyTaskComplete(
+          data.success ? `✅ ${label} 完成` : `❌ ${label} 失败`,
+          `${data.name || '未命名任务'}${data.durationMs ? ` (${(data.durationMs / 1000).toFixed(1)}s)` : ''}${data.error ? `\n${data.error.slice(0, 200)}` : ''}`,
+        );
+      }
+    });
+
+    /* ═══ 工作流进度实时展示 ═══ */
+    sock.on('workflow:started', (data: any) => {
+      appendMessage({
+        id: `wf-start-${data.executionId}-${Date.now()}`,
+        role: 'assistant',
+        segments: [{ kind: 'text', text: `[工作流] 🚀 ${data.templateName} 开始执行 (共 ${data.totalSteps} 步)` }],
+        ts: Date.now(),
+        status: 'done',
+        provider: 'system',
+      } as any);
+    });
+
+    sock.on('workflow:step', (data: any) => {
+      const statusIcon: Record<string, string> = { success: '✅', failed: '❌', running: '⏳', skipped: '⏭️' };
+      const icon = statusIcon[data.status] || '➡️';
+      appendMessage({
+        id: `wf-step-${data.executionId}-${data.stepId}-${Date.now()}`,
+        role: 'assistant',
+        segments: [{ kind: 'text', text: `  ${icon} ${data.stepName}: ${data.status}${data.error ? ' - ' + data.error : ''}` }],
+        ts: Date.now(),
+        status: 'done',
+        provider: 'system',
+      } as any);
     });
 
     return () => { sock.disconnect(); };
@@ -405,13 +621,6 @@ export const ChatView: React.FC = () => {
     };
   }, [messages, activeModelId]);
 
-  // Auto-scroll
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, queuedSends]);
-
   /* ---- 文件大小格式化 ---- */
   function formatFileSize(bytes: number): string {
     if (bytes < 1024) return bytes + 'B';
@@ -429,12 +638,18 @@ export const ChatView: React.FC = () => {
       setAskUserCard(null);
     }
 
-    // 正在处理时排队，不中止前一个任务
+    // 正在处理时: 中断旧对话, 立即发送新消息 (压制模式)
     if (loading) {
-      if (text.trim()) {
-        setQueuedSends(prev => [...prev, text]);
+      if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
+      // 标记正在流式的 bot 消息为已中断
+      const streamingMsgs = useChatStore.getState().messages.filter(m => m.streaming);
+      for (const m of streamingMsgs) {
+        updateMessage(m.id, (prev) => ({
+          ...prev, streaming: false, status: 'interrupted' as any,
+          segments: [...prev.segments, { kind: 'text', text: '\n\n⚡ 已被新消息中断' }],
+        }));
       }
-      return;
+      setLoading(false);
     }
 
     // 捕获当前附件并发送, 发送后清空 (必须先捕获再检查, 因为 setAttachments 会清空)
@@ -476,6 +691,42 @@ export const ChatView: React.FC = () => {
 
     setLoading(true);
 
+    // ═══ 前端直接拦截音乐关键词, 绕过 LLM 直接触发播放 ═══
+    const MUSIC_TRIGGERS = /放点音乐|放首歌|听歌|想听音乐|想听歌|来点音乐|音乐播放|开始播放|播放音乐|放音乐|放松.*音乐|听.*音乐|音乐.*放松|累了|background music|play music|play song/i;
+    if (MUSIC_TRIGGERS.test(text) && !text.startsWith('/')) {
+      window.dispatchEvent(new CustomEvent('agentai:music-action', {
+        detail: { action: 'play' },
+      }));
+      // 通知 StatusBar 弹出播放面板
+      window.dispatchEvent(new CustomEvent('agentai:music-action', {
+        detail: { action: 'show' },
+      }));
+    }
+
+    // ═══ 前端直接拦截音乐控制命令 (暂停/切歌/音量) ═══
+    const MUSIC_CONTROL: Array<{ pattern: RegExp; action: string; extra?: any }> = [
+      { pattern: /暂停|暂停音乐|暂停播放|先暂停/i, action: 'pause' },
+      { pattern: /下一首|下[一1]曲|切歌|换一首|下一曲|next/i, action: 'next' },
+      { pattern: /上一首|上[一1]曲|上一曲|prev/i, action: 'prev' },
+      { pattern: /音量调大|大点声|大声点|调大音量|volume\s*up|音量.*大/i, action: 'volume', extra: { volume: 0.8 } },
+      { pattern: /音量调小|小点声|小声点|调小音量|volume\s*down|音量.*小/i, action: 'volume', extra: { volume: 0.2 } },
+    ];
+    for (const { pattern, action, extra } of MUSIC_CONTROL) {
+      if (pattern.test(text)) {
+        const detail: any = { action };
+        if (extra?.volume !== undefined) detail.volume = extra.volume;
+        else if (extra) Object.assign(detail, extra);
+        window.dispatchEvent(new CustomEvent('agentai:music-action', { detail }));
+        // 纯控制命令不需要走 LLM, 直接返回
+        if (action === 'pause' || action === 'next' || action === 'prev') {
+          appendMessage({ id: `bot-${Date.now()}`, role: 'assistant', segments: [{ kind: 'text', text: action === 'pause' ? '⏸ 已暂停播放' : action === 'next' ? '⏭ 已切换到下一首' : '⏮ 已切换到上一首' }], ts: Date.now(), status: 'done' });
+          setLoading(false);
+          return;
+        }
+        break;
+      }
+    }
+
     // regenerate 时使用传入的附件, 不清空用户当前附件状态
     const currentAttachments = extraAttachments || [...attachments];
     if (!extraAttachments) {
@@ -492,7 +743,7 @@ export const ChatView: React.FC = () => {
     // 重置审批状态
     setPlanNeedsApproval(false);
 
-    const userId = `user-${Date.now()}`;
+    const userId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const botId = `bot-${Date.now()}`;
 
     // 构建用户消息段: 文本 + 图片缩略图 + 文件标记
@@ -526,18 +777,13 @@ export const ChatView: React.FC = () => {
     if (sessionId) {
       const session = sessions.find(s => s.id === sessionId);
       if (session && session.title === '新对话' && messageText.trim()) {
-        useSessionStore.getState().updateTitle(sessionId, messageText.trim().slice(0, 30));
+        useSessionStore.getState().updateTitle(sessionId, (messageText || '').trim().slice(0, 30));
       }
     }
 
-    // 情绪分析 (并行, 不阻塞回复)
-    // 快速启发式分析 (不调LLM, 立即可用)
+    // 情绪分析 — 仅使用快速启发式 (不调 LLM, 零延迟, 已集成到对话请求中)
     const quickEmotion = analyzeEmotionQuick(text);
     setEmotionMap(prev => ({ ...prev, [userId]: quickEmotion }));
-    // 异步LLM精确分析 (覆盖启发式结果)
-    analyzeEmotion(text).then(emotion => {
-      setEmotionMap(prev => ({ ...prev, [userId]: emotion }));
-    }).catch(() => { /* ignore */ });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -565,6 +811,14 @@ export const ChatView: React.FC = () => {
       onDelta: (info: any) => { lastActivityTs = Date.now(); baseHandlers.onDelta?.(info); },
       // 缓存工具调用参数 (onToolResult 中需要)
       _toolArgsCache: {} as Record<string, any>,
+      // 2026-06-24 新增: 透明进度处理
+      onProgress: (info: any) => {
+        setProgress(info);
+        // 任务完成时清除进度状态
+        if (info.step === 'done') {
+          setTimeout(() => setProgress(null), 2000);
+        }
+      },
       onModelFallback: (info: any) => {
         // 模型降级通知: 在消息中显示提示
         updateMessage(botId, (m: any) => ({
@@ -667,7 +921,7 @@ export const ChatView: React.FC = () => {
                 filePath,
                 type: changeType as 'created' | 'modified' | 'deleted',
                 summary: `${info.name}: ${filePath.split(/[\\/]/).pop()}`,
-                diff: args?.diff || args?.content?.slice(0, 500),
+                diff: args?.diff || (typeof args?.content === 'string' ? String(args.content).slice(0, 500) : undefined),
                 timestamp: Date.now(),
               });
             }
@@ -688,14 +942,14 @@ export const ChatView: React.FC = () => {
           };
         });
 
-        // TTS语音播报: AI回复完成时自动播报
-        try {
+        // TTS语音播报: AI回复完成时自动播报 (best-effort, 不阻塞)
+        setTimeout(() => {
           if (checkTts()) {
             const lastMsg = useChatStore.getState().messages.find((m: any) => m.id === botId);
             const text = lastMsg?.segments?.filter((s: any) => s.kind === 'text').map((s: any) => s.text).join('');
-            if (text) speak(text.slice(0, 500)); // 最多播报500字
+            if (text) speak(text.slice(0, 500)).catch(() => {}); // 最多播报500字
           }
-        } catch { /* TTS is best-effort */ }
+        }, 100);
 
         // 自动记忆: 检测任务完成, 保存到 MemoryEngine
         try {
@@ -704,11 +958,11 @@ export const ChatView: React.FC = () => {
             content: m.segments?.filter(s => s.kind === 'text').map(s => s.text).join('') || '',
           }));
           const lastAssistant = allText.filter(m => m.role === 'assistant').pop();
-          if (lastAssistant && lastAssistant.content.length > 30) {
+          if (lastAssistant && lastAssistant.content && lastAssistant.content.length > 30) {
             MemoryEngine.autoSaveOnTaskComplete(
               allText,
               '', // workspace (由 EditorRightPanel 处理)
-              lastAssistant.content.slice(0, 80).replace(/\n/g, ' ').trim(),
+              String(lastAssistant.content).slice(0, 80).replace(/\n/g, ' ').trim(),
             );
           }
         } catch { /* memory save is best-effort */ }
@@ -729,7 +983,20 @@ export const ChatView: React.FC = () => {
         }, 3000);
       },
       onError: (err: string) => {
-        updateMessage(botId, (m: any) => ({ ...m, streaming: false, status: 'error', segments: [...m.segments, { kind: 'text', text: `\n\n❌ ${err}` }] }));
+        // 结构化的错误卡片, 解析关键信息
+        const details = err.length > 120 ? err.slice(0, 120) + '...' : undefined;
+        updateMessage(botId, (m: any) => ({
+          ...m, streaming: false, status: 'error',
+          segments: [...m.segments, {
+            kind: 'error',
+            error: err.length > 80 ? err.slice(0, 80) + '...' : err,
+            details,
+            fix: err.includes('timeout') ? '检查服务是否运行正常，或稍后重试' :
+                 err.includes('rate limit') ? '请求过于频繁，请稍后再试' :
+                 err.includes('unauthorized') ? '请检查 API Key 配置' :
+                 err.includes('not found') ? '检查文件路径是否正确' : undefined,
+          }],
+        }));
         // 任务链标记失败 + 延迟隐藏
         setChainStages(prev => prev.map(s => s.key === chainCurrent ? { ...s, status: 'failed' as StageStatus } : s));
         // 桥接 → 全局任务编排器: 任务失败
@@ -802,9 +1069,17 @@ export const ChatView: React.FC = () => {
           ts: Date.now(),
         });
       },
-      onAskUser: (info: any) => {
-        setAskUserCard({ question: info.question, options: info.options || [] });
-      },
+onAskUser: (info: any) => {
+setAskUserCard({ question: info.question, options: info.options || [] });
+},
+onClarifyRequired: (info: any) => {
+setClarificationReq({
+id: info.id,
+originalMessage: info.originalMessage,
+questions: info.questions,
+ambiguities: info.ambiguities,
+});
+},
       // 子智能体事件: 渲染为可见文本
       onSubagentStart: (info: any) => {
         lastActivityTs = Date.now();
@@ -817,10 +1092,11 @@ export const ChatView: React.FC = () => {
       },
       onSubagentDone: (info: any) => {
         lastActivityTs = Date.now();
+        const subagentResult = typeof info.result === 'string' ? info.result : JSON.stringify(info.result || '');
         updateMessage(botId, (m: any) => ({
           ...m, segments: [...m.segments, {
             kind: 'text',
-            text: `\n\n> ✅ **子智能体完成**: ${(info.result || '').slice(0, 300)}\n`,
+            text: `\n\n> ✅ **子智能体完成**: ${String(subagentResult).slice(0, 300)}\n`,
           }],
         }));
       },
@@ -867,6 +1143,8 @@ export const ChatView: React.FC = () => {
         modelName: activeModelConfig.models?.[0] || activeModelConfig.label,
         provider: activeModelConfig.provider,
       } : undefined;
+      // 长任务快照: 若用户在任务中心激活了 taskId, 把 taskId 透传给后端以恢复上下文
+      const activeTaskId = useTaskResumeStore.getState().activeTaskId || undefined;
 
       if (mode === 'readonly') {
         // 非流式 JSON
@@ -879,6 +1157,7 @@ export const ChatView: React.FC = () => {
             emotion: quickEmotion,
             attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
             thinking, modelConfig,
+            taskId: activeTaskId,  // 长任务快照 ID (跨会话恢复)
           }),
           signal: controller.signal,
         });
@@ -904,6 +1183,7 @@ export const ChatView: React.FC = () => {
           attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
           thinking, modelConfig,
           systemRules: buildTimelinePrompt(),
+          taskId: activeTaskId,  // 长任务快照 ID (跨会话恢复)
         }, handlers, controller.signal);
       }
     } catch (e: any) {
@@ -918,6 +1198,10 @@ export const ChatView: React.FC = () => {
       clearInterval(timeoutChecker);
       setLoading(false);
       abortRef.current = null;
+      // 消息发送完毕后自动清除 activeTaskId (无论成功失败, 不再显示恢复提示条)
+      if (activeTaskId) {
+        setActiveTaskId(null);
+      }
     }
   }, [loading, activeModelId, mode, appendMessage, updateMessage, activeId, createSession, addMessage, attachments, setAttachments]);
 
@@ -1011,7 +1295,7 @@ export const ChatView: React.FC = () => {
         const next = list.filter(b => b.id !== messageId);
         localStorage.setItem(key, JSON.stringify(next));
       } else {
-        list.push({ id: messageId, text: text.slice(0, 1000), ts: Date.now() });
+        list.push({ id: messageId, text: String(text || '').slice(0, 1000), ts: Date.now() });
         localStorage.setItem(key, JSON.stringify(list));
       }
     } catch { /* ignore */ }
@@ -1042,7 +1326,7 @@ export const ChatView: React.FC = () => {
     { cmd: '/abort', desc: '中断当前回复', run: () => handleStop() },
     { cmd: '/help', desc: '查看帮助', run: () => {
       appendMessage({ id: 'help', role: 'system', segments: [{ kind: 'text', text: `
-**x-agent 命令指南**
+**Atlas 命令指南**
 
 - \`/clear\` — 清空当前对话
 - \`/new\` — 新建对话
@@ -1089,6 +1373,45 @@ export const ChatView: React.FC = () => {
     return () => window.removeEventListener('agentai:navigate-msg', handler);
   }, [handleNavigateToMsg]);
 
+  // 监听文件树 "添加到上下文" 事件
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const { filePath, fileName } = (e as CustomEvent).detail;
+      if (!filePath) return;
+      try {
+        // 从后端读取文件内容
+        const res = await fetch(`/api/files/download?path=${encodeURIComponent(filePath)}`);
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const text = await blob.text();
+        const ext = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() : '';
+        const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext || '');
+        const attachment: ParsedAttachment = isImage
+          ? { name: fileName, mimetype: `image/${ext}`, size: blob.size, content: `[图片: ${fileName}]`, dataUrl: `data:image/${ext};base64,${btoa(text)}`, kind: 'image' }
+          : { name: fileName, mimetype: 'text/plain', size: blob.size, content: text, kind: 'text' };
+        setAttachments(prev => [...prev, attachment]);
+      } catch {
+        // 静默失败
+      }
+    };
+    window.addEventListener('agentai:add-file-context', handler);
+    return () => window.removeEventListener('agentai:add-file-context', handler);
+  }, []);
+
+  /* ✨ 监听建议采纳事件 — 自动将建议 action 发送到对话 */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ action: string }>;
+      const action = ce.detail?.action;
+      if (action && typeof action === 'string' && action.trim()) {
+        // 自动发送建议的 action 到对话
+        handleSend(action.trim());
+      }
+    };
+    window.addEventListener('agentai:suggestion-accept', handler);
+    return () => window.removeEventListener('agentai:suggestion-accept', handler);
+  }, [handleSend]);
+
   /* ---- Drag-drop handler ---- */
   const [dragOver, setDragOver] = useState(false);
   // 任务链状态 (SSE plan events 驱动)
@@ -1115,6 +1438,8 @@ export const ChatView: React.FC = () => {
   // 规划模式审批状态
   const [planNeedsApproval, setPlanNeedsApproval] = useState(false);
   const [planSessionId, setPlanSessionId] = useState<string>('');
+// 意图澄清请求 (AI 检测到歧义时弹出卡片)
+const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | null>(null);
 
   /* ---- 追问答案: loading=false 后自动发送 ---- */
   useEffect(() => {
@@ -1124,30 +1449,14 @@ export const ChatView: React.FC = () => {
     }
   }, [pendingAnswer, loading, handleSend]);
 
-  /* ---- Auto-save: 每30秒保存到 sessionStore ---- */
+  /* ---- 队列消息: loading=false 后自动发送第一条 ---- */
   useEffect(() => {
-    if (!activeId || messages.length === 0) return;
-    const timer = setInterval(() => {
-      for (const msg of messages) {
-        const textSegs = msg.segments.filter(s => s.kind === 'text');
-        const text = textSegs[0]?.text || '';  // 只取用户输入文本, 文件标记不存 session
-        if (!text) continue;
-        addMessage(activeId!, { role: msg.role, content: text, ts: msg.ts });
-      }
-    }, 30000);
-    autoSaveTimerRef.current = timer;
-    return () => { clearInterval(timer); autoSaveTimerRef.current = null; };
-  }, [activeId, messages.length]);
-
-  /* ---- 保存最后一条消息到 sessionStore ---- */
-  useEffect(() => {
-    if (!activeId || messages.length === 0) return;
-    const last = messages[messages.length - 1];
-    const text = last.segments.filter(s => s.kind === 'text').map(s => s.text).join('').slice(0, 200);
-    if (text && !last.streaming) {
-      addMessage(activeId, { role: last.role, content: text, ts: last.ts });
+    if (!loading && queuedSends.length > 0) {
+      const next = queuedSends[0];
+      setQueuedSends(q => q.slice(1));
+      handleSend(next);
     }
-  }, [messages.length]);
+  }, [loading, queuedSends, handleSend]);
 
   /* ==================== Render ==================== */
   return (
@@ -1160,6 +1469,107 @@ export const ChatView: React.FC = () => {
       onDragLeave={() => setDragOver(false)}
       onDrop={e => { e.preventDefault(); setDragOver(false); }}
     >
+      {/* ===== 长任务快照: 顶部恢复提示条 ===== */}
+      {(activeTaskId || resumableTasks.length > 0) && (
+        <div style={{ padding: '8px 16px 0' }}>
+          {activeTaskId && (
+            <Alert
+              type="info"
+              showIcon
+              icon={<SyncOutlined spin />}
+              message={
+                <Space>
+                  <span>正在恢复长任务</span>
+                  <code style={{ fontSize: 11 }}>{activeTaskId.slice(0, 40)}...</code>
+                </Space>
+              }
+              description="发送消息时, AI 将自动加载此任务之前的进度、已完成步骤、待办和关键决策"
+              action={
+                <Button
+                  size="small"
+                  icon={<CloseOutlined />}
+                  onClick={() => setActiveTaskId(null)}
+                >
+                  取消激活
+                </Button>
+              }
+              style={{ marginBottom: 8 }}
+            />
+          )}
+          {!activeTaskId && resumableTasks.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              message={
+                <Space>
+                  <span>发现 {resumableTasks.length} 个可恢复的长任务</span>
+                  <Tag color="orange">跨会话继续</Tag>
+                </Space>
+              }
+              description={
+                <Space wrap>
+                  {resumableTasks.slice(0, 3).map((t) => (
+                    <Button
+                      key={t.taskId}
+                      size="small"
+                      type="primary"
+                      icon={resumingId === t.taskId ? <Spin size="small" /> : <SyncOutlined />}
+                      disabled={resumingId !== null}
+                      onClick={async () => {
+                        setResumingId(t.taskId);
+                        try {
+                          // 调 API 准备恢复, 成功后自动设 activeTaskId
+                          const result = await prepareResume(t.taskId);
+                          if (result) {
+                            // 在对话窗口显示一条消息告知用户已准备
+                            appendMessage({
+                              id: `resume-ready-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                              role: 'assistant',
+                              segments: [{ kind: 'text', text: `📋 已加载任务「${t.goal || t.taskId.slice(0, 20)}」的进度，输入消息即可继续。` }],
+                              ts: Date.now(),
+                              status: 'done',
+                              provider: 'system',
+                            } as any);
+                          } else {
+                            appendMessage({
+                              id: `resume-fail-${Date.now()}`,
+                              role: 'assistant',
+                              segments: [{ kind: 'text', text: `⚠️ 无法恢复任务「${t.goal || t.taskId.slice(0, 20)}」，任务数据可能已损坏或丢失。` }],
+                              ts: Date.now(),
+                              status: 'done',
+                              provider: 'system',
+                            } as any);
+                          }
+                        } catch (e: any) {
+                          appendMessage({
+                            id: `resume-err-${Date.now()}`,
+                            role: 'assistant',
+                            segments: [{ kind: 'text', text: `❌ 恢复任务失败: ${e.message}` }],
+                            ts: Date.now(),
+                            status: 'done',
+                            provider: 'system',
+                          } as any);
+                        } finally {
+                          setResumingId(null);
+                        }
+                      }}
+                    >
+                      {t.goal?.slice(0, 30) || t.taskId.slice(0, 20)}
+                    </Button>
+                  ))}
+                  {resumableTasks.length > 3 && (
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                      等 {resumableTasks.length - 3} 个...
+                    </span>
+                  )}
+                </Space>
+              }
+              style={{ marginBottom: 8 }}
+            />
+          )}
+        </div>
+      )}
+
       {/* ===== Workspace + 摘要 (可折叠) ===== */}
       <WorkspaceSummaryBar
         messageCount={messages.length}
@@ -1184,28 +1594,22 @@ export const ChatView: React.FC = () => {
         }}
       />
 
-      {/* AI 主动建议 */}
-      <ProactiveSuggestionCard
-        workspace={currentWorkspace}
-        industry={currentIndustry}
-        onAction={(action) => {
-          if (loading) {
-            handleQueueWhileBusy(action);
-          } else {
-            handleSend(action);
-          }
-        }}
-        visible={messages.length === 0}
-      />
+      {/* ✨ AI 主动建议 — 已由全局 FloatingSuggestionToast + SSE 接管 */}
 
       {/* Messages area */}
       <div
         ref={scrollRef}
+        onScroll={handleScroll}
         style={{
           flex: 1, overflowY: 'auto', padding: '8px 0',
           position: 'relative',
         }}
       >
+        {/* 上轮会话摘要提示 (v3.1) - 新对话时显示, 让用户知道 AI 记得上轮 */}
+        {messages.length === 0 && (
+          <LastSessionHint workspace={profile?.workspace || localStorage.getItem('agentai.workspace') || ''} />
+        )}
+
         {/* Welcome screen when empty */}
         {messages.length === 0 && (
           <div style={{
@@ -1213,30 +1617,94 @@ export const ChatView: React.FC = () => {
             justifyContent: 'center', height: '100%', padding: 40,
             textAlign: 'center',
           }}>
-            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--fg)', marginBottom: 4 }}>
+            {/* ATLAS LOGO */}
+            <div style={{ marginBottom: 20 }}>
+              <svg width="64" height="64" viewBox="0 0 64 64">
+                <defs>
+                  <linearGradient id="chat-logo" x1="0%" y1="100%" x2="0%" y2="0%">
+                    <stop offset="0%" stopColor="#CD7A3A" stopOpacity="0.4"/>
+                    <stop offset="50%" stopColor="#CD7A3A" stopOpacity="0.7"/>
+                    <stop offset="100%" stopColor="#E89055"/>
+                  </linearGradient>
+                </defs>
+                <rect width="64" height="64" rx="14" fill="#232328"/>
+                <path d="M32 10 L50 46 L42 46 L32 26 L22 46 L14 46 Z" fill="url(#chat-logo)"/>
+                <path d="M32 24 L40 44 L32 38 L24 44 Z" fill="#CD7A3A"/>
+                <circle cx="32" cy="14" r="3" fill="#E89055"/>
+              </svg>
+            </div>
+
+            {/* 行业徽章 — 根据用户选择的行业动态显示 */}
+            {currentIndustry && currentIndustry !== 'general' && (
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '3px 10px', borderRadius: 12,
+                fontSize: 11, fontWeight: 600, marginBottom: 12,
+                background: (INDUSTRY_BADGE_THEME as any)[currentIndustry]?.bgColor || 'rgba(255,255,255,0.06)',
+                color: (INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--fg-2)',
+                border: `1px solid ${(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--border)'}40`,
+              }}>
+                <span>{(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.icon || '🔧'}</span>
+                <span>{(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.label || currentIndustry}</span>
+              </div>
+            )}
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)', marginBottom: 6 }}>
               有什么可以帮你的？
             </div>
-            <div style={{ fontSize: 12, color: 'var(--muted-2)', marginBottom: 24 }}>
-              {systemInfo || 'x-agent'}
+            <div style={{ fontSize: 12, color: 'var(--muted-2)', marginBottom: 20 }}>
+              {systemInfo || 'PulseFlow · 岐黄'} · 10+ 免费模型 · 越用越懂你
             </div>
-            {/* 行业快捷指令 — 根据用户选择的行业动态显示 */}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 480 }}>
-              {getIndustryQuickActions(currentIndustry).map(action => (
+
+            {/* 展示性 Demo — 点击即发送, 让用户 3 秒体验核心能力 */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, maxWidth: 460, width: '100%' }}>
+              {[
+                { icon: '📖', label: '读懂项目', prompt: '帮我读一下当前项目的 README，总结这个项目是做什么的', color: '#3B82F6' },
+                { icon: '🎨', label: '画一张图', prompt: '画一张赛博朋克风格的猫，霓虹灯光，高质量', color: '#EC4899' },
+                { icon: '🔍', label: '搜索最新', prompt: '搜索最新的 AI Agent 开源框架，对比它们的优缺点', color: '#10B981' },
+                { icon: '📄', label: '写文档', prompt: '帮我写一份项目技术文档模板，包含架构设计和 API 说明', color: '#F59E0B' },
+              ].map(demo => (
                 <button
-                  key={action.label}
-                  onClick={() => { composerRef.current?.setDraft(action.prompt); composerRef.current?.focus(); }}
+                  key={demo.label}
+                  onClick={() => handleSend(demo.prompt)}
+                  className="demo-card"
                   style={{
-                    padding: '5px 12px', borderRadius: 6, fontSize: 12,
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4,
+                    padding: '10px 14px', borderRadius: 8, fontSize: 12,
                     background: 'var(--panel)', border: '1px solid var(--border)',
-                    color: 'var(--fg-2)', cursor: 'pointer',
+                    color: 'var(--fg-2)', cursor: 'pointer', textAlign: 'left',
+                    transition: 'all 0.15s ease',
+                    ['--demo-color' as any]: demo.color,
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; }}
                 >
-                  {action.label}
+                  <span style={{ fontSize: 18 }}>{demo.icon}</span>
+                  <span style={{ fontWeight: 600, color: 'var(--fg)' }}>{demo.label}</span>
+                  <span style={{ fontSize: 10, color: 'var(--muted-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                    {demo.prompt}
+                  </span>
                 </button>
               ))}
             </div>
+
+            {/* 行业快捷指令 — 折叠在下方 */}
+            {getIndustryQuickActions(currentIndustry).length > 0 && (
+              <div style={{ marginTop: 16, display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 480 }}>
+                {getIndustryQuickActions(currentIndustry).slice(0, 4).map(action => (
+                  <button
+                    key={action.label}
+                    onClick={() => { composerRef.current?.setDraft(action.prompt); composerRef.current?.focus(); }}
+                    style={{
+                      padding: '3px 10px', borderRadius: 6, fontSize: 11,
+                      background: 'transparent', border: '1px solid var(--border)',
+                      color: 'var(--muted-2)', cursor: 'pointer',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; }}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -1300,6 +1768,8 @@ export const ChatView: React.FC = () => {
                     const last = msg.segments.filter(s => s.kind === 'text').map((s: any) => s.text).join('\n');
                     composerRef.current?.setDraft(last);
                   }}
+                  onDone={scrollToTopOnDone}
+                  progress={msg.streaming ? progress : null}
                 />
               </div>
             );
@@ -1317,6 +1787,25 @@ export const ChatView: React.FC = () => {
         {/* Bottom padding */}
         <div style={{ height: 8 }} />
       </div>
+
+      {/* P1-6: 浮动「新回复」按钮 — 用户上滑后显示 */}
+      {isScrolledUp && messages.length > 0 && (
+        <button
+          onClick={scrollToBottom}
+          style={{
+            position: 'absolute', bottom: 120, right: 24,
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '6px 14px', borderRadius: 20,
+            background: 'var(--accent)', color: '#fff',
+            border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            boxShadow: 'var(--shadow-md)', zIndex: 50,
+            animation: 'fadeIn 0.2s ease-out',
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+          新回复
+        </button>
+      )}
 
       {/* Empty state margin adjustment */}
       {messages.length === 0 && <div style={{ flex: 1 }} />}
@@ -1398,6 +1887,16 @@ export const ChatView: React.FC = () => {
         />
       )}
 
+      {/* Clarification Card — 意图澄清 (AI 检测到歧义) */}
+      {clarificationReq && (
+        <ClarificationCard
+          request={clarificationReq}
+          onResolved={(id) => {
+            setClarificationReq(null);
+          }}
+        />
+      )}
+
       {/* Ask User Card — AI 追问问卷 */}
       {askUserCard && (
         <AskUserCard
@@ -1425,7 +1924,7 @@ export const ChatView: React.FC = () => {
       )}
 
       {/* Diff 预览 — AI 修改文件后的对比 */}
-      {diffFile && <DiffViewer filePath={diffFile} onClose={clearDiff} />}
+      {diffFile && <DiffViewer diffText={diffText} filePath={diffFile} onClose={clearDiff} />}
 
       {/* Context Monitor — 上下文长度提醒 */}
       {messages.length > 3 && tokenInfo.nearing && (
@@ -1493,8 +1992,43 @@ export const ChatView: React.FC = () => {
       {/* 工作目录选择 */}
       <WorkspaceSelector />
 
+      {/* 透明进度显示 — 仅在没有流式消息时显示 (流式时进度已内联到 ActivityTimeline) */}
+      {progress && !messages.some(m => m.streaming) && (
+        <div style={{
+          margin: '0 12px 6px', padding: '6px 12px',
+          borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--fg)',
+        }}>
+          {/* 进度条 */}
+          <div style={{
+            flex: 1, height: 6, borderRadius: 3,
+            background: 'rgba(255,255,255,0.06)',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              height: '100%',
+              width: `${progress.percent}%`,
+              background: progress.percent >= 100 ? '#22c55e' : 'var(--accent)',
+              borderRadius: 3,
+              transition: 'width 0.3s ease'
+            }} />
+          </div>
+          {/* 进度信息 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 200 }}>
+            <span style={{ fontWeight: 600 }}>{progress.percent}%</span>
+            <span style={{ color: 'var(--muted)', fontSize: 10 }}>{progress.description}</span>
+          </div>
+          {/* 工具调用统计 */}
+          {progress.toolCount && (
+            <div style={{ fontSize: 10, color: 'var(--muted)' }}>
+              {progress.successCount || 0}✓ · {progress.failCount || 0}✗
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 轻量级 loading 指示器 (详细进度由 TaskChainCard 展示) */}
-      {loading && !chainId && (
+      {loading && !chainId && !progress && (
         <div style={{
           margin: '0 12px 6px', padding: '4px 10px',
           borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)',

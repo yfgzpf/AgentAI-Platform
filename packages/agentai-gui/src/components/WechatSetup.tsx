@@ -11,7 +11,8 @@ const POLL_INTERVAL = 3000;
 
 export const WechatSetup: React.FC = () => {
   const [status, setStatus] = useState<'idle' | 'loading' | 'qr' | 'scanning' | 'confirmed' | 'error'>('idle');
-  const [qrcodeUrl, setQrcodeUrl] = useState<string>('');
+  const [qrImageUrl, setQrImageUrl] = useState<string>('');     // QR 图片直接 URL (备用)
+  const [qrcodeImage, setQrcodeImage] = useState<string>('');   // base64 png
   const [qrcodeId, setQrcodeId] = useState<string>('');
   const [account, setAccount] = useState<any>(null);
   const [error, setError] = useState<string>('');
@@ -47,7 +48,8 @@ export const WechatSetup: React.FC = () => {
       if (!data.success) {
         throw new Error(data.error || '获取二维码失败');
       }
-      setQrcodeUrl(data.qrcodeUrl);
+      setQrImageUrl(data.qrImageUrl || '');
+      setQrcodeImage(data.qrcodeImage || '');
       setQrcodeId(data.qrcodeId);
       setStatus('qr');
     } catch (err: any) {
@@ -56,9 +58,9 @@ export const WechatSetup: React.FC = () => {
     }
   }, []);
 
-  // --- 轮询扫码状态 ---
+  // --- 轮询扫码状态 (qr 或 scanning 状态下持续轮询) ---
   useEffect(() => {
-    if (status !== 'qr') return;
+    if (status !== 'qr' && status !== 'scanning') return;
 
     let cancelled = false;
     const poll = async () => {
@@ -72,11 +74,13 @@ export const WechatSetup: React.FC = () => {
           setStatus('confirmed');
           setAccount(data.account);
           message.success('微信绑定成功！');
+        } else if (data.status === 'scaned') {
+          setStatus('scanning');
         } else if (data.status === 'expired') {
           setStatus('error');
           setError('二维码已过期，请刷新重试');
         }
-        // 'wait' / 'scaned' → 继续轮询
+        // 'wait' / error → 继续轮询
       } catch (err: any) {
         if (!cancelled) console.warn('[wechat] poll error:', err.message);
       }
@@ -92,7 +96,8 @@ export const WechatSetup: React.FC = () => {
   // --- 刷新二维码 ---
   const handleRefresh = () => {
     setQrcodeId('');
-    setQrcodeUrl('');
+    setQrImageUrl('');
+    setQrcodeImage('');
     fetchQrCode();
   };
 
@@ -162,6 +167,21 @@ export const WechatSetup: React.FC = () => {
               icon={<LogoutOutlined />}
               danger
               style={{ flex: 1, height: 38, borderRadius: 8 }}
+              onClick={async () => {
+                try {
+                  const res = await fetch(`${GATEWAY_HTTP}/api/wechat/account/${account?.accountId}`, { method: 'DELETE' });
+                  const data = await res.json();
+                  if (data.success) {
+                    message.success('微信已解绑');
+                    setStatus('idle');
+                    setAccount(null);
+                  } else {
+                    message.error(data.error || '解绑失败');
+                  }
+                } catch (err: any) {
+                  message.error('解绑失败: ' + err.message);
+                }
+              }}
             >
               解绑
             </Button>
@@ -184,18 +204,34 @@ export const WechatSetup: React.FC = () => {
 
         {status === 'loading' && <Spin size="large" style={{ display: 'block', margin: '20px auto' }} />}
 
-        {status === 'qr' && qrcodeUrl && (
+        {status === 'qr' && (
           <div style={{ marginBottom: 20 }}>
-            <img
-              src={qrcodeUrl}
-              alt="微信绑定二维码"
-              style={{
-                width: 220,
-                height: 220,
-                borderRadius: 12,
-                border: '2px solid var(--border)',
-              }}
-            />
+            {/* 方案 1: base64 (后端从 qrserver API 下载的 QR 图, 最可靠) */}
+            {qrcodeImage ? (
+              <img
+                src={`data:image/png;base64,${qrcodeImage}`}
+                alt="微信绑定二维码"
+                style={{ width: 220, height: 220, borderRadius: 12, border: '2px solid var(--border)' }}
+              />
+            ) : qrImageUrl ? (
+              /* 方案 2: 浏览器直接从 qrserver API 加载 QR 图片 */
+              <img
+                src={qrImageUrl}
+                alt="微信绑定二维码"
+                style={{ width: 220, height: 220, borderRadius: 12, border: '2px solid var(--border)' }}
+                onError={() => {
+                  const el = document.getElementById('wechat-qr-fallback');
+                  if (el) el.style.display = 'block';
+                }}
+              />
+            ) : (
+              <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--panel)', borderRadius: 12 }}>
+                <span style={{ color: 'var(--muted)' }}>二维码加载中...</span>
+              </div>
+            )}
+            <div id="wechat-qr-fallback" style={{ display: 'none', marginTop: 8, fontSize: 12, color: 'var(--muted-2)' }}>
+              图片加载失败。请确认 API 服务可用，或联系管理员。
+            </div>
             <Tag color="orange" style={{ marginTop: 12, display: 'block' }}>
               等待扫码...
             </Tag>

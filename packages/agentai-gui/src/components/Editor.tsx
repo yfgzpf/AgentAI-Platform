@@ -14,15 +14,16 @@ import {
   Tabs, Tag, Segmented, App,
 } from 'antd';
 import {
-  FolderOutlined, FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined,
+  FolderOutlined, FolderOpenOutlined, FileOutlined, FileTextOutlined, ReloadOutlined, SaveOutlined,
   EditOutlined, FileAddOutlined, FolderAddOutlined,
   SearchOutlined, SendOutlined, CloseOutlined, CheckOutlined,
   DesktopOutlined, HomeOutlined, CodeOutlined, DeleteOutlined, EditOutlined as RenameIcon,
   FolderOpenOutlined as OpenFolderIcon, GlobalOutlined, RobotOutlined,
+  AppstoreAddOutlined, EnvironmentOutlined, HddOutlined, BulbOutlined, PushpinOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import { useProfileStore } from '../store';
 import { EditorChatPanel } from './EditorChatPanel';
-import { MonacoEditorComponent as MonacoEditor, detectLangFromPath, type AICodeDecoration } from './MonacoEditor';
+import { MonacoEditor, detectLangFromPath, type AICodeDecoration } from './MonacoEditor';
 import { useTaskOrchestrator } from '../store/taskOrchestratorStore';
 import { FileTimeline } from '../services/FileTimeline';
 import { gatewayFallback } from '../services/GatewayFallback';
@@ -544,9 +545,10 @@ export const Editor: React.FC = () => {
 
   // ===== 渲染 =====
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#0f0f0f' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--editor-bg)' }}>
       {/* ===== 顶栏 ===== */}
-      <div style={{ padding: '6px 10px', background: '#1a1a1a', borderBottom: '1px solid #333', display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ padding: '6px 10px', background: 'var(--editor-header)',
+        borderBottom: '1px solid var(--editor-divider)', display: 'flex', gap: 8, alignItems: 'center' }}>
         <Button size="small" type="primary" icon={<FolderOpenOutlined />} onClick={openDrivesModal}>
           打开文件夹
         </Button>
@@ -570,7 +572,7 @@ export const Editor: React.FC = () => {
           <Button
             size="small"
             type={showBottomPanel ? 'primary' : 'default'}
-            icon={<span style={{ fontSize: 12 }}>⊞</span>}
+            icon={<AppstoreAddOutlined />}
             onClick={() => setShowBottomPanel(v => !v)}
             style={{ fontSize: 10 }}
           >
@@ -622,16 +624,18 @@ export const Editor: React.FC = () => {
           {showFileTree && (
             <div style={{
               width: 220, minWidth: 0, flexShrink: 0,
-              background: '#0a0a0a', borderRight: '1px solid #333',
+              background: 'var(--editor-tree)',
+              borderRight: '1px solid var(--editor-divider)',
               overflow: 'auto', display: 'flex', flexDirection: 'column',
             }}>
               {/* 文件树标题栏 */}
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '4px 8px', background: '#111', borderBottom: '1px solid #222',
-                fontSize: 11, color: '#888', flexShrink: 0,
+                padding: '4px 8px', background: 'var(--editor-header)',
+                borderBottom: '1px solid var(--editor-divider)',
+                fontSize: 11, color: 'var(--muted)', flexShrink: 0,
               }}>
-                <span>📁 文件</span>
+                <FolderOutlined /> 文件
                 <Button size="small" type="text" icon={<FolderOutlined />} onClick={() => setShowFileTree(false)}
                   style={{ fontSize: 9, height: 18, color: '#555' }} title="收起文件树" />
               </div>
@@ -687,15 +691,15 @@ export const Editor: React.FC = () => {
             {/* ---- 下区: 终端/日志 ---- */}
             <div style={{ height: showBottomPanel ? bpHeight : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
               {/* 底部 Tab 栏 */}
-              <div style={{ height: 28, display: 'flex', alignItems: 'center', background: '#141414', borderBottom: '1px solid #333', padding: '0 8px', gap: 4, flexShrink: 0 }}>
+              <div style={{ height: 28, display: 'flex', alignItems: 'center', background: 'var(--editor-tab-bar)', borderBottom: '1px solid var(--editor-divider)', padding: '0 8px', gap: 4, flexShrink: 0 }}>
                 {(['terminal', 'logs', 'browser'] as const).map(tab => (
                   <div
                     key={tab}
                     onClick={() => setBottomPanelTab(tab)}
                     style={{
                       padding: '2px 12px', cursor: 'pointer', borderRadius: 3, fontSize: 12,
-                      color: bottomPanelTab === tab ? '#4ade80' : '#888',
-                      background: bottomPanelTab === tab ? '#1a3a1a' : 'transparent',
+                      color: bottomPanelTab === tab ? 'var(--editor-tab-active-fg)' : 'var(--muted)',
+                      background: bottomPanelTab === tab ? 'var(--editor-tab-active)' : 'transparent',
                     }}
                   >
                     {tab === 'terminal' ? '◉ 终端' : tab === 'logs' ? '◎ 日志' : '▣ 获客'}
@@ -756,19 +760,19 @@ export const Editor: React.FC = () => {
       </div>
 
       {/* ===== 状态栏 ===== */}
-      <div style={{ padding: '3px 12px', background: '#0a0a0a', borderTop: '1px solid #222', color: '#666', fontSize: 11, display: 'flex', gap: 16 }}>
-        <span>🌳 {tree.length} 个根</span>
-        <span>📄 {fileCount} 个文件</span>
-        <span>📑 {openFiles.length} tab</span>
-        {dirtyCount > 0 && <span style={{ color: '#facc15' }}>● {dirtyCount} 未保存</span>}
+      <div style={{ padding: '3px 12px', background: 'var(--editor-footer)', borderTop: '1px solid var(--editor-divider)', color: 'var(--muted-2)', fontSize: 11, display: 'flex', gap: 16 }}>
+        <FolderOutlined /> {tree.length} 个根
+        <FileOutlined /> {fileCount} 个文件
+        <CopyOutlined /> {openFiles.length} tab
+        {dirtyCount > 0 && <span style={{ color: 'var(--warning)' }}>● {dirtyCount} 未保存</span>}
         <div style={{ flex: 1 }} />
-        <span>📍 {workspace || '未打开'}</span>
-        {active && <span>📝 {active.name} · {active.language} · {active.content.length} 字符</span>}
+        <PushpinOutlined /> {workspace || '未打开'}
+        {active && <span><FileTextOutlined /> {active.name} · {active.language} · {active.content.length} 字符</span>}
       </div>
 
       {/* ===== Open Folder 弹窗 ===== */}
       <Modal
-        title="📁 打开文件夹"
+        title={<><FolderOpenOutlined /> 打开文件夹</>}
         open={openFolderModal}
         onCancel={() => setOpenFolderModal(false)}
         footer={null}
@@ -776,8 +780,8 @@ export const Editor: React.FC = () => {
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div>
-            <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>
-              💡 输入完整路径, 例: <code>F:\agentai-platform</code> 或 <code>C:\Users\你\Desktop\project</code>
+            <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 6 }}>
+              <BulbOutlined /> 输入完整路径, 例: <code>F:\agentai-platform</code>
             </div>
             <Space.Compact style={{ width: '100%' }}>
               <Input
@@ -802,7 +806,7 @@ export const Editor: React.FC = () => {
 
           {drivesInfo.drives.length > 0 && (
             <div>
-              <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>💽 盘符</div>
+              <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 6 }}><HddOutlined /> 盘符</div>
               <Space wrap>
                 {drivesInfo.drives.map(d => (
                   <Button

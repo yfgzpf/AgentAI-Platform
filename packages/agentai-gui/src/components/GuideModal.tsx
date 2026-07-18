@@ -45,7 +45,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <BookOutlined style={{ color: 'var(--accent)' }} />
-          <span>x-agent 使用指南</span>
+          <span>ATLAS 使用指南</span>
           <Tag color="purple" style={{ fontSize: 9 }}>v0.4.0</Tag>
         </div>
       }
@@ -60,8 +60,8 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
             label: '系统概览',
             children: (
               <div>
-                {SECTION.title('x-agent 是什么?')}
-                {SECTION.desc('x-agent 是一个多模型 AI 平台，支持智能对话、代码编辑、图像生成、视频生成、写作等功能。采用 Gateway + GUI 分离架构，Gateway 提供 LLM 路由、工具调用、记忆管理，GUI 提供交互界面。')}
+                {SECTION.title('Atlas 是什么?')}
+                {SECTION.desc('Atlas 是一个多模型 AI 平台，支持智能对话、代码编辑、图像生成、视频生成、写作等功能。采用 Gateway + GUI 分离架构，Gateway 提供 LLM 路由、工具调用、记忆管理，GUI 提供交互界面。')}
 
                 {SECTION.title('系统架构')}
                 {/* 架构图用文本流程图表示 */}
@@ -70,7 +70,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                   padding: 16, fontFamily: 'monospace', fontSize: 11, lineHeight: 1.8,
                   color: 'var(--fg-2)', whiteSpace: 'pre', overflowX: 'auto',
                 }}>{`┌─────────────────────────────────────────────────────────┐
-│                    x-agent                       │
+│                    Atlas                          │
 ├──────────┬──────────────┬──────────────┬────────────────┤
 │  GUI     │   Gateway    │   Core       │   Skills       │
 │ (React)  │  (Node 22)   │  (Types)     │  (Python)      │
@@ -91,7 +91,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {[
                     { name: 'LLM Router', desc: '4 Provider 路由: agentai / deepseek / openai / cline', tag: 'gateway' },
-                    { name: 'x-agent Loop', desc: '主循环: LLM调用→工具分派→结果入log→继续循环', tag: 'gateway' },
+                    { name: 'Atlas Loop', desc: '主循环: LLM调用→工具分派→结果入log→继续循环', tag: 'gateway' },
                     { name: 'Tool Registry', desc: '工具注册中心, 支持并行/串行分块执行', tag: 'gateway' },
                     { name: 'Memory Engine', desc: '持久记忆 + 会话记忆 + 行业记忆', tag: 'gateway' },
                     { name: 'Industry Engine', desc: '行业引擎: 装修/电商/教育/漫画等', tag: 'gateway' },
@@ -245,7 +245,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
             children: (
               <div>
                 {SECTION.title('AI 生成图表功能')}
-                {SECTION.desc('x-agent 内置 generate_diagram 工具, AI 可以在对话中自动生成 SVG 图表和流程图。')}
+                {SECTION.desc('Atlas 内置 generate_diagram 工具, AI 可以在对话中自动生成 SVG 图表和流程图。')}
 
                 {SECTION.title('触发方式')}
                 {SECTION.desc('在对话中直接用自然语言请求, 例如:')}
@@ -315,7 +315,63 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
             ),
           },
 
-          /* ====== 5. 快捷操作 ====== */
+          /* ====== 5. API Key 获取 ====== */
+          {
+            key: 'apikeys',
+            label: 'API Key 获取',
+            children: (
+              <div>
+                {SECTION.title('各模型 API Key 获取方式')}
+                {SECTION.desc('点击链接跳转官网注册，然后在 ATLAS 设置页粘贴 Key 即可')}
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {[
+                    { name: 'ATLAS (Agnes)', url: 'https://apihub.agnes-ai.com', quota: '每月 1000 次对话 + 100 张生图', env: 'AGENTAI_API_KEY' },
+                    { name: '智谱 GLM', url: 'https://open.bigmodel.cn', quota: '新用户 500 万 tokens', env: 'ZHIPU_API_KEY' },
+                    { name: 'DeepSeek', url: 'https://platform.deepseek.com', quota: '新用户 5000 万 tokens', env: 'DEEPSEEK_API_KEY' },
+                    { name: 'OpenAI', url: 'https://platform.openai.com', quota: '需绑定信用卡', env: 'OPENAI_API_KEY' },
+                    { name: 'NVIDIA NIM', url: 'https://build.nvidia.com', quota: '1000 次/月 (77+ 模型)', env: 'NVIDIA_API_KEY' },
+                    { name: '商汤 SenseNova', url: 'https://platform.sensenova.cn', quota: '每 5 小时 1500 次', env: 'SENSENOVA_API_KEY' },
+                    { name: '美团 LongCat', url: 'https://longcat.chat', quota: '申请内测资格', env: 'LONGCAT_API_KEY' },
+                    { name: 'SuperAPI', url: 'https://superapi.vanguard.dpdns.org', quota: '联系管理员', env: 'SUPERAPI_API_KEY' },
+                    { name: '通义千问', url: 'https://dashscope.aliyun.com', quota: '新用户免费额度', env: 'QWEN_API_KEY' },
+                    { name: 'Moonshot', url: 'https://platform.moonshot.cn', quota: '新用户 15 元额度', env: 'MOONSHOT_API_KEY' },
+                    { name: 'MiniMax', url: 'https://platform.minimaxi.com', quota: '新用户免费额度', env: 'MINIMAX_API_KEY' },
+                  ].map(m => (
+                    <div key={m.name} style={{
+                      padding: '10px 12px', borderRadius: 6,
+                      background: 'var(--card)', border: '1px solid var(--border)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>{m.name}</span>
+                        <a 
+                          href={m.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          style={{ fontSize: 11, color: 'var(--accent)' }}
+                        >
+                          去获取 →
+                        </a>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--muted-2)' }}>
+                        免费额度: {m.quota} · 环境变量: {SECTION.code(m.env)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {SECTION.divider()}
+                {SECTION.title('使用步骤')}
+                {['1. 点击上方链接访问官网', '2. 注册账号并创建 API Key', '3. 复制 Key 到 ATLAS 设置页', '4. 点击"测试连接"验证', '5. 启用模型即可使用'].map((t, i) => (
+                  <div key={i} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                    {t}
+                  </div>
+                ))}
+              </div>
+            ),
+          },
+
+          /* ====== 6. 快捷操作 ====== */
           {
             key: 'shortcuts',
             label: '快捷操作',

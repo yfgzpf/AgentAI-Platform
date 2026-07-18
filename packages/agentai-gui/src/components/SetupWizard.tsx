@@ -121,7 +121,7 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
       width={560}
       closable={allInstalled}
       maskClosable={false}
-      title={<Space><ReloadOutlined /> 环境检测 — Atlas 初始化</Space>}
+      title={<Space><ReloadOutlined /> 环境检测 — PulseFlow 初始化</Space>}
     >
       {checking ? (
         <div style={{ textAlign: 'center', padding: 40 }}>
@@ -132,7 +132,7 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
         <Result
           status="success"
           title="环境就绪"
-          subTitle="所有依赖已安装, ALTES | 岐黄 可以正常运行"
+          subTitle="所有依赖已安装, PulseFlow · 岐黄 可以正常运行"
           extra={
             <Button type="primary" onClick={onClose}>开始使用</Button>
           }
@@ -142,7 +142,7 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
           <Alert
             type="warning"
             message={`检测到 ${pendingDeps.length} 个缺失依赖`}
-            description="以下组件是 Atlas 运行所必需的。点击「下载」获取安装包, 安装完成后点击「已安装, 重新检测」继续。"
+            description="以下组件是 PulseFlow 运行所必需的。点击「下载」获取安装包, 安装完成后点击「已安装, 重新检测」继续。"
             style={{ marginBottom: 16 }}
           />
 

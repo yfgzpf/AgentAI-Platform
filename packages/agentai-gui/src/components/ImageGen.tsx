@@ -4,7 +4,7 @@
  * 共用: ZHIPU_API_KEY (文本/生图/生视频同一 key)
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Input, Button, Select, Card, Space, Tag, Alert, Spin, message, Empty, Tooltip, Modal } from 'antd';
+import { Input, Button, Select, Card, Space, Tag, Alert, Spin, message, Empty, Tooltip, Modal, Progress } from 'antd';
 import { PictureOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined, SendOutlined, SwapOutlined, BulbOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 
@@ -40,6 +40,7 @@ const SIZES = [
 ];
 
 const MODELS = [
+  { value: 'nvidia', label: 'NVIDIA qwen-image (免费)', desc: 'NVIDIA NIM, 需 NVIDIA_API_KEY' },
   { value: 'cogview', label: 'Cogview-3-Flash (免费)', desc: '智谱免费, 同 ZHIPU_API_KEY' },
   { value: 'agnes', label: 'Agnes Image 2.1 Flash', desc: '需 AGENTAI_API_KEY' },
 ];
@@ -64,6 +65,7 @@ export const ImageGen: React.FC = () => {
   const [current, setCurrent] = useState<HistoryItem | null>(null);
   const [zoomUrl, setZoomUrl] = useState<string | null>(null);
   const [refImages, setRefImages] = useState<string[]>([]); // 多图参考 base64 数组
+  const [fakeProgress, setFakeProgress] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -87,6 +89,14 @@ export const ImageGen: React.FC = () => {
       return;
     }
     setBusy(true);
+    setFakeProgress(0);
+    // 假进度动画: 0 → 100, 15秒内完成
+    const progressTimer = setInterval(() => {
+      setFakeProgress((prev: number) => {
+        if (prev >= 95) return prev;
+        return prev + Math.random() * 5 + 2;
+      });
+    }, 500);
     try {
       // 有参考图时自动切换到 Agnes (Cogview 不支持图生图)
       const effectiveModel = refImages.length > 0 ? 'agnes' : model;
@@ -105,7 +115,7 @@ export const ImageGen: React.FC = () => {
       const item: HistoryItem = {
         id: `${Date.now()}`,
         prompt,
-        url: data.url,
+        url: data.url?.startsWith('/') ? httpUrl + data.url : data.url,
         size,
         ts: Date.now(),
         provider: data.provider,
@@ -116,6 +126,8 @@ export const ImageGen: React.FC = () => {
     } catch (e: any) {
       message.error('网络错误: ' + e.message);
     } finally {
+      clearInterval(progressTimer);
+      setFakeProgress(100);
       setBusy(false);
     }
   };
@@ -205,6 +217,9 @@ export const ImageGen: React.FC = () => {
               {busy ? '生成中...' : '生成'}
             </Button>
           </Space>
+          {model === 'nvidia' && (
+            <Alert type="info" message="NVIDIA qwen-image 免费模型, 需配置 NVIDIA_API_KEY (从 build.nvidia.com 获取)。" style={{ fontSize: 11 }} showIcon />
+          )}
           {model === 'cogview' && (
             <Alert type="info" message="Cogview-3-Flash 免费模型, 同 ZHIPU_API_KEY。智谱生图/文本/视频共用同一 Key。" style={{ fontSize: 11 }} showIcon />
           )}
@@ -234,9 +249,14 @@ export const ImageGen: React.FC = () => {
       </Card>
 
       {busy && (
-        <div style={{ textAlign: 'center', padding: 60 }}>
+        <div style={{ textAlign: 'center', padding: 40 }}>
           <Spin size="large" />
-          <div style={{ marginTop: 16, color: '#888' }}>处理中, 通常 7-15 秒...</div>
+          <Progress 
+            percent={Math.min(fakeProgress, 95)} 
+            status="active" 
+            style={{ maxWidth: 400, margin: '16px auto' }} 
+          />
+          <div style={{ marginTop: 8, color: '#888' }}>🎨 AI 绘画中，通常 7-15 秒...</div>
         </div>
       )}
 

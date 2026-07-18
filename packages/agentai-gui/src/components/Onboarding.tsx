@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 import { useProfileStore } from '../store';
+import { useSessionStore } from '../store/sessionStore';
 import { INDUSTRY_TEMPLATES } from '../services/IndustryTemplates';
 
 const { Title, Paragraph, Text } = Typography;
@@ -168,6 +169,11 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
       // 网络失败静默忽略, 下次 chat 请求会自动同步
     });
 
+    // 保存到 localStorage 的历史用户记录 (agentai.user.${name})
+    localStorage.setItem(`agentai.user.${name.trim()}`, JSON.stringify(profileData));
+    // 同步到 sessionStore 的 currentUserId
+    useSessionStore.getState().setCurrentUserId(name.trim());
+
     message.success(`欢迎, ${name.trim()}!`);
     setStep('done');
     if (onFinish) {
@@ -228,14 +234,14 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
             overflow: 'hidden',
           }}>
             <img
-              src="/logo-xagent.svg"
-              alt="x-agent"
+              src="/favicon-192.png"
+              alt="Atlas"
               style={{ width: 64, height: 64 }}
             />
           </div>
           <Title level={2} style={{ marginTop: 24, color: 'var(--fg)', fontWeight: 600, letterSpacing: '-0.02em' }}>配置你的工作台</Title>
           <Paragraph style={{ color: 'var(--muted-2)', fontSize: 14, margin: '8px 0', lineHeight: 1.6 }}>
-            几步设置，让 <strong style={{ color: 'var(--fg)' }}>x-agent</strong> 了解你的工作方式<br />行业技能和记忆会自动适配
+            几步设置，让 <strong style={{ color: 'var(--fg)' }}>PulseFlow</strong> 了解你的工作方式<br />行业技能和记忆会自动适配
           </Paragraph>
           <div style={{ marginTop: 28 }}>
             <Button type="primary" size="large" shape="round" icon={<RightOutlined />} onClick={nextStep}

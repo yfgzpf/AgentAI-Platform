@@ -14,7 +14,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Card, Input, Button, Space, Tag, Alert, message, InputNumber, Select, Divider, Tooltip, Switch } from 'antd';
-import { SafetyOutlined, ReloadOutlined, ExperimentOutlined, CheckCircleOutlined, StopOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { SecurityScanOutlined, SafetyOutlined, ReloadOutlined, ExperimentOutlined, CheckCircleOutlined, StopOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 
 const { TextArea } = Input;
@@ -67,9 +67,15 @@ export const SandboxRulesEditor: React.FC = () => {
   const [probe, setProbe] = useState({ path: '', op: 'read' as 'read' | 'write' | 'delete' | 'execute' });
   const [probeResult, setProbeResult] = useState<any>(null);
 
+  const [sandboxUnavailable, setSandboxUnavailable] = useState(false);
+
   const load = async () => {
     try {
       const r = await fetch(httpUrl() + '/v1/sandbox/rules');
+      if (r.status === 404) {
+        setSandboxUnavailable(true);
+        return;
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data: SandboxStatus = await r.json();
       setStatus(data);
@@ -79,7 +85,7 @@ export const SandboxRulesEditor: React.FC = () => {
       setMaxFileSize(data.rules.maxFileSize ?? null);
       setMaxTotalSize(data.rules.maxTotalSize ?? null);
     } catch (e: any) {
-      message.error('加载沙箱规则失败: ' + e.message);
+      setSandboxUnavailable(true);
     }
   };
 
@@ -130,7 +136,7 @@ export const SandboxRulesEditor: React.FC = () => {
 
   return (
     <Card
-      title={<span><SafetyOutlined /> 沙箱规则 (Sandbox Rules)</span>}
+      title={<span><SecurityScanOutlined /> 沙箱规则 (Sandbox Rules)</span>}
       extra={
         <Space>
           {status && (
@@ -144,7 +150,16 @@ export const SandboxRulesEditor: React.FC = () => {
         </Space>
       }
     >
-      {!status && <Alert type="info" message="加载中..." showIcon />}
+      {!status && !sandboxUnavailable && <Alert type="info" message="加载中..." showIcon />}
+      {sandboxUnavailable && (
+        <Alert
+          type="warning"
+          message="沙箱服务未启用"
+          description="Gateway 沙箱模块未初始化或未注册路由。沙箱规则编辑功能不可用。请检查 Gateway 启动日志中 [sandbox] 相关信息。"
+          showIcon
+          style={{ marginBottom: 12 }}
+        />
+      )}
       {status && (
         <>
           <Alert

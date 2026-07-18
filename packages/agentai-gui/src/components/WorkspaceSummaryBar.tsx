@@ -9,6 +9,7 @@ import { Tooltip, Input, Button } from 'antd';
 import { FolderOpenOutlined, ReloadOutlined, DownOutlined, RightOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useProfileStore } from '../store';
 import { INDUSTRY_TEMPLATES } from '../services/IndustryTemplates';
+import { DirectoryTreePicker } from './DirectoryTreePicker';
 
 interface Props {
   /** 当前消息数 (用于摘要) */
@@ -34,6 +35,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
   const [expanded, setExpanded] = useState(false);
   const [editingWs, setEditingWs] = useState(false);
   const [wsDraft, setWsDraft] = useState(profile?.workspace || '');
+  const [pickerVisible, setPickerVisible] = useState(false);
 
   /* ---- 保存工作区 ---- */
   const saveWs = useCallback(() => {
@@ -170,38 +172,35 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                 >
                   {profile?.workspace || '点击输入路径或浏览选择'}
                 </div>
-                {/* 原生文件夹浏览器 */}
+                {/* 内置目录树选择器按钮 (替代原生 webkitdirectory) */}
                 <Button
                   size="small"
                   icon={<FolderOpenOutlined />}
-                  onClick={() => {
-                    const input = document.createElement('input');
-                    input.type = 'file';
-                    input.webkitdirectory = true;
-                    input.onchange = (e: any) => {
-                      const path = e.target?.files?.[0]?.path;
-                      if (path) {
-                        // 取目录路径 (去掉文件名)
-                        const dir = path.split(/[\\/]/).slice(0, -1).join('\\');
-                        if (profile) setProfile({ ...profile, workspace: dir });
-                      }
-                    };
-                    input.click();
-                  }}
+                  onClick={() => setPickerVisible(true)}
                   style={{ fontSize: 10, height: 26, flexShrink: 0 }}
                 >
                   浏览
                 </Button>
+                {/* 目录树选择器 Modal */}
+                <DirectoryTreePicker
+                  visible={pickerVisible}
+                  value={profile?.workspace || ''}
+                  onSelect={(dir) => {
+                    if (profile) setProfile({ ...profile, workspace: dir });
+                    setPickerVisible(false);
+                  }}
+                  onClose={() => setPickerVisible(false)}
+                />
               </div>
             )}
           </div>
 
-          {/* 行业身份选择 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* 行业身份选择 — 紧凑横向排列 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ fontSize: 10, color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
               行业身份
             </span>
-            <div style={{ display: 'flex', gap: 4, flex: 1, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 3, flex: 1, flexWrap: 'wrap' }}>
               {INDUSTRY_TEMPLATES.map(t => {
                 const active = profile?.industry === t.id || (!profile?.industry && t.id === 'general');
                 return (
@@ -210,7 +209,6 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                       onClick={() => {
                         if (profile) {
                           const prevIndustry = profile.industry || 'general';
-                          // 同一行业不重复切换
                           if (prevIndustry === t.id) return;
                           const newProfile = {
                             ...profile,
@@ -218,7 +216,6 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                             industrySkills: t.requiredSkills || [],
                           };
                           setProfile(newProfile);
-                          // 同步到 localStorage 供 gateway 读取
                           localStorage.setItem('agentai.industry', t.id);
                           if (t.requiredSkills.length) {
                             localStorage.setItem('agentai.industry.skills', JSON.stringify({
@@ -228,7 +225,6 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                           } else {
                             localStorage.removeItem('agentai.industry.skills');
                           }
-                          // 通知 gateway 行业切换 (AI 立即感知)
                           fetch('/v1/profile', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -237,21 +233,22 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                               industrySkills: t.requiredSkills || [],
                             }),
                           }).catch(() => { /* gateway 可能离线 */ });
-                          // 通知 ChatView 让 AI 感知行业变化并自动响应
                           if (onIndustryChange) {
                             onIndustryChange(t.id, t.label);
                           }
                         }
                       }}
                       style={{
-                        padding: '2px 8px', borderRadius: 4, fontSize: 10,
-                        border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
-                        background: active ? 'rgba(99,102,241,0.12)' : 'var(--panel)',
+                        padding: '2px 6px', borderRadius: 3, fontSize: 10,
+                        border: active ? '1px solid var(--accent)' : '1px solid transparent',
+                        background: active ? 'var(--accent-soft)' : 'transparent',
                         color: active ? 'var(--accent)' : 'var(--muted-2)',
                         cursor: 'pointer', transition: 'all 0.15s',
-                        display: 'inline-flex', alignItems: 'center', gap: 3,
+                        display: 'inline-flex', alignItems: 'center', gap: 2,
+                        lineHeight: '16px',
                       }}
                     >
+                      {active && <span style={{ fontSize: 8 }}>✓</span>}
                       <span>{t.icon}</span>
                       <span>{t.label}</span>
                     </button>

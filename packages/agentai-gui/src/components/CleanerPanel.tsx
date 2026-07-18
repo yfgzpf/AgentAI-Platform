@@ -34,21 +34,27 @@ interface CleanerState {
 
 interface RiskyPlan {
   planId: string;
-  ruleId: string;
-  file: string;
-  size: number;
-  reason: string;
-  action: string;
+  category: string;      // 后端字段: ruleId
+  files: Array<{         // 后端字段: 文件数组
+    path: string;
+    size: number;
+    mtime: number;
+    atime: number;
+    isFile: boolean;
+  }>;
   createdAt: number;
+  reason: string;
 }
 
 interface CleanerRule {
   id: string;
-  match: { path?: string; name?: string; ext?: string; mtimeDaysAgo?: number; sizeGtMb?: number };
-  action: 'delete' | 'gzip' | 'move' | 'llm-free-archive' | 'alert';
-  risk: 'safe' | 'risky' | 'alert';
+  match: { path?: string; name?: string; ext?: string; mtimeDaysAgo?: string; sizeBytes?: string };
+  action: string;
+  risk: 'safe' | 'risky' | 'alert' | 'keep';
   reason?: string;
   target?: string;
+  archiveDir?: string;
+  enabled?: boolean;
 }
 
 interface ScanResult {
@@ -276,7 +282,9 @@ export const CleanerPanel: React.FC = () => {
           <Empty description="暂无待确认的风险计划" />
         ) : (
           <Space direction="vertical" style={{ width: '100%' }} size={8}>
-            {pending.map((p) => (
+            {pending.map((p) => {
+              const totalSize = p.files.reduce((sum, f) => sum + f.size, 0);
+              return (
               <Card key={p.planId} size="small" type="inner"
                 title={<Space><Tag color="orange">RISKY</Tag><code>{p.planId}</code></Space>}
                 extra={
@@ -295,15 +303,22 @@ export const CleanerPanel: React.FC = () => {
                 }
               >
                 <Descriptions size="small" column={1}>
-                  <Descriptions.Item label="规则"><code>{p.ruleId}</code></Descriptions.Item>
-                  <Descriptions.Item label="文件"><code>{p.file}</code></Descriptions.Item>
-                  <Descriptions.Item label="大小">{formatBytes(p.size)}</Descriptions.Item>
-                  <Descriptions.Item label="动作"><Tag color="blue">{p.action}</Tag></Descriptions.Item>
+                  <Descriptions.Item label="规则"><code>{p.category}</code></Descriptions.Item>
+                  <Descriptions.Item label="文件数">{p.files.length} 个</Descriptions.Item>
+                  <Descriptions.Item label="总大小">{formatBytes(totalSize)}</Descriptions.Item>
+                  <Descriptions.Item label="文件列表">
+                    {p.files.map((f, i) => (
+                      <div key={i} style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--muted-2)' }}>
+                        {f.path} ({formatBytes(f.size)})
+                      </div>
+                    ))}
+                  </Descriptions.Item>
                   <Descriptions.Item label="原因">{p.reason || '—'}</Descriptions.Item>
                   <Descriptions.Item label="创建时间">{formatTime(p.createdAt)}</Descriptions.Item>
                 </Descriptions>
               </Card>
-            ))}
+              );
+            })}
           </Space>
         )}
       </Card>

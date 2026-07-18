@@ -1,58 +1,24 @@
 /**
- * Thread — 消息流卡片组件 (ZYAI + Reasonix 融合风格)
+ * Thread — 消息流卡片组件 (自研风格)
  *   - 浮动阴影气泡 + 入场动画
  *   - AssistantText:   Markdown 文本 (带阴影)
  *   - ReasoningCard:   推理过程 (可折叠)
  *   - ShellCard:       Shell 命令执行 (状态: await/running/done/failed)
  *   - ToolCard:        工具调用
  *   - UserMsg:         用户消息 (右对齐渐变气泡)
- *   - TurnDivider:     轮次分隔线 (时间线风格)
+ *   - TurnDivider:     轮次分隔符 (时间线风格)
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Tooltip } from 'antd';
+import { EditOutlined, FileTextOutlined, CaretRightOutlined, SettingOutlined, SearchOutlined, PictureOutlined, VideoCameraOutlined, MessageOutlined, OrderedListOutlined, ToolOutlined } from '@ant-design/icons';
 import { Markdown } from './Markdown';
 import { StatusIndicator } from './StatusIndicator';
 import type { MessageStatus, ChatSegment } from '../store/chatStore';
 import { Avatar } from './Avatar';
 import { MsgActions } from './MsgActions';
 import { FileCard, FilesFromToolSegment } from './FileCard';
-import { DiffViewer } from './DiffViewer';
 
-/* ======================== CSS 动画注入 ======================== */
-const styleId = 'thread-animations';
-if (!document.getElementById(styleId)) {
-  const sheet = document.createElement('style');
-  sheet.id = styleId;
-  sheet.textContent = `
-    @keyframes msgSlideIn {
-      from { opacity: 0; transform: translateY(12px) scale(0.97); }
-      to   { opacity: 1; transform: translateY(0) scale(1); }
-    }
-    @keyframes bubbleIn {
-      from { opacity: 0; transform: scale(0.92); }
-      to   { opacity: 1; transform: scale(1); }
-    }
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50%      { opacity: 0; }
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%      { opacity: 0.5; transform: scale(1.3); }
-    }
-    @keyframes glowPulse {
-      0%, 100% { box-shadow: 0 0 4px rgba(99,102,241,0.3); }
-      50%      { box-shadow: 0 0 12px rgba(99,102,241,0.6); }
-    }
-    .msg-enter {
-      animation: msgSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-    .bubble-enter {
-      animation: bubbleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-  `;
-  document.head.appendChild(sheet);
-}
+/* ======================== CSS 动画已移至 agentai-theme.css ======================== */
 
 /* ======================== Turn Divider ======================== */
 
@@ -89,7 +55,7 @@ export const UserMsg: React.FC<{
   onBookmark?: () => void;
 }> = ({ text, time, status, messageId, onNavigate, segments, userName, userAvatar, onResend, onEdit, onBookmark }) => {
   const [copied, setCopied] = useState(false);
-  // 过滤出图片段 + 文件标记段
+  // 过滤出图片段 + 文件标记
   const imageSegments = segments?.filter(s => s.kind === 'image') || [];
   const fileTags = segments?.filter(s => s.kind === 'text' && s.text !== text) || [];
   return (
@@ -103,11 +69,11 @@ export const UserMsg: React.FC<{
         <div className="bubble-enter" style={{
           padding: '10px 16px',
           borderRadius: '16px 16px 4px 16px',
-          background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
-          color: '#fff',
+          background: 'linear-gradient(135deg, var(--accent), var(--accent-strong))',
+          color: 'var(--fg-on-accent, #fff)',
           fontSize: 14, lineHeight: 1.6,
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-          boxShadow: '0 4px 16px rgba(99,102,241,0.25), 0 1px 4px rgba(0,0,0,0.1)',
+          boxShadow: '0 4px 16px var(--accent-soft), 0 1px 4px rgba(0,0,0,0.1)',
           position: 'relative',
         }}>
           {/* 图片缩略图 */}
@@ -127,7 +93,7 @@ export const UserMsg: React.FC<{
           {fileTags.length > 0 && (
             <div style={{ marginBottom: 6, fontSize: 11, opacity: 0.9 }}>
               {fileTags.map((seg, i) => (
-                <div key={i}>{seg.text}</div>
+                <div key={i}>{(seg as any).text}</div>
               ))}
             </div>
           )}
@@ -144,14 +110,14 @@ export const UserMsg: React.FC<{
           <MsgActions
             role="user"
             messageId={messageId || ''}
-            text={[text, ...fileTags.map(s => s.text)].filter(Boolean).join('\n')}
+            text={[text, ...fileTags.map(s => (s as any).text)].filter(Boolean).join('\n')}
             onResend={onResend}
             onEdit={onEdit}
             onBookmark={onBookmark}
           />
         </div>
       </div>
-      {/* 用户头像 — 右对齐 */}
+      {/* 用户头像 (右对齐) */}
       <div style={{ order: 2, paddingTop: 18 }}>
         <Avatar kind="user" name={userName} src={userAvatar} size={24} />
       </div>
@@ -201,7 +167,7 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = ({
         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '0.8'; }}
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
       >
-        {copied ? '✓ 已复制' : '复制'}
+        {copied ? '已复制' : '复制'}
       </button>
     </div>
   );
@@ -298,14 +264,14 @@ export const ReasoningCard: React.FC<{ text: string; streaming?: boolean }> = ({
           display: 'inline-flex', transition: 'transform 0.2s ease',
           transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
           fontSize: 9,
-        }}>▶</span>
+        }}><CaretRightOutlined style={{fontSize:9}} /></span>
         <span style={{
           width: 4, height: 4, borderRadius: '50%',
           background: streaming ? 'var(--accent)' : 'var(--muted)',
           animation: streaming ? 'pulse 1.6s ease-out infinite' : undefined,
         }} />
         <span>推理过程</span>
-        {streaming && <span style={{ color: 'var(--accent)', fontSize: 10 }}>进行中...</span>}
+        {streaming && <span style={{ color: 'var(--accent)', fontSize: 10 }}>进行中..</span>}
         {!streaming && !open && <span style={{ fontSize: 10, opacity: 0.5 }}>点击展开</span>}
       </div>
       {open && (
@@ -317,7 +283,7 @@ export const ReasoningCard: React.FC<{ text: string; streaming?: boolean }> = ({
           maxHeight: 300, overflowY: 'auto',
         }}>
           {text}
-          {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}>▌</span>}
+          {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:9}} /></span>}
         </div>
       )}
     </div>
@@ -326,7 +292,7 @@ export const ReasoningCard: React.FC<{ text: string; streaming?: boolean }> = ({
 
 /* ======================== Thinking Card ======================== */
 
-/** 深度思考卡片 — Agnes AI thinking 模式的思考过程展示 */
+/** 深度思考卡片: Agnes AI thinking 模式的思考过程展示 */
 export const ThinkingCard: React.FC<{ text: string; streaming?: boolean }> = ({ text, streaming }) => {
   const [open, setOpen] = useState(streaming || false);
   // 自动折叠: 流式结束后 5 秒自动折叠，用户可手动展开
@@ -336,7 +302,7 @@ export const ThinkingCard: React.FC<{ text: string; streaming?: boolean }> = ({ 
     if (streaming) {
       setOpen(true);
     } else if (open) {
-      // 流式结束 → 5秒后自动折叠
+      // 流式结束后 5秒后自动折叠
       foldTimerRef.current = setTimeout(() => setOpen(false), 5000);
     }
     return () => { if (foldTimerRef.current) clearTimeout(foldTimerRef.current); };
@@ -363,7 +329,7 @@ export const ThinkingCard: React.FC<{ text: string; streaming?: boolean }> = ({ 
           display: 'inline-flex', transition: 'transform 0.2s ease',
           transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
           fontSize: 9,
-        }}>▶</span>
+        }}><CaretRightOutlined style={{fontSize:9}} /></span>
         <span style={{
           width: 4, height: 4, borderRadius: '50%',
           background: streaming ? 'var(--accent)' : 'var(--muted)',
@@ -382,7 +348,7 @@ export const ThinkingCard: React.FC<{ text: string; streaming?: boolean }> = ({ 
           maxHeight: 300, overflowY: 'auto',
         }}>
           {text}
-          {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}>▌</span>}
+          {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:9}} /></span>}
         </div>
       )}
     </div>
@@ -470,7 +436,7 @@ export const ShellCard: React.FC<{
           fontFamily: "'Cascadia Code', 'Fira Code', monospace",
         }}>
           {output.slice(0, 2000)}
-          {output.length > 2000 && <span style={{ color: 'var(--muted-2)', display: 'block', marginTop: 4 }}>... (截断至 2000 字符)</span>}
+          {output.length > 2000 && <span style={{ color: 'var(--muted-2)', display: 'block', marginTop: 4 }}>... (截断于 2000 字符)</span>}
         </div>
       )}
 
@@ -565,7 +531,7 @@ export const ToolCard: React.FC<{
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
       >
         <span style={{ color: statusColor, fontSize: 11, fontWeight: 700 }}>
-          {ok === true ? '✓' : ok === false ? '✗' : '○'}
+          {ok === true ? '✓' : ok === false ? '✗' : '◐'}
         </span>
         <span style={{ fontWeight: 600, fontSize: 11 }}>{name}</span>
         {durationMs != null && (
@@ -573,12 +539,23 @@ export const ToolCard: React.FC<{
             {(durationMs / 1000).toFixed(1)}s
           </span>
         )}
+        {/* 结果预览摘要 (不展开即可看到) */}
+        {result && ok && !expanded && (
+          <span style={{
+            flex: 1, fontSize: 10, color: 'var(--muted-2)',
+            overflow: 'hidden', textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap', maxWidth: 200, marginLeft: 4,
+            opacity: 0.6,
+          }}>
+            {result.replace(/^\[([^\]]+)\]\s*/, '').replace(/[\\n\\r]+/g, ' ').slice(0, 60)}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         <span style={{
           fontSize: 9, color: 'var(--muted-2)',
           transition: 'transform 0.2s ease',
           transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-        }}>▶</span>
+        }}><CaretRightOutlined style={{fontSize:9}} /></span>
       </div>
       {expanded && (
         <div style={{
@@ -594,15 +571,33 @@ export const ToolCard: React.FC<{
           {hasDiff && (
             <div style={{ padding: '6px 10px' }}>
               <div style={{ marginBottom: 4, fontWeight: 600, fontSize: 10, color: 'var(--fg-2)' }}>
-                📝 代码变更预览
+                📝 代码变更预览{diffFileName ? ` · ${diffFileName}` : ''}
               </div>
-              <DiffViewer
-                diff={diffContent}
-                oldContent={oldContent}
-                newContent={newContent}
-                fileName={diffFileName ?? undefined}
-                collapsed={false}
-              />
+              <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                {oldContent && (
+                  <div style={{ flex: 1, overflow: 'auto', maxHeight: 200 }}>
+                    <div style={{ fontSize: 9, padding: '2px 6px', background: 'var(--panel)', color: 'var(--muted-2)', borderBottom: '1px solid var(--border)' }}>修改前</div>
+                    <pre style={{ margin: 0, padding: 6, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--danger-2, #ef4444)' }}>
+                      {oldContent.slice(0, 500)}
+                    </pre>
+                  </div>
+                )}
+                {newContent && (
+                  <div style={{ flex: 1, overflow: 'auto', maxHeight: 200, borderLeft: oldContent ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ fontSize: 9, padding: '2px 6px', background: 'var(--panel)', color: 'var(--muted-2)', borderBottom: '1px solid var(--border)' }}>修改后</div>
+                    <pre style={{ margin: 0, padding: 6, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--success-2, #22c55e)' }}>
+                      {newContent.slice(0, 500)}
+                    </pre>
+                  </div>
+                )}
+                {!oldContent && !newContent && diffContent && (
+                  <div style={{ flex: 1, overflow: 'auto', maxHeight: 200 }}>
+                    <pre style={{ margin: 0, padding: 6, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                      {diffContent.slice(0, 500)}
+                    </pre>
+                  </div>
+                )}
+              </div>
             </div>
           )}
           {result != null && (
@@ -613,6 +608,363 @@ export const ToolCard: React.FC<{
               </pre>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ======================== Widget Card ======================== */
+
+const WidgetCard: React.FC<{
+  widget: Extract<ChatSegment, { kind: 'widget' }>;
+}> = ({ widget }) => {
+  const [visible, setVisible] = useState(false);
+  const [iframeSrc, setIframeSrc] = useState<string>('');
+
+  useEffect(() => {
+    if (!visible) return;
+    let src = '';
+    if (widget.contentType === 'svg') {
+      const wrapped = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 400" width="${widget.width || '100%'}" height="${widget.height || 400}">${widget.content.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '')}</svg>`;
+      src = 'data:image/svg+xml,' + encodeURIComponent(wrapped);
+    } else {
+      const blob = new Blob([widget.content], { type: 'text/html' });
+      src = URL.createObjectURL(blob);
+    }
+    setIframeSrc(src);
+  }, [widget.content, widget.contentType, widget.width, widget.height, visible]);
+
+  return (
+    <div className="bubble-enter" style={{
+      margin: '8px 0',
+      borderRadius: 10,
+      border: '1px solid var(--border)',
+      background: 'var(--card)',
+      overflow: 'hidden',
+      boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+    }}>
+      {/* Header */}
+      <div onClick={() => setVisible(v => !v)} style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '8px 12px', cursor: 'pointer',
+        background: 'var(--panel)',
+        borderBottom: visible ? '1px solid var(--border)' : 'none',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 14 }}>🖼️</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>{widget.title}</span>
+          <span style={{ fontSize: 9, color: 'var(--muted-2)', background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 4 }}>
+            {widget.contentType === 'svg' ? 'SVG' : 'HTML'}
+          </span>
+        </div>
+        <span style={{
+          fontSize: 10, color: 'var(--accent)',
+          transform: visible ? 'rotate(90deg)' : 'rotate(0deg)',
+          transition: 'transform 0.2s ease',
+        }}><CaretRightOutlined style={{fontSize:9}} /></span>
+      </div>
+      {visible && (
+        <div style={{
+          padding: 0,
+          maxHeight: 600,
+          overflow: 'auto',
+        }}>
+          <iframe
+            src={iframeSrc}
+            style={{
+              width: '100%',
+              height: widget.height ? `${widget.height}px` : '300px',
+              border: 'none',
+            }}
+            title={widget.title}
+            onLoad={() => {
+              if (widget.contentType === 'html' && iframeSrc.startsWith('blob:')) {
+                URL.revokeObjectURL(iframeSrc);
+              }
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ======================== Activity Timeline (Unified) ======================== */
+
+/** 进度数据类型 (从 ChatView progress 状态传入) */
+export interface ActivityProgress {
+  step: string;
+  description: string;
+  percent: number;
+  iteration?: number;
+  maxIterations?: number;
+  toolCount?: number;
+  successCount?: number;
+  failCount?: number;
+}
+
+/** 工具名称 → 图标 */
+const activityToolIcon = (name: string): React.ReactNode => {
+  if (/^write_file|edit_file|create_file|replace_in_file|modify_file|delete_file|patch|str_replace/i.test(name)) return <EditOutlined />;
+  if (/^read_file|view_file|cat|get_file_contents/i.test(name)) return <FileTextOutlined />;
+  if (/^run_command|run_background|exec_command/i.test(name)) return <CaretRightOutlined />;
+  if (/^run_code|execute_code|python|javascript|node/i.test(name)) return <SettingOutlined />;
+  if (/^web_search|search_content|fetch_url|http_get/i.test(name)) return <SearchOutlined />;
+  if (/^generate_image|create_image|draw|paint/i.test(name)) return <PictureOutlined />;
+  if (/^generate_video|create_video/i.test(name)) return <VideoCameraOutlined />;
+  if (/^ask_user|question|ask_human/i.test(name)) return <MessageOutlined />;
+  if (/^plan_task|create_plan|task_orchestrat/i.test(name)) return <OrderedListOutlined />;
+  return <ToolOutlined />;
+};
+
+/**
+ * 统一活动时间线: 将推理、思考、工具调用合并为一条垂直时间线
+ * 替代之前分散的"推理卡片"+"工具卡片"两个独立容器
+ *
+ * 设计:
+ * - 折叠态: 一行摘要 "5 次操作 · 4 成功 · 1 失败 · 12.3s"
+ * - 流式态: 显示当前活动 + 内联进度条
+ * - 展开态: 垂直时间线, 每条活动可单独展开详情
+ * - 自动折叠: 完成后 1.5s 自动收起
+ */
+export const ActivityTimeline: React.FC<{
+  segments: ChatSegment[];
+  pending: boolean;
+  progress?: ActivityProgress | null;
+}> = ({ segments, pending, progress }) => {
+  // 按原始顺序提取活动段 (推理/思考/工具)
+  type ActivitySeg = Extract<ChatSegment, { kind: 'reasoning' }> | Extract<ChatSegment, { kind: 'thinking' }> | Extract<ChatSegment, { kind: 'tool' }>;
+  const activities = segments.filter((s): s is ActivitySeg =>
+    s.kind === 'reasoning' || s.kind === 'thinking' || s.kind === 'tool',
+  );
+
+  const toolSegs = activities.filter((s): s is Extract<ChatSegment, { kind: 'tool' }> => s.kind === 'tool');
+  const thinkSegs = activities.filter(s => s.kind === 'reasoning' || s.kind === 'thinking');
+
+  const successCount = toolSegs.filter(s => s.ok).length;
+  const failCount = toolSegs.filter(s => s.ok === false).length;
+  const runningCount = toolSegs.filter(s => s.state === 'running').length;
+  const totalDuration = toolSegs.reduce((sum, s) => sum + (s.durationMs || 0), 0);
+
+  const [open, setOpen] = useState(pending);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  // 流式时展开, 完成后 1.5s 自动折叠
+  const foldTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => {
+    if (foldTimerRef.current) clearTimeout(foldTimerRef.current);
+    if (pending) {
+      setOpen(true);
+    } else if (open) {
+      foldTimerRef.current = setTimeout(() => setOpen(false), 1500);
+    }
+    return () => { if (foldTimerRef.current) clearTimeout(foldTimerRef.current); };
+  }, [pending]);
+
+  // 无活动且非流式时不渲染
+  if (activities.length === 0 && !pending) return null;
+
+  // 构建摘要文字
+  const summaryParts: string[] = [];
+  if (toolSegs.length > 0) summaryParts.push(`${toolSegs.length} 次操作`);
+  if (successCount > 0) summaryParts.push(`${successCount}✓`);
+  if (failCount > 0) summaryParts.push(`${failCount}✗`);
+  if (thinkSegs.length > 0 && toolSegs.length === 0) summaryParts.push('推理过程');
+  if (totalDuration > 0) summaryParts.push(`${(totalDuration / 1000).toFixed(1)}s`);
+  const summary = summaryParts.join(' · ') || '活动中..';
+
+  // 当前活动描述 (流式时)
+  const currentActivity = pending
+    ? (runningCount > 0
+        ? `${runningCount} 个工具执行中`
+        : progress?.description || '思考中...')
+    : summary;
+
+  return (
+    <div className="bubble-enter" style={{
+      margin: '6px 0', borderRadius: 8,
+      border: '1px solid var(--border)', overflow: 'hidden',
+      background: 'var(--panel)',
+    }}>
+      {/* ===== Header: 摘要 + 进度 ===== */}
+      <div
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '5px 10px', cursor: 'pointer',
+          userSelect: 'none', fontSize: 11, fontWeight: 500,
+          color: 'var(--muted)',
+        }}
+      >
+        <span style={{
+          display: 'inline-flex', transition: 'transform 0.2s ease',
+          transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+          fontSize: 9,
+        }}><CaretRightOutlined style={{fontSize:9}} /></span>
+        {pending && (
+          <span style={{
+            width: 5, height: 5, borderRadius: '50%',
+            background: 'var(--accent)',
+            animation: 'pulse 1.6s ease-out infinite',
+            flexShrink: 0,
+          }} />
+        )}
+        <span style={{
+          color: pending ? 'var(--accent)' : 'var(--muted)',
+          fontWeight: pending ? 600 : 500,
+        }}>
+          {currentActivity}
+        </span>
+        {/* 成功/失败统计 (完成后) */}
+        {!pending && toolSegs.length > 0 && (
+          <span style={{ fontSize: 10, opacity: 0.7 }}>
+            {successCount > 0 && <span style={{ color: 'var(--success)' }}>{successCount}✓</span>}
+            {successCount > 0 && failCount > 0 && ' · '}
+            {failCount > 0 && <span style={{ color: 'var(--danger)' }}>{failCount}✗</span>}
+          </span>
+        )}
+        {!pending && !open && <span style={{ fontSize: 10, opacity: 0.5, marginLeft: 4 }}>点击展开</span>}
+        {/* 内联进度条 (流式时) */}
+        {pending && progress && (
+          <div style={{
+            flex: 1, height: 3, borderRadius: 2,
+            background: 'rgba(128,128,128,0.1)',
+            overflow: 'hidden', maxWidth: 120, marginLeft: 'auto',
+          }}>
+            <div style={{
+              height: '100%',
+              width: `${Math.min(100, progress.percent)}%`,
+              background: 'var(--accent)',
+              borderRadius: 2,
+              transition: 'width 0.3s ease',
+            }} />
+          </div>
+        )}
+      </div>
+
+      {/* ===== Timeline (展开时) ===== */}
+      {open && (
+        <div style={{
+          borderTop: '1px solid var(--border)',
+          padding: '4px 6px',
+          maxHeight: 500, overflowY: 'auto',
+        }}>
+          {activities.map((s, i) => {
+            // 推理/思考段: 紧凑文本行
+            if (s.kind === 'reasoning' || s.kind === 'thinking') {
+              const text = (s as any).text || '';
+              const isLast = pending && i === activities.length - 1;
+              return (
+                <div key={`a-${i}`} style={{
+                  display: 'flex', gap: 6, padding: '3px 6px',
+                  fontSize: 11, lineHeight: 1.5,
+                  color: 'var(--muted)', fontStyle: 'italic',
+                }}>
+                  <span style={{ flexShrink: 0, opacity: 0.5 }}>💭</span>
+                  <span style={{
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    maxHeight: 120, overflowY: 'auto',
+                  }}>
+                    {text.slice(0, 500)}
+                    {text.length > 500 && '...'}
+                    {isLast && (
+                      <span style={{
+                        animation: 'blink 1s infinite',
+                        marginLeft: 1, color: 'var(--accent)',
+                      }}><CaretRightOutlined style={{fontSize:9}} /></span>
+                    )}
+                  </span>
+                </div>
+              );
+            }
+            // 工具行: 紧凑行 + 可展开详情
+            if (s.kind === 'tool') {
+              const isRunning = s.state === 'running';
+              const statusIcon = s.ok === true ? '✓' : s.ok === false ? '✗' : '◐';
+              const statusColor = s.ok === true ? 'var(--success)' : s.ok === false ? 'var(--danger)' : 'var(--accent)';
+              const isExpanded = expandedIdx === i;
+              const icon = activityToolIcon(s.name);
+
+              return (
+                <div key={`a-${i}`}>
+                  {/* 紧凑行 */}
+                  <div
+                    onClick={() => setExpandedIdx(isExpanded ? null : i)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5,
+                      padding: '3px 6px', cursor: 'pointer', fontSize: 11,
+                      color: 'var(--fg-2)', userSelect: 'none',
+                      borderRadius: 4, transition: 'background 0.1s',
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-2)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                  >
+                    <span style={{ fontSize: 11 }}>{icon}</span>
+                    <span style={{ fontWeight: 600 }}>{s.name}</span>
+                    {/* 参数预览 */}
+                    {s.args && !isExpanded && (
+                      <span style={{
+                        fontSize: 10, color: 'var(--muted-2)',
+                        overflow: 'hidden', textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap', maxWidth: 150,
+                      }}>
+                        {typeof s.args === 'string' ? s.args : JSON.stringify(s.args)}
+                      </span>
+                    )}
+                    <span style={{ flex: 1 }} />
+                    {/* 状态 */}
+                    <span style={{
+                      color: statusColor, fontWeight: 700, fontSize: 11,
+                      display: 'inline-flex', alignItems: 'center', gap: 3,
+                    }}>
+                      {isRunning && (
+                        <span style={{
+                          width: 4, height: 4, borderRadius: '50%',
+                          background: statusColor,
+                          animation: 'pulse 1.2s ease-out infinite',
+                        }} />
+                      )}
+                      {statusIcon}
+                    </span>
+                    {/* 耗时 */}
+                    {s.durationMs != null && !isRunning && (
+                      <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>
+                        {(s.durationMs / 1000).toFixed(1)}s
+                      </span>
+                    )}
+                    <span style={{
+                      fontSize: 9, color: 'var(--muted-2)',
+                      transition: 'transform 0.2s ease',
+                      transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                    }}><CaretRightOutlined style={{fontSize:9}} /></span>
+                  </div>
+                  {/* 展开详情: 复用现有 ShellCard / ToolCard */}
+                  {isExpanded && (
+                    <div style={{ padding: '2px 6px 4px' }}>
+                      {s.name === 'run_command' || s.name === 'run_background' ? (
+                        <ShellCard
+                          command={extractCommand(s.args) || (typeof s.args === 'string' ? s.args : JSON.stringify(s.args)) || ''}
+                          output={s.result}
+                          state={isRunning ? 'running' : s.ok ? 'done' : s.ok === false ? 'failed' : 'running'}
+                          durationMs={s.durationMs}
+                        />
+                      ) : (
+                        <ToolCard
+                          name={s.name}
+                          args={typeof s.args === 'string' ? s.args : JSON.stringify(s.args)}
+                          result={s.result}
+                          ok={s.ok}
+                          durationMs={s.durationMs}
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            return null;
+          })}
         </div>
       )}
     </div>
@@ -642,56 +994,42 @@ export const AssistantMsg: React.FC<{
   onBookmark?: () => void;
   onOpenFile?: (path: string) => void;
   onEdit?: () => void;
-}> = ({ segments, pending, model, time, status, messageId, onNavigate, usage, onRegenerate, onFeedback, onBookmark, onOpenFile, onEdit }) => {
+  onDone?: () => void;
+  progress?: ActivityProgress | null;
+}> = ({ segments, pending, model, time, status, messageId, onNavigate, usage, onRegenerate, onFeedback, onBookmark, onOpenFile, onEdit, onDone, progress }) => {
   const fmtUsage = (u: typeof usage) => {
     if (!u) return null;
     const parts: string[] = [];
-    // 入/出 token 拆分显示, 与官方账单对齐
-    if (u.prompt_tokens != null) parts.push(`↑${u.prompt_tokens}`);
-    if (u.completion_tokens != null) parts.push(`↓${u.completion_tokens}`);
+    // 输入/输出 token 拆分显示, 与官方账单对齐
+    if (u.prompt_tokens != null) parts.push(`入${u.prompt_tokens}`);
+    if (u.completion_tokens != null) parts.push(`出${u.completion_tokens}`);
     if (parts.length === 0 && u.total_tokens) parts.push(`${u.total_tokens} tokens`);
     // 缓存命中公示
-    if (u.cacheHit) parts.push('⚡ 缓存命中');
-    // 估算模式标记 (透明度, 区分官方 / 估算)
+    if (u.cacheHit) parts.push('⚡缓存命中');
+    // 估算模式标记 (透明度) 区分官方 / 估算
     if (u.source === 'estimated') parts.push('~估算');
     if (u.cost && u.cost > 0) parts.push(`¥${u.cost.toFixed(4)}`);
     return parts.length ? parts.join(' · ') : null;
   };
 
-  // 工具调用合并容器状态
+  // 工具段 (用于文件卡片检测和文件列表)
   type ToolSeg = Extract<ChatSegment, { kind: 'tool' }>;
   const toolSegments = segments.filter((s): s is ToolSeg => s.kind === 'tool');
   const nonToolSegments = segments.filter(s => s.kind !== 'tool' && s.kind !== 'reasoning' && s.kind !== 'thinking');
-  const thinkSegments = segments.filter(s => s.kind === 'reasoning' || s.kind === 'thinking');
-  const [toolsOpen, setToolsOpen] = useState(true);
-  const [thinkOpen, setThinkOpen] = useState(true);
-  const successCount = toolSegments.filter(s => s.ok).length;
-  const failCount = toolSegments.filter(s => s.ok === false).length;
-  const runningCount = toolSegments.filter(s => s.state === 'running').length;
+  const textSegments = nonToolSegments.filter(s => s.kind === 'text');
+  const nonTextSegments = nonToolSegments.filter(s => s.kind !== 'text');
 
-  // 任务完成后自动折叠工具容器和思考容器
+  // AI 完成后通知父组件滚动到顶部查看最终回复
   React.useEffect(() => {
-    if (pending) {
-      setToolsOpen(true);
-      setThinkOpen(true);
-    } else {
-      if (toolSegments.length > 0 && runningCount === 0) {
-        const t1 = setTimeout(() => setToolsOpen(false), 2000);
-        return () => clearTimeout(t1);
-      }
-      if (thinkSegments.length > 0) {
-        const t2 = setTimeout(() => setThinkOpen(false), 3000);
-        return () => clearTimeout(t2);
-      }
-    }
-  }, [pending, toolSegments.length, runningCount, thinkSegments.length]);
+    if (!pending && onDone) onDone();
+  }, [pending, onDone]);
 
   return (
     <div className="msg-enter" style={{ display: 'flex', gap: 10, padding: '6px 16px', alignItems: 'flex-start' }}>
-      {/* AI 头像 — 按 provider 动态显示 */}
+      {/* AI 头像 (按 provider 动态显示) */}
       <Avatar
         kind="ai"
-        name={model || 'x-agent'}
+        name={model || '岐黄'}
         state={pending ? 'pending' : status === 'error' ? 'error' : 'done'}
         size={24}
         messageId={messageId}
@@ -700,7 +1038,7 @@ export const AssistantMsg: React.FC<{
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingLeft: 2 }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)' }}>
-            x-agent
+            PulseFlow
           </span>
           {model && (
             <span style={{
@@ -728,137 +1066,35 @@ export const AssistantMsg: React.FC<{
           )}
         </div>
 
-        {/* 非工具段: 文本 / 图片 */}
-        {nonToolSegments.map((s, i) => {
+        {/* ===== 统一活动时间线 (替代分散的推理卡+工具卡) ===== */}
+        <ActivityTimeline segments={segments} pending={pending} progress={progress} />
+
+        {/* 3. 最终回答文本 (最后展示) */}
+        {textSegments.map((s, i) => {
           if (s.kind === 'text') {
             return <AssistantText key={`nt-${i}`} text={s.text}
-              streaming={pending && i === nonToolSegments.length - 1} />;
-          }
-          if (s.kind === 'image') {
-            return <ImageCard key={`nt-${i}`} url={s.url}
-              base64={s.base64} alt={s.alt} filePath={s.filePath} />;
+              streaming={pending && i === textSegments.length - 1} />;
           }
           return null;
         })}
 
-        {/* 推理/思考过程: 合并到一个可折叠容器 */}
-        {thinkSegments.length > 0 && (
-          <div style={{
-            margin: '6px 0', borderRadius: 8,
-            border: '1px solid var(--border)',
-            overflow: 'hidden', background: 'var(--panel)',
-          }}>
-            <div
-              onClick={() => setThinkOpen(v => !v)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 10px', cursor: 'pointer',
-                userSelect: 'none', fontSize: 11, fontWeight: 500,
-                color: 'var(--muted)',
-              }}
-            >
-              <span style={{
-                display: 'inline-flex', transition: 'transform 0.2s ease',
-                transform: thinkOpen ? 'rotate(90deg)' : 'rotate(0deg)',
-                fontSize: 9,
-              }}>▶</span>
-              {pending && (
-                <span style={{
-                  width: 5, height: 5, borderRadius: '50%',
-                  background: 'var(--accent)',
-                  animation: 'pulse 1.6s ease-out infinite',
-                }} />
-              )}
-              <span>推理过程</span>
-              {pending && <span style={{ color: 'var(--accent)', fontSize: 10 }}>进行中...</span>}
-            </div>
-            {thinkOpen && (
-              <div style={{
-                padding: '6px 10px 10px',
-                borderTop: '1px solid var(--border)',
-                fontSize: 12, lineHeight: 1.7,
-                color: 'var(--muted)', fontStyle: 'italic',
-                whiteSpace: 'pre-wrap',
-                maxHeight: 400, overflowY: 'auto',
-              }}>
-                {thinkSegments.map((s, i) => (
-                  <div key={`tk-${i}`}>
-                    {(s as any).text}
-                    {pending && i === thinkSegments.length - 1 && (
-                      <span style={{
-                        animation: 'blink 1s infinite',
-                        marginLeft: 1, color: 'var(--accent)',
-                      }}>▌</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 工具调用: 合并到一个可折叠容器 */}
-        {toolSegments.length > 0 && (
-          <div style={{
-            margin: '6px 0', borderRadius: 8,
-            border: '1px solid var(--border)',
-            overflow: 'hidden', background: 'var(--panel)',
-          }}>
-            <div
-              onClick={() => setToolsOpen(v => !v)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 10px', cursor: 'pointer',
-                userSelect: 'none', fontSize: 11, fontWeight: 500,
-                color: 'var(--muted)',
-              }}
-            >
-              <span style={{
-                display: 'inline-flex', transition: 'transform 0.2s ease',
-                transform: toolsOpen ? 'rotate(90deg)' : 'rotate(0deg)',
-                fontSize: 9,
-              }}>▶</span>
-              {pending && runningCount > 0 && (
-                <span style={{
-                  width: 5, height: 5, borderRadius: '50%',
-                  background: 'var(--accent)',
-                  animation: 'pulse 1.6s ease-out infinite',
-                }} />
-              )}
-              <span>{toolSegments.length} 次工具调用</span>
-              <span style={{ marginLeft: 'auto', fontSize: 10 }}>
-                {successCount > 0 && `${successCount} 成功`}
-                {successCount > 0 && failCount > 0 && ' · '}
-                {failCount > 0 && `${failCount} 失败`}
-                {runningCount > 0 && ` · ${runningCount} 执行中`}
-              </span>
-            </div>
-            {toolsOpen && (
-              <div style={{
-                padding: '4px 6px',
-                borderTop: '1px solid var(--border)',
-              }}>
-                {toolSegments.map((s, i) => {
-                  if (s.name === 'run_command' || s.name === 'run_background') {
-                    const cmd = extractCommand(s.args);
-                    const state: ShellState = s.state === 'running'
-                      ? 'running' : s.ok ? 'done'
-                      : s.ok === false ? 'failed' : 'running';
-                    return <ShellCard key={`t-${i}`}
-                      command={cmd || s.args || ''}
-                      output={s.result} state={state}
-                      durationMs={s.durationMs} />;
-                  }
-                  return <ToolCard key={`t-${i}`} name={s.name}
-                    args={typeof s.args === 'string'
-                      ? s.args : JSON.stringify(s.args)}
-                    result={s.result} ok={s.ok}
-                    durationMs={s.durationMs} />;
-                })}
-              </div>
-            )}
-          </div>
-        )}
+        {/* 4. 非文本非工具段: 图片 / 错误卡片 / 视频 / widget (紧跟最终回复) */}
+        {nonTextSegments.filter(s => s.kind === 'image' || s.kind === 'error' || s.kind === 'video' || s.kind === 'widget').map((s, i) => {
+          if (s.kind === 'image') {
+            return <ImageCard key={`nt-${i}`} url={(s as any).url}
+              base64={(s as any).base64} alt={(s as any).alt} filePath={(s as any).filePath} />;
+          }
+          if (s.kind === 'error') {
+            return <ErrorCard key={`nt-${i}`} error={(s as any).error} details={(s as any).details} fix={(s as any).fix} />;
+          }
+          if (s.kind === 'video') {
+            return <VideoPlayer key={`nt-${i}`} url={(s as any).url} poster={(s as any).poster} alt={(s as any).alt} />;
+          }
+          if (s.kind === 'widget') {
+            return <WidgetCard key={`nt-${i}`} widget={s as Extract<ChatSegment, { kind: 'widget' }>} />;
+          }
+          return null;
+        })}
 
         {/* Footer: status + token usage */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, paddingLeft: 2 }}>
@@ -879,7 +1115,7 @@ export const AssistantMsg: React.FC<{
           )}
         </div>
 
-        {/* AI 生成/读取的文件 — 显示在 token 用量下方 */}
+        {/* AI 生成/读取的文件 (显示在 token 用量下方) */}
         {segments.some(s => s.kind === 'tool' && /^(write|edit|read|create|cat|patch|view|str_replace)/i.test(s.name || '')) && (
           <FilesFromToolSegment
             segments={segments.filter(s => s.kind === 'tool') as any}
@@ -909,7 +1145,7 @@ export const AssistantMsg: React.FC<{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >
-                  <span>→</span>
+                  <span>✏️</span>
                 </button>
               </Tooltip>
             )}
@@ -959,7 +1195,7 @@ export const ImageCard: React.FC<{
           </div>
         ) : !loaded && (
           <div style={{ padding: 20, color: 'var(--muted-2)', fontSize: 12 }}>
-            加载中...
+            加载中..
           </div>
         )}
         {src && (
@@ -976,6 +1212,108 @@ export const ImageCard: React.FC<{
           />
         )}
       </div>
+    </div>
+  );
+};
+
+/* ======================== Error Card ======================== */
+
+const ErrorCard: React.FC<{ error: string; details?: string; fix?: string }> = ({ error, details, fix }) => {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div style={{
+      margin: '6px 0', borderRadius: 8, overflow: 'hidden',
+      border: '1px solid rgba(239,68,68,0.3)',
+      background: 'rgba(239,68,68,0.06)',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '6px 10px', fontSize: 12, fontWeight: 500,
+        color: '#ef4444',
+      }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span style={{ flex: 1 }}>{error}</span>
+        {(details || fix) && (
+          <span
+            onClick={() => setExpanded(v => !v)}
+            style={{ cursor: 'pointer', fontSize: 10, color: 'var(--muted-2)', userSelect: 'none' }}
+          >
+            {expanded ? '▲ 收起' : '▼ 详情'}
+          </span>
+        )}
+      </div>
+      {expanded && (
+        <div style={{
+          padding: '6px 10px 10px',
+          borderTop: '1px solid rgba(239,68,68,0.15)',
+          fontSize: 11, lineHeight: 1.6, color: 'var(--fg-2)',
+          whiteSpace: 'pre-wrap',
+        }}>
+          {details && <div style={{ marginBottom: fix ? 6 : 0 }}>📋 {details}</div>}
+          {fix && (
+            <div style={{
+              padding: '5px 8px', borderRadius: 4,
+              background: 'rgba(34,197,94,0.08)',
+              border: '1px solid rgba(34,197,94,0.2)',
+              color: '#22c55e', marginTop: 4,
+            }}>
+              💡 建议修复: {fix}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ======================== Video Player ======================== */
+
+const VideoPlayer: React.FC<{ url: string; poster?: string; alt?: string }> = ({ url, poster, alt }) => {
+  const [error, setError] = useState(false);
+  if (error) {
+    return (
+      <div style={{
+        margin: '6px 0', borderRadius: 8, padding: '12px 16px',
+        background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
+        fontSize: 12, color: 'var(--fg-2)',
+      }}>
+        <span style={{ color: '#ef4444' }}>⚠️</span> 视频加载失败: {alt || url}
+        <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4, wordBreak: 'break-all' }}>
+          {url}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{
+      margin: '6px 0', borderRadius: 8, overflow: 'hidden',
+      border: '1px solid var(--border)', background: '#000',
+    }}>
+      {alt && (
+        <div style={{
+          padding: '4px 8px', fontSize: 10, color: 'var(--muted-2)',
+          background: 'rgba(255,255,255,0.05)',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+        }}>
+          🎬 {alt}
+        </div>
+      )}
+      <video
+        src={url}
+        poster={poster}
+        controls
+        preload="metadata"
+        onError={() => setError(true)}
+        style={{ width: '100%', maxHeight: 480, display: 'block', outline: 'none' }}
+      >
+        <p style={{ padding: 20, color: 'var(--muted-2)', fontSize: 12, textAlign: 'center' }}>
+          您的浏览器不支持视频播放
+        </p>
+      </video>
     </div>
   );
 };
@@ -1069,8 +1407,7 @@ export const FollowUpCard: React.FC<{
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--fg-2)'; }}
         >
-          {q} →
-        </button>
+          {q} →        </button>
       ))}
     </div>
   </div>

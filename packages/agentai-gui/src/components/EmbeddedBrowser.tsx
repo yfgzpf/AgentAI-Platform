@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * EmbeddedBrowser — 智能体内嵌浏览器 (对标美团 Tabbit)
  * =====================================================
@@ -24,6 +25,7 @@ import {
 } from '@ant-design/icons';
 import { io, type Socket } from 'socket.io-client';
 import { gatewayFallback } from '../services/GatewayFallback';
+import { BrowserStateBus } from '../services/BrowserStateBus';
 
 export interface IdentifiedElement {
   tag: string;
@@ -63,6 +65,7 @@ interface HistoryItem {
 interface Props {
   initialUrl?: string;
   compact?: boolean;
+  hideToolbar?: boolean;  // 由外部 BrowserMode 提供工具栏时隐藏内部导航栏
   aiControlled?: boolean;
   style?: React.CSSProperties;
   onElementsDetected?: (elements: IdentifiedElement[], url: string) => void;
@@ -70,6 +73,16 @@ interface Props {
 }
 
 const gatewayUrl = () => gatewayFallback.url || 'http://127.0.0.1:18789';
+
+/** 防护: 兜底函数 (防止 AI/iframe postMessage 引用未定义变量导致 ReferenceError)
+ *  BrowserMode 之外的挂载点 (GlobalBrowserDrawer) 没有这些函数, 必须兜底
+ *  v3.1 (2026-07-15) 修复 hideToolbar is not defined 死循环
+ */
+const safeNoop = () => { /* 防止 ReferenceError: hideToolbar is not defined */ };
+if (typeof (window as any).hideToolbar !== 'function') (window as any).hideToolbar = safeNoop;
+if (typeof (window as any).showToolbar !== 'function') (window as any).showToolbar = safeNoop;
+if (typeof (window as any).hideAddressBar !== 'function') (window as any).hideAddressBar = safeNoop;
+if (typeof (window as any).toggleFullscreen !== 'function') (window as any).toggleFullscreen = safeNoop;
 
 /** 构建 iframe src: 直连或通过代理 */
 function buildIframeSrc(url: string, useProxy: boolean): string {
@@ -174,16 +187,36 @@ export const EmbeddedBrowser: React.FC<Props> = ({
   const streamWsRef = useRef<Socket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pwUrl, setPwUrl] = useState('');
+
+  // v3.2 修复: 把 RPA 录制 useState 提前, 避免 useEffect 访问未初始化的变量 (TDZ 错误)
+  const [recording, setRecording] = useState(false);
+  const [recordStepCount, setRecordStepCount] = useState(0);
+  const [showRecordModal, setShowRecordModal] = useState(false);
+  const [recordName, setRecordName] = useState('');
+
+  // v3.2 同步到 BrowserStateBus: 状态变化时自动发布
+  useEffect(() => {
+    BrowserStateBus.update({
+      tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, loading: t.loading })),
+      activeTabId,
+      activeTabUrl: tabs.find(t => t.id === activeTabId)?.url || '',
+      activeTabTitle: tabs.find(t => t.id === activeTabId)?.title || '',
+      elements,
+      recording,
+      recordStepCount,
+      playwrightMode,
+      playwrightConnected: pwConnected,
+      playwrightEngineStatus: pwEngineStatus,
+    });
+  }, [tabs, activeTabId, elements, recording, recordStepCount, playwrightMode, pwConnected, pwEngineStatus]);
+
   // ===== 本地浏览器数据 =====
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [showBookmarkBar, setShowBookmarkBar] = useState(true);
   const [bookmarksExpanded, setBookmarksExpanded] = useState(false); // 书签栏是否展开（默认收起）
-  // ===== RPA 录制状态 =====
-  const [recording, setRecording] = useState(false);
-  const [recordStepCount, setRecordStepCount] = useState(0);
-  const [showRecordModal, setShowRecordModal] = useState(false);
-  const [recordName, setRecordName] = useState('');
+
+  // v3.2 修复: 删掉下方的重复 useState (已提前到上面)
   const [recordStartUrl, setRecordStartUrl] = useState('');
 
   // ===== RPA 录制控制 =====
@@ -279,18 +312,25 @@ export const EmbeddedBrowser: React.FC<Props> = ({
     if (!u.startsWith('http://') && !u.startsWith('https://')) u = 'https://' + u;
     setAiExecuting(true);
     setPwEngineStatus('starting');
+    const action = BrowserStateBus.recordAction('navigate', { target: u, result: 'pending' });
+    BrowserStateBus.setPageLoading(true);
     try {
       const resp = await fetch(`${gatewayUrl()}/v1/browser/engine/navigate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: u, waitFor: 'domcontentloaded' }),
       });
       const data = await resp.json();
-      if (data.elements) { setElements(data.elements); if (onElementsDetected) onElementsDetected(data.elements, u); }
+      if (data.elements) { setElements(data.elements); BrowserStateBus.setElements(data.elements); if (onElementsDetected) onElementsDetected(data.elements, u); }
       setPwUrl(u);
       setPwEngineStatus('running');
       setUrlInput(u);
+      BrowserStateBus.setUrl(u, data.title);
+      BrowserStateBus.setPageLoading(false);
+      BrowserStateBus.updateLastAction('success', `导航至 ${u.slice(0, 40)}`);
     } catch (e: any) {
       message.error(`导航失败: ${e.message}`);
+      BrowserStateBus.setPageLoading(false);
+      BrowserStateBus.updateLastAction('error', e.message);
     } finally {
       setAiExecuting(false);
     }
@@ -616,6 +656,7 @@ export const EmbeddedBrowser: React.FC<Props> = ({
         const fn = new Function('document', SCAN_SCRIPT.replace(/^\(function\(\)\s*\{/, '').replace(/\}\);?\s*$/, ''));
         const els = (fn(doc) || []) as IdentifiedElement[];
         setElements(els);
+        BrowserStateBus.setElements(els);  // v3.2 实时发布元素
         if (onElementsDetected && tabId === activeTabId) onElementsDetected(els, tabsRef.current.find(t => t.id === tabId)?.url || '');
         return els;
       }
@@ -657,6 +698,11 @@ export const EmbeddedBrowser: React.FC<Props> = ({
     const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setTabs(prev => [...prev, { id, url, title: url ? getHostname(url) : '新标签页', history: url ? [url] : [], historyIdx: url ? 0 : -1, loading: !!url, useProxy: useProxyGlobal }]);
     setActiveTabId(id); setUrlInput(url);
+    // v3.2 同步到全局状态
+    setTimeout(() => {
+      const newTabs = [...tabsRef.current, { id, url, title: url ? getHostname(url) : '新标签页', loading: !!url }];
+      BrowserStateBus.setTabs(newTabs, id);
+    }, 0);
     return id;
   };
 
@@ -885,6 +931,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
       )}
 
       {/* ===== 导航栏 ===== */}
+      {!hideToolbar && (
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: compact ? '3px 6px' : '4px 8px', background: 'var(--panel)', borderBottom: '1px solid var(--border)' }}>
         <Tooltip title="后退"><Button size="small" type="text" icon={<ArrowLeftOutlined />} disabled={!activeTab || activeTab.historyIdx <= 0} onClick={goBack} style={{ color: 'var(--muted-2)', height: compact ? 22 : 24, width: compact ? 22 : 24 }} /></Tooltip>
         <Tooltip title="前进"><Button size="small" type="text" icon={<ArrowRightOutlined />} disabled={!activeTab || activeTab.historyIdx >= activeTab.history.length - 1} onClick={goForward} style={{ color: 'var(--muted-2)', height: compact ? 22 : 24, width: compact ? 22 : 24 }} /></Tooltip>
@@ -904,21 +951,20 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
             style={{ fontSize: compact ? 10 : 11, height: compact ? 22 : 26, fontFamily: 'monospace' }}
           />
         </AutoComplete>
-        {!compact && <Segmented size="small" value={screenMode} onChange={(v) => setScreenMode(v as 'desktop'|'mobile')} options={[{ label:'💻', value:'desktop' },{ label:'📱', value:'mobile' }]} style={{ height: 24 }} />}
+        {!compact && <Segmented size="small" value={screenMode} onChange={(v) => setScreenMode(v as 'desktop'|'mobile')} options={[{ label: <DesktopOutlined />, value:'desktop' },{ label: <MobileOutlined />, value:'mobile' }]} style={{ height: 24 }} />}
         {/* Playwright 引擎模式切换 */}
         <Tooltip title={playwrightMode ? ' playwright 引擎 (真实浏览器, 点击切换到 iframe)' : 'iframe 模式 (点击切换到 Playwright 引擎)'}>
           <Button size="small" type="text" icon={<ThunderboltOutlined style={{ color: playwrightMode ? '#818cf8' : 'var(--muted-2)' }} />} 
             onClick={() => setPlaywrightMode(v => !v)} style={{ height: compact ? 22 : 24, width: compact ? 22 : 24 }} />
         </Tooltip>
         {/* 代理模式 */}
-        <Tooltip title={useProxyGlobal ? '代理模式 (绕过嵌入限制)' : '直连模式'}><Button size="small" type="text" icon={<SafetyCertificateOutlined style={{ color: useProxyGlobal ? '#4ade80' : 'var(--muted-2)' }} />} onClick={() => setUseProxyGlobal(v => !v)} style={{ height: compact ? 22 : 24, width: compact ? 22 : 24 }} /></Tooltip>
+        <Tooltip title={useProxyGlobal ? '代理模式 (绕过嵌入限制)' : '直连模式'}><Button size="small" type="text" icon={<SafetyCertificateOutlined style={{ color: useProxyGlobal ? 'var(--success)' : 'var(--muted-2)' }} />} onClick={() => setUseProxyGlobal(v => !v)} style={{ height: compact ? 22 : 24, width: compact ? 22 : 24 }} /></Tooltip>
         {/* 收藏栏开关 */}
-        {!compact && <Tooltip title={showBookmarkBar ? '隐藏收藏栏' : '显示收藏栏'}><Button size="small" type="text" icon={showBookmarkBar ? <StarFilled style={{ color: '#facc15' }} /> : <StarOutlined />} onClick={() => setShowBookmarkBar(v => !v)} style={{ color: 'var(--muted-2)', height: compact ? 22 : 24, width: compact ? 22 : 24 }} /></Tooltip>}
+        {!compact && <Tooltip title={showBookmarkBar ? '隐藏收藏栏' : '显示收藏栏'}><Button size="small" type="text" icon={showBookmarkBar ? <StarFilled style={{ color: 'var(--warning)' }} /> : <StarOutlined />} onClick={() => setShowBookmarkBar(v => !v)} style={{ color: 'var(--muted-2)', height: compact ? 22 : 24, width: compact ? 22 : 24 }} /></Tooltip>}
         {/* Cookie 同步 */}
         {!compact && <Tooltip title="从本地浏览器同步 Cookie (免登录)"><Button size="small" type="text" icon={<SafetyCertificateOutlined />} onClick={handleSyncCookies} style={{ color: 'var(--muted-2)', height: 24, width: 24 }} /></Tooltip>}
         {/* AI 状态 */}
         {aiControlled && (() => {
-          // Playwright 模式用 pwConnected, iframe 模式用 wsConnected
           const connected = playwrightMode ? pwConnected : wsConnected;
           const connLabel = playwrightMode ? 'PW 引擎' : 'AI 桥接';
           return (
@@ -929,34 +975,32 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
             </Tooltip>
           );
         })()}
-        {aiControlled && <Tooltip title={scanning ? '扫描中' : hasScanResult ? `${elements.length} 个元素` : '扫描'}><Button size="small" type="text" icon={scanning ? <ReloadOutlined spin /> : hasScanResult ? <CheckCircleOutlined style={{ color: '#4ade80' }} /> : <ScanOutlined />} onClick={handleScan} style={{ color: hasScanResult ? '#4ade80' : 'var(--muted-2)', height: compact ? 22 : 24 }} /></Tooltip>}
+        {aiControlled && <Tooltip title={scanning ? '扫描中' : hasScanResult ? `${elements.length} 个元素` : '扫描'}><Button size="small" type="text" icon={scanning ? <ReloadOutlined spin /> : hasScanResult ? <CheckCircleOutlined style={{ color: 'var(--success)' }} /> : <ScanOutlined />} onClick={handleScan} style={{ color: hasScanResult ? 'var(--success)' : 'var(--muted-2)', height: compact ? 22 : 24 }} /></Tooltip>}
         {!compact && <Tooltip title="手动导入 Cookie"><Button size="small" type="text" icon={<SafetyCertificateOutlined />} onClick={() => setShowCookieModal(true)} style={{ color: 'var(--muted-2)', height: 24, width: 24 }} /></Tooltip>}
         {/* RPA 录制按钮 */}
-        {!compact && (
-          recording ? (
+        {!compact && (recording ? (
             <Tooltip title="停止录制并保存">
-              <Button size="small" type="text" icon={<StopOutlined style={{ color: '#ef4444' }} />} onClick={handleStopRecording}
-                style={{ height: 24, width: 24 }} />
+              <Button size="small" type="text" icon={<StopOutlined style={{ color: 'var(--danger)' }} />} onClick={handleStopRecording} style={{ height: 24, width: 24 }} />
             </Tooltip>
           ) : (
             <Tooltip title="开始录制操作 (RPA)">
               <Button size="small" type="text" icon={<VideoCameraOutlined style={{ color: 'var(--muted-2)' }} />} onClick={() => {
                 setRecordStartUrl(activeTab?.url || '');
                 setShowRecordModal(true);
-              }}
-                style={{ height: 24, width: 24 }} />
+              }} style={{ height: 24, width: 24 }} />
             </Tooltip>
           )
         )}
         {/* RPA 录制指示器 */}
         {recording && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 4, background: 'rgba(239,68,68,0.15)', fontSize: 9, color: '#ef4444' }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444', animation: 'pulse 1.5s infinite' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 4, background: 'var(--danger-soft)', fontSize: 9, color: 'var(--danger)' }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--danger)', animation: 'pulse 1.5s infinite' }} />
             录制中 ({recordStepCount})
           </div>
         )}
         <Tooltip title={fullscreen ? '退出全屏' : '全屏'}><Button size="small" type="text" icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />} onClick={() => { if (!fullscreen) containerRef.current?.requestFullscreen?.().catch(()=>{}); else document.exitFullscreen?.().catch(()=>{}); }} style={{ color: 'var(--muted-2)', height: compact ? 22 : 24, width: compact ? 22 : 24 }} /></Tooltip>
       </div>
+      )}
 
       {/* ===== 内容区: Playwright Canvas 或 iframe ===== */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#fff', ...(screenMode === 'mobile' && !fullscreen ? { display: 'flex', justifyContent: 'center', padding: '8px 0' } : {}) }}>

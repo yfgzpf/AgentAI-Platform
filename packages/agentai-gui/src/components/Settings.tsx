@@ -3,11 +3,13 @@
  */
 import React, { useState, useEffect } from 'react';
 import { Card, Input, Button, Space, Tag, Alert, Form, message, Tabs, Descriptions, Select, Divider, Modal, Switch, Typography, Collapse, Tooltip, Table, App } from 'antd';
-import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, DeleteOutlined, BellOutlined, SoundOutlined, AppstoreOutlined, SecurityScanOutlined, CheckOutlined, LinkOutlined, CrownOutlined, ExperimentOutlined } from '@ant-design/icons';
+import { saveApiKey } from '../services/secureKeyStorage';
+import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, DeleteOutlined, BellOutlined, SoundOutlined, AppstoreOutlined, SecurityScanOutlined, CheckOutlined, LinkOutlined, CrownOutlined, ExperimentOutlined, PartitionOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 import { ModelSelector } from './ModelSelector';
 import { SandboxRulesEditor } from './SandboxRulesEditor';
 import { EvolutionPanel } from './EvolutionPanel';
+import MCPConfigModal from './mcp/MCPConfigModal';
 import { useSettingsStore, useFrameworkStore } from '../store';
 import { useModelStore, type ModelConfig } from '../store/modelStore';
 import { useModeStore, MODE_CONFIG, MODE_ORDER, type AppMode } from '../store/modeStore';
@@ -113,6 +115,15 @@ export const Settings: React.FC = () => {
   const [qqStatus, setQQStatus] = useState<{ online: boolean; lastSeen: number; messageCount: number; sessionId: string }>({
     online: false, lastSeen: 0, messageCount: 0, sessionId: '',
   });
+  // MCP 配置弹窗
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
+  // Feature flags (灰度开关)
+  const [featureFlags, setFeatureFlags] = useState({
+    useNewModelSelector: false,
+    enableDiagnosisPipeline: true,
+    newModelSelectorTrafficPercent: 0,
+  });
+  const [savingFlags, setSavingFlags] = useState(false);
 
   // 加载所有 provider 的 key 状态
   const loadAllKeyStatus = async () => {
@@ -183,10 +194,10 @@ export const Settings: React.FC = () => {
       });
       if (r.ok) {
         message.success(`✅ ${providerId} Key 已保存`);
-        // 同时缓存到本地
+        // 同时缓存到本地（用 sessionStorage 替代 localStorage，关闭浏览器自动销毁）
         const envVar = `${providerId.toUpperCase()}_API_KEY`;
         setCommercialKey(envVar, apiKey);
-        localStorage.setItem(envVar, apiKey);
+        saveApiKey(envVar, apiKey);
         loadAllKeyStatus();
         return true;
       } else {
@@ -305,10 +316,10 @@ export const Settings: React.FC = () => {
       provider: providerId,
       models: newModel.modelName ? [newModel.modelName] : undefined,
     });
-    // 保存 API Key 到 gateway 和本地缓存
+    // 保存 API Key 到 gateway 和本地缓存（sessionStorage 替代 localStorage）
     const envVar = `${providerId.toUpperCase()}_API_KEY`;
     setCommercialKey(envVar, newModel.apiKey);
-    localStorage.setItem(envVar, newModel.apiKey);
+    saveApiKey(envVar, newModel.apiKey);
     try {
       const r = await fetch(httpUrl() + '/v1/settings/keys', {
         method: 'POST',
@@ -341,6 +352,23 @@ export const Settings: React.FC = () => {
     };
     loadQQStatus();
     const q = setInterval(loadQQStatus, 5000);
+
+    // 加载灰度开关
+    (async () => {
+      try {
+        const r = await fetch(httpUrl() + '/v1/feature-flags');
+        if (r.ok) {
+          const data = await r.json();
+          setFeatureFlags(prev => ({
+            ...prev,
+            ...data,
+            useNewModelSelector: data.useNewModelSelector ?? prev.useNewModelSelector,
+            enableDiagnosisPipeline: data.enableDiagnosisPipeline ?? prev.enableDiagnosisPipeline,
+            newModelSelectorTrafficPercent: data.newModelSelectorTrafficPercent ?? prev.newModelSelectorTrafficPercent,
+          }));
+        }
+      } catch { /* ignore */ }
+    })();
 
     return () => { clearInterval(t); clearInterval(q); };
   }, []);
@@ -860,6 +888,38 @@ export const Settings: React.FC = () => {
                     <input type="range" min={0} max={1} step={0.05} value={abRatio} onChange={(e) => setAbRatio(parseFloat(e.target.value))} style={{ width: '100%' }} />
                   </div>
                   <Alert type="info" message="关于框架" description={<ul style={{ marginBottom: 0, paddingLeft: 18 }}><li>Atlas: 自研系统提示 + 工具描述, 适合代码/工具调用</li><li>Hermes: 自研多渠道网关, 适合多平台对话</li><li>A/B 灰度: 1.0 = 全走 Atlas, 0.0 = 全走 Hermes</li><li>切换后新建对话即生效, 无需重启</li></ul>} />
+                  <Divider />
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>⚙️ 灰度功能开关</div>
+                    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>新模型选择器 <Tag style={{ fontSize: 9 }}>useNewModelSelector</Tag></span>
+                        <Switch checked={featureFlags.useNewModelSelector} onChange={(v) => setFeatureFlags(f => ({ ...f, useNewModelSelector: v }))} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>诊断优先主链路 <Tag style={{ fontSize: 9 }}>enableDiagnosisPipeline</Tag></span>
+                        <Switch checked={featureFlags.enableDiagnosisPipeline} onChange={(v) => setFeatureFlags(f => ({ ...f, enableDiagnosisPipeline: v }))} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>新选择器流量: {featureFlags.newModelSelectorTrafficPercent}%</span>
+                        <input type="range" min={0} max={100} step={5}
+                          value={featureFlags.newModelSelectorTrafficPercent}
+                          onChange={(e) => setFeatureFlags(f => ({ ...f, newModelSelectorTrafficPercent: parseInt(e.target.value) }))}
+                          style={{ width: 120 }} />
+                      </div>
+                      <Button size="small" loading={savingFlags}
+                        onClick={async () => {
+                          setSavingFlags(true);
+                          try {
+                            await fetch(`${httpUrl()}/v1/feature-flags`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(featureFlags) });
+                            message.success('灰度开关已保存 (重启 Gateway 后基于 .env 的配置会覆盖)');
+                          } catch { message.warning('保存失败, 仅本地生效'); }
+                          setSavingFlags(false);
+                        }}>
+                        保存灰度设置
+                      </Button>
+                    </Space>
+                  </div>
                 </Space>
               </Card>
             ),
@@ -904,6 +964,24 @@ export const Settings: React.FC = () => {
                   AI 会跨会话学习你的偏好和教训, 越用越懂你。这里可以查看和管理 AI 学到的内容。
                 </div>
                 <EvolutionPanel />
+              </Card>
+            ),
+          },
+
+          // ========== MCP 配置 ==========
+          {
+            key: 'mcp',
+            label: <span><ApiOutlined /> MCP 配置</span>,
+            children: (
+              <Card>
+                <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                  <Alert type="info" message="MCP (Model Context Protocol) 服务器"
+                    description="MCP 让 AI 通过标准协议访问外部工具和数据源。默认 memory 已启用, 其他需配置环境变量。" />
+                  <Button icon={<ApiOutlined />} onClick={() => setMcpModalOpen(true)}>
+                    打开 MCP 配置面板
+                  </Button>
+                </Space>
+                <MCPConfigModal open={mcpModalOpen} onClose={() => setMcpModalOpen(false)} />
               </Card>
             ),
           },

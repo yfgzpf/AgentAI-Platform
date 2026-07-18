@@ -6,7 +6,7 @@
  */
 import React, { useMemo } from 'react';
 import { Card, Tag, Empty, Tooltip, message as antdMsg } from 'antd';
-import { FileAddOutlined, FileTextOutlined, DownloadOutlined } from '@ant-design/icons';
+import { FileAddOutlined, FileTextOutlined, DownloadOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { useChatStore } from '../store/chatStore';
 
 export const GeneratedFilesPanel: React.FC = () => {
@@ -57,6 +57,24 @@ export const GeneratedFilesPanel: React.FC = () => {
     antdMsg.info(`打开: ${filePath.split(/[\\/]/).pop()}`);
   };
 
+  const handleReveal = async (filePath: string) => {
+    try {
+      const res = await fetch('/v1/fs/reveal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        antdMsg.success(`已在文件夹中显示: ${filePath.split(/[\\/]/).pop()}`);
+      } else {
+        antdMsg.error(data.error || '打开失败');
+      }
+    } catch {
+      antdMsg.error('打开文件夹失败');
+    }
+  };
+
   const handleDownload = (filePath: string) => {
     const a = document.createElement('a');
     a.href = `/api/files/download?path=${encodeURIComponent(filePath)}`;
@@ -81,7 +99,7 @@ export const GeneratedFilesPanel: React.FC = () => {
             const ext = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() : '';
             const langColor = ext ? getLangColor(ext) : '#666';
             return (
-              <Tooltip key={`${f.path}-${i}`} title={`点击在编辑器中打开: ${f.path}`}>
+              <Tooltip key={`${f.path}-${i}`} title={`${f.path}\n点击在编辑器中打开`}>
                 <div
                   onClick={() => handleOpen(f.path)}
                   style={{
@@ -98,6 +116,12 @@ export const GeneratedFilesPanel: React.FC = () => {
                   <span style={{
                     flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>{fileName}</span>
+                  <Tooltip title="在文件夹中显示">
+                    <FolderOpenOutlined
+                      onClick={(e) => { e.stopPropagation(); handleReveal(f.path); }}
+                      style={{ fontSize: 11, color: 'var(--muted-2)', cursor: 'pointer' }}
+                    />
+                  </Tooltip>
                   <Tooltip title="下载">
                     <DownloadOutlined
                       onClick={(e) => { e.stopPropagation(); handleDownload(f.path); }}

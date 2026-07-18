@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Input, Button, Select, Card, Space, Tag, Alert, Spin, message, Empty, Tooltip, Progress } from 'antd';
 import { AppstoreOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
+import { saveApiKey } from '../services/secureKeyStorage';
 
 const PROVIDERS = [
   { value: 'doubao', label: '豆包 Seed3D 2.0', desc: '火山引擎 ARK_API_KEY, 图生3D', keyLabel: 'ARK API Key', keyStorage: 'agentai.3d.ark-key' },
@@ -49,10 +50,19 @@ export const Model3DGen: React.FC = () => {
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   const saveKeys = () => {
-    localStorage.setItem('agentai.3d.ark-key', arkKey);
-    localStorage.setItem('agentai.3d.tc-id', tcSecretId);
-    localStorage.setItem('agentai.3d.tc-secret', tcSecretKey);
-    message.success('密钥已保存到本地');
+    // 改用 sessionStorage（关闭浏览器自动销毁）
+    try {
+      if (arkKey) saveApiKey('ARK_API_KEY', arkKey);
+      if (tcSecretId) saveApiKey('TENCENT_TC_ID', tcSecretId);
+      if (tcSecretKey) saveApiKey('TENCENT_TC_SECRET', tcSecretKey);
+      // 兼容旧 key 名（自动迁移）
+      try { localStorage.removeItem('agentai.3d.ark-key'); } catch {}
+      try { localStorage.removeItem('agentai.3d.tc-id'); } catch {}
+      try { localStorage.removeItem('agentai.3d.tc-secret'); } catch {}
+      message.success('密钥已保存到 sessionStorage');
+    } catch (e) {
+      message.error('保存失败：' + (e as Error).message);
+    }
     setShowKeys(false);
   };
 

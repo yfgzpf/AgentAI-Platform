@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Input, message, Tooltip, Button, Spin, Popover, Modal, Tree } from 'antd';
 import { FolderOpenOutlined, HomeOutlined, CheckOutlined, InfoCircleOutlined, FolderFilled, HddOutlined } from '@ant-design/icons';
 import { useProfileStore } from '../store';
-import { GATEWAY_HTTP } from '../services/config';
+import { gatewayFallback } from '../services/GatewayFallback';
 
 interface FsEntry {
   name: string;
@@ -32,11 +32,14 @@ export const WorkspaceSelector: React.FC = () => {
 
   /** 获取 AI 工作目录路径 (从 gateway 查询) */
   useEffect(() => {
-    fetch(`${GATEWAY_HTTP}/v1/fs/project-root`)
+    fetch(`${gatewayUrl()}/v1/fs/project-root`)
       .then(r => r.json())
       .then(d => { if (d.aiWorkDir) setAiWorkDir(d.aiWorkDir); })
       .catch(() => {});
   }, []);
+
+  /** 获取 Gateway 基础 URL (dev 模式走 Vite proxy → 空串; 生产/Tauri 直接连) */
+  const gatewayUrl = () => gatewayFallback.url || 'http://127.0.0.1:18789';
 
   const applyWorkspace = (path: string) => {
     const trimmed = path.trim();
@@ -49,13 +52,24 @@ export const WorkspaceSelector: React.FC = () => {
       workspace: trimmed,
     });
     setEditing(false);
+    // 同步通知 Gateway 更新工作目录
+    fetch(`${gatewayUrl()}/v1/workspace`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: trimmed }),
+    }).then(r => r.json()).then(d => {
+      if (d.ok) setAiWorkDir(d.aiWorkDir);
+      else message.warning(d.error || '同步工作目录到 Gateway 失败');
+    }).catch(() => {
+      // Gateway 不可达时静默失败（本地已保存）
+    });
   };
 
   /** 加载驱动器列表作为树根节点 */
   const loadDrives = useCallback(async () => {
     setBrowserLoading(true);
     try {
-      const res = await fetch(`${GATEWAY_HTTP}/v1/fs/drives`);
+      const res = await fetch(`${gatewayUrl()}/v1/fs/drives`);
       const data = await res.json();
       const drives: string[] = data.drives || [];
       const common: string[] = data.common || [];
@@ -82,7 +96,7 @@ export const WorkspaceSelector: React.FC = () => {
 
   /** 加载目录子节点 */
   const loadDirEntries = useCallback(async (dirPath: string): Promise<FsEntry[]> => {
-    const res = await fetch(`${GATEWAY_HTTP}/v1/fs/list?dir=${encodeURIComponent(dirPath)}`);
+    const res = await fetch(`${gatewayUrl()}/v1/fs/list?dir=${encodeURIComponent(dirPath)}`);
     const data = await res.json();
     return (data.entries || []).filter((e: FsEntry) => e.type === 'directory');
   }, []);
@@ -156,11 +170,9 @@ export const WorkspaceSelector: React.FC = () => {
       });
     }
     if (!folderName) return;
-    // 浏览器只能拿到文件夹名，弹出手动输入框让用户补全路径
-    setEditing(true);
-    const guessed = `F:\\${folderName}`;
-    setValue(guessed);
-    message.info(`已识别文件夹: ${folderName}，请补全完整路径 (如 ${guessed})`);
+    // 浏览器无法给出完整路径，改用 Gateway 文件夹浏览器让用户从盘符逐级选择
+    setBrowserOpen(true);
+    message.info(`已识别文件夹: ${folderName}，请在文件浏览器中逐级定位到该目录`);
   };
 
   /** 确认选择文件夹 */
@@ -178,7 +190,7 @@ export const WorkspaceSelector: React.FC = () => {
   const handleSetProjectRoot = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${GATEWAY_HTTP}/v1/fs/project-root`);
+      const res = await fetch(`${gatewayUrl()}/v1/fs/project-root`);
       const data = await res.json();
       const root = data.projectRoot || data.cwd || '';
       if (root) {
@@ -195,7 +207,7 @@ export const WorkspaceSelector: React.FC = () => {
   /** 首次加载自动获取项目根目录 (Gateway 不可达立即回退) */
   useEffect(() => {
     if (!workspace) {
-      const fallback = () => { setEditing(true); setValue('F:\\agentai-platform'); };
+      const fallback = () => { setEditing(true); setValue(''); };
       const timer = setTimeout(fallback, 2000); // 2秒超时
       handleSetProjectRoot()
         .then(() => clearTimeout(timer))
@@ -206,7 +218,7 @@ export const WorkspaceSelector: React.FC = () => {
   if (!workspace && !editing) {
     return (
       <div style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 6 }}
-           onClick={() => { setEditing(true); setValue('F:\\agentai-platform'); }}
+           onClick={() => { setEditing(true); setValue(''); }}
            title="点击设置工作目录">
         <FolderOpenOutlined style={{ color: 'var(--color-text-muted)', fontSize: 13 }} />
         <Spin size="small" />

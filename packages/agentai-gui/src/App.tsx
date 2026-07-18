@@ -731,11 +731,13 @@ export const App: React.FC = () => {
       {guideVisible && <GuideModal onClose={() => setGuideVisible(false)} />}
 
       {/* ═══ 6. 沿用身份确认弹窗 ═══ */}
-      {showReusePrompt && <ReuseIdentityPrompt
+      <ReuseIdentityPrompt
+        open={showReusePrompt}
         profile={profile}
         onReuse={handleReuseIdentity}
         onReset={handleResetIdentity}
-      />}
+        onClose={() => setShowReusePrompt(false)}
+      />
 
       {/* ═══ 7. Onboarding Modal (首次启动) ═══ */}
       {showOnboarding && <OnboardingWrapper onFinish={handleOnboardFinish} />}

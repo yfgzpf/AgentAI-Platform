@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    agentai_desktop_lib::run()
+    pulseflow_desktop_lib::run()
 }
