@@ -12,6 +12,16 @@ const ENV_KEY_MAP: Record<string, string> = {
   deepseek: 'DEEPSEEK_API_KEY',
   openai: 'OPENAI_API_KEY',
   zhipu: 'ZHIPU_API_KEY',
+  superapi: 'SUPERAPI_API_KEY',
+  sensenova: 'SENSENOVA_API_KEY',
+  longcat: 'LONGCAT_API_KEY',
+  // nvidia: 'NVIDIA_API_KEY', 已移除
+  qwen: 'DASHSCOPE_API_KEY',
+  moonshot: 'MOONSHOT_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  minimax: 'MINIMAX_API_KEY',
+  doubao: 'VOLCANO_API_KEY',
+  dxnt: 'DXNT_API_KEY',
 };
 
 /** 掩码 API Key, 只保留前 2 + 后 4 位 */
@@ -70,6 +80,16 @@ function writeEnvKey(envVar: string, value: string): void {
   fs.writeFileSync(envFile, lines.join('\n'), 'utf-8');
 }
 
+/** 从 .env 文件删除指定 key */
+function removeEnvKey(envVar: string): void {
+  const envFile = findEnvFile();
+  if (!envFile) return;
+  if (!fs.existsSync(envFile)) return;
+  const text = fs.readFileSync(envFile, 'utf-8');
+  const lines = text.split('\n').filter(l => !l.startsWith(`${envVar}=`) && !l.startsWith(`${envVar} =`));
+  fs.writeFileSync(envFile, lines.join('\n'), 'utf-8');
+}
+
 export interface SettingsRouterDeps {
   router?: { recheckApiKeys: () => void };
 }
@@ -93,6 +113,29 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
       masked: maskKey(envValue),
       envVar,
     });
+  });
+
+  /**
+   * GET /v1/settings/keys/status
+   * 返回所有已知 Provider 的密钥配置状态 (供前端模型选择器同步)
+   */
+  r.get('/v1/settings/keys/status', (_req: Request, res: Response) => {
+    const allKeys: Record<string, string> = {
+      AGENTAI_API_KEY: 'AGENTAI_API_KEY', ZHIPU_API_KEY: 'ZHIPU_API_KEY',
+      DEEPSEEK_API_KEY: 'DEEPSEEK_API_KEY', OPENAI_API_KEY: 'OPENAI_API_KEY',
+      SUPERAPI_API_KEY: 'SUPERAPI_API_KEY', SENSENOVA_API_KEY: 'SENSENOVA_API_KEY',
+      LONGCAT_API_KEY: 'LONGCAT_API_KEY',
+      DASHSCOPE_API_KEY: 'DASHSCOPE_API_KEY', VOLCANO_API_KEY: 'VOLCANO_API_KEY',
+      MOONSHOT_API_KEY: 'MOONSHOT_API_KEY', ANTHROPIC_API_KEY: 'ANTHROPIC_API_KEY',
+      MINIMAX_API_KEY: 'MINIMAX_API_KEY', DXNT_API_KEY: 'DXNT_API_KEY',
+    };
+
+    const status: Record<string, { ok: boolean; masked: string }> = {};
+    for (const [key, envVar] of Object.entries(allKeys)) {
+      const value = process.env[envVar] || readEnvKey(envVar);
+      status[key] = { ok: !!value, masked: maskKey(value) };
+    }
+    res.json(status);
   });
 
   /**
@@ -127,6 +170,37 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
   });
 
   /**
+   * DELETE /v1/settings/keys
+   * Body: { provider }
+   * 从 .env 和 process.env 删除密钥 (用户删除自定义模型时调用)
+   */
+  r.delete('/v1/settings/keys', (req: Request, res: Response) => {
+    const { provider } = req.body || {};
+    if (!provider) {
+      return res.status(400).json({ error: 'provider 必填' });
+    }
+
+    const envVar = ENV_KEY_MAP[provider] || `${provider.toUpperCase()}_API_KEY`;
+
+    try {
+      // 从 .env 文件删除
+      removeEnvKey(envVar);
+      // 从运行时环境变量删除
+      delete process.env[envVar];
+
+      // 通知 router 重新检查 key 状态
+      if (deps?.router) {
+        setImmediate(() => deps.router!.recheckApiKeys());
+      }
+
+      console.log(`[settings] ${envVar} 已从 .env 删除`);
+      res.json({ ok: true, envVar });
+    } catch (err: any) {
+      res.status(500).json({ error: `删除失败: ${err.message}` });
+    }
+  });
+
+  /**
    * POST /v1/settings/keys/test
    * Body: { provider, baseURL, modelName, apiKey }
    * 通过 Gateway 代理测试模型连接（走与服务相同的网络路径）
@@ -149,7 +223,6 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
     const url = baseURL.replace(/\/+$/, '') + '/chat/completions';
 
     try {
-      // NVIDIA NIM 模型名包含 publisher/ 前缀 (如 deepseek-ai/deepseek-v4-flash)
       // 某些 provider 可能需要不同的测试模型名
       const testModel = modelName || 'deepseek-v4-flash';
 
@@ -158,8 +231,6 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${key}`,
-          // NVIDIA NIM 需要 Accept header
-          ...(provider === 'nvidia' ? { 'Accept': 'application/json' } : {}),
         },
         body: JSON.stringify({
           model: testModel,

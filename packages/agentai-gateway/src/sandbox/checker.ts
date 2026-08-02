@@ -1,8 +1,13 @@
 /**
- * Sandbox 检查器
+ * Sandbox 检查器 v3.2
+ * =====================================================
+ * 优先级: deny > size > prompt > default-allow
  *
- * 优先级:
- *   deny > prompt > allow > 默认 deny (白名单模式)
+ * 核心理念 (2026-07-19): "只要不动操作系统权限全放行"
+ *   1. deny 规则保护系统路径 (C:/Windows, ~/.ssh 等) — 永不放开
+ *   2. 大小检查: maxFileSize / maxTotalSize
+ *   3. prompt 规则标记敏感文件 (.env, .pem 等) — 审计但不阻止
+ *   4. 其余所有路径默认放行 — 用户不需要手动配置白名单
  *
  * 大小检查:
  *   - write/delete 时检查 maxFileSize (单文件)
@@ -26,7 +31,7 @@ export function check(
         const norm = normalizePath(req.path);
         const op: SandboxOp = req.op;
 
-        // 1. deny 最高优先
+        // 1. deny 最高优先 — 系统目录/凭证永不放开
         const denyHit = matchAny(norm, rules.deny || []);
         if (denyHit.matched) {
             return {
@@ -58,7 +63,7 @@ export function check(
             }
         }
 
-        // 3. prompt 次优先
+        // 3. prompt — 敏感文件标记 (审计但放行)
         const promptHit = matchAny(norm, rules.prompt || []);
         if (promptHit.matched) {
             return {
@@ -69,21 +74,10 @@ export function check(
             };
         }
 
-        // 4. allow 通过
-        const allowHit = matchAny(norm, rules.allow || []);
-        if (allowHit.matched) {
-            return {
-                verdict: 'allow',
-                reason: `Path matches allow rule: ${allowHit.pattern}`,
-                matchedRule: allowHit.pattern,
-                source: 'allow',
-            };
-        }
-
-        // 5. 默认 deny (白名单模式, 谨慎)
+        // 4. 默认放行 — "只要不动操作系统权限全放行"
         return {
-            verdict: 'deny',
-            reason: `Path not in any allow rule (default-deny mode)`,
+            verdict: 'allow',
+            reason: `Default allow (deny & prompt rules not matched)`,
             source: 'default',
         };
     } catch (e: any) {

@@ -13,10 +13,32 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+/** 扩展错误类型 */
+export type ErrorType =
+  // 基础类型
+  | 'TypeError' | 'ReferenceError' | 'SyntaxError' | 'NetworkError' | 'FileSystemError' | 'PermissionError' | 'TimeoutError' | 'UnknownError'
+  // API/服务相关
+  | 'RateLimitError'      // 429 限流
+  | 'AuthError'           // 401/403 认证授权失败
+  | 'ServiceUnavailable'  // 503 服务不可用
+  | 'BadRequest'          // 400 请求参数错误
+  // 资源相关
+  | 'ResourceExhausted'   // 资源耗尽 (内存/磁盘/配额)
+  | 'QuotaExceeded'       // API 配额超限
+  // 逻辑错误
+  | 'ValidationError'     // 数据校验失败
+  | 'ConflictError'       // 409 资源冲突
+  | 'NotFoundError'       // 404 资源不存在
+  // 外部依赖
+  | 'DependencyError'     // 外部依赖失败
+  | 'ExternalAPIError';   // 第三方 API 错误
+
 export interface EvolutionEntry {
   ts: number;
-  type: 'success' | 'failure' | 'preference' | 'tool_stats' | 'meta_instruction' | 'self-eval-insight';
+  type: 'success' | 'failure' | 'preference' | 'tool_stats' | 'meta_instruction' | 'self-eval-insight' | 'self_modify_proposal' | 'self_modify_executed' | 'self_modify_rollback' | 'feedback_negative' | 'tool_iteration';
   content: string;
+  /** 是否成功 */
+  success?: boolean;
   metadata?: Record<string, any>;
   /** 关联的 session id (可追溯) */
   sessionId?: string;
@@ -29,7 +51,7 @@ export interface EvolutionEntry {
   /** 2026-06-24 新增: 行业（用于智能召回） */
   industry?: string;
   /** 2026-06-24 新增: 错误类型（用于智能召回） */
-  errorType?: 'TypeError' | 'ReferenceError' | 'SyntaxError' | 'NetworkError' | 'FileSystemError' | 'PermissionError' | 'TimeoutError' | 'UnknownError';
+  errorType?: ErrorType;
   /** 2026-06-24 新增: 关键词（用于智能召回） */
   keywords?: string[];
   /** 2026-06-25 CSSL 新增: 元指令的诊断类型 */
@@ -38,6 +60,20 @@ export interface EvolutionEntry {
   failureCategory?: 'skill_defect' | 'execution_error' | 'environment_issue' | 'unknown';
   /** 2026-07-02 新增: 关联的技能名 (失因分类时关联到具体技能) */
   relatedSkill?: string;
+  /** 2026-07-30 新增: 自编程相关字段 */
+  proposalId?: string;
+  targetFile?: string;
+  reason?: string;
+  failureInfo?: string;
+  proposal?: any;
+  result?: any;
+  /** 2026-07-30 新增: 工具调用历史分析字段 */
+  toolCall?: {
+    toolName: string;
+    params: any;
+    duration: number;
+    retryCount: number;
+  };
 }
 
 /**
@@ -52,33 +88,76 @@ export interface EvolutionEntry {
  */
 export function classifyFailure(opts: {
   errorMessage: string;
-  errorType?: EvolutionEntry['errorType'];
+  errorType?: ErrorType;
   toolName?: string;
   skillName?: string;
+  statusCode?: number;
 }): EvolutionEntry['failureCategory'] {
   const msg = (opts.errorMessage || '').toLowerCase();
+  const statusCode = opts.statusCode;
+
+  // 根据 HTTP 状态码快速判断
+  if (statusCode) {
+    if (statusCode === 429) return 'execution_error'; // Rate limit → 重试
+    if (statusCode === 401 || statusCode === 403) return 'environment_issue'; // Auth → 检查密钥
+    if (statusCode === 503 || statusCode === 502) return 'execution_error'; // 服务不可用 → 重试
+    if (statusCode === 400) return 'skill_defect'; // 请求错误 → 检查参数
+    if (statusCode === 404) return 'environment_issue'; // 资源不存在 → 检查路径
+    if (statusCode === 409) return 'execution_error'; // 冲突 → 可能需要重试
+  }
+
+  // 根据 errorType 判断
+  if (opts.errorType) {
+    // 环境问题
+    if (['FileSystemError', 'PermissionError', 'NotFoundError', 'ResourceExhausted'].includes(opts.errorType)) {
+      return 'environment_issue';
+    }
+    // 执行失误 (可重试)
+    if (['NetworkError', 'TimeoutError', 'RateLimitError', 'ServiceUnavailable', 'ExternalAPIError', 'DependencyError'].includes(opts.errorType)) {
+      return 'execution_error';
+    }
+    // 技能缺陷
+    if (['SyntaxError', 'TypeError', 'ReferenceError', 'ValidationError', 'BadRequest'].includes(opts.errorType)) {
+      return 'skill_defect';
+    }
+  }
 
   // 环境问题: 依赖缺失、路径不存在、权限不足
-  if (opts.errorType === 'FileSystemError' || opts.errorType === 'PermissionError') {
+  if (/module not found|cannot find module|enoent|no such file|permission denied|eacces/.test(msg)) {
     return 'environment_issue';
   }
-  if (/module not found|cannot find module|enoent|no such file|permission denied|eacces/.test(msg)) {
+  // 资源耗尽
+  if (/out of memory|memory leak|disk full|quota exceeded|rate limit exceeded/.test(msg)) {
     return 'environment_issue';
   }
 
   // 执行失误: 网络超时、连接失败、临时性错误
-  if (opts.errorType === 'NetworkError' || opts.errorType === 'TimeoutError') {
+  if (/timeout|econnrefused|econnreset|socket hang up|fetch failed|network/.test(msg)) {
     return 'execution_error';
   }
-  if (/timeout|econnrefused|econnreset|socket hang up|fetch failed|network|rate limit|429|503|502/.test(msg)) {
+  // 限流
+  if (/rate limit|too many requests|429|throttled/.test(msg)) {
+    return 'execution_error';
+  }
+  // 认证失败
+  if (/unauthorized|authentication failed|invalid.*token|api.*key|401|403/.test(msg)) {
+    return 'environment_issue';
+  }
+  // 服务不可用
+  if (/service unavailable|temporarily unavailable|503|502|bad gateway/.test(msg)) {
     return 'execution_error';
   }
 
   // 技能缺陷: 语法错误、类型错误、引用错误 — 说明技能/代码本身有问题
-  if (opts.errorType === 'SyntaxError' || opts.errorType === 'TypeError' || opts.errorType === 'ReferenceError') {
+  if (/syntaxerror|typeerror|referenceerror|is not a function|is not defined|unexpected token|invalid arguments/.test(msg)) {
     return 'skill_defect';
   }
-  if (/syntaxerror|typeerror|referenceerror|is not a function|is not defined|unexpected token|invalid arguments|parameter.*missing|parameter.*required/.test(msg)) {
+  // 参数错误
+  if (/parameter.*missing|parameter.*required|invalid.*param|missing.*param|wrong.*arg|argument.*not|validation.*failed/.test(msg)) {
+    return 'skill_defect';
+  }
+  // 数据校验失败
+  if (/validation|schema|invalid.*format|type.*mismatch/.test(msg)) {
     return 'skill_defect';
   }
 
@@ -88,6 +167,44 @@ export function classifyFailure(opts: {
   }
 
   return 'unknown';
+}
+
+/**
+ * 2026-07-30 新增: 智能错误类型识别
+ * 从错误消息中识别具体的错误类型
+ */
+export function detectErrorType(errorMessage: string, statusCode?: number): ErrorType {
+  const msg = errorMessage.toLowerCase();
+
+  // HTTP 状态码优先
+  if (statusCode === 429) return 'RateLimitError';
+  if (statusCode === 401 || statusCode === 403) return 'AuthError';
+  if (statusCode === 503) return 'ServiceUnavailable';
+  if (statusCode === 400) return 'BadRequest';
+  if (statusCode === 404) return 'NotFoundError';
+  if (statusCode === 409) return 'ConflictError';
+  if (statusCode === 422) return 'ValidationError';
+
+  // 模式匹配
+  if (/rate limit|too many requests|throttled/.test(msg)) return 'RateLimitError';
+  if (/unauthorized|authentication|invalid.*token|api.*key|401|403/.test(msg)) return 'AuthError';
+  if (/service unavailable|503/.test(msg)) return 'ServiceUnavailable';
+  if (/bad request|invalid request|400/.test(msg)) return 'BadRequest';
+  if (/not found|404|enoent/.test(msg)) return 'NotFoundError';
+  if (/conflict|409/.test(msg)) return 'ConflictError';
+  if (/validation|schema|invalid.*format/.test(msg)) return 'ValidationError';
+  if (/timeout|etimedout/.test(msg)) return 'TimeoutError';
+  if (/network|econnrefused|econnreset|fetch failed/.test(msg)) return 'NetworkError';
+  if (/out of memory|memory|disk full|quota/.test(msg)) return 'ResourceExhausted';
+  if (/quota exceeded/.test(msg)) return 'QuotaExceeded';
+  if (/dependency|external api|third party/.test(msg)) return 'DependencyError';
+  if (/permission|eacces|eperm/.test(msg)) return 'PermissionError';
+  if (/syntax|unexpected token/.test(msg)) return 'SyntaxError';
+  if (/type.*error|is not a function|is not defined/.test(msg)) return 'TypeError';
+  if (/reference.*error/.test(msg)) return 'ReferenceError';
+  if (/filesystem|enoent/.test(msg)) return 'FileSystemError';
+
+  return 'UnknownError';
 }
 
 /**
@@ -243,7 +360,7 @@ export function extractPatterns(entries: EvolutionEntry[]): string[] {
   const metaInstructions = entries.filter(e => e.type === 'meta_instruction');
   const instructionPatterns = new Map<string, number>();
   for (const m of metaInstructions) {
-    const key = m.content.slice(0, 80);
+    const key = (m.content || '').slice(0, 80);
     instructionPatterns.set(key, (instructionPatterns.get(key) || 0) + 1);
   }
   // 元指令出现 2 次以上即提取（比失败模式的 3 次阈值更低，因为元指令更有价值）
@@ -254,7 +371,7 @@ export function extractPatterns(entries: EvolutionEntry[]): string[] {
   }
   // 即使只出现 1 次的元指令，如果带有诊断类型也提取（覆盖面更广）
   for (const m of metaInstructions.slice(-3)) {
-    const content = m.content.slice(0, 80);
+    const content = (m.content || '').slice(0, 80);
     if (!instructionPatterns.has(content) || (instructionPatterns.get(content) || 0) < 2) {
       patterns.push(`教练建议: ${content}`);
     }
@@ -265,7 +382,7 @@ export function extractPatterns(entries: EvolutionEntry[]): string[] {
   const failurePatterns = new Map<string, number>();
   const skillDefects = new Map<string, number>(); // 技能缺陷单独统计
   for (const f of failures) {
-    const pattern = f.content.slice(0, 50);
+    const pattern = (f.content || '').slice(0, 50);
     failurePatterns.set(pattern, (failurePatterns.get(pattern) || 0) + 1);
     // 技能缺陷单独标记 — 这些是需要修改技能/规则的模式
     if (f.failureCategory === 'skill_defect') {
@@ -285,14 +402,14 @@ export function extractPatterns(entries: EvolutionEntry[]): string[] {
   // 3. 提取偏好模式
   const preferences = entries.filter(e => e.type === 'preference');
   for (const p of preferences.slice(0, 5)) {
-    patterns.push(`偏好: ${p.content}`);
+    patterns.push(`偏好: ${p.content || ''}`);
   }
   
   // 4. 提取成功模式
   const successes = entries.filter(e => e.type === 'success');
   const successPatterns = new Map<string, number>();
   for (const s of successes) {
-    const pattern = s.content.slice(0, 50);
+    const pattern = (s.content || '').slice(0, 50);
     successPatterns.set(pattern, (successPatterns.get(pattern) || 0) + 1);
   }
   

@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { Modal, Tabs, Tag } from 'antd';
-import { CloseOutlined, BookOutlined, AppstoreOutlined, ThunderboltOutlined, PictureOutlined, CodeOutlined } from '@ant-design/icons';
+import { CloseOutlined, BookOutlined, AppstoreOutlined, ThunderboltOutlined, PictureOutlined, CodeOutlined, TeamOutlined } from '@ant-design/icons';
 
 interface Props {
   onClose: () => void;
@@ -45,8 +45,8 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <BookOutlined style={{ color: 'var(--accent)' }} />
-          <span>ATLAS 使用指南</span>
-          <Tag color="purple" style={{ fontSize: 9 }}>v0.4.0</Tag>
+          <span>岐枢 PulseFlow 使用指南</span>
+          <Tag color="purple" style={{ fontSize: 9 }}>v0.5.0</Tag>
         </div>
       }
       styles={{ body: { maxHeight: '70vh', overflowY: 'auto', padding: '12px 20px' } }}
@@ -60,8 +60,8 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
             label: '系统概览',
             children: (
               <div>
-                {SECTION.title('Atlas 是什么?')}
-                {SECTION.desc('Atlas 是一个多模型 AI 平台，支持智能对话、代码编辑、图像生成、视频生成、写作等功能。采用 Gateway + GUI 分离架构，Gateway 提供 LLM 路由、工具调用、记忆管理，GUI 提供交互界面。')}
+                {SECTION.title('岐枢是什么?')}
+                {SECTION.desc('岐枢 (PulseFlow) 是一个多模型 AI 平台，支持智能对话、代码编辑、图像生成、视频生成、写作等功能。采用 Gateway + GUI 分离架构，Gateway 提供 LLM 路由、工具调用、记忆管理，GUI 提供交互界面。')}
 
                 {SECTION.title('系统架构')}
                 {/* 架构图用文本流程图表示 */}
@@ -70,7 +70,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                   padding: 16, fontFamily: 'monospace', fontSize: 11, lineHeight: 1.8,
                   color: 'var(--fg-2)', whiteSpace: 'pre', overflowX: 'auto',
                 }}>{`┌─────────────────────────────────────────────────────────┐
-│                    Atlas                          │
+│              岐枢 PulseFlow                       │
 ├──────────┬──────────────┬──────────────┬────────────────┤
 │  GUI     │   Gateway    │   Core       │   Skills       │
 │ (React)  │  (Node 22)   │  (Types)     │  (Python)      │
@@ -91,7 +91,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {[
                     { name: 'LLM Router', desc: '4 Provider 路由: agentai / deepseek / openai / cline', tag: 'gateway' },
-                    { name: 'Atlas Loop', desc: '主循环: LLM调用→工具分派→结果入log→继续循环', tag: 'gateway' },
+                    { name: 'PulseFlow Loop', desc: '主循环: LLM调用→工具分派→结果入log→继续循环', tag: 'gateway' },
                     { name: 'Tool Registry', desc: '工具注册中心, 支持并行/串行分块执行', tag: 'gateway' },
                     { name: 'Memory Engine', desc: '持久记忆 + 会话记忆 + 行业记忆', tag: 'gateway' },
                     { name: 'Industry Engine', desc: '行业引擎: 装修/电商/教育/漫画等', tag: 'gateway' },
@@ -238,14 +238,148 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
             ),
           },
 
-          /* ====== 4. 图表与流程图 ====== */
+          /* ====== 4. AI 高级能力 (团队协作/3D场景/公网分享) ====== */
+          {
+            key: 'advanced',
+            label: 'AI 高级能力',
+            children: (
+              <div>
+                {SECTION.title('🎭 AI 团队协作 (run_team)')}
+                {SECTION.desc('启动预设 AI 团队执行复杂任务。团队由多个角色 Agent 组成, 支持并行/串行/审查三种工作流, 结果自动综合。')}
+                {SECTION.divider()}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {[
+                    { id: 'code-review', name: '代码审查团队', members: '架构师 + 安全专家 + 性能专家', flow: '并行', cases: '提交前审查 / 架构评估 / 技术债务排查' },
+                    { id: 'feature-dev', name: '功能开发团队', members: '架构师 + 前端 + 后端 + 测试', flow: '串行', cases: '全栈功能开发 / 端到端实现' },
+                    { id: 'docs', name: '文档团队', members: '技术写作 + 校对', flow: '串行', cases: 'API文档 / 技术规范 / 用户手册' },
+                    { id: 'debug', name: '调试团队', members: '探索 + 审查 + 安全', flow: '并行', cases: '复杂Bug定位 / 性能调优' },
+                    { id: 'security-audit', name: '安全审计团队', members: '漏洞扫描 + 架构安全 + 代码探索', flow: '并行', cases: '上线前审计 / 合规检查' },
+                    { id: 'refactor', name: '重构团队', members: '架构师 + 前端 + 后端 + 测试', flow: '串行', cases: '系统重构 / 代码现代化' },
+                  ].map(t => (
+                    <div key={t.id} style={{
+                      padding: '8px 10px', borderRadius: 6,
+                      background: 'var(--card)', border: '1px solid var(--border)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <TeamOutlined style={{ fontSize: 12, color: 'var(--accent)' }} />
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>{t.name}</span>
+                        {SECTION.tag(t.flow, t.flow === '并行' ? 'green' : 'blue')}
+                        <code style={{ fontSize: 10, padding: '1px 4px', background: 'var(--panel)', borderRadius: 3, color: 'var(--muted)' }}>{t.id}</code>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--fg-2)' }}>成员: {t.members}</div>
+                      <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 2 }}>适用: {t.cases}</div>
+                    </div>
+                  ))}
+                </div>
+                {SECTION.divider()}
+                {SECTION.title('使用方法')}
+                {SECTION.desc('直接在对话中描述任务, AI 会自动判断是否需要启动团队。也可手动触发:')}
+                <div style={{
+                  background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)', marginBottom: 8,
+                }}>用户: "帮我审查整个 packages 目录的代码质量"<br/>AI: → 自动调用 run_team({'{teamId:"code-review", task:"..."}'})</div>
+                {SECTION.desc('或显式指令:')}
+                <div style={{
+                  background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)',
+                }}>用户: "用代码审查团队审查 src/auth 目录"<br/>用户: "组建功能开发团队实现用户登录模块"</div>
+
+                {SECTION.divider()}
+                {SECTION.title('🎲 AI 生成 3D 可交互场景 (generate_3d_scene)')}
+                {SECTION.desc('根据用户描述生成 Three.js 参数化 3D 场景, 前端自动渲染为可交互预览。用户可旋转/缩放/调参/下载。')}
+                {SECTION.title('适用场景')}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
+                  {[
+                    { icon: '🪑', name: '家具设计', desc: '沙发/桌椅/灯具 3D 预览' },
+                    { icon: '🏗️', name: '建筑可视化', desc: '楼盘/室内/外观 3D 漫游' },
+                    { icon: '📦', name: '产品原型', desc: '包装/工业品 3D 展示' },
+                    { icon: '📊', name: '数据可视化', desc: '3D 柱状图/散点/曲面' },
+                    { icon: '🎮', name: '游戏场景', desc: '低多边形场景概念图' },
+                    { icon: '🎨', name: '艺术创作', desc: '抽象雕塑/粒子系统' },
+                  ].map(s => (
+                    <div key={s.name} style={{
+                      padding: '6px 8px', borderRadius: 6,
+                      background: 'var(--card)', border: '1px solid var(--border)',
+                    }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>
+                        <span style={{ marginRight: 4 }}>{s.icon}</span>{s.name}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>{s.desc}</div>
+                    </div>
+                  ))}
+                </div>
+                {SECTION.title('使用示例')}
+                <div style={{
+                  background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)',
+                }}>用户: "生成一个 3D 沙发, 可以旋转看"<br/>用户: "用 3D 场景展示一个装修客厅效果"<br/>用户: "画一个数据可视化 3D 柱状图"</div>
+                {SECTION.desc('生成后可在对话区交互预览, 支持刷新/下载 HTML/全屏查看。')}
+
+                {SECTION.divider()}
+                {SECTION.title('🌐 公网分享本地端口 (share_port)')}
+                {SECTION.desc('将本地端口通过 localtunnel 隧道暴露为公网 URL, 任何人访问该 URL 都会转发到你的 localhost。无需注册, 完全免费。')}
+                {SECTION.title('触发方式')}
+                {SECTION.desc('AI 会在以下场景主动询问是否需要公网分享:')}
+                {['启动了 vite dev / pnpm dev / npm start 等本地服务', '完成 Web 项目开发', '用户提到"演示/分享给/远程访问/外网访问"', '完成 Webhook/回调类功能'].map(t => (
+                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                    • {t}
+                  </div>
+                ))}
+                {SECTION.title('使用示例')}
+                <div style={{
+                  background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)', marginBottom: 8,
+                }}>用户: "把 localhost:3000 分享出去"<br/>AI: → share_port({'{action:"create", port:3000}'}) → https://xxx.loca.lt</div>
+                <div style={{
+                  background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)',
+                }}>用户: "查看所有隧道" → share_port({'{action:"list"}'})<br/>用户: "关闭隧道" → share_port({'{action:"close", tunnel_id:"tun_xxx"}'})</div>
+                {SECTION.divider()}
+                {SECTION.title('安全规则')}
+                {['仅 1024-65535 端口 (拒绝系统端口)', '拒绝 22/3389 等敏感端口', '不主动为数据库端口 (3306/5432/6379) 创建隧道', '隧道 URL 仅返回给当前用户, 不写入日志'].map(t => (
+                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                    • {t}
+                  </div>
+                ))}
+
+                {SECTION.divider()}
+                {SECTION.title('📦 依赖自管理 (npm_install + ensure_dependency)')}
+                {SECTION.desc('AI 可以自动检测和安装缺失的依赖包，支持 npm/pnpm/yarn/pip 多种包管理器。')}
+                {SECTION.title('触发方式')}
+                {SECTION.desc('AI 会在以下场景主动安装依赖:')}
+                {['运行项目前自动检查关键依赖', '调用工具前发现可能缺包', '遇到 "Cannot find module" 错误时自动修复', '新接手项目探索时检查 package.json 依赖'].map(t => (
+                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                    • {t}
+                  </div>
+                ))}
+                {SECTION.title('使用示例')}
+                <div style={{
+                  background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)', marginBottom: 8,
+                }}>用户: "运行这个项目"<br/>AI: → 自动调用 ensure_dependency 检查并安装依赖 → 启动项目</div>
+                <div style={{
+                  background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)',
+                }}>用户: "帮我安装 axios"<br/>AI: → npm_install({'{package:"axios"}'})</div>
+                {SECTION.divider()}
+                {SECTION.title('智能特性')}
+                {['自动检测包管理器 (pnpm > yarn > npm)', '支持 monorepo workspace 安装', '幂等检查: 已安装则跳过', '国内镜像加速 (npmmirror/清华源)', 'Python venv 自动检测'].map(t => (
+                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                    • {t}
+                  </div>
+                ))}
+              </div>
+            ),
+          },
+
+          /* ====== 5. 图表与流程图 ====== */
           {
             key: 'diagrams',
             label: '图表/流程图',
             children: (
               <div>
                 {SECTION.title('AI 生成图表功能')}
-                {SECTION.desc('Atlas 内置 generate_diagram 工具, AI 可以在对话中自动生成 SVG 图表和流程图。')}
+                {SECTION.desc('岐枢内置 generate_diagram 工具, AI 可以在对话中自动生成 SVG 图表和流程图。')}
 
                 {SECTION.title('触发方式')}
                 {SECTION.desc('在对话中直接用自然语言请求, 例如:')}
@@ -315,7 +449,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
             ),
           },
 
-          /* ====== 5. API Key 获取 ====== */
+          /* ====== 6. API Key 获取 ====== */
           {
             key: 'apikeys',
             label: 'API Key 获取',
@@ -326,11 +460,11 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {[
-                    { name: 'ATLAS (Agnes)', url: 'https://apihub.agnes-ai.com', quota: '每月 1000 次对话 + 100 张生图', env: 'AGENTAI_API_KEY' },
+                    { name: '岐枢 (Agnes)', url: 'https://api.agnes-ai.cn', quota: '每月 1000 次对话 + 100 张生图', env: 'AGENTAI_API_KEY' },
                     { name: '智谱 GLM', url: 'https://open.bigmodel.cn', quota: '新用户 500 万 tokens', env: 'ZHIPU_API_KEY' },
                     { name: 'DeepSeek', url: 'https://platform.deepseek.com', quota: '新用户 5000 万 tokens', env: 'DEEPSEEK_API_KEY' },
                     { name: 'OpenAI', url: 'https://platform.openai.com', quota: '需绑定信用卡', env: 'OPENAI_API_KEY' },
-                    { name: 'NVIDIA NIM', url: 'https://build.nvidia.com', quota: '1000 次/月 (77+ 模型)', env: 'NVIDIA_API_KEY' },
+                    // NVIDIA NIM 已移除 (2026-07-25): NIM 不可用
                     { name: '商汤 SenseNova', url: 'https://platform.sensenova.cn', quota: '每 5 小时 1500 次', env: 'SENSENOVA_API_KEY' },
                     { name: '美团 LongCat', url: 'https://longcat.chat', quota: '申请内测资格', env: 'LONGCAT_API_KEY' },
                     { name: 'SuperAPI', url: 'https://superapi.vanguard.dpdns.org', quota: '联系管理员', env: 'SUPERAPI_API_KEY' },
@@ -371,7 +505,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
             ),
           },
 
-          /* ====== 6. 快捷操作 ====== */
+          /* ====== 7. 快捷操作 ====== */
           {
             key: 'shortcuts',
             label: '快捷操作',

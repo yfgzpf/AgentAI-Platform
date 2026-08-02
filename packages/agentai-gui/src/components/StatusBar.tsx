@@ -13,7 +13,7 @@ import { VoiceWakeIndicator } from './VoiceWakeIndicator';
 import { MusicPlayer } from './MusicPlayer';
 import { gatewayFallback } from '../services/GatewayFallback';
 
-type GwStatus = 'online' | 'offline' | 'checking';
+type GwStatus = 'online' | 'offline' | 'starting';  // 与 GatewayFallback 状态一致
 
 /* ---- 连接状态定义 ---- */
 interface QqStatus {
@@ -250,8 +250,8 @@ export const StatusBar: React.FC = () => {
   /* ---- Gateway 状态色 ---- */
   const gwDotColor = gw === 'online' ? 'var(--success)'
     : gw === 'offline' ? 'var(--danger)' : 'var(--muted)';
-  const gwLabel = gw === 'online' ? 'Gateway 在线'
-    : gw === 'offline' ? 'Gateway 离线' : '检测中...';
+  const gwLabel = gw === 'online' ? '✅ Gateway 在线'
+    : gw === 'offline' ? '❌ Gateway 离线' : '⏳ 检测中...';
 
   return (
     <>

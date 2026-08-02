@@ -214,7 +214,7 @@ export class MasterController extends EventEmitter {
     }
 
     // 4. 图片/视频生成 → media 类
-    const mediaPattern = /图|效果图|海报|插画|视频|画|设计|logo|icon|封面|配图|生成图|生成视频/i;
+    const mediaPattern = /效果图|海报|插画|视频|画一张|画一个|生成图|生成视频|生成图片|生图|图片生成|logo|icon|封面|配图|AI.*图|绘图|绘画/i;
     if (mediaPattern.test(trimmed)) {
       return { category: 'media', confidence: 0.90, complexity: 'simple', needsSubAgents: false,
         entities: [], impliedNeeds: ['需要使用 generate_image 或 generate_video 工具'], missingInfo: [], summary: trimmed.slice(0, 100) };
@@ -644,7 +644,7 @@ export class MasterController extends EventEmitter {
     const lower = msg.toLowerCase();
     const hasCode = /代码|coding|写|code|函数|类|组件|bug|修复|优化|重构|实现|开发/.test(msg);
     const hasCreate = /创建|新建|生成|做一个|帮我写/.test(msg);
-    const hasMedia = /图片|视频|画像|生成图|生图|合成/.test(msg);
+    const hasMedia = /生成图|生图|画一张|画一个|海报|插画|效果图|绘图|AI.*图/.test(msg);
     const hasSearch = /搜索|查|找|search|find|在哪里/.test(msg);
     const hasReview = /审查|review|检查|审计/.test(msg);
 

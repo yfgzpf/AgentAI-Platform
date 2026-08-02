@@ -33,6 +33,9 @@ export interface ToolContext {
   abortSignal: AbortSignal;
   /** 来自 router 的 chat response, 用于多步推理 */
   priorMessages?: Array<{ role: string; content: string }>;
+  /** 递归深度限制，防止无限递归 */
+  callDepth?: number;
+  maxDepth?: number;
 }
 
 export interface ToolResult {
@@ -90,6 +93,8 @@ export class ToolRegistry extends EventEmitter {
   private tools = new Map<string, ToolEntry>();
   private watcher?: FSWatcher;
   private skillsDir: string;
+  /** 拦截器链: 工具执行前按序检查, 返回 string=拒绝, null/undefined=放行 */
+  private _interceptors: Array<{ id: string; fn: (name: string, args: Record<string, any>, ctx: ToolContext) => string | null | undefined | Promise<string | null | undefined> }> = [];
 
   constructor(skillsDir = path.join(process.env.HOME || '~', '.agentai', 'skills')) {
     super();
@@ -121,6 +126,19 @@ export class ToolRegistry extends EventEmitter {
     if (leafCount > 10) {
       console.warn(`[tool-registry] ${entry.name} has ${leafCount} leaf params, consider flattening`);
     }
+    
+    // 4. DeepSeek 兼容: 确保 parameters 是有效的 JSON Schema，type 必须是 "object"
+    if (!entry.parameters || typeof entry.parameters !== 'object') {
+      console.warn(`[tool-registry] ${entry.name} has invalid parameters, fixing to { type: 'object', properties: {} }`);
+      entry.parameters = { type: 'object', properties: {} };
+    }
+    if (entry.parameters.type !== 'object') {
+      console.warn(`[tool-registry] ${entry.name} parameters.type is "${entry.parameters.type}", forcing to "object"`);
+      entry.parameters.type = 'object';
+    }
+    if (!entry.parameters.properties) {
+      entry.parameters.properties = {};
+    }
 
     this.tools.set(entry.name, entry);
     this.emit('tool:registered', entry);
@@ -137,6 +155,23 @@ export class ToolRegistry extends EventEmitter {
 
   list(): ToolEntry[] {
     return [...this.tools.values()];
+  }
+
+  /**
+   * 注册拦截器: 工具执行前按序检查
+   * 返回 string → 拒绝执行, 该字符串作为拒绝原因返回给 AI
+   * 返回 null/undefined → 放行
+   */
+  addInterceptor(id: string, fn: (name: string, args: Record<string, any>, ctx: ToolContext) => string | null | undefined | Promise<string | null | undefined>): void {
+    this._interceptors.push({ id, fn });
+  }
+
+  removeInterceptor(id: string): void {
+    this._interceptors = this._interceptors.filter(i => i.id !== id);
+  }
+
+  getInterceptors(): ReadonlyArray<{ id: string }> {
+    return this._interceptors;
   }
 
   /**
@@ -240,9 +275,66 @@ export class ToolRegistry extends EventEmitter {
     call: { id: string; name: string; args: Record<string, any> },
     ctx: ToolContext,
   ): Promise<ToolResult> {
+    // 修复问题12: 递归深度限制，防止无限递归
+    const currentDepth = ctx.callDepth || 0;
+    const maxDepth = ctx.maxDepth || 10; // 默认最大深度10
+    if (currentDepth > maxDepth) {
+      return { 
+        success: false, 
+        output: '', 
+        error: `Tool call depth limit exceeded (${maxDepth}). Possible infinite recursion detected.` 
+      };
+    }
+    // 更新上下文深度
+    const newCtx = { ...ctx, callDepth: currentDepth + 1 };
+
     const tool = this.tools.get(call.name);
     if (!tool) {
       return { success: false, output: '', error: `Unknown tool: ${call.name}` };
+    }
+
+    // 修复问题1: 执行时检查参数值，防止黑名单绕过
+    const argsStr = JSON.stringify(call.args);
+    for (const k of PARAM_KEY_BLACKLIST) {
+      const keyRegex = new RegExp('"' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"', 'g');
+      if (keyRegex.test(argsStr)) {
+        return { success: false, output: '', error: `Tool call blocked: dangerous keyword "${k}" in args` };
+      }
+    }
+    // 额外检查：参数值中是否包含危险代码模式
+    const dangerousPatterns = [
+      /eval\s*\(/i,
+      /Function\s*\(/i,
+      /child_process/i,
+      /require\s*\(\s*['"]fs['"]\s*\)/i,
+      /require\s*\(\s*['"]child_process['"]\s*\)/i,
+    ];
+    for (const pattern of dangerousPatterns) {
+      if (pattern.test(argsStr)) {
+        return { success: false, output: '', error: `Tool call blocked: dangerous code pattern detected` };
+      }
+    }
+
+    // ═══ 拦截器链: 按序执行, 任一返回 string 则拒绝 ═══
+    // 学自 Reasonix ToolRegistry interceptor chain
+    if (this._interceptors.length > 0) {
+      for (const interceptor of this._interceptors) {
+        try {
+          const reason = await interceptor.fn(call.name, call.args, ctx);
+          if (typeof reason === 'string' && reason.length > 0) {
+            return {
+              success: false,
+              output: reason,
+              error: `[拦截器: ${interceptor.id}] ${reason}`,
+              durationMs: 0,
+              data: { rejectedBy: interceptor.id },
+            };
+          }
+        } catch (e: any) {
+          console.warn(`[tool-registry] Interceptor "${interceptor.id}" error:`, e?.message);
+          // 拦截器异常不阻断工具执行, 只记日志
+        }
+      }
     }
 
     // Hook: PreToolUse - 执行前检查
@@ -284,7 +376,7 @@ export class ToolRegistry extends EventEmitter {
     const t0 = Date.now();
     let result: ToolResult;
     try {
-      result = await tool.handler(call.args, ctx);
+      result = await tool.handler(call.args, newCtx);
       result.durationMs = Date.now() - t0;
     } catch (err) {
       // 2026-06-24: 结构化错误处理
@@ -347,8 +439,9 @@ export class ToolRegistry extends EventEmitter {
       // 2. 注册一次性审批回调
       const approvalKey = `approval:${call.id}`;
       const onApproved = (data: { callId: string; approved: boolean }) => {
+        // ALWAYS remove listener to prevent leak (even if callId doesn't match)
+        this.off('tool:approval_result', onApproved);
         if (data.callId === call.id) {
-          this.off('tool:approval_result', onApproved);
           clearTimeout(timer);
           resolve(data.approved);
         }

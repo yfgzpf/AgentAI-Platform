@@ -22,7 +22,7 @@ import * as path from 'path';
 
 /* ===== 类型 ===== */
 interface TtsConfig {
-  provider: 'agnes' | 'moss' | 'mimo' | 'openai' | 'edge' | 'nvidia' | 'none';
+  provider: 'agnes' | 'moss' | 'mimo' | 'openai' | 'edge' | 'none';
   apiKey?: string;
   baseUrl?: string;
   voice?: string;
@@ -30,11 +30,15 @@ interface TtsConfig {
 }
 
 function getTtsConfig(): TtsConfig {
+  // 修复：默认使用 'none' 让前端使用浏览器 TTS，避免后端依赖问题
+  // 用户可以通过环境变量 TTS_PROVIDER=edge 启用 Edge TTS
+  const provider = (process.env.TTS_PROVIDER as TtsConfig['provider']) || 'none';
+  
   return {
-    provider: (process.env.TTS_PROVIDER as TtsConfig['provider']) || 'edge', // 默认使用 Edge（多音色，免费）
+    provider,
     apiKey: process.env.TTS_API_KEY || '',
     baseUrl: process.env.TTS_BASE_URL || '',
-    voice: process.env.TTS_VOICE || 'zh-CN-XiaoxiaoNeural', // 默认中文女声
+    voice: process.env.TTS_VOICE || 'zh-CN-XiaoxiaoNeural',
     model: process.env.TTS_MODEL || 'edge',
   };
 }
@@ -168,8 +172,32 @@ export function createVoiceRouter(): Router {
           const ssml = buildAgnesSsml(text, voiceConfig!.shortName, voiceConfig!.locale, speed);
 
           // 调用 Agnes TTS API（Azure TTS 兼容接口）
+          // URL 优先级: AGNES_TTS_URL > AGENTAI_BASE_URL 替换路径 > 默认值
+          // 注意: Agnes TTS 端点与 Chat 端点可能不同!
+          //   Chat: https://api.agnes-ai.cn/v1/chat/completions
+          //   TTS:  https://api.agnes-ai.cn/v1/tts  (同域不同路径)
           const agnesKey = process.env.AGENTAI_API_KEY || config.apiKey || '';
-          const agnesUrl = process.env.AGNES_TTS_URL || 'https://apihub.agnes-ai.com/v1/tts';
+          
+          let agnesUrl: string;
+          if (process.env.AGNES_TTS_URL) {
+            // 用户显式配置了 TTS URL
+            agnesUrl = process.env.AGNES_TTS_URL.replace(/\/+$/, '');
+          } else {
+            // 从 AGENTAI_BASE_URL 推导 TTS URL
+            // 处理各种可能的 base URL 格式:
+            //   https://api.agnes-ai.cn → https://api.agnes-ai.cn/v1/tts
+            //   https://api.agnes-ai.cn/v1 → https://api.agnes-ai.cn/v1/tts
+            //   https://api.agnes-ai.cn/v1/chat/completions → https://api.agnes-ai.cn/v1/tts
+            let baseForTts = (process.env.AGENTAI_BASE_URL || 'https://api.agnes-ai.cn').replace(/\/+$/, '');
+            // 去掉末尾的 /chat/completions 或 /v1/chat/completions
+            baseForTts = baseForTts.replace(/\/chat\/completions$/, '');
+            // 确保 /v1 存在
+            if (!baseForTts.endsWith('/v1')) {
+              baseForTts = baseForTts.endsWith('/') ? `${baseForTts}v1` : `${baseForTts}/v1`;
+            }
+            agnesUrl = `${baseForTts}/tts`;
+          }
+          console.log(`[agnes-tts] 使用 URL: ${agnesUrl}, voice=${voiceConfig!.shortName}`);
 
           const resp = await fetch(agnesUrl, {
             method: 'POST',
@@ -203,53 +231,7 @@ export function createVoiceRouter(): Router {
         }
       }
 
-      // ====== NVIDIA NIM TTS (chatterbox-multilingual-tts, 免费) ======
-      if (effectiveProvider === 'nvidia') {
-        const nvidiaKey = process.env.NVIDIA_API_KEY || '';
-        if (!nvidiaKey) {
-          res.json({
-            fallback: 'browser-api',
-            note: 'NVIDIA API Key 未配置, 请在 .env 填 NVIDIA_API_KEY',
-            text,
-            duration: Date.now() - startTime,
-          });
-          return;
-        }
-        const nvidiaModel = process.env.NVIDIA_TTS_MODEL || 'resembleai/chatterbox-multilingual-tts';
-        const resp = await fetch('https://integrate.api.nvidia.com/v1/audio/speech', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${nvidiaKey}`,
-          },
-          body: JSON.stringify({
-            model: nvidiaModel,
-            input: text,
-            voice: voice || 'default',
-            response_format: 'wav',
-            speed: speed || 1.0,
-          }),
-          signal: AbortSignal.timeout(60000),
-        });
-
-        if (!resp.ok) {
-          const errText = await resp.text();
-          // NVIDIA TTS 可能不支持 /audio/speech 端点, 降级到浏览器 TTS
-          res.json({
-            fallback: 'browser-api',
-            note: `NVIDIA TTS 返回 HTTP ${resp.status}: ${errText.slice(0, 100)}, 已降级到浏览器 TTS`,
-            text,
-            duration: Date.now() - startTime,
-          });
-          return;
-        }
-
-        const audioBuffer = Buffer.from(await resp.arrayBuffer());
-        res.setHeader('Content-Type', 'audio/wav');
-        res.setHeader('X-Duration-Ms', String(Date.now() - startTime));
-        res.send(audioBuffer);
-        return;
-      }
+      // ====== NVIDIA NIM TTS 已移除 (2026-07-25): 需自建 GPU Docker + 端点不稳定 + 中国大陆不可达 ======
 
       // ====== 无提供商 → 通知前端用浏览器 API ======
       if (effectiveProvider === 'none') {
@@ -401,12 +383,7 @@ export function createVoiceRouter(): Router {
       });
     }
 
-    // NVIDIA TTS 音色
-    voices.push(
-      { id: 'default', name: 'Chatterbox Default', gender: 'neutral', provider: 'nvidia' },
-      { id: 'en-US', name: 'Chatterbox EN', gender: 'neutral', provider: 'nvidia' },
-      { id: 'zh-CN', name: 'Chatterbox 中文', gender: 'neutral', provider: 'nvidia' },
-    );
+    // NVIDIA TTS 音色已移除
 
     // Edge 音色
     voices.push(

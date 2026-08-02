@@ -11,7 +11,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useChatStore } from '../store/chatStore';
 import {
   Tree, Input, Button, Space, message, Spin, Dropdown, Modal, Empty, Tooltip,
-  Tabs, Tag, Segmented, App,
+  Tabs, Tag, App,
 } from 'antd';
 import {
   FolderOutlined, FolderOpenOutlined, FileOutlined, FileTextOutlined, ReloadOutlined, SaveOutlined,
@@ -20,6 +20,7 @@ import {
   DesktopOutlined, HomeOutlined, CodeOutlined, DeleteOutlined, EditOutlined as RenameIcon,
   FolderOpenOutlined as OpenFolderIcon, GlobalOutlined, RobotOutlined,
   AppstoreAddOutlined, EnvironmentOutlined, HddOutlined, BulbOutlined, PushpinOutlined, CopyOutlined,
+  CodeOutlined as TerminalOutlined,
 } from '@ant-design/icons';
 import { useProfileStore } from '../store';
 import { EditorChatPanel } from './EditorChatPanel';
@@ -127,7 +128,7 @@ export const Editor: React.FC = () => {
   const [showAiPanel, setShowAiPanel] = useState(true); // 默认开启 AI 对话面板
   const [showFileTree, setShowFileTree] = useState(false); // 默认折叠文件树, 给浏览器更多空间
   const [showBottomPanel, setShowBottomPanel] = useState(false); // 默认关闭，保持浏览器清爽
-  const [bottomPanelTab, setBottomPanelTab] = useState<'terminal' | 'logs' | 'browser'>('terminal');
+  const [bottomPanelTab, setBottomPanelTab] = useState<'terminal' | 'logs' | 'browser' | 'problems'>('terminal');
   const bottomPanelHeight = 180;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
@@ -183,7 +184,7 @@ export const Editor: React.FC = () => {
       }
       const root: TreeNode = {
         key: dir,
-        title: <span style={{ color: '#facc15', fontWeight: 600 }}><FolderOpenOutlined style={{ marginRight: 4 }} />{dir.split(/[\\/]/).filter(Boolean).pop() || dir}</span>,
+        title: <span style={{ color: 'var(--warning)', fontWeight: 600 }}><FolderOpenOutlined style={{ marginRight: 4 }} />{dir.split(/[\\/]/).filter(Boolean).pop() || dir}</span>,
         path: dir,
         type: 'directory',
         isLeaf: false,
@@ -224,11 +225,11 @@ export const Editor: React.FC = () => {
     title: (
       <Space size={4}>
         {e.type === 'directory'
-          ? <FolderOutlined style={{ color: '#facc15' }} />
+          ? <FolderOutlined style={{ color: 'var(--warning)' }} />
           : iconForFile(e.name)}
-        <span style={{ color: '#ddd', fontSize: 13 }}>{e.name}</span>
+        <span style={{ color: 'var(--fg-2)', fontSize: 13 }}>{e.name}</span>
         {e.type === 'file' && e.size > 0 && (
-          <span style={{ color: '#555', fontSize: 10 }}>{fmtSize(e.size)}</span>
+          <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>{fmtSize(e.size)}</span>
         )}
       </Space>
     ),
@@ -241,10 +242,10 @@ export const Editor: React.FC = () => {
 
   const iconForFile = (name: string) => {
     if (name.endsWith('.tsx') || name.endsWith('.ts')) return <CodeOutlined style={{ color: '#3178c6' }} />;
-    if (name.endsWith('.py')) return <CodeOutlined style={{ color: '#3776ab' }} />;
-    if (name.endsWith('.json')) return <CodeOutlined style={{ color: '#93c5fd' }} />;
-    if (name.endsWith('.md')) return <FileOutlined style={{ color: '#c084fc' }} />;
-    return <FileOutlined style={{ color: '#93c5fd' }} />;
+    if (name.endsWith('.py')) return <CodeOutlined style={{ color: '#3572A5' }} />;
+    if (name.endsWith('.json')) return <CodeOutlined style={{ color: 'var(--fg-2)' }} />;
+    if (name.endsWith('.md')) return <FileOutlined style={{ color: 'var(--violet)' }} />;
+    return <FileOutlined style={{ color: 'var(--fg-2)' }} />;
   };
 
   // ===== 递归不可变更新树 (让 AntD Tree 能检测到子节点变化) =====
@@ -367,9 +368,13 @@ export const Editor: React.FC = () => {
     return () => clearTimeout(t);
   }, [openFiles, autoSave]);
 
-  // ===== 编辑 =====
+  // ===== 编辑 (带 300ms 防抖, 避免每按键 O(n) 数组拷贝) =====
+  const editTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editContent = (val: string) => {
-    setOpenFiles(prev => prev.map(f => f.path === activeKey ? { ...f, content: val, dirty: true } : f));
+    if (editTimerRef.current) clearTimeout(editTimerRef.current);
+    editTimerRef.current = setTimeout(() => {
+      setOpenFiles(prev => prev.map(f => f.path === activeKey ? { ...f, content: val, dirty: true } : f));
+    }, 300);
   };
 
   // ===== 关闭 tab =====
@@ -568,53 +573,30 @@ export const Editor: React.FC = () => {
           style={{ width: 180 }}
         />
         <div style={{ flex: 1 }} />
-        <Tooltip title="终端/日志 (底部面板)">
+        {/* 精简工具栏: 只保留核心功能 */}
+        <Tooltip title={showBottomPanel ? '隐藏终端' : '显示终端'}>
           <Button
             size="small"
-            type={showBottomPanel ? 'primary' : 'default'}
+            type={showBottomPanel ? 'primary' : 'text'}
             icon={<AppstoreAddOutlined />}
             onClick={() => setShowBottomPanel(v => !v)}
-            style={{ fontSize: 10 }}
-          >
-            终端
-          </Button>
+          />
         </Tooltip>
-        <Tooltip title="AI 对话 (右侧面板)">
+        <Tooltip title={showAiPanel ? '隐藏 AI 面板' : '显示 AI 面板'}>
           <Button
             size="small"
-            type={showAiPanel ? 'primary' : 'default'}
+            type={showAiPanel ? 'primary' : 'text'}
             icon={<RobotOutlined />}
             onClick={() => setShowAiPanel(v => !v)}
-            style={{ fontSize: 10 }}
-          >
-            AI
-          </Button>
+          />
         </Tooltip>
-        {/* 模式切换: 编辑器 / 浏览器 / 预览 */}
-        <Segmented
-          size="small"
-          defaultValue="browser"
-          onChange={(v) => {
-            const mode = v as 'editor' | 'browser' | 'preview' | 'auto';
-            useWorkspaceStore.getState().setMode(mode);
-            if (mode === 'browser') setShowFileTree(false);
-          }}
-          options={[
-            { label: '编辑器', value: 'editor' },
-            { label: '浏览器', value: 'browser' },
-            { label: '预览', value: 'preview' },
-          ]}
-          style={{ background: 'rgba(255,255,255,0.06)' }}
-        />
-        <Tag color={autoSave ? 'green' : 'default'} style={{ cursor: 'pointer' }} onClick={() => setAutoSave(!autoSave)}>
-          {autoSave ? '✓ 自动保存' : '自动保存'}
+        <Tag 
+          color={autoSave ? 'green' : 'default'} 
+          style={{ cursor: 'pointer', fontSize: 11 }} 
+          onClick={() => setAutoSave(!autoSave)}
+        >
+          {autoSave ? '✓ 自动保存' : '自动保存: 关'}
         </Tag>
-        <Segmented
-          size="small"
-          value={autoSave ? 'on' : 'off'}
-          onChange={(v) => setAutoSave(v === 'on')}
-          options={[{ label: '关', value: 'off' }, { label: '开', value: 'on' }]}
-        />
       </div>
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -688,11 +670,11 @@ export const Editor: React.FC = () => {
               <div style={{ width: 60, height: 3, borderRadius: 2, background: '#3a3a3a' }} />
             </div>
 
-            {/* ---- 下区: 终端/日志 ---- */}
+            {/* ---- 下区: 终端/问题/日志 ---- */}
             <div style={{ height: showBottomPanel ? bpHeight : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
               {/* 底部 Tab 栏 */}
               <div style={{ height: 28, display: 'flex', alignItems: 'center', background: 'var(--editor-tab-bar)', borderBottom: '1px solid var(--editor-divider)', padding: '0 8px', gap: 4, flexShrink: 0 }}>
-                {(['terminal', 'logs', 'browser'] as const).map(tab => (
+                {(['terminal', 'problems', 'logs'] as const).map(tab => (
                   <div
                     key={tab}
                     onClick={() => setBottomPanelTab(tab)}
@@ -702,7 +684,7 @@ export const Editor: React.FC = () => {
                       background: bottomPanelTab === tab ? 'var(--editor-tab-active)' : 'transparent',
                     }}
                   >
-                    {tab === 'terminal' ? '◉ 终端' : tab === 'logs' ? '◎ 日志' : '▣ 获客'}
+                    {tab === 'terminal' ? '◉ 终端' : tab === 'problems' ? '✕ 问题' : '◎ 日志'}
                   </div>
                 ))}
                 <div style={{ flex: 1 }} />
@@ -714,23 +696,8 @@ export const Editor: React.FC = () => {
                   ✕
                 </div>
               </div>
-              {/* 底部内容 */}
-              <div style={{ flex: 1, overflow: 'auto', background: '#0a0a0a', fontSize: 12, color: '#aaa' }}>
-                {bottomPanelTab === 'logs' ? (
-                  <div style={{ padding: 8, color: '#888' }}>日志输出区 — Gateway 日志将在此显示</div>
-                ) : bottomPanelTab === 'browser' ? (
-                  <div style={{ padding: 8, color: '#888' }}>浏览器自动化 — 通过AI技能调用执行</div>
-                ) : (
-                  <div style={{ padding: 8, color: '#888' }}>
-                    <div style={{ color: '#4ade80', marginBottom: 4 }}>$ 终端 (模拟)</div>
-                    <div>输入命令 (例如: dir)</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                      <span style={{ color: '#4ade80' }}>$</span>
-                      <span style={{ color: '#666' }}>等待实现...</span>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* 底部内容: 从 ChatStore 的消息中提取编译错误和 run_code 输出 */}
+              <BottomPanelContent tab={bottomPanelTab} />
             </div>
           </div>
 
@@ -885,4 +852,176 @@ const MonacoEditorWithAI: React.FC<React.ComponentProps<typeof MonacoEditor>> = 
       aiDecorations={aiDecorations}
     />
   );
+};
+
+/**
+ * BottomPanelContent — 底部面板内容
+ * - terminal: 真实终端 (xterm.js) + AI run_code 输出
+ * - problems: 显示 write_file/multi_edit 的编译错误
+ * - logs: Gateway 日志输出
+ */
+const BottomPanelContent: React.FC<{ tab: string }> = ({ tab }) => {
+  const messages = useChatStore(s => s.messages);
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const [terminalReady, setTerminalReady] = useState(false);
+
+  // 模拟终端功能 - 使用 styled pre 模拟真实终端
+  if (tab === 'terminal') {
+    const recentRuns = messages
+      .flatMap(m => m.segments || [])
+      .filter((s: any) => s.kind === 'tool' && (s.name === 'run_code' || s.name === 'Bash' || s.name === 'PowerShell' || s.name === 'execute_command') && s.state !== 'running')
+      .slice(-10)
+      .reverse();
+
+    return (
+      <div style={{
+        padding: 0,
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#0c0c0c',
+        fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+      }}>
+        {/* 终端标题栏 */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '4px 12px',
+          background: '#1e1e1e',
+          borderBottom: '1px solid #333',
+          fontSize: 11,
+          color: 'var(--muted-2)',
+        }}>
+          <span><TerminalOutlined style={{ marginRight: 4 }} /> Terminal</span>
+          <span>{recentRuns.length} 条记录</span>
+        </div>
+
+        {/* 终端内容区 */}
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '8px 12px',
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}>
+          {recentRuns.length === 0 ? (
+            <div style={{ color: 'var(--muted-2)' }}>
+              <div style={{ marginBottom: 8, opacity: 0.6 }}>
+                <div>PulseFlow Terminal v1.0</div>
+                <div>AI 命令执行输出将显示在这里</div>
+                <div style={{ marginTop: 4, fontStyle: 'italic' }}>提示: AI 工具调用 (Bash/PowerShell/run_code) 的结果会自动显示在此</div>
+              </div>
+            </div>
+          ) : (
+            recentRuns.map((seg: any, i: number) => {
+              const resultText = typeof seg.result === 'string' ? seg.result : JSON.stringify(seg.result || '');
+              let codeText = typeof seg.args?.code === 'string' ? seg.args.code : '';
+              if (!codeText) codeText = seg.args?.command || seg.args?.cmd || '';
+              if (!codeText) codeText = JSON.stringify(seg.args || '');;
+              const isError = !seg.ok;
+              const toolName = seg.name || 'run_code';
+
+              return (
+                <div key={i} style={{
+                  marginBottom: 8,
+                  paddingBottom: 8,
+                  borderBottom: '1px solid rgba(255,255,255,0.05)',
+                }}>
+                  {/* 命令行 */}
+                  <div style={{
+                    color: '#4ade80',
+                    fontSize: 11,
+                    marginBottom: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}>
+                    <span style={{
+                      padding: '1px 6px',
+                      borderRadius: 3,
+                      background: isError ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.1)',
+                      color: isError ? '#f87171' : '#4ade80',
+                      fontSize: 9,
+                      fontWeight: 600,
+                    }}>
+                      {toolName.toUpperCase()}
+                    </span>
+                    <span>$ {codeText.slice(0, 150)}{codeText.length > 150 ? '...' : ''}</span>
+                  </div>
+
+                  {/* 输出 */}
+                  <pre style={{
+                    margin: 0,
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: isError ? 'var(--danger)' : 'var(--fg-2)',
+                    whiteSpace: 'pre-wrap',
+                    maxHeight: 200,
+                    overflow: 'auto',
+                    paddingLeft: 12,
+                    borderLeft: isError ? '3px solid var(--danger)' : '3px solid var(--success)',
+                  }}>
+                    {resultText.slice(0, 1000)}
+                    {resultText.length > 1000 && '\n... (截断)'}
+                  </pre>
+
+                  {/* 耗时和状态 */}
+                  {seg.durationMs != null && (
+                    <div style={{
+                      fontSize: 10,
+                      color: 'var(--muted-2)',
+                      marginTop: 4,
+                      paddingLeft: 12,
+                    }}>
+                      ⏱️ {(seg.durationMs / 1000).toFixed(2)}s · {isError ? '❌ 失败' : '✅ 成功'}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (tab === 'problems') {
+    // 从 write_file / multi_edit 工具结果中提取编译错误
+    const compileErrors = messages
+      .flatMap(m => m.segments || [])
+      .filter((s: any) => s.kind === 'tool' && (s.name === 'write_file' || s.name === 'multi_edit') && !s.ok)
+      .flatMap((s: any) => {
+        const resultText = typeof s.result === 'string' ? s.result : JSON.stringify(s.result || '');
+        if (!resultText.includes('编译错误')) return [];
+        const errorPart = resultText.split('编译错误')[1] || resultText;
+        return errorPart.split('\n').filter((l: string) => l.trim()).map((l: string) => ({
+          file: s.args?.file_path || s.args?.path || 'unknown',
+          message: l.replace(/⚠️|请立即修复|:/g, '').trim().slice(0, 200),
+        }));
+      });
+    if (compileErrors.length === 0) {
+      return <div style={{ padding: 8, color: 'var(--success)' }}>✅ 当前无编译错误</div>;
+    }
+    return (
+      <div style={{ padding: 4 }}>
+        {compileErrors.map((e: any, i: number) => (
+          <div key={i} style={{
+            display: 'flex', gap: 6, padding: '3px 8px',
+            borderBottom: '1px solid rgba(255,255,255,0.05)',
+            cursor: 'pointer',
+          }}
+            onClick={() => window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: e.file } }))}
+          >
+            <span style={{ color: '#ef4444', flexShrink: 0 }}>✕</span>
+            <span style={{ color: '#f87171', flex: 1, fontSize: 11 }}>{e.message}</span>
+            <span style={{ color: '#666', fontSize: 10, flexShrink: 0 }}>{e.file.split(/[\\/]/).pop()}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // logs tab
+  return <div style={{ padding: 8, color: '#888' }}>日志输出区 — Gateway 日志将在此显示</div>;
 };

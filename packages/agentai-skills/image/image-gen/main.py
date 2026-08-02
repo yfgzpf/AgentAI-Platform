@@ -74,8 +74,14 @@ def cmd_text2img(args: argparse.Namespace) -> None:
     payload: dict[str, Any] = {
         "model": DEFAULT_MODEL,
         "prompt": args.prompt,
-        "size": args.size,
+        "size": args.size,  # 1K/2K/3K/4K 档位式
     }
+    if args.ratio:
+        payload["ratio"] = args.ratio  # 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9
+    if args.quality:
+        payload["quality"] = args.quality  # standard/flash/hd
+    if args.style:
+        payload["style"] = args.style  # realistic/anime/oil-painting/...
     if args.url_output:
         payload.setdefault("extra_body", {})["response_format"] = "url"
     elif args.b64_output:
@@ -111,10 +117,18 @@ def cmd_img2img(args: argparse.Namespace) -> None:
     payload: dict[str, Any] = {
         "model": DEFAULT_MODEL,
         "prompt": args.prompt,
-        "size": args.size,
+        "size": args.size,  # 1K/2K/3K/4K 档位式
         "image": [_to_image_input(x) for x in args.image],
         "extra_body": extra_body,
     }
+    if args.ratio:
+        payload["ratio"] = args.ratio
+    if args.quality:
+        payload["quality"] = args.quality
+    if args.style:
+        payload["style"] = args.style
+    if args.strength:
+        payload["strength"] = args.strength  # 图生图强度 0.0-1.0
     result = _post_json(payload)
     item = (result.get("data") or [{}])[0]
     if not item:
@@ -138,7 +152,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p1 = sub.add_parser("text2img", help="文生图")
     p1.add_argument("--prompt", required=True)
-    p1.add_argument("--size", default="1024x768")
+    p1.add_argument("--size", default="2K", help="档位式尺寸: 1K/2K/3K/4K (默认 2K)")
+    p1.add_argument("--ratio", default="1:1", help="宽高比: 1:1/16:9/9:16/4:3/3:4/3:2/2:3/21:9 (默认 1:1)")
+    p1.add_argument("--quality", default=None, help="质量: standard/flash/hd")
+    p1.add_argument("--style", default=None, help="风格: realistic/anime/oil-painting/...")
     p1.add_argument("--out", required=True, help="输出图片路径")
     p1.add_argument("--url-output", action="store_true", help="请求 url 输出（默认）")
     p1.add_argument("--b64-output", action="store_true", help="请求 Base64 输出")
@@ -146,7 +163,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p2 = sub.add_parser("img2img", help="图生图（URL 或 Data URI）")
     p2.add_argument("--prompt", required=True)
-    p2.add_argument("--size", default="1024x768")
+    p2.add_argument("--size", default="2K", help="档位式尺寸: 1K/2K/3K/4K (默认 2K)")
+    p2.add_argument("--ratio", default="1:1", help="宽高比: 1:1/16:9/9:16/4:3/3:4/3:2/2:3/21:9 (默认 1:1)")
+    p2.add_argument("--quality", default=None, help="质量: standard/flash/hd")
+    p2.add_argument("--style", default=None, help="风格: realistic/anime/oil-painting/...")
+    p2.add_argument("--strength", type=float, default=None, help="图生图强度 0.0-1.0")
     p2.add_argument("--image", nargs="+", required=True, help="输入图片 URL 或 Data URI，可多个")
     p2.add_argument("--out", required=True)
     p2.add_argument("--url-output", action="store_true")

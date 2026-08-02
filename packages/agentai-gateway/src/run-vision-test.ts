@@ -60,7 +60,7 @@ async function testModelVision(provider: string, model: string, label: string): 
   const baseEnv = `${provider.toUpperCase()}_BASE_URL`;
   const apiKey = process.env[keyEnv] || process.env.AGENTAI_API_KEY;
   const baseUrl = (process.env[baseEnv] || '').replace(/\/$/, '') ||
-    (provider === 'agentai' ? 'https://apihub.agnes-ai.com/v1' :
+    (provider === 'agentai' ? 'https://api.agnes-ai.cn/v1' :
      provider === 'deepseek' ? 'https://api.deepseek.com/v1' :
      provider === 'zhipu' ? 'https://open.bigmodel.cn/api/paas/v4' :
      'https://api.openai.com/v1');

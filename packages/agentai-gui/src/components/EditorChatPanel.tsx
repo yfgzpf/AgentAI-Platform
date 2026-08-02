@@ -21,6 +21,8 @@ import { gatewayFallback } from '../services/GatewayFallback';
 import { startSpeechRecognition, stopSpeechRecognition, isSpeechRecognitionSupported } from '../services/voice';
 import { useBrowserState, useBrowserActions, buildBrowserContext, BrowserStateBus } from '../services/BrowserStateBus';
 import { openGlobalBrowser } from './GlobalBrowserDrawer';
+import { AskUserCard } from './AskUserCard';
+import { Scene3DViewer, type Scene3DData } from './Scene3DViewer';
 
 interface Props {
   workspaceDir?: string;
@@ -41,14 +43,17 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [askUserCard, setAskUserCard] = useState<{ question: string; options: Array<{ id: string; title: string }> } | null>(null);
+  const [scene3D, setScene3D] = useState<Scene3DData | null>(null);
+  const [pendingAnswer, setPendingAnswer] = useState<string | null>(null);
   const editorMsgs = messages || [];
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [editorMsgs]);
 
-  const handleSend = useCallback(async () => {
-    const text = draft.trim();
+  const handleSend = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? draft).trim();
     if (!text || loading) return;
     setDraft('');
     setLoading(true);
@@ -68,8 +73,33 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    const baseHandlers = makeChatHandlers(botId, updateMessage);
     const handlers = {
-      ...makeChatHandlers(botId, updateMessage),
+      ...baseHandlers,
+      // 🔧 修复: 编辑页面缺少浏览器工具自动显示逻辑 (ChatView 有, EditorChatPanel 遗漏)
+      // AI 调用 browser_* 工具时, 前端自动弹出浏览器面板
+      onToolStart: (info: any) => {
+        baseHandlers.onToolStart?.(info);  // 默认行为: 更新 UI 显示工具调用
+        if (info.name && /^browser_/.test(info.name)) {
+          window.dispatchEvent(new CustomEvent('agentai:show-browser', {
+            detail: { name: info.name, args: info.args, url: info.args?.url || info.args?.target || '' },
+          }));
+        }
+      },
+      // 🔧 修复: 编辑页面缺少 ask_user 追问处理 (ChatView 有, EditorChatPanel 遗漏)
+      onAskUser: (info: any) => {
+        setAskUserCard({ question: info.question, options: info.options || [] });
+      },
+      // 3D 场景渲染: generate_3d_scene 结果自动渲染为可交互 3D 预览
+      onToolResult: (info: any) => {
+        baseHandlers.onToolResult?.(info);
+        if (info.name === 'generate_3d_scene' && info.ok) {
+          try {
+            const result = typeof info.result === 'string' ? JSON.parse(info.result) : info.result;
+            if (result?.data?.scene) setScene3D(result.data.scene);
+          } catch { /* best-effort */ }
+        }
+      },
       onDone: (info: any) => {
         updateMessage(botId, (m: any) => {
           // 兜底: 降级路径不走 delta, 内容只在 done.content 里
@@ -104,8 +134,8 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         _browserState: {
           url: browserState.activeTabUrl,
           title: browserState.pageTitle,
-          elements: browserState.elements.slice(0, 30),
-          recentActions: browserState.actionHistory.slice(0, 5),
+          elements: (browserState.elements || []).slice(0, 30),
+          recentActions: (browserState.actionHistory || []).slice(0, 5),
           playwrightConnected: browserState.playwrightConnected,
         },
       };
@@ -124,6 +154,14 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
       setLoading(false);
     }
   }, [draft, loading, activeModelId, workspaceDir, appendMessage, updateMessage]);
+
+  // 🔧 修复: 追问卡片回答后自动发送 (与 ChatView 行为一致)
+  useEffect(() => {
+    if (pendingAnswer && !loading) {
+      handleSend(pendingAnswer);
+      setPendingAnswer(null);
+    }
+  }, [pendingAnswer, loading, handleSend]);
 
   const handleAbort = () => {
     abortRef.current?.abort();
@@ -215,7 +253,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         display: 'flex', alignItems: 'center', gap: 4,
         background: '#1a1a1a',
       }}>
-        <img src="/logo1.jpg" alt="AI" style={{ width: 16, height: 16, borderRadius: 3, objectFit: 'cover' }} />
+        <img src="./logo1.jpg" alt="AI" style={{ width: 16, height: 16, borderRadius: 3, objectFit: 'cover' }} />
         <span style={{ fontSize: 11, color: '#ccc', fontWeight: 600, marginRight: 4 }}>AI 对话</span>
         <Select
           size="small"
@@ -250,7 +288,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
       }}>
         {editorMsgs.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#666', fontSize: 11, padding: 20, marginTop: 20 }}>
-            <img src="/logo1.jpg" alt="AI" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover', marginBottom: 8 }} />
+            <img src="./logo1.jpg" alt="AI" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover', marginBottom: 8 }} />
             <div style={{ fontWeight: 600, color: '#888', fontSize: 12 }}>AI 对话</div>
             <div style={{ marginTop: 4, lineHeight: 1.6 }}>
               输入代码相关的问题<br />AI 可读取当前工作目录文件
@@ -264,6 +302,33 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
           ))
         )}
       </div>
+
+      {/* Ask User Card — AI 追问问卷 */}
+      {askUserCard && (
+        <AskUserCard
+          question={askUserCard.question}
+          options={askUserCard.options}
+          onClose={() => {
+            if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
+            setLoading(false);
+            setAskUserCard(null);
+          }}
+          onAnswer={(answer) => {
+            const answerText = Array.isArray(answer) ? answer.join(', ') : answer;
+            if (abortRef.current) {
+              abortRef.current.abort();
+              abortRef.current = null;
+            }
+            setLoading(false);
+            setAskUserCard(null);
+            // 🔧 修复: 自动发送答案 (与 ChatView 行为一致), 不再只填入输入框
+            setPendingAnswer(answerText);
+          }}
+        />
+      )}
+
+      {/* 3D 可交互场景 (AI 调用 generate_3d_scene 生成) */}
+      {scene3D && <Scene3DViewer scene={scene3D} />}
 
       {/* Composer 输入区 */}
       <div style={{ borderTop: '1px solid #333', padding: '4px 8px 6px', background: '#1a1a1a' }}>
@@ -348,7 +413,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
               <StopOutlined style={{ fontSize: 10 }} /> 停止
             </span>
           ) : (
-            <span onClick={handleSend} style={{
+            <span onClick={() => handleSend()} style={{
               padding: '2px 8px', borderRadius: 4,
               cursor: draft.trim() ? 'pointer' : 'default',
               background: draft.trim() ? '#6366F1' : '#333',

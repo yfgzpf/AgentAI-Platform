@@ -70,11 +70,20 @@ export const NotificationPanel: React.FC = () => {
   // 获取通知列表
   const fetchNotifications = useCallback(async () => {
     try {
-      const response = await fetch(`${GATEWAY_HTTP}/v1/notifications?limit=50`);
+      const response = await fetch(`${GATEWAY_HTTP}/v1/notifications/history?limit=50`);
       if (response.ok) {
         const data = await response.json();
-        setNotifications(data.notifications || []);
-        setUnreadCount(data.notifications?.filter((n: Notification) => !n.read).length || 0);
+        const items = (data.history || []).map((n: any) => ({
+          id: n.id || String(Date.now()),
+          title: n.title || n.source || '通知',
+          content: n.body || n.message || '',
+          type: n.level === 'error' ? 'error' : n.level === 'warning' ? 'warning' : 'info',
+          source: n.source || 'system',
+          timestamp: n.ts ? new Date(n.ts).toLocaleString('zh-CN') : '',
+          read: n.read || false,
+        }));
+        setNotifications(items);
+        setUnreadCount(items.filter((n: any) => !n.read).length);
       }
     } catch (error) {
       console.error('获取通知失败:', error);
@@ -137,73 +146,41 @@ export const NotificationPanel: React.FC = () => {
   useEffect(() => {
     fetchNotifications();
     fetchConfig();
-    
-    // 建立SSE连接
-    const eventSource = new EventSource(`${GATEWAY_HTTP}/v1/notifications/stream`);
-    eventSource.onmessage = (event) => {
-      const notification = JSON.parse(event.data);
-      setNotifications(prev => [notification, ...prev]);
-      setUnreadCount(prev => prev + 1);
-    };
-
-    return () => {
-      eventSource.close();
-    };
   }, [fetchNotifications, fetchConfig]);
 
-  // 标记已读
+  // 标记已读 (本地操作)
   const markAsRead = async (id: string) => {
-    try {
-      await fetch(`${GATEWAY_HTTP}/v1/notifications/${id}/read`, { method: 'POST' });
-      setNotifications(prev => 
-        prev.map(n => n.id === id ? { ...n, read: true } : n)
-      );
-      setUnreadCount(prev => Math.max(0, prev - 1));
-    } catch (error) {
-      console.error('标记已读失败:', error);
-    }
+    setNotifications(prev => 
+      prev.map(n => n.id === id ? { ...n, read: true } : n)
+    );
+    setUnreadCount(prev => Math.max(0, prev - 1));
   };
 
-  // 标记全部已读
+  // 标记全部已读 (本地操作)
   const markAllAsRead = async () => {
-    try {
-      await fetch(`${GATEWAY_HTTP}/v1/notifications/read-all`, { method: 'POST' });
-      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-      setUnreadCount(0);
-      message.success('已全部标记为已读');
-    } catch (error) {
-      message.error('操作失败');
-    }
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setUnreadCount(0);
+    message.success('已全部标记为已读');
   };
 
-  // 删除通知
+  // 删除通知 (本地操作)
   const deleteNotification = async (id: string) => {
-    try {
-      await fetch(`${GATEWAY_HTTP}/v1/notifications/${id}`, { method: 'DELETE' });
-      setNotifications(prev => prev.filter(n => n.id !== id));
-      message.success('删除成功');
-    } catch (error) {
-      message.error('删除失败');
-    }
+    setNotifications(prev => prev.filter(n => n.id !== id));
+    message.success('删除成功');
   };
 
-  // 清空所有通知
+  // 清空所有通知 (本地操作)
   const clearAll = async () => {
-    try {
-      await fetch(`${GATEWAY_HTTP}/v1/notifications/clear`, { method: 'POST' });
-      setNotifications([]);
-      setUnreadCount(0);
-      message.success('已清空所有通知');
-    } catch (error) {
-      message.error('操作失败');
-    }
+    setNotifications([]);
+    setUnreadCount(0);
+    message.success('已清空所有通知');
   };
 
   // 保存配置
   const saveConfig = async () => {
     try {
       await fetch(`${GATEWAY_HTTP}/v1/notifications/config`, {
-        method: 'PUT',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ config }),
       });

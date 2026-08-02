@@ -123,23 +123,23 @@ export const CodeSandbox: React.FC<CodeSandboxProps> = ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '8px 12px',
-        background: '#252526',
-        borderBottom: '1px solid #3c3c3c',
+        background: 'var(--editor-header)',
+        borderBottom: '1px solid var(--border)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {/* 文件图标 */}
-          <FileTextOutlined style={{ color: '#cccccc' }} />
+          <FileTextOutlined style={{ color: 'var(--fg-2)' }} />
           
           {/* 文件名 */}
           {filename && (
-            <span style={{ color: '#cccccc', fontSize: 13 }}>
+            <span style={{ color: 'var(--fg-2)', fontSize: 13 }}>
               {filename}
             </span>
           )}
           
           {/* 文件路径 */}
           {path && (
-            <span style={{ color: '#808080', fontSize: 11 }}>
+            <span style={{ color: 'var(--muted-2)', fontSize: 11 }}>
               {path}
             </span>
           )}
@@ -192,7 +192,7 @@ export const CodeSandbox: React.FC<CodeSandboxProps> = ({
                 a.click();
                 URL.revokeObjectURL(url);
               }}
-              style={{ color: '#cccccc' }}
+              style={{ color: 'var(--fg-2)' }}
             />
           </Tooltip>
         </div>
@@ -204,8 +204,8 @@ export const CodeSandbox: React.FC<CodeSandboxProps> = ({
         margin: 0,
         padding: '12px 16px',
         overflow: 'auto',
-        background: '#1e1e1e',
-        color: '#d4d4d4',
+        background: 'var(--editor-bg)',
+        color: 'var(--fg)',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
       }}>
@@ -218,10 +218,10 @@ export const CodeSandbox: React.FC<CodeSandboxProps> = ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '6px 12px',
-        background: '#252526',
-        borderTop: '1px solid #3c3c3c',
+        background: 'var(--editor-footer)',
+        borderTop: '1px solid var(--border)',
         fontSize: 11,
-        color: '#808080',
+        color: 'var(--muted-2)',
       }}>
         <span>{code.split('\n').length} 行</span>
         <span>{code.length.toLocaleString()} 字符</span>
@@ -268,8 +268,8 @@ export const MultiFileSandbox: React.FC<MultiFileSandboxProps> = ({
       {/* 文件标签栏 */}
       <div style={{
         display: 'flex',
-        background: '#252526',
-        borderBottom: '1px solid #3c3c3c',
+        background: 'var(--editor-header)',
+        borderBottom: '1px solid var(--border)',
         overflowX: 'auto',
       }}>
         {files.map((file) => (

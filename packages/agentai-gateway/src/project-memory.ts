@@ -39,6 +39,11 @@ export interface ProjectMemory {
     commitConvention?: string;
     /** 自定义规则 */
     customRules: string[];
+    /** AI 偏好设置 */
+    ai_preferences?: {
+      /** 是否跳过跨会话记忆注入 */
+      skip_last_session_injection?: boolean;
+    };
   };
   /** 历史修复模式 */
   fixPatterns: Array<{

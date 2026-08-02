@@ -113,14 +113,15 @@ export async function windowControl(opts: WindowControlOptions): Promise<WindowC
     return { ok: false, message: '', error: 'Window control only on Windows' };
   }
   // 1. 黑名单
-  if (opts.windowTitle && BLACKLIST_TITLE.some(p => p.test(opts.windowTitle!))) {  // v3.2 修复: windowTitle 是 optional, 已检查后用 ! 断言
+  const windowTitle = opts.windowTitle || '';
+  if (windowTitle && BLACKLIST_TITLE.some(p => p.test(windowTitle))) {
     return { ok: false, message: '', error: 'Window title blocked by safety policy' };
   }
   // 2. 找 hwnd（通过标题）
-  if (!['list'].includes(opts.action) && !opts.windowTitle) {
+  if (!['list'].includes(opts.action) && !windowTitle) {
     return { ok: false, message: '', error: 'windowTitle required for non-list actions' };
   }
-  const script = buildControlScript(opts);
+  const script = buildControlScript({ ...opts, windowTitle });
   try {
     const output = await runPowerShell(script);
     return { ok: true, message: `${opts.action} 完成: ${output.trim()}` };
@@ -129,8 +130,8 @@ export async function windowControl(opts: WindowControlOptions): Promise<WindowC
   }
 }
 
-function buildControlScript(opts: WindowControlOptions): string {
-  const safeTitle = (opts.windowTitle || '').replace(/'/g, "''");
+function buildControlScript(opts: WindowControlOptions & { windowTitle: string }): string {
+  const safeTitle = opts.windowTitle.replace(/'/g, "''");
   let actionLine = '';
   switch (opts.action) {
     case 'minimize': actionLine = `$code = 0xF020`; break; // SC_MINIMIZE

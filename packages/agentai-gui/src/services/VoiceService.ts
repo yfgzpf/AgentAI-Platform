@@ -31,12 +31,15 @@ try {
   if (saved === '1') ttsEnabled = true;
 } catch {}
 
-/** 停止当前播报 */
+/** 停止当前播报并清空队列 */
 export function stopTts(): void {
   if (typeof speechSynthesis !== 'undefined') {
     speechSynthesis.cancel();
   }
   currentUtterance = null;
+  // 清空队列
+  ttsQueue = [];
+  isPlaying = false;
 }
 
 /** 浏览器 SpeechSynthesis 播报 */
@@ -49,20 +52,69 @@ function speakText(text: string, options?: { voice?: string; rate?: number; pitc
   utterance.volume = 0.9;
   utterance.lang = 'zh-CN';
 
-  if (options?.voice || typeof speechSynthesis !== 'undefined') {
-    const voices = speechSynthesis.getVoices();
-    const zhVoice = voices.find(v =>
-      v.lang.startsWith('zh') && (v.localService || v.name.includes('Google'))
+  // 匹配音色: 先直接匹配 (Microsoft 英文名), 再中文 ID 映射匹配
+  if (options?.voice && speechSynthesis.getVoices().length > 0) {
+    const allVoices = speechSynthesis.getVoices();
+    let found = allVoices.find(
+      v => v.name.includes(options.voice!) || v.voiceURI.includes(options.voice!),
     );
-    if (zhVoice) utterance.voice = zhVoice;
+    if (!found) {
+      const zhMap: Record<string, string[]> = {
+        'zh-CN-XiaoxiaoNeural': ['Xiaoxiao', 'Huihui'],
+        'zh-CN-YunxiNeural': ['Yunxi', 'Kangkang'],
+        'zh-CN-YunjianNeural': ['Yunjian'],
+        'zh-CN-XiaoyiNeural': ['Xiaoyi', 'Yaoyao'],
+        'zh-CN-YunyangNeural': ['Yunyang'],
+        'zh-CN-XiaochenNeural': ['Xiaochen'],
+        'zh-CN-XiaohanNeural': ['Xiaohan'],
+        'zh-CN-XiaomengNeural': ['Xiaomeng'],
+        'zh-CN-YunfengNeural': ['Yunfeng'],
+        'zh-CN-YunhaoNeural': ['Yunhao'],
+        'zh-HK-HiuMaanNeural': ['HiuMaan'],
+        'zh-HK-WanLungNeural': ['WanLung'],
+        'zh-TW-HsiaoChenNeural': ['HsiaoChen'],
+        'zh-TW-YunJheNeural': ['YunJhe'],
+        'en-US-AriaNeural': ['Aria'],
+        'en-US-GuyNeural': ['Guy'],
+        'ja-JP-NanamiNeural': ['Nanami'],
+        'ko-KR-SunHiNeural': ['SunHi'],
+      };
+      const keywords = zhMap[options.voice];
+      if (keywords) {
+        found = allVoices.find(v => keywords.some(k => v.name.includes(k)));
+      }
+    }
+    if (found) utterance.voice = found;
   }
 
   currentUtterance = utterance;
   speechSynthesis.speak(utterance);
 }
 
-/** 播报文本 (根据用户选择的引擎, 失败 fallback 到浏览器) */
-export async function speak(text: string, options?: { rate?: number; pitch?: number; voiceName?: string }): Promise<void> {
+/** 播报队列，防止多个请求冲突 */
+interface TtsQueueItem {
+  text: string;
+  options?: { rate?: number; pitch?: number; voiceName?: string };
+}
+let ttsQueue: TtsQueueItem[] = [];
+let isPlaying = false;
+
+/** 处理 TTS 队列 */
+async function processTtsQueue() {
+  if (isPlaying || ttsQueue.length === 0) return;
+  isPlaying = true;
+
+  while (ttsQueue.length > 0) {
+    const item = ttsQueue.shift();
+    if (!item) continue;
+    await speakInternal(item.text, item.options);
+  }
+
+  isPlaying = false;
+}
+
+/** 内部播报实现 */
+async function speakInternal(text: string, options?: { rate?: number; pitch?: number; voiceName?: string }): Promise<void> {
   if (!ttsEnabled) return;
 
   const cleanText = text
@@ -79,8 +131,8 @@ export async function speak(text: string, options?: { rate?: number; pitch?: num
 
   if (!cleanText) return;
 
-  // 读取用户选择的 TTS 引擎（默认 Agnes，支持多音色）
-  let engine = 'agnes';
+  // 读取用户选择的 TTS 引擎（默认 browser，避免后端依赖）
+  let engine = 'browser';
   try {
     const saved = localStorage.getItem('agentai.tts.settings');
     if (saved) {
@@ -88,8 +140,7 @@ export async function speak(text: string, options?: { rate?: number; pitch?: num
       if (s.engine) engine = s.engine;
     }
   } catch {
-    // 默认使用 Agnes，支持 40+ 音色
-    engine = 'agnes';
+    engine = 'browser';
   }
 
   // 浏览器引擎 → 直接用 SpeechSynthesis
@@ -102,12 +153,12 @@ export async function speak(text: string, options?: { rate?: number; pitch?: num
     return;
   }
 
-  // 后端引擎 (agnes/moss) → 调用 API, 失败 fallback 到浏览器
-  // 读取用户选择的音色
+  // 后端引擎 → 调用 API, 失败 fallback 到浏览器
   let selectedVoice = options?.voiceName;
   if (!selectedVoice) {
     try {
-      selectedVoice = localStorage.getItem('agentai.tts.voice') || undefined;
+      const saved = localStorage.getItem('agentai.tts.settings');
+      if (saved) selectedVoice = JSON.parse(saved).voice || undefined;
     } catch {}
   }
 
@@ -130,13 +181,23 @@ export async function speak(text: string, options?: { rate?: number; pitch?: num
         const url = URL.createObjectURL(audioBlob);
         const audio = new Audio(url);
         audio.volume = 0.9;
-        await audio.play().catch(() => {});
-        URL.revokeObjectURL(url);
+        await new Promise<void>((resolve) => {
+          audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+          audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+          audio.play().catch(() => resolve());
+        });
+        return;
+      }
+      // 后端返回 JSON fallback
+      const data = await resp.json();
+      if (data.fallback === 'browser-api') {
+        console.log('[VoiceService] 后端建议使用浏览器 TTS:', data.note);
+        speakText(cleanText, { voice: options?.voiceName, rate: options?.rate, pitch: options?.pitch });
         return;
       }
     }
   } catch (e: any) {
-    console.debug(`[VoiceService] ${engine} TTS 失败, fallback 到浏览器:`, e.message);
+    console.warn(`[VoiceService] ${engine} TTS 失败, fallback 到浏览器:`, e.message);
   }
 
   // Fallback: 浏览器 SpeechSynthesis
@@ -145,6 +206,29 @@ export async function speak(text: string, options?: { rate?: number; pitch?: num
     rate: options?.rate,
     pitch: options?.pitch,
   });
+}
+
+/** 播报文本 (根据用户选择的引擎, 失败 fallback 到浏览器) */
+export async function speak(text: string, options?: { rate?: number; pitch?: number; voiceName?: string }): Promise<void> {
+  // 🔧 修复: 调用方未传 voiceName 时, 自动从 localStorage 读取用户选择的音色
+  // 这是 TTS 实际播报时使用默认音色 (而非测试音色) 的根因
+  let voiceName = options?.voiceName;
+  let rate = options?.rate;
+  let pitch = options?.pitch;
+  if (!voiceName) {
+    try {
+      const saved = localStorage.getItem('agentai.tts.settings');
+      if (saved) {
+        const s = JSON.parse(saved);
+        if (s.voice) voiceName = s.voice;
+        if (rate === undefined && typeof s.rate === 'number') rate = s.rate;
+        if (pitch === undefined && typeof s.pitch === 'number') pitch = s.pitch;
+      }
+    } catch {}
+  }
+  // 添加到队列并处理 (保留完整 options 以传递音色选择)
+  ttsQueue.push({ text, options: { ...options, voiceName, rate, pitch } });
+  await processTtsQueue();
 }
 
 /** 检查是否正在播报 */
@@ -167,7 +251,7 @@ export function getWakeWords(): string[] {
   const words = [...BASE_WAKE_WORDS];
   // 从 profile store 读取用户名作为唤醒词
   try {
-    const profile = JSON.parse(localStorage.getItem('agentai-profile') || '{}');
+    const profile = JSON.parse(localStorage.getItem('agentai-user-profile') || '{}');
     if (profile.name) {
       words.push(profile.name);
     }

@@ -16,10 +16,82 @@
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { WorkspaceManager } from '../workspace-manager.js';
 import type { SandboxRules } from './types.js';
+
+/**
+ * 自动检测系统可用盘符 (Windows: C:/ D:/ E:/ ...)
+ * Linux/Mac: 返回 / 根目录
+ */
+export function getAvailableDrives(): string[] {
+    if (process.platform === 'win32') {
+        const drives: string[] = [];
+        // 检测 A-Z 盘符
+        for (let c = 65; c <= 90; c++) {
+            const letter = String.fromCharCode(c);
+            const root = `${letter}:\\`;
+            try {
+                if (fsSync.existsSync(root)) {
+                    drives.push(`${letter}:/`);
+                }
+            } catch { /* skip */ }
+        }
+        return drives;
+    }
+    // Unix: 返回根目录
+    return ['/'];
+}
+
+/**
+ * 路径预置 — 供前端设置页使用
+ * 包含: 所有盘符根目录、常用用户目录、workspace
+ */
+export interface PathPreset {
+    path: string;
+    label: string;
+    category: 'drive' | 'user' | 'workspace' | 'common';
+}
+
+export function getPathPresets(): PathPreset[] {
+    const home = os.homedir();
+    const wm = WorkspaceManager.getInstance();
+    const presets: PathPreset[] = [];
+
+    // 1. 盘符根目录
+    const drives = getAvailableDrives();
+    for (const d of drives) {
+        const label = d.replace(':/', '');
+        presets.push({ path: `${d}**`, label: `${label}: 盘`, category: 'drive' });
+    }
+
+    // 2. 常用用户目录
+    const userDirs = [
+        { path: path.join(home, 'Desktop'), label: '桌面' },
+        { path: path.join(home, 'Documents'), label: '文档' },
+        { path: path.join(home, 'Downloads'), label: '下载' },
+    ];
+    for (const d of userDirs) {
+        const p = d.path.replace(/\\/g, '/');
+        presets.push({ path: `${p}/**`, label: d.label, category: 'user' });
+    }
+
+    // 3. Workspace
+    const ws = wm.projectDir.replace(/\\/g, '/');
+    presets.push({ path: `${ws}/**`, label: '项目目录', category: 'workspace' });
+
+    // 4. 常用路径 (不写 glob, 用户可手动加 /**)
+    const common = [
+        { path: `${home.replace(/\\/g, '/')}/**`, label: '用户目录' },
+    ];
+    for (const c of common) {
+        presets.push({ path: c.path, label: c.label, category: 'common' });
+    }
+
+    return presets;
+}
 
 /** 默认规则 (首次启动生成) */
 export function defaultRules(): SandboxRules {
@@ -33,23 +105,21 @@ export function defaultRules(): SandboxRules {
             `${home}/Desktop/**`,
         ],
         deny: [
+            // === 系统路径保护 (核心安全, 永不放开) ===
             'C:/Windows/**',
             'C:/Program Files/**',
             'C:/Program Files (x86)/**',
+            'C:/System32/**',
             '/etc/**',
             '/usr/**',
             '/bin/**',
             '/sbin/**',
             '/var/**',
-            'C:/System32/**',
+            // === 凭证/密钥保护 ===
             `${home}/.ssh/**`,
             `${home}/.aws/**`,
             `${home}/.gnupg/**`,
             `${home}/.config/gh/**`,
-            '**/node_modules/**',
-            '**/.git/**',
-            '**/dist/**',
-            '**/build/**',
         ],
         prompt: [
             '**/.env*',

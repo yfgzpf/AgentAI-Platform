@@ -2,13 +2,38 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
-  <link rel="apple-touch-icon" sizes="192x192" href="/favicon-192.png" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./favicon-192.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="./favicon-192.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="PulseFlow — 让智能体理解系统的生命状态，融合中医辨证思维的状态感知型智能体框架" />
   <title>PulseFlow Studio</title>
+  
+  <!-- ═══ 艺术字体: 草书 + 科技感 ═══ -->
+  <!-- Ma Shan Zheng: 中文草书 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=ZCOOL+XiaoWei&family=Orbitron:wght@400;500;600;700&family=Exo+2:wght@400;500;600&family=Syncopate:wght@400;700&display=swap" rel="stylesheet">
+  
+  <!-- ═══ 关键: 预加载主题变量，防止 FOUC (Flash of Unstyled Content) ═══ -->
+  <style>
+    /* 在 CSS 加载前设置基础背景，防止白屏闪烁 */
+    html, body {
+      background: #1c1c26;
+      color: #f2f2f5;
+      margin: 0;
+      padding: 0;
+    }
+    /* 浅色主题回退 */
+    @media (prefers-color-scheme: light) {
+      html, body {
+        background: #f5f1ea;
+        color: #38352e;
+      }
+    }
+  </style>
+  
   <style>
     @keyframes musicPulse {
       0%, 100% { transform: scale(1); opacity: 1; }

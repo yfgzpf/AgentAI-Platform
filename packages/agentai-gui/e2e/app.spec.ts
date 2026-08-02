@@ -36,11 +36,11 @@ test.describe('AgentAI Platform - 网页端 E2E', () => {
     await expect(page.locator('text=富哥, 发个消息开始干')).toBeVisible();
   });
 
-  test('3. 框架栏显示 OpenClaw 默认 + 切到 Hermes', async ({ page }) => {
+  test('3. 框架栏显示 AgentAI 默认 + 切到 Hermes', async ({ page }) => {
     await page.goto('/');
     await waitApp(page);
-    // 看到 OpenClaw tag
-    await expect(page.locator('text=OpenClaw').first()).toBeVisible();
+    // 看到 AgentAI tag
+    await expect(page.locator('text=AgentAI').first()).toBeVisible();
     // 点 Hermes
     await page.locator('button:has-text("Hermes")').click();
     // Hermes tag 出现
@@ -54,7 +54,7 @@ test.describe('AgentAI Platform - 网页端 E2E', () => {
     const slider = page.locator('[role=slider]').first();
     await expect(slider).toBeVisible();
     // 验证显示当前值
-    await expect(page.locator('text=100% → OpenClaw')).toBeVisible();
+    await expect(page.locator('text=100% → AgentAI')).toBeVisible();
   });
 
   test('5. 切到技能库视图, 显示 27 个技能', async ({ page }) => {
@@ -136,7 +136,7 @@ test.describe('AgentAI Platform - 网页端 E2E', () => {
     // 顶栏可见
     await expect(page.locator('header')).toBeVisible();
     // 框架栏可见
-    await expect(page.locator('button:has-text("OpenClaw")')).toBeVisible();
+    await expect(page.locator('button:has-text("AgentAI")')).toBeVisible();
     // 主内容区可见
     await expect(page.locator('text=富哥, 发个消息开始干')).toBeVisible();
   });

@@ -4,8 +4,8 @@
  * 共用: ZHIPU_API_KEY (文本/生图/生视频同一 key)
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Input, Button, Card, Space, Tag, Alert, Spin, message, Progress, Empty, Select, Tooltip } from 'antd';
-import { VideoCameraOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined, SendOutlined, SwapOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Input, Button, Card, Space, Tag, Alert, Spin, message, Progress, Empty, Select, Tooltip, Modal } from 'antd';
+import { VideoCameraOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined, SendOutlined, SwapOutlined, ThunderboltOutlined, PlusOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 
 const PRESETS = [
@@ -17,18 +17,51 @@ const PRESETS = [
   { label: '植物', prompt: 'Cherry blossom tree blooming, soft pink petals falling in the wind' },
   { label: '电影感', prompt: 'Cinematic shot, shallow depth of field, anamorphic lens, film grain' },
   { label: '建筑漫游', prompt: 'Architectural visualization, modern building, smooth walkthrough' },
+  { label: '美食', prompt: 'delicious food cooking, close-up, steam rising, cinematic food photography, slow motion' },
+  { label: '时尚', prompt: 'fashion runway, elegant model, dynamic lighting, high-end fashion photography' },
+  { label: '运动', prompt: 'sports action, dynamic motion, slow motion, athletic performance, dramatic lighting' },
+  { label: '自然', prompt: 'aerial nature landscape, birds eye view, smooth drone footage, misty mountains' },
+  { label: '烟花', prompt: 'fireworks display, night sky, colorful explosions, slow motion, festive' },
+  { label: '水下', prompt: 'underwater scene, coral reef, fish swimming, sunlight rays through water' },
+  { label: '星空', prompt: 'time-lapse of starry night sky, milky way, rotating stars, astrophotography' },
+  { label: '极光', prompt: 'aurora borealis, northern lights, green purple sky, arctic landscape, smooth motion' },
 ];
 
 const DURATIONS = [
+  { value: '3s', label: '3秒 (快速)', frames: 73, fps: 24 },
   { value: '5s', label: '5s (快)', frames: 121, fps: 24 },
+  { value: '8s', label: '8秒', frames: 193, fps: 24 },
   { value: '10s', label: '10s (标准)', frames: 241, fps: 24 },
   { value: '18s', label: '18s (长)', frames: 441, fps: 24 },
 ];
 
 const MODELS = [
-  { value: 'cogvideo', label: 'CogVideoX-Flash (免费)', desc: '智谱免费, 同 ZHIPU_API_KEY' },
-  { value: 'agnes', label: 'Agnes Video V2.0', desc: '需 AGENTAI_API_KEY' },
+    { value: 'cogvideo', label: 'CogVideoX-Flash (免费)', desc: '智谱免费, 同 ZHIPU_API_KEY' },
+    { value: 'agnes', label: 'Agnes Video V2.0', desc: '需 AGENTAI_API_KEY' },
+    // NVIDIA Cosmos 已移除 (NIM 不可用)
+    { value: 'wanx', label: '通义万相 (免费500条)', desc: '阿里 DashScope, 需 DASHSCOPE_API_KEY, 文/图生视频' },
+    { value: 'runway-gen3', label: 'Runway Gen-3', desc: '需 RUNWAY_API_KEY, 专业级视频生成' },
+    { value: 'pika', label: 'Pika Labs', desc: '需 PIKA_API_KEY, AI视频生成新秀' },
 ];
+
+/** 自定义模型配置 */
+interface CustomModel {
+    id: string;
+    name: string;
+    apiKey: string;
+    baseUrl: string;
+}
+
+const getCustomModels = (): CustomModel[] => {
+    try {
+        const raw = localStorage.getItem('agentai-custom-video-models');
+        return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+};
+
+const saveCustomModels = (models: CustomModel[]) => {
+    localStorage.setItem('agentai-custom-video-models', JSON.stringify(models));
+};
 
 interface HistoryItem {
   id: string;
@@ -55,6 +88,48 @@ export const VideoGen: React.FC = () => {
   const pollRef = useRef<number | null>(null);
   const imgRef = useRef<HTMLInputElement>(null);
   const lastFrameRef = useRef<HTMLInputElement>(null);
+
+  // 自定义模型状态
+  const [customModels, setCustomModels] = useState<CustomModel[]>(getCustomModels());
+  const [showAddModel, setShowAddModel] = useState(false);
+  const [newModel, setNewModel] = useState<Partial<CustomModel>>({});
+
+  // 合并内置模型和自定义模型
+  const allModelOptions = [
+    ...MODELS.map(m => ({ value: m.value, label: m.label })),
+    ...customModels.map(m => ({ value: `custom:${m.id}`, label: `🔑 ${m.name}`, isCustom: true })),
+  ];
+
+  /** 添加自定义模型 */
+  const handleAddModel = () => {
+    if (!newModel.name || !newModel.apiKey) {
+      message.error('请填写模型名称和 API Key');
+      return;
+    }
+    const model: CustomModel = {
+      id: `custom-${Date.now()}`,
+      name: newModel.name!,
+      apiKey: newModel.apiKey!,
+      baseUrl: newModel.baseUrl || '',
+    };
+    const updated = [...customModels, model];
+    setCustomModels(updated);
+    saveCustomModels(updated);
+    setModel(`custom:${model.id}`);
+    setNewModel({});
+    setShowAddModel(false);
+    message.success(`已添加视频模型: ${model.name}`);
+  };
+
+  /** 删除自定义模型 */
+  const handleDeleteModel = (id: string) => {
+    const updated = customModels.filter(m => m.id !== id);
+    setCustomModels(updated);
+    saveCustomModels(updated);
+    if (model.startsWith('custom:') && model === `custom:${id}`) {
+      setModel('cogvideo');
+    }
+  };
 
   useEffect(() => {
     try {
@@ -154,20 +229,36 @@ export const VideoGen: React.FC = () => {
     submit(b64);
   };
 
-  return (
-    <div style={{ padding: 16, color: '#fff', height: '100%', overflow: 'auto' }}>
+return (
+<div style={{ padding: '8px 12px', color: 'var(--fg)', height: '100%', overflow: 'auto' }}>
       <Card
         size="small"
         title={<Space><VideoCameraOutlined />AI 生视频</Space>}
         extra={
           <Space>
-            <Select
-              size="small"
-              value={model}
-              onChange={setModel}
-              style={{ width: 240 }}
-              options={MODELS.map(m => ({ value: m.value, label: m.label }))}
-            />
+  <Select
+    size="small"
+    value={model}
+    onChange={setModel}
+    style={{ width: 240 }}
+    options={allModelOptions}
+    dropdownRender={(menu) => (
+      <>
+        {menu}
+        <div style={{ padding: '4px 8px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>自定义模型</span>
+          <Button size="small" type="link" icon={<PlusOutlined />} onClick={(e) => { e.stopPropagation(); setShowAddModel(true); }}>
+            添加
+          </Button>
+        </div>
+      </>
+    )}
+  />
+  {model.startsWith('custom:') && (
+    <Button size="small" type="link" danger onClick={() => handleDeleteModel(model.replace('custom:', ''))} style={{ fontSize: 12, marginLeft: 8 }}>
+      删除此模型
+    </Button>
+  )}
           </Space>
         }
       >
@@ -181,7 +272,7 @@ export const VideoGen: React.FC = () => {
             disabled={busy}
           />
           <Space wrap>
-            <span style={{ color: '#888' }}>🎬 场景:</span>
+            <span style={{ color: 'var(--muted)' }}>🎬 场景:</span>
             {PRESETS.map(p => (
               <Tag key={p.label} color="purple" style={{ cursor: 'pointer', padding: '4px 8px' }} onClick={() => setPrompt(p.prompt)}>
                 {p.label}
@@ -189,7 +280,7 @@ export const VideoGen: React.FC = () => {
             ))}
           </Space>
           <Space wrap>
-            <span style={{ color: '#888' }}>⏱ 时长:</span>
+            <span style={{ color: 'var(--muted)' }}>⏱ 时长:</span>
             {DURATIONS.map(d => (
               <Tag.CheckableTag
                 key={d.value}
@@ -220,32 +311,32 @@ export const VideoGen: React.FC = () => {
             </Button>
           </Space>
           {model === 'cogvideo' && (
-            <Alert type="info" message="CogVideoX-3 免费模型, 同 ZHIPU_API_KEY。支持: 文生视频 / 图生视频 / 首尾帧生视频" style={{ fontSize: 11 }} showIcon />
+            <Alert message="CogVideoX-3 免费模型, 同 ZHIPU_API_KEY。支持: 文生视频 / 图生视频 / 首尾帧生视频" style={{ fontSize: 11, background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }} showIcon icon={<InfoCircleOutlined />} />
           )}
           {/* 首尾帧预览 */}
           {firstFrame && (
-            <div style={{ display: 'flex', gap: 12, padding: 8, borderRadius: 8, background: '#1a1a1a', border: '1px solid #333' }}>
+            <div style={{ display: 'flex', gap: 12, padding: 8, borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)' }}>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>首帧</div>
+                <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4 }}>首帧</div>
                 <img src={firstFrame} alt="首帧" style={{ width: 100, height: 60, objectFit: 'cover', borderRadius: 4 }} />
               </div>
               {lastFrame ? (
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>尾帧</div>
+                  <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4 }}>尾帧</div>
                   <img src={lastFrame} alt="尾帧" style={{ width: 100, height: 60, objectFit: 'cover', borderRadius: 4 }} />
                 </div>
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', fontSize: 11, color: '#666' }}>
+                <div style={{ display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--muted)' }}>
                   可选: 上传尾帧 → 生成首尾帧过渡视频
                 </div>
               )}
-              <div style={{ display: 'flex', alignItems: 'center', fontSize: 11, color: '#999', flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--muted-2)', flex: 1 }}>
                 {lastFrame ? '首尾帧模式: AI 将生成从首帧到尾帧的过渡视频' : '图生视频模式: AI 将基于此图生成动态视频'}
               </div>
             </div>
           )}
           {model === 'agnes' && (
-            <Alert type="info" message="Agnes Video V2.0, 需 AGENTAI_API_KEY。异步任务, 通常 30s-3min。" style={{ fontSize: 11 }} showIcon />
+            <Alert message={`Agnes Video V2.0 | 时长: ${duration} | 帧率: 24fps | 需 AGENTAI_API_KEY`} style={{ fontSize: 11, background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }} showIcon icon={<InfoCircleOutlined />} />
           )}
         </Space>
       </Card>
@@ -278,7 +369,7 @@ export const VideoGen: React.FC = () => {
           }
         >
           {current.videoUrl ? (
-            <div style={{ textAlign: 'center', background: '#0a0a0a', padding: 12, borderRadius: 8 }}>
+            <div style={{ textAlign: 'center', background: 'var(--panel)', padding: 12, borderRadius: 8 }}>
               <video
                 src={current.videoUrl}
                 controls
@@ -291,13 +382,13 @@ export const VideoGen: React.FC = () => {
             <div style={{ textAlign: 'center', padding: 40 }}>
               <Spin size="large" />
               <Progress percent={current.progress} status="active" style={{ maxWidth: 400, margin: '16px auto' }} />
-              <div style={{ color: '#888' }}>
+              <div style={{ color: 'var(--muted)' }}>
                 {current.status === 'queued' && '🕒 排队中...'}
                 {current.status === 'in_progress' && '🎨 AI 渲染中...'}
               </div>
             </div>
           )}
-          <div style={{ marginTop: 8, color: '#888', fontSize: 12 }}>
+          <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 12 }}>
             {current.prompt} · {current.taskId.slice(0, 24)}...
           </div>
         </Card>
@@ -323,17 +414,17 @@ export const VideoGen: React.FC = () => {
                 style={{
                   cursor: 'pointer',
                   position: 'relative',
-                  border: current?.id === item.id ? '2px solid #9333EA' : '1px solid #333',
+                  border: current?.id === item.id ? '2px solid var(--accent)' : '1px solid var(--border)',
                   borderRadius: 4,
                   overflow: 'hidden',
-                  background: '#000',
+                  background: 'var(--bg)',
                   aspectRatio: '16/9',
                 }}
               >
                 {item.videoUrl ? (
                   <video src={item.videoUrl} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#666' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted)' }}>
                     <Spin size="small" />
                   </div>
                 )}
@@ -342,7 +433,7 @@ export const VideoGen: React.FC = () => {
                     {item.status === 'completed' ? '✓' : item.status === 'failed' ? '✗' : `${item.progress}%`}
                   </Tag>
                 </div>
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 4, background: 'linear-gradient(transparent, rgba(0,0,0,0.8))', color: '#fff', fontSize: 11 }}>
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 4, background: 'linear-gradient(transparent, rgba(0,0,0,0.8))', color: 'var(--fg)', fontSize: 11 }}>
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.prompt}</div>
                 </div>
               </div>
@@ -352,8 +443,46 @@ export const VideoGen: React.FC = () => {
       )}
 
       {!current && history.length === 0 && !busy && (
-        <Empty description={<span style={{ color: '#666' }}>还没生成过视频, 上面写 prompt 提交</span>} style={{ marginTop: 60 }} />
+        <Empty description={<span style={{ color: 'var(--muted)' }}>还没生成过视频, 上面写 prompt 提交</span>} style={{ marginTop: 60 }} />
       )}
+
+      {/* 自定义模型配置弹窗 */}
+      <Modal
+        open={showAddModel}
+        title="添加自定义视频生成模型"
+        onCancel={() => { setShowAddModel(false); setNewModel({}); }}
+        onOk={handleAddModel}
+        okText="添加"
+        width={480}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div>
+            <label style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>模型名称 <span style={{ color: 'var(--danger)' }}>*</span></label>
+            <Input
+              placeholder="例如: Runway Gen-3、Pika Labs、Seedance"
+              value={newModel.name}
+              onChange={e => setNewModel(prev => ({ ...prev, name: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>API Key <span style={{ color: 'var(--danger)' }}>*</span></label>
+            <Input.Password
+              placeholder="sk-... 或 api-..."
+              value={newModel.apiKey}
+              onChange={e => setNewModel(prev => ({ ...prev, apiKey: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Base URL（可选）</label>
+            <Input
+              placeholder="https://api.runwayml.com/v1 (留空使用默认)"
+              value={newModel.baseUrl}
+              onChange={e => setNewModel(prev => ({ ...prev, baseUrl: e.target.value }))}
+            />
+          </div>
+          <Alert type="info" message="API Key 将安全存储在本地浏览器中，不会上传到服务器。" showIcon style={{ fontSize: 11 }} />
+        </Space>
+      </Modal>
     </div>
   );
 };

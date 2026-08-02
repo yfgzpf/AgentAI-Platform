@@ -10,6 +10,7 @@
  * 4. 缓存 (减少不必要的 LLM 调用)
  */
 
+import { createHash } from 'crypto';
 import { PromptBuilder } from './prompt-builder';
 import { ScoreParser, RoutingDecision } from './score-parser';
 import { SkillOrchestrator, SkillDescriptor } from '../skill-orchestrator';
@@ -216,14 +217,11 @@ export class SemanticRouter {
 
   /**
    * 消息哈希 — 使用 crypto SHA-256
+   * 
+   * 使用 SHA-256 生成消息的唯一标识，用于缓存查询。
+   * 相比简化版 djb2，SHA-256 具有更低的碰撞概率和更好的分布特性。
    */
   hashMessage(msg: string): string {
-    // TODO: 实际运行时 import crypto 并使用 createHash('sha256')
-    // 这里使用简化版 djb2 hash 作为占位
-    let hash = 5381;
-    for (let i = 0; i < msg.length; i++) {
-      hash = ((hash << 5) + hash) + msg.charCodeAt(i);
-    }
-    return Math.abs(hash).toString(16);
+    return createHash('sha256').update(msg, 'utf-8').digest('hex');
   }
 }

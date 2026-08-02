@@ -9,14 +9,16 @@
  *   - TurnDivider:     轮次分隔符 (时间线风格)
  */
 import React, { useState, useEffect } from 'react';
-import { Tooltip } from 'antd';
+import { Tooltip, Tag } from 'antd';
 import { EditOutlined, FileTextOutlined, CaretRightOutlined, SettingOutlined, SearchOutlined, PictureOutlined, VideoCameraOutlined, MessageOutlined, OrderedListOutlined, ToolOutlined } from '@ant-design/icons';
 import { Markdown } from './Markdown';
 import { StatusIndicator } from './StatusIndicator';
 import type { MessageStatus, ChatSegment } from '../store/chatStore';
 import { Avatar } from './Avatar';
 import { MsgActions } from './MsgActions';
+import { DiffViewer } from './DiffViewer';
 import { FileCard, FilesFromToolSegment } from './FileCard';
+import FileChangeTree from './FileChangeTree';
 
 /* ======================== CSS 动画已移至 agentai-theme.css ======================== */
 
@@ -71,7 +73,7 @@ export const UserMsg: React.FC<{
           borderRadius: '16px 16px 4px 16px',
           background: 'linear-gradient(135deg, var(--accent), var(--accent-strong))',
           color: 'var(--fg-on-accent, #fff)',
-          fontSize: 14, lineHeight: 1.6,
+          fontSize: 'var(--chat-font-size)', lineHeight: 'var(--chat-line-height)',
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
           boxShadow: '0 4px 16px var(--accent-soft), 0 1px 4px rgba(0,0,0,0.1)',
           position: 'relative',
@@ -136,7 +138,7 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = ({
     <div className="bubble-enter" style={{
       padding: '12px 16px',
       borderRadius: 12,
-      fontSize: 14, lineHeight: 1.7,
+      fontSize: 'var(--chat-font-size)', lineHeight: 'var(--chat-line-height)',
       color: 'var(--fg)',
       wordBreak: 'break-word', overflowX: 'auto',
       background: 'var(--card)',
@@ -198,8 +200,8 @@ export const ToolCollapseSummary: React.FC<{
           ▲ 收起工具调用
         </div>
         {toolSegments.map((s, i) => {
-          if (s.name === 'run_command' || s.name === 'run_background') {
-            const cmd = extractCommand(s.args);
+          if (s.name === 'run_command' || s.name === 'run_background' || s.name === 'Bash' || s.name === 'PowerShell' || s.name === 'execute_command' || s.name === 'run_code') {
+            const cmd = extractCommand(s.args) || (s.name === 'run_code' ? '[代码执行]' : '');
             const state: ShellState = s.state === 'running' ? 'running' : s.ok ? 'done' : s.ok === false ? 'failed' : 'running';
             return <ShellCard key={i} command={cmd || s.args || ''} output={s.result} state={state} durationMs={s.durationMs} />;
           }
@@ -435,8 +437,8 @@ export const ShellCard: React.FC<{
           maxHeight: 200, overflowY: 'auto',
           fontFamily: "'Cascadia Code', 'Fira Code', monospace",
         }}>
-          {output.slice(0, 2000)}
-          {output.length > 2000 && <span style={{ color: 'var(--muted-2)', display: 'block', marginTop: 4 }}>... (截断于 2000 字符)</span>}
+          {output.slice(0, 5000)}
+          {output.length > 5000 && <span style={{ color: 'var(--muted-2)', display: 'block', marginTop: 4 }}>... (截断于 5000 字符)</span>}
         </div>
       )}
 
@@ -447,7 +449,7 @@ export const ShellCard: React.FC<{
             onClick={onApprove}
             style={{
               padding: '3px 12px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-              background: 'var(--success)', color: '#fff', border: 'none', cursor: 'pointer',
+              background: 'var(--success)', color: 'var(--fg)', border: 'none', cursor: 'pointer',
               boxShadow: '0 1px 4px rgba(34,197,94,0.3)',
             }}
           >
@@ -480,7 +482,9 @@ export const ToolCard: React.FC<{
   ok?: boolean;
   durationMs?: number;
 }> = ({ name, args, result, ok, durationMs }) => {
-  const [expanded, setExpanded] = useState(false);
+  // 检测是否为 diff 工具: 有结果时自动展开, 让用户直接看到 +/- 编辑内容
+  const isDiffTool = !!name.match(/^(write_file|edit_file|str_replace|apply_patch)$/i);
+  const [expanded, setExpanded] = useState(isDiffTool && !!result);
 
   const statusColor = ok === true ? 'var(--success)' : ok === false ? 'var(--danger)' : 'var(--muted)';
   const statusLabel = ok === true ? '完成' : ok === false ? '失败' : '进行中';
@@ -569,35 +573,14 @@ export const ToolCard: React.FC<{
             </div>
           )}
           {hasDiff && (
-            <div style={{ padding: '6px 10px' }}>
-              <div style={{ marginBottom: 4, fontWeight: 600, fontSize: 10, color: 'var(--fg-2)' }}>
-                📝 代码变更预览{diffFileName ? ` · ${diffFileName}` : ''}
-              </div>
-              <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                {oldContent && (
-                  <div style={{ flex: 1, overflow: 'auto', maxHeight: 200 }}>
-                    <div style={{ fontSize: 9, padding: '2px 6px', background: 'var(--panel)', color: 'var(--muted-2)', borderBottom: '1px solid var(--border)' }}>修改前</div>
-                    <pre style={{ margin: 0, padding: 6, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--danger-2, #ef4444)' }}>
-                      {oldContent.slice(0, 500)}
-                    </pre>
-                  </div>
-                )}
-                {newContent && (
-                  <div style={{ flex: 1, overflow: 'auto', maxHeight: 200, borderLeft: oldContent ? '1px solid var(--border)' : 'none' }}>
-                    <div style={{ fontSize: 9, padding: '2px 6px', background: 'var(--panel)', color: 'var(--muted-2)', borderBottom: '1px solid var(--border)' }}>修改后</div>
-                    <pre style={{ margin: 0, padding: 6, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--success-2, #22c55e)' }}>
-                      {newContent.slice(0, 500)}
-                    </pre>
-                  </div>
-                )}
-                {!oldContent && !newContent && diffContent && (
-                  <div style={{ flex: 1, overflow: 'auto', maxHeight: 200 }}>
-                    <pre style={{ margin: 0, padding: 6, fontSize: 10, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                      {diffContent.slice(0, 500)}
-                    </pre>
-                  </div>
-                )}
-              </div>
+            <div style={{ padding: '4px 8px' }}>
+              <DiffViewer
+                diffText={diffContent}
+                filePath={diffFileName || undefined}
+                oldContent={oldContent}
+                newContent={newContent}
+                defaultExpanded={false}
+              />
             </div>
           )}
           {result != null && (
@@ -704,8 +687,19 @@ export interface ActivityProgress {
   failCount?: number;
 }
 
-/** 工具名称 → 图标 */
+/** 工具名称 → 图标 (参考 ZCode 整洁风格) */
 const activityToolIcon = (name: string): React.ReactNode => {
+  // 子智能体调用 - 自创优雅头像 (SVG 内联图标)
+  if (/^spawn_subagent|subagent|子智能体/i.test(name)) {
+    return (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+        <circle cx="12" cy="8" r="4" fill="var(--accent)" opacity="0.9"/>
+        <path d="M12 14c-4 0-7 2-7 5v1h14v-1c0-3-3-5-7-5z" fill="var(--accent)" opacity="0.7"/>
+        <circle cx="18" cy="6" r="2.5" fill="var(--violet)" opacity="0.8"/>
+        <path d="M18 10c-1.5 0-2.5.8-2.5 2v.5h5V12c0-1.2-1-2-2.5-2z" fill="var(--violet)" opacity="0.6"/>
+      </svg>
+    );
+  }
   if (/^write_file|edit_file|create_file|replace_in_file|modify_file|delete_file|patch|str_replace/i.test(name)) return <EditOutlined />;
   if (/^read_file|view_file|cat|get_file_contents/i.test(name)) return <FileTextOutlined />;
   if (/^run_command|run_background|exec_command/i.test(name)) return <CaretRightOutlined />;
@@ -718,15 +712,35 @@ const activityToolIcon = (name: string): React.ReactNode => {
   return <ToolOutlined />;
 };
 
+/** 检测是否为子智能体调用 */
+const isSubagentCall = (name: string): boolean => {
+  return /^spawn_subagent|subagent/i.test(name);
+};
+
+/** 从参数中提取子智能体类型和任务描述 */
+const getSubagentInfo = (args: any): { type: string; task?: string; prompt?: string } => {
+  try {
+    const parsed = typeof args === 'string' ? JSON.parse(args) : args;
+    return {
+      type: parsed?.type || parsed?.subagentType || '专家',
+      task: parsed?.task || parsed?.description || '',
+      prompt: parsed?.prompt || parsed?.systemPrompt || '',
+    };
+  } catch {
+    return { type: '专家' };
+  }
+};
+
 /**
  * 统一活动时间线: 将推理、思考、工具调用合并为一条垂直时间线
  * 替代之前分散的"推理卡片"+"工具卡片"两个独立容器
  *
- * 设计:
- * - 折叠态: 一行摘要 "5 次操作 · 4 成功 · 1 失败 · 12.3s"
- * - 流式态: 显示当前活动 + 内联进度条
+ * 设计 (参考 ZCode 整洁风格):
+ * - 折叠态: 紧凑一行摘要 "5 次操作 · 4✓ · 1✗ · 12.3s"
+ * - 流式态: 显示当前活动 + 内联进度条 (不展开详情)
  * - 展开态: 垂直时间线, 每条活动可单独展开详情
- * - 自动折叠: 完成后 1.5s 自动收起
+ * - 自动折叠: 完成后 2s 自动收起 (给用户足够时间看到结果)
+ * - 子智能体调用: 显示为 "🔍 子智能体: Explore" 格式, 整洁清晰
  */
 export const ActivityTimeline: React.FC<{
   segments: ChatSegment[];
@@ -750,14 +764,14 @@ export const ActivityTimeline: React.FC<{
   const [open, setOpen] = useState(pending);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
-  // 流式时展开, 完成后 1.5s 自动折叠
+  // 流式时展开, 完成后 2s 自动折叠 (给用户足够时间看到结果)
   const foldTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   React.useEffect(() => {
     if (foldTimerRef.current) clearTimeout(foldTimerRef.current);
     if (pending) {
       setOpen(true);
     } else if (open) {
-      foldTimerRef.current = setTimeout(() => setOpen(false), 1500);
+      foldTimerRef.current = setTimeout(() => setOpen(false), 2000);
     }
     return () => { if (foldTimerRef.current) clearTimeout(foldTimerRef.current); };
   }, [pending]);
@@ -878,32 +892,51 @@ export const ActivityTimeline: React.FC<{
                 </div>
               );
             }
-            // 工具行: 紧凑行 + 可展开详情
+            // 工具行: 紧凑行 + 可展开详情 (参考 ZCode 整洁风格)
             if (s.kind === 'tool') {
               const isRunning = s.state === 'running';
               const statusIcon = s.ok === true ? '✓' : s.ok === false ? '✗' : '◐';
               const statusColor = s.ok === true ? 'var(--success)' : s.ok === false ? 'var(--danger)' : 'var(--accent)';
               const isExpanded = expandedIdx === i;
               const icon = activityToolIcon(s.name);
+              // 检测是否为子智能体调用
+              const isSubagent = isSubagentCall(s.name);
+              const subagentInfo = isSubagent ? getSubagentInfo(s.args) : null;
 
               return (
                 <div key={`a-${i}`}>
-                  {/* 紧凑行 */}
+                  {/* 紧凑行 - 子智能体调用有特殊样式 */}
                   <div
                     onClick={() => setExpandedIdx(isExpanded ? null : i)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 5,
-                      padding: '3px 6px', cursor: 'pointer', fontSize: 11,
+                      padding: isSubagent ? '4px 8px' : '3px 6px',
+                      cursor: 'pointer', fontSize: 'var(--tool-font-size, 11px)',
                       color: 'var(--fg-2)', userSelect: 'none',
                       borderRadius: 4, transition: 'background 0.1s',
+                      background: isSubagent ? 'var(--accent-soft)' : undefined,
+                      border: isSubagent ? '1px solid var(--border)' : undefined,
                     }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-2)'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                    onMouseEnter={e => { if (!isSubagent) (e.currentTarget as HTMLElement).style.background = 'var(--bg-2)'; }}
+                    onMouseLeave={e => { if (!isSubagent) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                   >
-                    <span style={{ fontSize: 11 }}>{icon}</span>
-                    <span style={{ fontWeight: 600 }}>{s.name}</span>
-                    {/* 参数预览 */}
-                    {s.args && !isExpanded && (
+                    <span style={{ fontSize: 12 }}>{icon}</span>
+                    {/* 子智能体显示类型和任务摘要 */}
+                    <span style={{ fontWeight: isSubagent ? 700 : 600, color: isSubagent ? 'var(--accent)' : undefined }}>
+                      {isSubagent ? `子智能体: ${subagentInfo?.type}` : s.name}
+                    </span>
+                    {/* 子智能体任务描述预览 */}
+                    {isSubagent && subagentInfo?.task && (
+                      <span style={{
+                        fontSize: 10, color: 'var(--muted-2)',
+                        overflow: 'hidden', textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap', maxWidth: 200, marginLeft: 4,
+                      }}>
+                        — {subagentInfo.task.slice(0, 50)}{subagentInfo.task.length > 50 ? '...' : ''}
+                      </span>
+                    )}
+                    {/* 参数预览 (子智能体不显示参数预览) */}
+                    {s.args && !isExpanded && !isSubagent && (
                       <span style={{
                         fontSize: 10, color: 'var(--muted-2)',
                         overflow: 'hidden', textOverflow: 'ellipsis',
@@ -942,9 +975,90 @@ export const ActivityTimeline: React.FC<{
                   {/* 展开详情: 复用现有 ShellCard / ToolCard */}
                   {isExpanded && (
                     <div style={{ padding: '2px 6px 4px' }}>
-                      {s.name === 'run_command' || s.name === 'run_background' ? (
+                      {isSubagent ? (
+                        // 子智能体专用展开视图
+                        <div style={{
+                          padding: '8px 12px',
+                          background: 'var(--bg-2)',
+                          borderRadius: 6,
+                          border: '1px solid var(--border)',
+                          fontSize: 11,
+                        }}>
+                          {/* 类型标签 */}
+                          <div style={{ marginBottom: 8 }}>
+                            <Tag color="purple" style={{ fontSize: 10 }}>
+                              {subagentInfo?.type}
+                            </Tag>
+                          </div>
+                          
+                          {/* 任务描述 */}
+                          {subagentInfo?.task && (
+                            <div style={{ marginBottom: 8 }}>
+                              <div style={{ color: 'var(--muted)', fontSize: 10, marginBottom: 4 }}>📋 任务描述:</div>
+                              <div style={{
+                                padding: '6px 8px',
+                                background: 'var(--card)',
+                                borderRadius: 4,
+                                border: '1px solid var(--border)',
+                                maxHeight: 100,
+                                overflowY: 'auto',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                              }}>
+                                {subagentInfo.task}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* 提示词 (如果有) */}
+                          {subagentInfo?.prompt && (
+                            <div style={{ marginBottom: 8 }}>
+                              <div style={{ color: 'var(--muted)', fontSize: 10, marginBottom: 4 }}>💡 系统提示:</div>
+                              <div style={{
+                                padding: '6px 8px',
+                                background: 'var(--card)',
+                                borderRadius: 4,
+                                border: '1px solid var(--border)',
+                                maxHeight: 150,
+                                overflowY: 'auto',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                fontSize: 10,
+                              }}>
+                                {subagentInfo.prompt}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* 执行结果 */}
+                          {s.result && (
+                            <div>
+                              <div style={{ color: 'var(--muted)', fontSize: 10, marginBottom: 4 }}>✅ 执行结果:</div>
+                              <div style={{
+                                padding: '6px 8px',
+                                background: 'var(--card)',
+                                borderRadius: 4,
+                                border: '1px solid var(--border)',
+                                maxHeight: 200,
+                                overflowY: 'auto',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                              }}>
+                                {typeof s.result === 'string' ? s.result : JSON.stringify(s.result, null, 2)}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* 耗时 */}
+                          {s.durationMs != null && (
+                            <div style={{ marginTop: 8, textAlign: 'right', color: 'var(--muted-2)', fontSize: 10 }}>
+                              ⏱️ {(s.durationMs / 1000).toFixed(1)}s
+                            </div>
+                          )}
+                        </div>
+                      ) : s.name === 'run_command' || s.name === 'run_background' || s.name === 'Bash' || s.name === 'PowerShell' || s.name === 'execute_command' || s.name === 'run_code' ? (
                         <ShellCard
-                          command={extractCommand(s.args) || (typeof s.args === 'string' ? s.args : JSON.stringify(s.args)) || ''}
+                          command={extractCommand(s.args) || (s.name === 'run_code' ? '[代码执行]' : '') || (typeof s.args === 'string' ? s.args : JSON.stringify(s.args)) || ''}
                           output={s.result}
                           state={isRunning ? 'running' : s.ok ? 'done' : s.ok === false ? 'failed' : 'running'}
                           durationMs={s.durationMs}
@@ -988,6 +1102,7 @@ export const AssistantMsg: React.FC<{
     cost?: number;
     cacheHit?: boolean;
     source?: 'api' | 'estimated';
+    durationMs?: number; // Phase 2: 实时显示 - 响应时间
   } | null;
   onRegenerate?: () => void;
   onFeedback?: (kind: 'up' | 'down') => void;
@@ -1000,6 +1115,10 @@ export const AssistantMsg: React.FC<{
   const fmtUsage = (u: typeof usage) => {
     if (!u) return null;
     const parts: string[] = [];
+    // Phase 2: 实时显示 - 添加响应时间
+    if (u.durationMs && u.durationMs > 0) {
+      parts.push(`⏱️ ${(u.durationMs / 1000).toFixed(1)}s`);
+    }
     // 输入/输出 token 拆分显示, 与官方账单对齐
     if (u.prompt_tokens != null) parts.push(`入${u.prompt_tokens}`);
     if (u.completion_tokens != null) parts.push(`出${u.completion_tokens}`);
@@ -1008,7 +1127,7 @@ export const AssistantMsg: React.FC<{
     if (u.cacheHit) parts.push('⚡缓存命中');
     // 估算模式标记 (透明度) 区分官方 / 估算
     if (u.source === 'estimated') parts.push('~估算');
-    if (u.cost && u.cost > 0) parts.push(`¥${u.cost.toFixed(4)}`);
+    if (u.cost && u.cost > 0) parts.push(`💰 ¥${u.cost.toFixed(4)}`);
     return parts.length ? parts.join(' · ') : null;
   };
 
@@ -1065,6 +1184,51 @@ export const AssistantMsg: React.FC<{
             </span>
           )}
         </div>
+
+        {/* ===== AI 文件变更树 (聚合摘要, 放在最顶部) ===== */}
+        {!pending && toolSegments.length > 0 && (
+          <>
+            <FileChangeTree
+              segments={toolSegments}
+              onOpen={onOpenFile}
+            />
+            {/* ===== 代码编辑 Diff 独立卡片: write_file/edit_file 直接显示 +/- 内容 ===== */}
+            {toolSegments.filter(s =>
+              /^(write_file|edit_file|str_replace|apply_patch)$/i.test(s.name || '')
+            ).map((s, i) => {
+              if (!s.result) return null;
+              // 尝试解析 unified diff
+              const dm = String(s.result).match(/^---\s+a\/[^\n]+\n\+\+\+\s+b\/([^\n]+)\n([\s\S]*)$/m);
+              if (dm) {
+                const fileName = (s as any).name === dm[1] ? dm[1] : dm[1];
+                return (
+                  <div key={`diff-${i}`} style={{ margin: '4px 0' }}>
+                    <DiffViewer
+                      diffText={dm[2]}
+                      filePath={fileName}
+                      defaultExpanded={true}
+                    />
+                  </div>
+                );
+              }
+              // 尝试 old/new 格式
+              const oldM = String(s.result).match(/__OLD_CONTENT__\n([\s\S]*?)\n__NEW_CONTENT__/);
+              const newM = String(s.result).match(/__NEW_CONTENT__\n([\s\S]*?)\n__/);
+              if (oldM && newM) {
+                return (
+                  <div key={`diff-${i}`} style={{ margin: '4px 0' }}>
+                    <DiffViewer
+                      oldContent={oldM[1]}
+                      newContent={newM[1]}
+                      defaultExpanded={true}
+                    />
+                  </div>
+                );
+              }
+              return null;
+            })}
+          </>
+        )}
 
         {/* ===== 统一活动时间线 (替代分散的推理卡+工具卡) ===== */}
         <ActivityTimeline segments={segments} pending={pending} progress={progress} />
@@ -1188,7 +1352,7 @@ export const ImageCard: React.FC<{
         <span>{alt || '截图/图片'}</span>
         {filePath && <span style={{ marginLeft: 'auto' }}>{filePath}</span>}
       </div>
-      <div style={{ padding: 8, display: 'flex', justifyContent: 'center', background: '#000' }}>
+      <div style={{ padding: 8, display: 'flex', justifyContent: 'center', background: 'var(--bg)' }}>
         {error ? (
           <div style={{ padding: 20, color: 'var(--danger)', fontSize: 12 }}>
             图片加载失败
@@ -1229,7 +1393,7 @@ const ErrorCard: React.FC<{ error: string; details?: string; fix?: string }> = (
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6,
         padding: '6px 10px', fontSize: 12, fontWeight: 500,
-        color: '#ef4444',
+        color: 'var(--danger)',
       }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="12" cy="12" r="10"/>
@@ -1259,7 +1423,7 @@ const ErrorCard: React.FC<{ error: string; details?: string; fix?: string }> = (
               padding: '5px 8px', borderRadius: 4,
               background: 'rgba(34,197,94,0.08)',
               border: '1px solid rgba(34,197,94,0.2)',
-              color: '#22c55e', marginTop: 4,
+              color: 'var(--success)', marginTop: 4,
             }}>
               💡 建议修复: {fix}
             </div>
@@ -1281,7 +1445,7 @@ const VideoPlayer: React.FC<{ url: string; poster?: string; alt?: string }> = ({
         background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
         fontSize: 12, color: 'var(--fg-2)',
       }}>
-        <span style={{ color: '#ef4444' }}>⚠️</span> 视频加载失败: {alt || url}
+        <span style={{ color: 'var(--danger)' }}>⚠️</span> 视频加载失败: {alt || url}
         <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4, wordBreak: 'break-all' }}>
           {url}
         </div>
@@ -1291,7 +1455,7 @@ const VideoPlayer: React.FC<{ url: string; poster?: string; alt?: string }> = ({
   return (
     <div style={{
       margin: '6px 0', borderRadius: 8, overflow: 'hidden',
-      border: '1px solid var(--border)', background: '#000',
+      border: '1px solid var(--border)', background: 'var(--bg)',
     }}>
       {alt && (
         <div style={{

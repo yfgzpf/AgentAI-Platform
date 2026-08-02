@@ -1,0 +1,20 @@
+{
+  "name": "智能媒体下载器",
+  "installedAt": 1783266552795,
+  "source": "marketplace",
+  "version": "1.0.0",
+  "skillId": "skill_2066477017106116608",
+  "examples_zh": [
+    "下载一些可爱的猫咪图片",
+    "找一段海浪的视频，15秒左右",
+    "找一些适合做壁纸的风景图"
+  ],
+  "examples_en": [
+    "Download 5 cat images",
+    "Find a 15-second ocean wave video",
+    "Download YouTube video from 1:30 to 2:00"
+  ],
+  "iconSource": "https://openplatform-cdn.codebuddy.cn/public/operation-platform/skill-icons/skill_2066477017106116608/85878d2127e694c7.svg",
+  "iconLocalPath": "C:\\Users\\Administrator\\.workbuddy\\skills\\skill_2066477017106116608\\_icon.svg",
+  "iconDownloadedFrom": "https://openplatform-cdn.codebuddy.cn/public/operation-platform/skill-icons/skill_2066477017106116608/85878d2127e694c7.svg"
+}

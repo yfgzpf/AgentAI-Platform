@@ -1,3 +1,14 @@
+---
+name: decoration-quotation
+version: 1.0.0
+description: 装修工程报价计算器，支持材料清单、人工费用、总价汇总
+author: AgentAI
+tags: [office, decoration, quotation]
+dependencies: []
+testCommand: node test.js
+riskLevel: low
+---
+
 # Decoration Quotation (装修报价)
 
 装修工程报价计算器，支持材料清单、人工费用、总价汇总。

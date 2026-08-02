@@ -1,11 +1,16 @@
 /**
- * MemoryManager — 统一记忆接口
+ * MemoryManager — 统一记忆接口 (简化版 KV 存储)
  * ==============================
- * 合并 5 个分散的记忆系统为一个统一入口：
+ * ⚠️ 架构注意 (2026-07-19): 本项目存在两套并行记忆系统:
+ *   1. 本文件 — 简单 KV 存储 (.agentai/memory.json), 用于快速键值读写
+ *   2. memory.ts — 高级 JSONL 系统 (.agentai/memory.jsonl), 含压缩/评分/实体追踪
+ * 两套系统目前独立运行、互不感知。合并工作是待办项 (见 AGENTS.md 审计)。
+ *
+ * 设计意图: 作为 5 层的统一入口 (但当前仅实现 KV 层):
  *   1. persistent-memory (SQLite) — 对话历史/用户数据
  *   2. project-memory  (.json)   — 项目技术栈/偏好/修复模式
  *   3. fts5-memory     (SQLite)  — 全文搜索记忆
- *   4. memory.jsonl              — 简单键值记忆
+ *   4. memory.jsonl              — 高级 JSONL 记忆 (实际被 memory.ts 管理)
  *   5. knowledge-cache           — 知识缓存
  *
  * 使用方式:

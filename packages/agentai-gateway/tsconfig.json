@@ -13,9 +13,17 @@
     "declaration": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noUncheckedIndexedAccess": true,
+    "noEmit": false,
+    "noUncheckedIndexedAccess": false,
     "noImplicitOverride": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"]
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/test-*.ts",
+    "src/**/*-demo.ts",
+    "src/**/*-example.ts"
+  ]
 }

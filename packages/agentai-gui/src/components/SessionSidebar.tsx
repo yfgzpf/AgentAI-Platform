@@ -28,10 +28,21 @@ export const SessionSidebar: React.FC<{
   const { profile } = useProfileStore();
   const { activeId, createSession, deleteSession, setActive, getMySessions } = useSessionStore();
   const [query, setQuery] = useState('');
+  const [autoOpen, setAutoOpen] = useState(true);
+  const [autoStats, setAutoStats] = useState({total:0,active:0});
+  const [autoTasks, setAutoTasks] = useState<string[]>([]);
 
   const userName = profile?.name || '未登录';
 
   /* ---- 过滤 + 排序 ---- */
+    useEffect(() => {
+    fetch('http://127.0.0.1:18789/v1/automation/stats').then(r=>r.json()).then(d=>{
+      if(d.ok)setAutoStats(d.stats);
+    }).catch(()=>{});
+    fetch('http://127.0.0.1:18789/v1/automation/crons').then(r=>r.json()).then(d=>{
+      if(d.ok)setAutoTasks(d.crons.slice(0,5).map((j:any)=>j.name));
+    }).catch(()=>{});
+  },[]);
   const filtered = useMemo(() => {
     // 使用 getMySessions 获取当前用户的会话列表
     const mySessions = getMySessions();
@@ -323,6 +334,51 @@ export const SessionSidebar: React.FC<{
             {filtered.map(s => (
               <SessionItem key={s.id} s={s} />
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* ═════ 自动化任务: 折叠面板 ═════ */}
+      <div style={{ borderTop: '1px solid var(--border)' }}>
+        <div
+          onClick={() => setAutoOpen(v => !v)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 10px', cursor: 'pointer', fontSize: 11,
+            color: 'var(--muted-2)', userSelect: 'none',
+          }}
+        >
+          <ThunderboltOutlined style={{ fontSize: 11 }} />
+          <span style={{ flex: 1, fontWeight: 500 }}>自动化任务</span>
+          <span style={{
+            fontSize: 9, transition: 'transform 0.2s',
+            transform: autoOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+          }}>▶</span>
+        </div>
+        {autoOpen && (
+          <div style={{ padding: '2px 10px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+              运行中: {autoStats.active} · 总任务: {autoStats.total}
+            </div>
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'automation' } }))}
+              style={{
+                padding: '4px 8px', borderRadius: 4, fontSize: 11,
+                background: 'var(--accent-soft)', border: '1px solid var(--accent)',
+                color: 'var(--accent)', cursor: 'pointer', fontWeight: 500,
+              }}
+            >
+              管理自动化
+            </button>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {autoTasks.map((t, i) => (
+                <span key={i} style={{
+                  fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                  background: 'var(--card)', border: '1px solid var(--border)',
+                  color: 'var(--fg-2)',
+                }}>⚡ {t}</span>
+              ))}
+            </div>
           </div>
         )}
       </div>

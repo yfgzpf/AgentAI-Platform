@@ -20,8 +20,17 @@ AGNS_IMAGE = SCRIPT_DIR / "agns_image.py"
 AGNS_VIDEO = SCRIPT_DIR / "agns_video.py"
 
 
+def _safe_arg(value: str) -> str:
+    """清洗参数，防止被 argparse 解析为额外选项"""
+    safe = value.replace('\n', ' ').replace('\r', ' ')
+    # 以 - 开头的值会被 argparse 当作选项而非值
+    if safe.lstrip().startswith('-'):
+        safe = ' ' + safe
+    return safe
+
 def run_agns_image(req: dict) -> dict:
-    prompt = req.get("prompt", "")
+    raw_prompt = req.get("prompt", "")
+    prompt = _safe_arg(raw_prompt)
     size = req.get("size", "1024x1024")
     image_url = req.get("image")
     out = req.get("out") or str(SCRIPT_DIR.parent / "out" / f"img-{os.getpid()}-{int(__import__('time').time())}.png")
@@ -42,7 +51,7 @@ def run_agns_image(req: dict) -> dict:
 
 
 def run_agns_video(req: dict) -> dict:
-    prompt = req.get("prompt", "")
+    prompt = _safe_arg(req.get("prompt", ""))
     image_url = req.get("image")
     mode = req.get("mode") or ("i2v" if image_url else "t2v")
     cmd = [sys.executable, str(AGNS_VIDEO), mode, "--prompt", prompt]

@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https:; font-src 'self' data: https://cdn.jsdelivr.net;">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PulseFlow Lite</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/typescript.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/javascript.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/python.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/bash.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/json.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+    <style nonce="agentai-nonce">
+
+    :root {
+        /* === 颜色变量 (VSCode 主题优先, 兜底 GUI 色板) === */
+        --bg: var(--vscode-editor-background, #1e1e1e);
+        --bg-elev: var(--vscode-textBlockQuote-background, #252526);
+        --panel: var(--vscode-panel-background, #252526);
+        --border: var(--vscode-panel-border, #3c3c3c);
+        --fg: var(--vscode-foreground, #d4d4d4);
+        --fg-muted: var(--vscode-descriptionForeground, #888);
+        --accent: var(--vscode-textLink-foreground, #4fc3f7);
+        --accent-strong: #29b6f6;
+        --accent-soft: rgba(79, 195, 247, 0.25);
+        --error: #f48771;
+        --success: #6a9955;
+        --warning: #dcdcaa;
+
+        /* === 间距 (与 GUI 对齐) === */
+        --gap-1: 4px;
+        --gap-2: 8px;
+        --gap-3: 12px;
+        --gap-4: 16px;
+
+        /* === 圆角 === */
+        --radius-sm: 6px;
+        --radius: 8px;
+        --radius-lg: 12px;
+        --radius-bubble: 16px;
+
+        /* === 字体 === */
+        --font: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+        --font-mono: var(--vscode-editor-font-family, "Cascadia Code", "Fira Code", Consolas, monospace);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--fg);
+        font-size: 13px;
+        line-height: 1.5;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* === 工具栏 === */
+    .toolbar {
+        display: flex;
+        align-items: center;
+        gap: var(--gap-1);
+        padding: 4px 8px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+        min-height: 32px;
+    }
+    .tb-btn {
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid transparent;
+        padding: 2px 8px;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.15s;
+    }
+    .tb-btn:hover { background: var(--bg-elev); border-color: var(--border); }
+    .tb-btn:active { transform: scale(0.95); }
+    .tb-spacer { flex: 1; }
+    .tb-status {
+        font-size: 11px;
+        color: var(--fg-muted);
+        padding: 0 6px;
+    }
+
+    /* === 文件树 === */
+    .file-tree {
+        max-height: 200px;
+        overflow-y: auto;
+        padding: 4px 8px;
+        background: var(--bg-elev);
+        border-bottom: 1px solid var(--border);
+        font-size: 11px;
+    }
+    .file-tree .file-entry {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 4px;
+        cursor: pointer;
+        border-radius: 3px;
+    }
+    .file-tree .file-entry:hover { background: var(--accent-soft); }
+    .file-tree .file-entry .file-icon { flex-shrink: 0; }
+
+    /* === 消息列表 === */
+    .messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: var(--gap-2);
+        scroll-behavior: smooth;
+    }
+    .messages::-webkit-scrollbar { width: 8px; }
+    .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--fg-muted);
+        font-size: 12px;
+    }
+
+    /* === 消息气泡 (与 GUI Thread.tsx 对齐) === */
+    .msg {
+        display: flex;
+        gap: var(--gap-2);
+        margin-bottom: var(--gap-3);
+        animation: msg-enter 0.25s cubic-bezier(0.2, 0, 0, 1);
+        align-items: flex-start;
+    }
+    .msg-user { justify-content: flex-end; }
+    .msg-bot { justify-content: flex-start; }
+
+    @keyframes msg-enter {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg .avatar {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: #fff;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+        position: relative;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+    .msg .avatar.ai {
+        background: var(--panel);
+        border: 1.5px solid var(--accent);
+    }
+    .msg .avatar.pending { animation: avatar-pulse 1.4s ease-in-out infinite; }
+    @keyframes avatar-pulse {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
+    }
+
+    .msg .bubble {
+        max-width: 78%;
+        min-width: 0;
+        padding: 10px 16px;
+        border-radius: var(--radius-bubble);
+        font-size: 13px;
+        line-height: 1.6;
+        word-break: break-word;
+        white-space: pre-wrap;
+        position: relative;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1);
+    }
+    .msg-user .bubble {
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        color: #fff;
+        border-radius: var(--radius-bubble) var(--radius-bubble) 4px var(--radius-bubble);
+        box-shadow: 0 4px 16px var(--accent-soft), 0 1px 4px rgba(0, 0, 0, 0.1);
+    }
+    .msg-bot .bubble {
+        background: var(--bg-elev);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 4px var(--radius-bubble) var(--radius-bubble) var(--radius-bubble);
+    }
+    .msg-bot .bubble.error {
+        border-color: var(--error);
+        color: var(--error);
+    }
+
+    /* === Markdown 渲染 === */
+    .bubble pre {
+        background: rgba(0, 0, 0, 0.3);
+        padding: var(--gap-2);
+        border-radius: var(--radius);
+        overflow-x: auto;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        line-height: 1.45;
+        margin: 6px 0;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .bubble code {
+        font-family: var(--font-mono);
+        font-size: 0.92em;
+        background: rgba(127, 127, 127, 0.15);
+        padding: 1px 5px;
+        border-radius: 3px;
+    }
+    .bubble pre code {
+        background: transparent;
+        padding: 0;
+        border-radius: 0;
+    }
+    .bubble p { margin: 4px 0; }
+    .bubble p:first-child { margin-top: 0; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble ul, .bubble ol { margin: 4px 0 4px 20px; }
+    .bubble a {
+        color: var(--accent);
+        text-decoration: underline;
+    }
+    .bubble blockquote {
+        border-left: 3px solid var(--accent);
+        padding-left: 10px;
+        margin: 6px 0;
+        color: var(--fg-muted);
+    }
+    .bubble h1, .bubble h2, .bubble h3 {
+        margin: 8px 0 4px;
+        font-weight: 600;
+    }
+    .bubble h1 { font-size: 16px; }
+    .bubble h2 { font-size: 15px; }
+    .bubble h3 { font-size: 14px; }
+    .bubble table {
+        border-collapse: collapse;
+        margin: 6px 0;
+        font-size: 12px;
+    }
+    .bubble th, .bubble td {
+        border: 1px solid var(--border);
+        padding: 4px 8px;
+    }
+    .bubble th { background: var(--bg-elev); }
+
+    /* === 工具调用卡片 === */
+    .tool-card {
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 6px 10px;
+        margin: 6px 0;
+        font-size: 11px;
+        font-family: var(--font-mono);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .tool-card.success { border-left: 3px solid var(--success); }
+    .tool-card.error { border-left: 3px solid var(--error); }
+    .tool-card .tool-icon { font-size: 14px; }
+
+    /* === 状态指示器 === */
+    .status-dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--fg-muted);
+        margin-right: 4px;
+    }
+    .status-dot.success { background: var(--success); }
+    .status-dot.error { background: var(--error); }
+    .status-dot.pending { background: var(--accent); animation: pulse 1s infinite; }
+    @keyframes pulse {
+        0%, 100% { opacity: 0.4; }
+        50% { opacity: 1; }
+    }
+
+    /* === 流式光标 === */
+    .cursor {
+        display: inline-block;
+        width: 2px;
+        height: 14px;
+        background: var(--accent);
+        animation: cursor-blink 1s infinite;
+        vertical-align: text-bottom;
+        margin-left: 2px;
+    }
+    @keyframes cursor-blink { 50% { opacity: 0; } }
+
+    /* === Composer (与 GUI Composer.tsx 对齐) === */
+    .composer {
+        display: flex;
+        gap: var(--gap-1);
+        padding: 6px 8px;
+        background: var(--panel);
+        border-top: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+    .composer textarea {
+        flex: 1;
+        min-height: 36px;
+        max-height: 120px;
+        padding: 6px 10px;
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        font-family: var(--font);
+        font-size: 13px;
+        resize: vertical;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    .composer textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent-soft);
+    }
+    .composer .send-btn {
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        color: #fff;
+        border: none;
+        padding: 0 16px;
+        border-radius: var(--radius);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        align-self: stretch;
+        transition: opacity 0.15s;
+    }
+    .composer .send-btn:hover { opacity: 0.9; }
+    .composer .send-btn:active { transform: scale(0.97); }
+    .composer .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* === 状态变体 (minimal) === */
+    body.variant-status .toolbar { display: none; }
+    body.variant-status .composer { display: none; }
+    body.variant-status .messages { padding: 12px; }
+    
+    </style>
+</head>
+<body class="variant-chat">
+    <div class="toolbar">
+        <button class="tb-btn" data-action="toggle-files" title="文件树">📁</button>
+        <button class="tb-btn" data-action="review" title="审查项目">🔍</button>
+        <button class="tb-btn" data-action="clear" title="清空">🗑</button>
+        <div class="tb-spacer"></div>
+        <span class="tb-status" id="status">就绪</span>
+    </div>
+    <div class="file-tree" id="fileTree" style="display:none"></div>
+    <div class="messages" id="log">
+        <div class="empty-state">🚀 PulseFlow Lite 模式 (快速启动)
+让智能体理解系统的生命状态
+输入消息开始对话
+用 @ 引用文件/工具/记忆</div>
+    </div>
+    
+    <div class="composer">
+        <textarea id="in" placeholder="输入消息... (@引用文件/工具/记忆)  Shift+Enter 换行"></textarea>
+        <button class="send-btn" id="sendBtn">发送</button>
+    </div>
+    
+    <script nonce="agentai-nonce">
+
+(function () {
+    'use strict';
+    const vscode = acquireVsCodeApi();
+    const PROVIDER = (window.PROVIDER || 'agentai').toLowerCase();
+    let msgId = 0;
+    let streaming = null; // 当前流式消息 ID
+
+    // === Provider 配色 (与 GUI Avatar.tsx 对齐) ===
+    const PALETTE = {
+        agentai:  { grad: 'linear-gradient(135deg,#A78BFA,#6366F1 50%,#4338CA)', ring: 'rgba(99,102,241,.85)', letter: 'A', label: 'Atlas' },
+        deepseek: { grad: 'linear-gradient(135deg,#67E8F9,#06B6D4 50%,#0369A1)', ring: 'rgba(6,182,212,.85)',  letter: 'D', label: 'DeepSeek' },
+        openai:   { grad: 'linear-gradient(135deg,#6EE7B7,#10B981 50%,#047857)', ring: 'rgba(16,185,129,.85)', letter: 'O', label: 'OpenAI' },
+        cline:    { grad: 'linear-gradient(135deg,#FCD34D,#F59E0B 50%,#B45309)', ring: 'rgba(245,158,11,.85)', letter: 'C', label: 'Cline' },
+        zhipu:    { grad: 'linear-gradient(135deg,#F9A8D4,#EC4899 50%,#BE185D)', ring: 'rgba(236,72,153,.85)', letter: 'Z', label: '智谱 GLM' },
+    };
+    const AI_STYLE = PALETTE[PROVIDER] || PALETTE.agentai;
+
+    // === 工具栏事件 ===
+    document.querySelectorAll('.tb-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const action = btn.dataset.action;
+            if (action === 'clear') clearLog();
+            if (action === 'review') sendMessage('请审查当前项目, 指出问题并给出改进建议');
+            if (action === 'toggle-files') {
+                const ft = document.getElementById('fileTree');
+                if (ft) {
+                    const show = ft.style.display === 'none';
+                    ft.style.display = show ? 'block' : 'none';
+                    if (show) vscode.postMessage({ type: 'listFiles', dir: '.' });
+                }
+            }
+        });
+    });
+
+    // === 发送消息 ===
+    const inEl = document.getElementById('in');
+    const sendBtn = document.getElementById('sendBtn');
+    function sendMessage(text) {
+        if (!text || !text.trim()) return;
+        if (inEl) inEl.value = '';
+        addUserMsg(text);
+        vscode.postMessage({ type: 'chat', text });
+        setStatus('pending', '🤔 思考中...');
+        if (sendBtn) sendBtn.disabled = true;
+    }
+    if (sendBtn) sendBtn.addEventListener('click', () => sendMessage(inEl && inEl.value));
+    if (inEl) {
+        inEl.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage(inEl.value);
+            }
+        });
+    }
+
+    function clearLog() {
+        const log = document.getElementById('log');
+        if (log) {
+            log.innerHTML = '<div class="empty-state">已清空对话</div>';
+            streaming = null;
+        }
+    }
+
+    // === 用户消息 ===
+    function addUserMsg(text) {
+        const log = document.getElementById('log');
+        if (!log) return;
+        const empty = log.querySelector('.empty-state');
+        if (empty) empty.remove();
+        const msg = document.createElement('div');
+        msg.className = 'msg msg-user';
+        msg.innerHTML = '<div class="bubble">' + escapeHtml(text) + '</div>';
+        log.appendChild(msg);
+        scrollToBottom();
+    }
+
+    // === AI 消息 (流式) ===
+    function addBotStart(id) {
+        streaming = id;
+        const log = document.getElementById('log');
+        if (!log) return;
+        const empty = log.querySelector('.empty-state');
+        if (empty) empty.remove();
+        const msg = document.createElement('div');
+        msg.className = 'msg msg-bot';
+        msg.id = 'msg-' + id;
+        msg.innerHTML =
+            '<div class="avatar ai" style="background:' + AI_STYLE.grad + ';border-color:' + AI_STYLE.ring + '">' +
+            '<span style="color:' + AI_STYLE.ring + '">' + AI_STYLE.letter + '</span></div>' +
+            '<div class="bubble" id="bubble-' + id + '"><span class="cursor"></span></div>';
+        log.appendChild(msg);
+        scrollToBottom();
+    }
+
+    function appendBotDelta(id, text) {
+        const el = document.getElementById('bubble-' + id);
+        if (!el) return;
+        // 删除光标
+        const cursor = el.querySelector('.cursor');
+        if (cursor) cursor.remove();
+        el.insertAdjacentText('beforeend', text);
+        // 重新加光标
+        const c = document.createElement('span');
+        c.className = 'cursor';
+        el.appendChild(c);
+        scrollToBottom();
+    }
+
+    function finishBot(id) {
+        const el = document.getElementById('bubble-' + id);
+        if (!el) return;
+        // 移除最后一个光标
+        const cursor = el.querySelector('.cursor');
+        if (cursor) cursor.remove();
+        // 渲染 markdown (包括代码块高亮)
+        const raw = el.textContent;
+        el.innerHTML = renderMarkdown(raw);
+        // 触发 highlight.js
+        if (window.hljs) {
+            el.querySelectorAll('pre code').forEach(b => {
+                try { window.hljs.highlightElement(b); } catch (e) {}
+            });
+        }
+        streaming = null;
+        setStatus('success', '✅ 完成');
+        if (sendBtn) sendBtn.disabled = false;
+    }
+
+    function errorBot(id, err) {
+        const el = document.getElementById('bubble-' + id);
+        if (el) {
+            el.innerHTML = '<span style="color:var(--error)">❌ ' + escapeHtml(err) + '</span>';
+            el.classList.add('error');
+        }
+        streaming = null;
+        setStatus('error', '❌ 错误');
+        if (sendBtn) sendBtn.disabled = false;
+    }
+
+    // === 工具调用卡片 ===
+    function addToolCard(name, args, result, ok) {
+        const log = document.getElementById('log');
+        if (!log) return;
+        const card = document.createElement('div');
+        card.className = 'tool-card ' + (ok ? 'success' : 'error');
+        const icon = ok ? '🔧' : '⚠️';
+        let argsStr = '';
+        try { argsStr = typeof args === 'string' ? args : JSON.stringify(args).slice(0, 200); } catch (e) {}
+        card.innerHTML =
+            '<span class="tool-icon">' + icon + '</span>' +
+            '<span><b>' + escapeHtml(name) + '</b></span>' +
+            '<span style="color:var(--fg-muted);margin-left:6px">' + escapeHtml(argsStr) + '</span>';
+        // 插入到当前流式消息之前
+        const cur = streaming ? document.getElementById('msg-' + streaming) : null;
+        if (cur) log.insertBefore(card, cur);
+        else log.appendChild(card);
+        scrollToBottom();
+    }
+
+    // === 文件列表 ===
+    function renderFileList(dir, files) {
+        const ft = document.getElementById('fileTree');
+        if (!ft) return;
+        ft.innerHTML = '';
+        const head = document.createElement('div');
+        head.style.cssText = 'padding:2px 0;font-weight:600;opacity:0.7';
+        head.textContent = '📂 ' + dir;
+        ft.appendChild(head);
+        files.forEach(f => {
+            const entry = document.createElement('div');
+            entry.className = 'file-entry';
+            const icon = f.type === 'directory' ? '📁' : '📄';
+            entry.innerHTML = '<span class="file-icon">' + icon + '</span>' + escapeHtml(f.name);
+            entry.onclick = () => {
+                if (f.type === 'directory') {
+                    vscode.postMessage({ type: 'listFiles', dir: dir + '/' + f.name });
+                } else {
+                    vscode.postMessage({ type: 'openFile', path: dir + '/' + f.name });
+                }
+            };
+            ft.appendChild(entry);
+        });
+    }
+
+    // === 状态指示 ===
+    function setStatus(kind, text) {
+        const s = document.getElementById('status');
+        if (s) {
+            s.innerHTML = '<span class="status-dot ' + kind + '"></span>' + escapeHtml(text);
+        }
+    }
+
+    // === 工具函数 ===
+    function scrollToBottom() {
+        const log = document.getElementById('log');
+        if (log) log.scrollTop = log.scrollHeight;
+    }
+    function escapeHtml(s) {
+        return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function renderMarkdown(text) {
+        if (typeof window.marked === 'undefined') {
+            return escapeHtml(text).replace(/\n/g, '<br>');
+        }
+        try {
+            return window.marked.parse(text, { gfm: true, breaks: true });
+        } catch (e) {
+            return escapeHtml(text);
+        }
+    }
+
+    // === 接收扩展消息 ===
+    window.addEventListener('message', e => {
+        const d = e.data;
+        if (!d || !d.type) return;
+        switch (d.type) {
+            case 'userMsg':    addUserMsg(d.text); break;
+            case 'botStart':   addBotStart(d.id); break;
+            case 'botDelta':   appendBotDelta(d.id, d.text); break;
+            case 'botDone':    finishBot(d.id); break;
+            case 'botError':   errorBot(d.id, d.error || 'unknown'); break;
+            case 'toolCall':   addToolCard(d.name, d.args, d.result, d.ok !== false); break;
+            case 'fileList':   renderFileList(d.dir, d.files || []); break;
+            case 'status':     setStatus(d.kind || 'pending', d.text); break;
+        }
+    });
+
+    // 暴露给扩展注入 prompt
+    window.AgentAI = {
+        send: sendMessage,
+        onMessage: (cb) => window.addEventListener('message', cb),
+    };
+})();
+
+    </script>
+</body>
+</html>

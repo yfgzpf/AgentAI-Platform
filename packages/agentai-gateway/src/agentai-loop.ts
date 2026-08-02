@@ -36,6 +36,11 @@ import { buildIdeContext } from './ide-state.js';
 import { buildMemoryContext, initProjectMemory, readProjectMemory } from './project-memory.js';
 import { MemoryManager } from './memory-manager.js';
 import { recordCall } from './usage-stats.js';
+import { getTaskSupervisor } from './task-supervisor.js';
+import { loopLogger as logger, isLogEnabled } from './logger.js';
+import { recordToolCall, finalizeSessionAnalytics } from './tool-call-analytics.js';
+import { getFourDiagnosesSystem } from './qihuang/four-diagnoses.js';
+import { buildRemoteContext, isRemoteSessionActive, getActiveRemoteSession, detectRemoteIntent } from './remote/ai-integration.js';
 
 /* ═══════════ 审批白名单: 用户信任的命令模式 ═══════════
  * 当用户在审批卡片中点击"信任此命令"后，相同工具+路径模式将自动跳过审批
@@ -439,6 +444,38 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     return this._smartSwitcher;
   }
 
+  /**
+   * 读取项目说明文件 (PROJECT_README.md, PROJECT_CONTEXT.md, PROJECT_STATE.md)
+   * 返回合并后的内容，用于注入 AI 上下文
+   */
+  private readProjectDocs(): string | null {
+    const workspace = this.opts.workspace || process.cwd();
+    const agentaiDir = path.join(workspace, '.agentai');
+    const docs: string[] = [];
+
+    const docFiles = [
+      { name: 'PROJECT_README.md', label: '项目架构' },
+      { name: 'PROJECT_CONTEXT.md', label: '任务上下文' },
+      { name: 'PROJECT_STATE.md', label: '实时状态' },
+    ];
+
+    for (const { name, label } of docFiles) {
+      const filePath = path.join(agentaiDir, name);
+      if (fs.existsSync(filePath)) {
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          docs.push(`\n=== ${label}: ${name} ===\n${content}`);
+        } catch (e) {
+          logger.warn(`读取 ${name} 失败:`, e);
+        }
+      }
+    }
+
+    if (docs.length === 0) return null;
+
+    return `# 项目说明文档 (AI 自动维护)\n${docs.join('\n')}\n\n提示: 使用 auto_project_doc 工具更新这些文档。`;
+  }
+
   /** 中断当前运行的任务 */
   abort() {
     this._aborted = true;
@@ -461,7 +498,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     return new Promise<boolean>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingApprovals.delete(id);
-        console.warn(`[loop] approval ${id} 超时, 自动拒绝`);
+        logger.warn(`approval ${id} 超时, 自动拒绝`);
         resolve(false);
       }, timeoutMs);
       this.pendingApprovals.set(id, { resolve, reject, timer });
@@ -476,7 +513,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   resolveApproval(id: string, granted: boolean): boolean {
     const entry = this.pendingApprovals.get(id);
     if (!entry) {
-      console.warn(`[loop] resolveApproval: 未找到 ${id}`);
+      logger.warn(`resolveApproval: 未找到 ${id}`);
       return false;
     }
     clearTimeout(entry.timer);
@@ -503,14 +540,14 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         resolve(val);
       };
       const timer = setTimeout(() => {
-        console.warn(`[loop] clarification ${id} 超时, 继续执行`);
+        logger.warn(`clarification ${id} 超时, 继续执行`);
         settle({}); // 超时返回空答案，继续执行
       }, timeoutMs);
       // 安全: 监听 abort 信号，会话被压制时立即结束等待
       let abortHandler: (() => void) | null = null;
       if (this.opts?.abortSignal) {
         abortHandler = () => {
-          console.warn(`[loop] clarification ${id} aborted`);
+          logger.warn(`clarification ${id} aborted`);
           settle({});
         };
         if (this.opts.abortSignal.aborted) {
@@ -531,7 +568,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   resolveClarification(id: string, answers: Record<string, string>): boolean {
     const entry = this.pendingClarifications.get(id);
     if (!entry) {
-      console.warn(`[loop] resolveClarification: 未找到 ${id}`);
+      logger.warn(`resolveClarification: 未找到 ${id}`);
       return false;
     }
     clearTimeout(entry.timer);
@@ -622,13 +659,13 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       
       if (skillMatch && skillMatch.confidence >= 0.6) {
         skillInvocationBlock = skillManager.generateInvocationPrompt(skillMatch);
-        console.log(`[loop] 🎯 检测到技能匹配: ${skillMatch.skill.name} (置信度: ${(skillMatch.confidence * 100).toFixed(0)}%)`);
+        logger.info(`🎯 检测到技能匹配: ${skillMatch.skill.name} (置信度: ${(skillMatch.confidence * 100).toFixed(0)}%)`);
         
         // 高置信度时强制调用（>=0.8）
         if (skillMatch.confidence >= 0.8) {
           this._forceSkill = skillMatch.skill.name;
           forcedSkillMatch = skillMatch;
-          console.log(`[loop] 🔒 强制技能调用: ${skillMatch.skill.name}`);
+          logger.info(`🔒 强制技能调用: ${skillMatch.skill.name}`);
         }
       }
       
@@ -639,7 +676,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         skillInvocationBlock += `\n\n【可用技能】\n${skillList}\n\n**重要**: 当用户需求匹配技能时，立即调用该技能完成！`;
       }
     } catch (e) {
-      console.warn('[loop] 技能自动检测失败:', e);
+      logger.warn('技能自动检测失败:', e);
     }
 
     // === 1. AI 身份 + 核心规则（精简版或完整版） ===
@@ -647,9 +684,9 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     //               supervised 用完整版 (规则驱动, 含 PUA/元认知引导, ~200行)
     const useLitePrompt = this._capabilityTier !== 'supervised';
     if (useLitePrompt) {
-      console.log(`[loop] 📝 使用精简版 system prompt (tier=${this._capabilityTier})`);
+      logger.info(`📝 使用精简版 system prompt (tier=${this._capabilityTier})`);
     } else {
-      console.log(`[loop] 📜 使用完整版 system prompt (tier=${this._capabilityTier}, 含反摆烂/PRD/质疑模式)`);
+      logger.info(`📜 使用完整版 system prompt (tier=${this._capabilityTier}, 含反摆烂/PRD/质疑模式)`);
     }
     
     // === 1.1 进化记忆智能召回（2026-06-24 新增，2026-06-26 整合治失忆症）===
@@ -740,6 +777,36 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       systemMsgs.push({ role: 'system', content: memCtx });
     }
 
+    // === 1.75 远程开发环境上下文 (2026-07-30 新增) ===
+    // 当用户连接到远程环境时，注入远程上下文让 AI 感知
+    const remoteCtx = buildRemoteContext();
+    if (remoteCtx) {
+      systemMsgs.push({ role: 'system', content: remoteCtx });
+      logger.info(`🌐 已注入远程环境上下文: ${getActiveRemoteSession()?.environment.name}`);
+    }
+
+    // === 1.8 项目说明文件 (PROJECT_README.md, PROJECT_CONTEXT.md, PROJECT_STATE.md) ===
+    // 自动读取 AI 维护的项目文档并注入上下文
+    try {
+      // 🔧 自动检测: 如果 3 个文档全部缺失, 首次自动生成 (仅 init 时执行一次)
+      const _ws = this.opts.workspace || process.cwd();
+      const _ad = path.join(_ws, '.agentai');
+      const _allMissing = ['PROJECT_README.md', 'PROJECT_CONTEXT.md', 'PROJECT_STATE.md']
+        .every(name => !fs.existsSync(path.join(_ad, name)));
+      if (_allMissing) {
+        logger.info('[project-docs] 3 个文档均不存在, 自动生成中...');
+        const { autoProjectDoc } = await import('./tools/auto-project-doc.js');
+        await autoProjectDoc({ action: 'review', workspace: _ws });
+        logger.info('[project-docs] 自动生成完成');
+      }
+      const projectDocs = this.readProjectDocs();
+      if (projectDocs) {
+        systemMsgs.push({ role: 'system', content: projectDocs });
+      }
+    } catch (e) {
+      logger.warn('读取项目说明文件失败:', e);
+    }
+
     // === 2. 用户上下文 (姓名 + 情绪 + 开发偏好 合并为一条) ===
     try {
       const ctxParts: string[] = [];
@@ -757,11 +824,12 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         let emotionStr = `情绪: ${e.label} (${tips[e.emotion] || ''})`;
 
         // ═══ 2026-06-27 新增: 情绪趋势感知 ═══
-        // 如果有历史情绪, 注入趋势让 AI 感知变化
+        // 2026-07-29: 只在情绪强度>0.7时才注入趋势
         if (this._emotionHistory.length >= 2) {
           const prev = this._emotionHistory[this._emotionHistory.length - 2];
           const curr = this._emotionHistory[this._emotionHistory.length - 1];
-          if (prev && curr && prev.emotion !== curr.emotion) {
+          // 强度阈值守卫: 只有当前或上一轮情绪强度>0.7才显示趋势
+          if (prev && curr && (curr.intensity > 0.7 || prev.intensity > 0.7) && prev.emotion !== curr.emotion) {
             const trendMap: Record<string, string> = {
               'anxious→positive': '从焦虑转为积极 — 你的安抚有效, 继续当前策略',
               'anxious→neutral': '焦虑有所缓解, 继续保持耐心',
@@ -801,10 +869,11 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           if (dp.length) ctxParts.push(`开发偏好: ${dp.join(' | ')}`);
         }
       } catch {}
-      // 注入浏览器引擎状态 (让 AI 知道有页面可操作)
+      // 注入浏览器引擎状态 (让 AI 知道有页面可操作) — 2026-07-29: 添加关键词守卫
       try {
+        const hasBrowserIntent = /截图|浏览器|网页|browser|screenshot|capture|page|web/i.test(typeof userMessage === 'string' ? userMessage : '');
         const be = (globalThis as any).__browserEngine;
-        if (be?.isRunning?.()) {
+        if (hasBrowserIntent && be?.isRunning?.()) {
           const url = be.getCurrentUrl?.();
           if (url) ctxParts.push(`🌐 浏览器已打开: ${url} — 可用 browser_screenshot 截图查看, browser_click/type 操作元素`);
         }
@@ -812,10 +881,13 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       if (ctxParts.length > 0) {
         systemMsgs.push({ role: 'system', content: `# 用户上下文\n${ctxParts.join('\n')}` });
       }
-    } catch (e: any) { console.warn('[loop] user context optional failed:', e?.message || e); }
+    } catch (e: any) { logger.warn('user context optional failed:', e?.message || e); }
 
     // === 2.5 客户档案上下文 (B3: AI 对话时自动注入客户信息) ===
+    // 2026-07-29: 添加关键词守卫，只在客服场景注入
     try {
+      const hasCustomerIntent = /客户|客服|售后|投诉|咨询|customer|support|after.?sales|跟进|联系|沟通/i.test(typeof userMessage === 'string' ? userMessage : '');
+      if (!hasCustomerIntent) throw new Error('skip customer context');
       const { findByChannel, getJourney } = await import('./customer-store.js');
       const { getMapping } = await import('./channel-session-bridge.js');
       // 尝试从 userId 反查渠道身份
@@ -862,7 +934,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             const latestUserMsg = messages.filter(m => m.role === 'user' && typeof m.content === 'string').pop();
             if (latestUserMsg) {
               const detected = insightAccumulator.detectIndustry(latestUserMsg.content as string);
-              if (detected && detected.confidence > 0.15) {
+              if (detected && detected.confidence > 0.6) {
                 // 将 InsightAccumulator ID 映射到 IndustryEngine ID
                 const idMap: Record<string, string> = {
                   software_dev: 'developer', healthcare: 'medical',
@@ -873,7 +945,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
                 const config = industryEngine.activate(mappedId);
                 if (config) {
                   industryId = mappedId;
-                  console.log(`[industry] auto-detected: ${detected.industryId} → ${mappedId} (confidence: ${(detected.confidence * 100).toFixed(0)}%)`);
+                  logger.info(`[industry] auto-detected: ${detected.industryId} → ${mappedId} (confidence: ${(detected.confidence * 100).toFixed(0)}%)`);
                   // 动态注册行业技能到 ToolRegistry
                   try {
                     for (const skill of config.skills) {
@@ -888,7 +960,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
                         });
                       }
                     }
-                    console.log(`[industry] auto-registered ${config.skills.length} industry tools for ${mappedId}`);
+                    logger.info(`[industry] auto-registered ${config.skills.length} industry tools for ${mappedId}`);
                   } catch {}
                 }
               }
@@ -899,7 +971,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         // 注入 IndustryEngine 的 System Prompt 片段
         const frag = industryEngine.buildSystemPromptFragment();
         if (frag) systemMsgs.push({ role: 'system', content: frag });
-      } catch (e: any) { console.warn('[loop] industry engine optional failed:', e?.message || e); }
+      } catch (e: any) { logger.warn('industry engine optional failed:', e?.message || e); }
       // 回退到环境变量
       if (!industryId) {
         industryId = process.env['AGENTAI_INDUSTRY'] || '';
@@ -949,10 +1021,10 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             if (insightFrag) {
               systemMsgs.push({ role: 'system', content: insightFrag });
             }
-          } catch (e: any) { console.warn('[loop]', e?.message || e); }
+          } catch (e: any) { logger.warn(e?.message || e); }
         }
       }
-    } catch (e: any) { console.warn('[loop]', e?.message || e); }
+    } catch (e: any) { logger.warn(e?.message || e); }
 
     // === 3. 用户模型 (Honcho 4维度) ===
     try {
@@ -960,7 +1032,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       if (profile && !profile.includes('0,')) {
         systemMsgs.push({ role: 'system', content: profile });
       }
-    } catch (e: any) { console.warn('[loop] user model optional:', e?.message || e); }
+    } catch (e: any) { logger.warn('user model optional:', e?.message || e); }
 
     // === 3.5 行业知识库检索 (RAG) ===
     try {
@@ -981,28 +1053,17 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           }
         }
       }
-    } catch (e: any) { console.warn('[loop] knowledge base optional:', e?.message || e); }
+    } catch (e: any) { logger.warn('knowledge base optional:', e?.message || e); }
 
-    // === 4. 持久记忆注入 (智能排序: 行业加权 + 时效衰减) ===
+    // === 4. 持久记忆注入 (已合并到 §1.7 MemoryManager, 此处禁用避免重复) ===
+    // 2026-07-29: 记忆系统去重 - MemoryManager (§1.7) 已统一处理项目记忆和用户偏好
+    // 原 readMemory (memory.jsonl) 注入已移除，如需使用请通过 recall_memory 工具手动调用
+    // 保留代码结构以备未来需要，但当前逻辑为空
     try {
-      const { readMemory } = await import('./memory.js');
-      const mems = await readMemory({
-        userId: this.opts.userId,
-        workspace: this.opts.workspace,
-        limit: 10,
-      });
-      if (mems.length > 0) {
-        const memEntries = mems.map(m => {
-          const industryTag = m.industry && m.industry !== 'general' ? `[${m.industry}]` : '';
-          const date = new Date(m.ts).toLocaleDateString();
-          return `- ${date}${industryTag} ${(m.content || '').slice(0, 80)}`;
-        });
-        systemMsgs.push({
-          role: 'system',
-          content: `\n# Persistent Memory\n${memEntries.join('\n')}\n使用 recall_memory 查看详情, remember 保存, forget 删除。`,
-        });
-      }
-    } catch (e: any) { console.warn('[loop] persistent memory optional:', e?.message || e); }
+      // 记忆注入已合并到 §1.7，此处不再重复注入
+      // const { readMemory } = await import('./memory.js');
+      // ... (原逻辑已迁移)
+    } catch { /* 记忆系统已统一 */ }
 
     // === 4.5 自进化记忆 (已整合到 §1.1, 此处已废弃) ===
     // 进化记忆在 §1.1 统一召回并注入 evolutionSystemBlock，无需在此重复读取。
@@ -1061,26 +1122,39 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       } catch { /* startup awareness optional */ }
     }
 
-    // === 4.9 跨会话连续记忆: 注入上次会话摘要 ===
+    // === 4.9 跨会话连续记忆: 注入上次会话摘要 (支持 AI 控制是否注入) ===
     if (!this._startupSessionInjected && this.opts.workspace) {
       this._startupSessionInjected = true;
       try {
-        const { getPersistentMemory } = await import('./persistent-memory.js');
-        const pm = getPersistentMemory();
-        const lastSession = pm.getLastSessionSummary(this.opts.workspace);
-        if (lastSession) {
-          const ageMin = Math.round((Date.now() - lastSession.timestamp) / 60000);
-          const ageStr = ageMin < 60 ? `${ageMin}分钟前` : `${Math.round(ageMin / 60)}小时前`;
-          const tools = lastSession.toolsUsed.length > 0
-            ? lastSession.toolsUsed.slice(0, 8).join(', ')
-            : '无';
-          const files = lastSession.filesModified.length > 0
-            ? lastSession.filesModified.slice(0, 5).join(', ')
-            : '无';
-          systemMsgs.push({
-            role: 'system',
-            content: `# 上次会话 (${ageStr})\n用户目标: ${lastSession.userGoal}\n使用工具: ${tools}\n修改文件: ${files}\n结果摘要: ${lastSession.summary}\n\n如果用户说"继续上次"或"接着做"，参考以上信息。`,
-          });
+        // 检查 AI 是否设置了禁用跨会话记忆注入的偏好
+        let skipInjection = false;
+        try {
+          const { readProjectMemory } = await import('./project-memory.js');
+          const pm = readProjectMemory(this.opts.workspace);
+          if (pm?.preferences?.ai_preferences?.skip_last_session_injection === true) {
+            skipInjection = true;
+            logger.info('🚫 AI 已设置跳过跨会话记忆注入');
+          }
+        } catch { /* ignore */ }
+
+        if (!skipInjection) {
+          const { getPersistentMemory } = await import('./persistent-memory.js');
+          const pm = getPersistentMemory();
+          const lastSession = pm.getLastSessionSummary(this.opts.workspace);
+          if (lastSession) {
+            const ageMin = Math.round((Date.now() - lastSession.timestamp) / 60000);
+            const ageStr = ageMin < 60 ? `${ageMin}分钟前` : `${Math.round(ageMin / 60)}小时前`;
+            const tools = lastSession.toolsUsed.length > 0
+              ? lastSession.toolsUsed.slice(0, 8).join(', ')
+              : '无';
+            const files = lastSession.filesModified.length > 0
+              ? lastSession.filesModified.slice(0, 5).join(', ')
+              : '无';
+            systemMsgs.push({
+              role: 'system',
+              content: `# 上次会话 (${ageStr})\n用户目标: ${lastSession.userGoal}\n使用工具: ${tools}\n修改文件: ${files}\n结果摘要: ${lastSession.summary}\n\n如果用户说"继续上次"或"接着做"，参考以上信息。`,
+            });
+          }
         }
       } catch { /* last session summary optional */ }
     }
@@ -1112,7 +1186,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             if (mem) {
               systemMsgs.push({ role: 'system', content: `\n${mem}\n\n使用 \`read_file\` 查看完整规则。` });
             }
-          } catch (e: any) { console.warn('[loop] sub-memory read optional:', e?.message || e); }
+          } catch (e: any) { logger.warn('sub-memory read optional:', e?.message || e); }
 
           // === 最近生成文件感知: 扫描工作区最近 24h 内创建/修改的产出文件 ===
           try {
@@ -1150,7 +1224,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             }
           } catch { /* recent files scan optional */ }
         }
-      } catch (e: any) { console.warn('[loop]', e?.message || e); }
+      } catch (e: any) { logger.warn(e?.message || e); }
     }
 
     // === 6.3 项目规则文件自动加载/生成 (跨会话项目规范) ===
@@ -1166,7 +1240,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             content: `\n# 项目规则 (来自 .trae/rules/project_rules.md)\n${rules}`,
           });
         }
-      } catch (e: any) { console.warn('[loop] project rules init optional:', e?.message || e); }
+      } catch (e: any) { logger.warn('project rules init optional:', e?.message || e); }
     }
 
     // === 6.5 自主能力 + 成本意识 ===
@@ -1246,13 +1320,22 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       }
     }
 
+    // === 5.5 外部连接工具提示 (Android/公众号/SketchUp) ===
+    const externalToolsBlock = this.buildExternalToolsContext();
+    if (externalToolsBlock) {
+      systemMsgs.push({
+        role: 'system',
+        content: externalToolsBlock,
+      });
+    }
+
     // === 5. 用户偏好 (从 RevertBridge 学习的缩进/引号风格) ===
     try {
       const prefs = revertBridge.toSystemPrompt(this.opts.workspace || process.cwd());
       if (prefs) {
         systemMsgs.push({ role: 'system', content: prefs });
       }
-    } catch (e: any) { console.warn('[loop] RevertBridge preferences optional:', e?.message || e); }
+    } catch (e: any) { logger.warn('RevertBridge preferences optional:', e?.message || e); }
 
     // === 5. 用户传入的额外 system messages ===
     const userSystemMsgs = messages.filter(m => m.role === 'system');
@@ -1280,10 +1363,78 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       const proactiveEngine = new ProactiveSuggestionEngine();
       (proactiveEngine as any); // 解除未使用变量警告
     } catch (error) {
-      console.warn('[ProactiveSuggestionEngine] SessionStart hook error (non-critical):', error);
+      logger.warn('[ProactiveSuggestionEngine] SessionStart hook error (non-critical):', error);
     }
 
     return systemMsgs;
+  }
+
+  /**
+   * 构建外部连接工具上下文
+   * 注入所有外部连接器信息 + AI自主安装/配置指南
+   */
+  private buildExternalToolsContext(): string {
+    const tools = this.registry.list();
+    const androidTools = tools.filter(t => t.name.startsWith('android_'));
+    const wechatTools = tools.filter(t => t.name.includes('wechat') || t.name.includes('official'));
+    const sketchupTools = tools.filter(t => t.name.includes('sketchup'));
+    
+    let context = '';
+    
+    // ═══════════ 连接器使用总则 ═══════════
+    context += `# 🔌 外部连接器使用规则\n`;
+    context += `当用户启用某个连接器时，你必须按以下流程操作：\n`;
+    context += `1. **自检**: 调用 GET /api/connectors/status 查看各连接器状态\n`;
+    context += `2. **缺依赖→自动安装**: 如果 missingDeps 不为空，用 bash 工具执行安装命令\n`;
+    context += `3. **缺配置→追问用户**: 如果 missingConfig 不为空，向用户说明需要什么配置及如何获取\n`;
+    context += `4. **保存配置**: 用户回复后，用 POST /api/connectors/:id/configure 保存每个配置项\n`;
+    context += `5. **验证就绪**: 所有依赖安装完成、所有配置填好后，连接器标记为 online\n`;
+    context += `6. **开始使用**: 用对应工具执行任务\n\n`;
+    
+    // ═══════════ Android 手机控制 ═══════════
+    if (androidTools.length > 0) {
+      context += `## 📱 Android 手机控制\n`;
+      context += `可用工具: android_list_devices, android_connect_device, android_screenshot,\n`;
+      context += `android_press_button, android_send_text, android_send_touch, android_scroll,\n`;
+      androidTools.slice(0, 12).forEach(t => context += `- ${t.name}: ${t.description}\n`);
+      context += `\n**安装流程**: \n`;
+      context += `1. 检查 adb: \`adb version\` — 没有则 \`sudo apt install adb\` (linux) 或 \`brew install android-platform-tools\` (mac)\n`;
+      context += `2. 下载 Another: \`curl -LO https://github.com/Zfinix/another/releases/latest/download/Another.dmg\`\n`;
+      context += `3. 安装后启动，MCP Server 监听 localhost:7070\n`;
+      context += `4. USB连接Android设备，开启USB调试\n`;
+      context += `5. 调用 android_list_devices 确认设备在线\n\n`;
+      context += `**使用流程**: list_devices → connect_device → screenshot → 操作 → screenshot 验证 → disconnect\n`;
+      context += `**注意**: 操作前必须先截图了解界面, 操作后截图验证结果\n\n`;
+    }
+    
+    // ═══════════ 公众号自动化 ═══════════
+    if (wechatTools.length > 0) {
+      context += `## 📝 微信公众号自动化\n`;
+      context += `可用工具: wechat_publish_article\n`;
+      context += `完整流水线: 对标拆解 → 选题判断 → AI写初稿 → deAI去指纹 → 质量闸门 → 配图生成 → Markdown转微信HTML → 发布草稿箱\n\n`;
+      context += `**所需配置**:\n`;
+      context += `- DeepSeek API Key: 去 https://platform.deepseek.com 注册获取（约$0.002/千字）\n`;
+      context += `- 公众号 AppID: mp.weixin.qq.com → 开发 → 基本配置 → 开发者ID\n`;
+      context += `- 公众号 AppSecret: 同上页面 → 开发者密码\n`;
+      context += `- 出图API Key（可选）: Runware(runware.ai) 或 豆包(volcengine.com)\n\n`;
+      context += `**使用方式**: wechat_publish_article({topic: "文章主题", style_guide: "风格描述"})\n`;
+      context += `AI会自动执行8步流水线，生成文章并推送到公众号草稿箱。人工只需过审+发布。\n\n`;
+    }
+    
+    // ═══════════ SketchUp 3D建模 ═══════════
+    if (sketchupTools.length > 0) {
+      context += `## 🏗️ SketchUp 3D 建模\n`;
+      context += `可用能力: 创建几何体、设置材质、布尔运算、导出STL/OBJ/DAE\n`;
+      context += `适合: 建筑/室内/家具设计行业\n\n`;
+      context += `**安装流程**:\n`;
+      context += `1. 安装 uv: \`winget install --id astral-sh.uv -e\` (Windows) 或 \`pip install uv\`\n`;
+      context += `2. 安装 sketchup-mcp2: \`uvx sketchup-mcp2\`\n`;
+      context += `3. 在 SketchUp 中安装 .rbz 扩展 → Window → Extension Manager → Install Extension\n`;
+      context += `4. 打开 SketchUp → Plugins → MCP Server → Start Server (默认 127.0.0.1:9876)\n`;
+      context += `5. ⚠️ 不要将 Host 改为 0.0.0.0，仅限本机访问\n\n`;
+    }
+    
+    return context;
   }
 
   /**
@@ -1294,12 +1445,17 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
    *
    * @param userMessage 纯文本消息, 或含 text+image_url 块的结构化消息
    */
-  async run(userMessage: string | { content: MessageContent }): Promise<ChatResponse> {
-    await this.ensureContext();
-    this.iteration = 0;
-    this.context.volatileScratch = '';
-    // 安全守护: H5 修复 — 每次 run() 重置 metaLoop，防止 stepCount 跨消息累积导致元认知失效
-    this.metaLoop = null;
+async run(userMessage: string | { content: MessageContent }): Promise<ChatResponse> {
+  await this.ensureContext();
+  this.iteration = 0;
+  this.context.volatileScratch = '';
+  // 安全守护: H5 修复 — 每次 run() 重置 metaLoop，防止 stepCount 跨消息累积导致元认知失效
+  this.metaLoop = null;
+
+  // ═══ 任务自监督系统: 启动计时器 + 重置统计 ═══
+  const supervisor = getTaskSupervisor();
+  supervisor.reset();
+  supervisor.startTimer();
 
     // ═══ 模型能力分层: 6维评分 → 自治等级 + 运行时参数适配 ═══
     // 核心理念: 不是所有模型都需要手把手管。根据模型元数据自动计算 6 维能力评分
@@ -1322,8 +1478,8 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         const dynCap = getTracker().getDynamicCapabilities(modelId, this._taskType);
         if (dynCap.hasRuntimeData) {
           this._capabilityTier = dynCap.dynamicTier;
-          console.log(
-            `[loop] 🧠 动态能力覆盖: static=${this._capabilities.tier} → dynamic=${dynCap.dynamicTier} ` +
+          logger.info(
+            `🧠 动态能力覆盖: static=${this._capabilities.tier} → dynamic=${dynCap.dynamicTier} ` +
             `(samples=${dynCap.sampleCount}, runtime=${dynCap.runtimeOverall.toFixed(2)}, weight=${(dynCap.runtimeWeight * 100).toFixed(0)}%)`
           );
         }
@@ -1338,8 +1494,8 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       (this as any)._contextCompressThreshold = rt.contextCompressThreshold;
 
       const cap = this._capabilities;
-      console.log(
-        `[loop] 🧠 模型能力: ${this.opts.model}:${this.opts.modelName || 'default'} → tier=${this._capabilityTier} | ` +
+      logger.info(
+        `🧠 模型能力: ${this.opts.model}:${this.opts.modelName || 'default'} → tier=${this._capabilityTier} | ` +
         `reasoning=${cap.reasoning.toFixed(2)} toolCall=${cap.toolCall.toFixed(2)} speed=${cap.speed.toFixed(2)} ` +
         `context=${cap.context.toFixed(2)} overall=${cap.overall.toFixed(2)} | ` +
         `maxIter=${rt.maxIterations} thinking=${rt.thinking} temp=${rt.temperature}`
@@ -1353,7 +1509,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     this._aborted = false;
     const myGeneration = this._runGeneration;
     if (this._abortedGeneration > 0 && this._abortedGeneration < myGeneration - 1) {
-      console.log(`[loop] 🔄 检测到上次中断 (gen ${this._abortedGeneration}), 新任务开始 (gen ${myGeneration})`);
+      logger.info(`🔄 检测到上次中断 (gen ${this._abortedGeneration}), 新任务开始 (gen ${myGeneration})`);
     }
 
     // ═══ 关键修复: 清理上一轮对话残留, 避免旧消息堆积导致 AI 回复旧消息 ═══
@@ -1366,7 +1522,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')
       ).slice(-3); // 最多保留 3 条旧 tool 结果
       this.context.appendOnlyLog = [...retainedOld, ...recentMsgs];
-      console.log(`[loop] 🧹 清理旧对话: ${oldMsgs.length} 条 → 保留 ${retainedOld.length} 条 tool 结果 + ${recentMsgs.length} 条最近消息`);
+      logger.info(`🧹 清理旧对话: ${oldMsgs.length} 条 → 保留 ${retainedOld.length} 条 tool 结果 + ${recentMsgs.length} 条最近消息`);
     }
 
     // ═══ 2026-06-27 新增: 情绪历史追踪 ═══
@@ -1388,9 +1544,9 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
 
     // v3.2 修复: 提前声明 messageText/messageContent, 供下面的 task-snapshot 块使用
     // 之前 messageText 在 1426 才声明, 但 1390 就被使用 → TS 报错
-    const messageContent: MessageContent = typeof userMessage === 'string' ? userMessage : userMessage.content;
-    const messageText = typeof messageContent === 'string' ? messageContent
-      : messageContent.find(b => b.type === 'text')?.text || '';
+    const messageContent: MessageContent = typeof userMessage === 'string' ? userMessage : (userMessage.content || '');
+    const messageText = (typeof messageContent === 'string' ? messageContent
+      : (Array.isArray(messageContent) ? messageContent.find(b => b.type === 'text')?.text : undefined) || '') || '';
 
     // ═══ 2026-07-15 新增: 长任务快照 (task-snapshot) ═══
     // 每次新任务/新会话 → 初始化 task-snapshot, 用于跨会话恢复
@@ -1404,8 +1560,11 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         workspace: this.opts.workspace || process.cwd(),
         goal: messageText.slice(0, 500),
       });
-      // 启动时检测可恢复任务 (仅在用户消息是非空且没有显式新任务时提示)
-      if (messageText && !messageText.startsWith('/') && this.iteration === 0) {
+      // 启动时检测可恢复任务 — 仅当用户明确表达恢复意图时才注入, 避免每次对话都干扰
+      // 关键词触发: "继续"/"上次"/"恢复"/"resume"/"continue" 等
+      const _resumeKeywords = ['继续', '上次', '恢复', '接着', 'resume', 'continue', '上次那个', '还没完成', '未完成'];
+      const _wantsResume = _resumeKeywords.some(kw => messageText.toLowerCase().includes(kw.toLowerCase()));
+      if (_wantsResume && messageText && !messageText.startsWith('/') && this.iteration === 0) {
         const resumable = findResumableTasks(this.opts.userId);
         const mine = resumable.filter(t => t.userId === (this.opts.userId || 'anonymous'));
         if (mine.length > 0) {
@@ -1433,7 +1592,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         }
       }
     } catch (e) {
-      console.warn('[task-snapshot] init failed:', e);
+      logger.warn('[task-snapshot] init failed:', e);
     }
 
     // 1. 用户消息进 append-only log (支持结构化 content, 含 image_url)
@@ -1457,7 +1616,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       const wfOrchestrator = await this._getWorkflowOrchestrator();
       const matchedWorkflow = wfOrchestrator.matchWorkflow(messageText);
       if (matchedWorkflow) {
-        console.log(`[workflow] matched: ${matchedWorkflow.name}, executing ${matchedWorkflow.stages.length} stages`);
+        logger.info(`[workflow] matched: ${matchedWorkflow.name}, executing ${matchedWorkflow.stages.length} stages`);
         const wfResult = await wfOrchestrator.execute(matchedWorkflow, messageText);
         if (wfResult.success) {
           this.context.appendOnlyLog.push({
@@ -1486,7 +1645,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         }
       }
     } catch (e: any) {
-      console.error(`[workflow] error: ${e.message}`);
+      logger.error(`[workflow] error: ${e.message}`);
       // 工作流匹配失败不影响正常对话
     }
 
@@ -1552,11 +1711,11 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
 
       if (currentSupportsVision) {
         // 当前模型支持视觉 → 直接使用，无需切换
-        console.log(`[vision] detected image input, current model ${currentModelId} supports vision, keeping it`);
+        logger.info(`[vision] detected image input, current model ${currentModelId} supports vision, keeping it`);
       } else {
         // 当前模型不支持视觉 → 启动视觉代理机制
         // 1) 调用视觉模型分析图片 → 2) 将分析结果注入上下文 → 3) 主模型处理
-        console.log('[vision] detected image input, current model does not support vision, starting visual proxy');
+        logger.info('[vision] detected image input, current model does not support vision, starting visual proxy');
 
         // 视觉代理模型选择: 优先 zhipu glm-4.6v-flash，其次 agentai agnes-2.0-flash
         const zhipuStats = (this.router as any)?.providers?.get('zhipu');
@@ -1577,7 +1736,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
 
         if (visionModel) {
           // 将图片提取出来，调用视觉模型分析
-          console.log(`[vision] using ${visionProvider}:${visionModel} as vision proxy`);
+          logger.info(`[vision] using ${visionProvider}:${visionModel} as vision proxy`);
           // 标记图片待处理，后续在 run() 中会调用视觉代理
           (this as any)._pendingVisionAnalysis = {
             images: this.context.appendOnlyLog.filter(m => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url')),
@@ -1586,7 +1745,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           };
         } else {
           // 无可用视觉模型 → 降级为文字描述
-          console.log('[vision] no vision model available, converting to text description');
+          logger.info('[vision] no vision model available, converting to text description');
           for (const msg of this.context.appendOnlyLog) {
             if (Array.isArray(msg.content)) {
               const hasImageUrl = msg.content.some((c: any) => c.type === 'image_url');
@@ -1621,7 +1780,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           taskChain = new TaskChain({ goal: messageText.slice(0, 200), userId: this.opts.userId, workspace: this.opts.workspace });
         }
         this.emit('plan:created', { chainId: taskChain.chainId, goal: messageText.slice(0, 200), stages: [{ key: 'understand', label: '理解' }, { key: 'execute', label: '执行' }, { key: 'report', label: '报告' }], currentStage: 'understand' });
-      } catch (e: any) { console.warn('[TaskChain] init failed:', e?.message); }
+      } catch (e: any) { logger.warn('[TaskChain] init failed:', e?.message); }
 
       // 复杂任务: 自动创建计划 + 自动追踪进度
       try {
@@ -1668,7 +1827,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
                 latency_ms: 0,
                 timestamp: new Date().toISOString(),
               });
-            } catch (e: any) { console.warn('[loop] skill dispatch log optional:', e?.message || e); }
+            } catch (e: any) { logger.warn('skill dispatch log optional:', e?.message || e); }
           }
         }
         if (injected.length > 0) {
@@ -1678,7 +1837,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           });
         }
       }
-    } catch (e: any) { console.warn('[loop] skill orchestrator optional:', e?.message || e); }
+    } catch (e: any) { logger.warn('skill orchestrator optional:', e?.message || e); }
 
     // 2.5 智能模型推荐 + 商用密钥主动检测
     let modelRecommendation: string | null = null;
@@ -1693,7 +1852,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           : '';
         modelRecommendation = `💡 **模型建议**: ${rec.reason}, 推荐切换到 **${rec.recommendedLabel}** 以获得更好的结果。${keyHint}\n\n---\n\n`;
         this.emit('model:recommended', { from: currentModelId, to: rec.recommendedModel, reason: rec.reason });
-        console.log(`[model-recommend] ${rec.reason} → ${rec.recommendedModel}`);
+        logger.info(`[model-recommend] ${rec.reason} → ${rec.recommendedModel}`);
 
         // ═══ 商用密钥主动检测: 敢于向用户要 ═══
         // 检查是否配置了任何商用模型 API Key
@@ -1732,10 +1891,10 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             recommendedModel: rec.recommendedModel,
             missingProviders: missingKeys.map(k => k.name),
           });
-          console.log(`[commercial-key] task needs pro model but no commercial keys configured, asking user`);
+          logger.info(`[commercial-key] task needs pro model but no commercial keys configured, asking user`);
         }
       }
-    } catch (e: any) { console.warn('[loop] model recommendation optional:', e?.message || e); }
+    } catch (e: any) { logger.warn('model recommendation optional:', e?.message || e); }
 
     // ═══ Layer 5: 意图深挖 (Goal Engine) ═══
     // 不只看用户字面说了什么, 更要分析用户真正想要什么
@@ -1847,7 +2006,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
 
       // ═══ v3.1 死循环硬停执行: 上轮检测到死循环, 注入 SYSTEM 后立即退出 ═══
       if (this._hardStopNext) {
-        console.log(`[loop] 🛑 硬停触发: 在 iteration ${this.iteration} 退出循环 (避免 AI 死循环)`);
+        logger.info(`🛑 硬停触发: 在 iteration ${this.iteration} 退出循环 (避免 AI 死循环)`);
         this._hardStopNext = false;
         this.directives.add('dead_loop_done', '[SYSTEM] 已根据死循环保护策略终止循环。请直接给出最终回答。', 'high');
         // 不再 continue, 走完当前轮后正常结束
@@ -1891,7 +2050,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
           this.context.appendOnlyLog.unshift({
             role: 'system', content: summary,
           });
-          console.log(`[working-memory] injected summary at iteration ${this.iteration}`);
+          logger.info(`[working-memory] injected summary at iteration ${this.iteration}`);
         } catch { /* working memory optional */ }
       }
 
@@ -1934,7 +2093,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             if (r?.success) {
               this.context.appendOnlyLog.splice(-1, 0, { role: 'system', content: `[pre-read] 📁 目录结构:\n${r.output}` });
             }
-          } catch (e: any) { console.warn('[pre-read] list_directory failed:', e?.message); }
+          } catch (e: any) { logger.warn('[pre-read] list_directory failed:', e?.message); }
         }
         const readMatch = userText.match(/^(读|查看|读取|cat|read)\s+(.+)/i);
         if (readMatch?.[2]) {
@@ -2402,6 +2561,10 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       }
       lastResponse = res;
 
+      // 🔧 修复: LLM 纯文本回复也更新 supervisor 活动时间 (原来只在工具调用后更新)
+      // 防止免费模型多轮纯文本回复累积 idleDuration > 60s 误判 timeout → 死循环
+      supervisor.updateActivity();
+
       // ═══ AI回复拦截: 禁止向用户暴露内部错误信息 ═══
       const FORBIDDEN_PATTERNS = /所有.*模型.*不可用|模型.*暂时不可用|all.*models.*unavailable|no.*provider|API.*不可用|服务.*不可用/i;
       if (res?.content && FORBIDDEN_PATTERNS.test(res.content) && this.iteration < this.opts.maxIterations - 1) {
@@ -2543,6 +2706,23 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         const rawResults = await this.dispatchToolCalls(res.toolCalls);
         lastToolActivityAt = Date.now(); // 工具执行完成, 重置超时计时器
 
+        // ═══ 任务自监督: 更新活动时间 + 记录文件变更 ═══
+        supervisor.updateActivity();
+        for (const r of rawResults) {
+          if (r.name === 'write_file' || r.name === 'multi_edit') {
+            supervisor.parseFileChangeFromResult(r.name, r.output || '');
+          }
+          const tc = res.toolCalls?.find((t: any) => t.id === r.id);
+          if (tc?.args?.file_path || tc?.args?.path) {
+            supervisor.recordFileChange(tc.args.file_path || tc.args.path);
+          }
+        }
+        this.emit('supervisor:update', {
+          timer: supervisor.getTimerState(),
+          fileChanges: supervisor.getFileChangeSummary(),
+          health: supervisor.checkHealth(),
+        });
+
         // ═══ 2026-07-15: 用量统计 (工具调用记录) ═══
         try {
           for (const r of rawResults) {
@@ -2634,6 +2814,33 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             tool_call_id: r.id,
             content: toolContent,
           });
+
+          // 🔧 修复: 工具返回截图 (imageBase64) 时, 注入多模态消息让 AI 能"看到"图片
+          // 原来只传文本 "✅ 截图完成", AI 看不到实际页面内容, 导致"打开了网页但说没看到"
+          const _imgB64 = (r as any).data?.imageBase64;
+          if (_imgB64 && !isToolFailed) {
+            const _model = (this.opts.model || '').toLowerCase();
+            const _supportsVision = ['glm-4v', 'gpt-4o', 'gpt-4-vision', 'gpt-4-turbo',
+              'claude-3', 'claude-sonnet', 'claude-opus', 'claude-haiku',
+              'gemini', 'qwen-vl', 'qwen2-vl', 'internvl', 'minicpm-v',
+              'yi-vl', 'deepseek-vl', 'llava', 'agnes'].some(kw => _model.includes(kw));
+            if (_supportsVision) {
+              // 模型支持视觉: 注入 user 消息包含 image_url (tool 消息 content 只能是字符串)
+              this.context.appendOnlyLog.push({
+                role: 'user',
+                content: [
+                  { type: 'text', text: `[系统注入] ${r.name} 截图如下, 请基于截图内容继续操作:` },
+                  { type: 'image_url', image_url: { url: `data:image/png;base64,${_imgB64}` } },
+                ],
+              });
+            } else {
+              // 模型不支持视觉: 提示 AI 使用 browser_extract 提取文本
+              this.context.appendOnlyLog.push({
+                role: 'user',
+                content: `[系统注入] ${r.name} 已截图但当前模型不支持视觉理解。请使用 browser_extract 提取页面文本内容代替截图。`,
+              });
+            }
+          }
           this.emit('log:appended', { role: 'tool', content: r.output });
           this.emit('tool:result', { callId: r.id, name: r.name, result: r.output, ok: !(r.output && r.output.startsWith('Error:')), durationMs: 0 }); // 前端可监听
 
@@ -2976,6 +3183,25 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             }
           }
 
+          // ═══ v3.2 只读不写检测: 连续 5 次只调用读取类工具 → 强制要求执行 ═══
+          // 解决 "AI 无限读文件但不执行修改" 的死循环
+          if (toolMsgs.length >= 5) {
+            const recent5 = toolMsgs.slice(-5).map((m: any) => m.name || '');
+            const readOnlyTools = ['read_file', 'list_directory', 'directory_tree', 'search_content', 'search_codebase', 'glob', 'recall_memory', 'web_search', 'web_fetch', 'get_symbols'];
+            const writeTools = ['write_file', 'multi_edit', 'create_file', 'delete_file', 'run_code', 'edit_file', 'create_directory', 'move_file', 'copy_file'];
+            const readCount = recent5.filter((t: string) => readOnlyTools.includes(t)).length;
+            const writeCount = recent5.filter((t: string) => writeTools.includes(t)).length;
+            if (readCount >= 5 && writeCount === 0) {
+              this.directives.add('read_only_loop',
+                '[SYSTEM] ⚠️ 检测到连续 5 次只读不写! 信息已足够, 必须立即调用 write_file/multi_edit 执行修改, 或明确回答"无法执行并说明原因"。不要继续读取文件。',
+                'high');
+              // 迭代较深时直接硬停, 避免再读一轮
+              if (this.iteration > 8) {
+                this._hardStopNext = true;
+              }
+            }
+          }
+
           // ═══ v3.1 死循环硬停: 连续 3 次相同工具 + 相同参数 + 相似结果 → 强制退出 ═══
           // 解决 AI 死循环: web_search 反复调用 / browser_click 反复失败等
           // 关键场景: 工具持续返回低质量/错误/相似结果, AI 不换思路
@@ -3048,6 +3274,41 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
         autoResumeCount++;
         this.emit('auto:resume', { reason: 'length_truncated', count: autoResumeCount });
         continue;
+      }
+
+      // ═══ 任务自监督: 检测中断并决策是否自动恢复 ═══
+      const health = supervisor.checkHealth();
+      if (!health.healthy && health.status === 'interrupted') {
+        // 🔧 修复 (方案 B): 闲聊/问候场景豁免 supervisor resume
+        // 即使方案 A (updateActivity) 已更新活动时间, 作为双保险:
+        // 闲聊场景 AI 给出纯文本回复是正常的, 不应被误判为 "任务中断需要恢复"
+        // 否则会导致: 你好→回复→supervisor resume→你好→回复→... 死循环
+        const _userMsgCtx = typeof userMessage === 'string' ? userMessage : '';
+        const _aiReplyCtx = (res?.content || '').trim();
+        const _isChitChatCtx = /^(你好|嗨|hi|hello|好的|谢谢|没问题|ok|嗯|对|是|不|行|可以|能|在吗|你在|怎么样|能不能|会不会|为什么|怎么|什么|如何|哪里|哪个)/i.test(_userMsgCtx.trim())
+          || _userMsgCtx.trim().length < 15;
+        const _isGreetingCtx = /^(你好|嗨|hi|hello|嘿|哈喽|我是|我在|有什么|随时|开干|说吧)/i.test(_aiReplyCtx)
+          || /智能助手|AgentAI|PulseFlow|帮你搞|帮你处理|开干|我在的|我在呢|没有掉线/i.test(_aiReplyCtx);
+        if (!_isChitChatCtx && !_isGreetingCtx) {
+          const resumeDecision = await supervisor.shouldAutoResume({
+            lastError: health.interruptionReason,
+            taskSnapshot: taskSnap,
+            toolHistory: this.context.appendOnlyLog
+              .filter(m => m.role === 'tool')
+              .map(m => ({ name: (m as any).name || 'unknown', ok: !String(m.content).startsWith('[ERROR]') })),
+          });
+          if (resumeDecision.shouldResume && resumeDecision.confidence > 0.5) {
+            this.directives.add('supervisor_resume', resumeDecision.prompt, 'high');
+            autoResumeCount++;
+            this.emit('auto:resume', { 
+              reason: health.interruptionReason || 'supervisor_detected', 
+              count: autoResumeCount,
+              confidence: resumeDecision.confidence 
+            });
+            this.emit('reasoning', { text: `[任务自监督] 检测到${health.interruptionReason}，自动恢复任务...` });
+            continue;
+          }
+        }
       }
 
       // ═══ 元认知决策: 让 AI 自己判断是否继续 ═══
@@ -3265,10 +3526,9 @@ if (this._capabilityTier !== 'autonomous') {
 
       if (hasPriorTools && len > 60 && this.iteration < this.opts.maxIterations * 0.5) {
         const isUserChitChat = messageText.trim().length < 10;
-        const isAnalysisTask = /^(审查|分析|检查|评估|review|analyze|inspect|audit|诊断)/i.test(messageText.trim());
         const isDescriptive = /我(看到|发现|了解|注意到|观察到|查看了|分析了)|让我(先|来)|这是|看起来|似乎|大概|目前|现状|情况/i.test(text);
         const hasAction = /已(创建|修改|写入|删除|安装|执行|生成)|成功|✅|完成/i.test(text);
-        if (isDescriptive && !hasAction && !isUserChitChat && !isAnalysisTask) {
+        if (isDescriptive && !hasAction && !isUserChitChat) {
           this.directives.add('descriptive', '[SYSTEM] 不要只描述, 请调用 write_file/multi_edit 修改代码, 用 run_code 验证。', 'medium');
           continue;
         }
@@ -3507,11 +3767,12 @@ if (this._capabilityTier !== 'autonomous') {
     this.emit('loop:done', { iterations: this.iteration, response: lastResponse });
 
     // ═══ 2026-07-15: 任务完成/失败时更新 task-snapshot ═══
-    if (taskSnap) {
+    if (taskSnap && lastResponse) {
       try {
         taskSnap.setStage('done');
-        taskSnap.setContextSummary(lastResponse.content?.slice(0, 500) || '');
-        taskSnap?.complete(lastResponse.content?.slice(0, 500) || '任务完成');
+        const content = typeof lastResponse.content === 'string' ? lastResponse.content : '';
+        taskSnap.setContextSummary(content.slice(0, 500));
+        taskSnap?.complete(content.slice(0, 500) || '任务完成');
         taskSnap?.appendLog('info', 'task-completed-success', { iteration: this.iteration, durationMs: Date.now() - startedAt });
       } catch (e) { /* best-effort */ }
     }
@@ -3589,6 +3850,13 @@ if (this._capabilityTier !== 'autonomous') {
     } catch (e: any) {
       console.warn('[temp-cleanup] failed:', e?.message);
     }
+
+    // ═══ 2026-07-30 新增: 导出工具调用分析到 evolution ═══
+    try {
+      finalizeSessionAnalytics(this.opts.userId || 'anonymous');
+    } catch (e: any) {
+      console.warn('[tool-analytics] finalize failed:', e?.message);
+    }
     
     // ═══ 2026-06-24 新增: 透明进度推送 ═══
     // 任务完成时发射进度事件
@@ -3609,8 +3877,10 @@ if (this._capabilityTier !== 'autonomous') {
       ) === 'string'
         ? ([...this.context.appendOnlyLog].reverse().find(m => m.role === 'user')?.content as string).slice(0, 100)
         : '用户请求';
-      const assistantSummary = (typeof lastResponse.content === 'string' ? lastResponse.content : '')
-        .trim().split('\n')[0]?.slice(0, 80) || '完成任务';
+      const assistantSummary = lastResponse
+        ? (typeof lastResponse.content === 'string' ? lastResponse.content : '')
+            .trim().split('\n')[0]?.slice(0, 80) || '完成任务'
+        : '完成任务';
 
       import('./memory.js').then(({ workspaceJournal }) => {
         workspaceJournal.append(this.opts.workspace!, {
@@ -3760,6 +4030,16 @@ if (this._capabilityTier !== 'autonomous') {
         });
       } catch { /* session summary save optional */ }
     }
+
+    // ═══ 任务自监督: 停止计时器 + 发射最终状态 ═══
+    supervisor.stopTimer();
+    const finalState = supervisor.getState();
+    this.emit('supervisor:complete', {
+      timer: finalState.timer,
+      fileChanges: finalState.fileChanges,
+      health: finalState.health,
+    });
+    console.log(`[supervisor] ✅ 任务完成 — ${finalState.timer.formatted} | ${finalState.fileChanges.formatted} (${finalState.fileChanges.files} files)`);
 
     return {
       ...lastResponse,
@@ -4191,6 +4471,14 @@ if (this._capabilityTier !== 'autonomous') {
       const r = results.find(x => x.id === c.id);
       this.emit('tool:result', { callId: c.id, name: c.name, result: r?.result?.output || '', ok: r?.result?.success !== false, durationMs: r?.result?.durationMs || 0 });
 
+      // ═══ 2026-07-30 新增: 工具调用历史分析记录 ═══
+      recordToolCall(c.name, c.args, {
+        success: r?.result?.success !== false,
+        error: r?.result?.success === false ? r.result.output : undefined,
+        duration: r?.result?.durationMs || 0,
+        retryCount: 0, // 重试次数在上方逻辑中统计
+      });
+
       // ═══ 2026-06-27 修复: widget 渲染通道 ═══
       // render_widget 工具返回的 data 中带有 __type: 'widget'，
       // 需要单独发射 widget:show 事件让前端渲染
@@ -4203,7 +4491,7 @@ if (this._capabilityTier !== 'autonomous') {
           height: r.result.data.height,
         });
       }
-      
+
       // 2026-06-24 新增: 临时文件追踪（任务完成后自动清理）
       if (r?.result?.success && c.args) {
         // 检查是否是文件创建工具

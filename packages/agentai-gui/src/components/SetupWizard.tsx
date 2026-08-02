@@ -27,7 +27,11 @@ interface DepStatus {
 /** 检测本地是否安装了某个命令 */
 async function checkDependency(cmd: string): Promise<{ installed: boolean; version?: string }> {
   try {
-    const res = await fetch(`/v1/system/check-dep?cmd=${encodeURIComponent(cmd)}`);
+    // ⚠️ 必须用绝对路径! Tauri 打包后相对路径 /v1/... → tauri://localhost → 404
+    const { GATEWAY_HTTP } = await import('../services/config');
+    const res = await fetch(`${GATEWAY_HTTP}/v1/system/check-dep?cmd=${encodeURIComponent(cmd)}`, {
+      signal: AbortSignal.timeout(5000),
+    });
     if (res.ok) {
       const data = await res.json();
       return { installed: !!data.installed, version: data.version };

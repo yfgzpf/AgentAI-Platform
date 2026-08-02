@@ -83,8 +83,8 @@ export const ApprovalCard: React.FC<Props> = ({ proposal, onApprove, onReject })
       size="small"
       style={{
         margin: '8px 0',
-        borderLeft: `3px solid ${RISK_COLORS[proposal.riskLevel] || '#888'}`,
-        background: '#141414',
+        borderLeft: `3px solid ${RISK_COLORS[proposal.riskLevel] || 'var(--muted)'}`,
+        background: 'var(--bg-2)',
       }}
       title={
         <Space>
@@ -119,26 +119,26 @@ export const ApprovalCard: React.FC<Props> = ({ proposal, onApprove, onReject })
         </Space>
       }
     >
-      <div style={{ fontSize: 12, color: '#aaa', marginBottom: 4 }}>
+      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>
         <Tag>{proposal.type}</Tag>
         {proposal.filePath && <span style={{ fontFamily: 'monospace' }}>{proposal.filePath}</span>}
       </div>
-      <div style={{ fontSize: 13, color: '#ddd', marginBottom: 8 }}>
+      <div style={{ fontSize: 13, color: 'var(--fg-2)', marginBottom: 8 }}>
         {proposal.summary}
       </div>
       {proposal.details && (
-        <div style={{ fontSize: 12, color: '#bbb', marginBottom: 8, padding: '4px 8px', background: '#0d0d0d', borderRadius: 4 }}>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8, padding: '4px 8px', background: 'var(--bg)', borderRadius: 4 }}>
           {proposal.details}
         </div>
       )}
       {proposal.violations && proposal.violations.length > 0 && (
-        <div style={{ fontSize: 11, color: '#f87171', marginBottom: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--danger)', marginBottom: 4 }}>
           违规项: {proposal.violations.join(', ')}
         </div>
       )}
       {proposal.diff && (
         <pre style={{
-          fontSize: 11, background: '#0d0d0d', color: '#aaa',
+          fontSize: 11, background: 'var(--bg)', color: 'var(--muted)',
           padding: 6, borderRadius: 4, maxHeight: 120, overflow: 'auto',
           margin: 0,
         }}>
@@ -148,13 +148,13 @@ export const ApprovalCard: React.FC<Props> = ({ proposal, onApprove, onReject })
       {/* 信任此命令选项 */}
       <div style={{
         marginTop: 8, padding: '6px 8px',
-        background: 'rgba(79,70,229,0.06)', borderRadius: 4,
-        border: '1px solid rgba(79,70,229,0.15)',
+        background: 'var(--accent-soft)', borderRadius: 4,
+        border: '1px solid var(--border)',
       }}>
         <Checkbox
           checked={trustChecked}
           onChange={e => setTrustChecked(e.target.checked)}
-          style={{ fontSize: 11, color: '#aaa' }}
+          style={{ fontSize: 11, color: 'var(--muted)' }}
         >
           <Tooltip title={`信任后，相同工具(${proposal.toolName || '?'})对相同目录的操作将自动跳过审批`}>
             <span>信任此命令，后续不再提示</span>

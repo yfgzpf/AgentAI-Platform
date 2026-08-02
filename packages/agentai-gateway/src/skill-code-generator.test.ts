@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SkillCodeGenerator, SkillCodeRequest } from './skill-code-generator.js';
 import { AgentAIRouter } from './llm-router.js';

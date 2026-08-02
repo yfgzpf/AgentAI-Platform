@@ -198,6 +198,7 @@ export class Sandbox {
     /**
      * 检查路径是否允许操作
      * - 未启用时永远返 allow, 不审计
+     * - v3.2: 默认放行, 仅 deny 规则拦截 (系统路径/凭证)
      */
     async check(req: SandboxCheckRequest): Promise<SandboxCheckResult> {
         if (!this.enabled) {

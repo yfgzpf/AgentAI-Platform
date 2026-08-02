@@ -10,7 +10,8 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback, useImperativeHandle, type KeyboardEvent, type RefObject, type DragEvent } from 'react';
 import { Tooltip, Select, Image, message, Dropdown } from 'antd';
-import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, SoundOutlined, BellOutlined, BulbOutlined, MoreOutlined } from '@ant-design/icons';
+import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, BellOutlined, BulbOutlined, MoreOutlined, DesktopOutlined, ThunderboltOutlined, GithubOutlined } from '@ant-design/icons';
+import { MessageOutlined as QQIcon } from '@ant-design/icons';
 import { useModeStore, MODE_CONFIG, MODE_ORDER } from '../store/modeStore';
 import { useModelStore } from '../store/modelStore';
 import { GATEWAY_HTTP } from '../services/config';
@@ -20,6 +21,7 @@ import VoiceSettings from './VoiceSettings';
 import type { VoiceSettingsState } from './VoiceSettings';
 import { parseFile, type ParsedAttachment } from '../services/file-parser';
 import { PromptOptimizer } from './PromptOptimizer';
+import { RemoteEnvironmentButton } from './RemoteEnvironmentButton';
 
 export type SlashCmd = { cmd: string; desc: string; run: () => void };
 
@@ -72,7 +74,7 @@ const ComposerBase = ({
 }: Props, ref: React.Ref<ComposerHandle>) => {
   const { mode, setMode, suggestedMode, suggestionReason, acceptSuggestion, clearSuggestion } = useModeStore();
   const activeModeConfig = MODE_CONFIG[mode];
-  const { activeModelId, setActive: setActiveModel, models, commercialKeys } = useModelStore();
+  const { activeModelId, setActive: setActiveModel, models, commercialKeys, chatMode } = useModelStore();
   const [draft, setDraft] = useState('');
   const [popup, setPopup] = useState<PopupKind>(null);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -105,7 +107,7 @@ const ComposerBase = ({
       return { url, label };
     });
   }, [draft]);
-  const [ttsOn, setTtsOn] = useState(isTtsEnabled());
+  const [ttsOn] = useState(isTtsEnabled());
   const [wakeOn, setWakeOn] = useState(isWakeEnabled());
   const [optimizeOpen, setOptimizeOpen] = useState(false);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
@@ -131,16 +133,35 @@ const ComposerBase = ({
   const activeModel = models.find(m => m.id === activeModelId);
 
   // 模型切换时的密钥检查
-  const handleModelChange = (modelId: string) => {
-    const targetModel = models.find(m => m.id === modelId);
-    if (targetModel) {
-      const hasKey = !!localStorage.getItem(targetModel.apiKeyEnv);
-      if (!hasKey && targetModel.isCommercial) {
-        message.warning({ content: `「${targetModel.label}」需配置密钥，请前往 设置 → 模型配置 输入密钥后使用`, duration: 5, key: 'missing-key' });
-      }
-    }
-    setActiveModel(modelId);
-  };
+// [Phase1-P0-fix] 修复: 商用模型无密钥时显式return阻止切换 + 免费模型直接放行
+const handleModelChange = (modelId: string) => {
+const targetModel = models.find(m => m.id === modelId);
+if (!targetModel) return;
+
+// 免费模型(agentai/zhipu)无需密钥，直接切换
+const isFreeModel = (m: typeof targetModel) => m.id === 'agentai' || m.id === 'zhipu';
+if (isFreeModel(targetModel)) {
+setActiveModel(modelId);
+return;
+}
+
+// 商用模型检查密钥
+const apiKeyEnv = targetModel.apiKeyEnv || `${targetModel.id.toUpperCase()}_API_KEY`;
+const hasKey = !!localStorage.getItem(apiKeyEnv)
+|| !!useModelStore.getState().commercialKeys?.[apiKeyEnv];
+
+if (!hasKey && targetModel.isCommercial) {
+message.warning({
+content: `「${targetModel.label}」需配置API密钥才能使用，请前往 设置 → 模型配置 输入密钥`,
+duration: 6,
+key: 'missing-key',
+});
+return; // ← 显式return：无密钥时不切换模型
+}
+
+// 有密钥的商用模型或非商用自定义模型 → 正常切换
+setActiveModel(modelId);
+};
 
   /* ---- 粘贴 & 拖拽文件处理 ---- */
   const [dragOver, setDragOver] = useState(false);
@@ -335,7 +356,7 @@ const ComposerBase = ({
     <div style={{
       position: 'relative', borderTop: '1px solid var(--border)',
       background: 'var(--bg-2)',
-      ...(dragOver ? { borderTopColor: '#4ade80' } : {}),
+      ...(dragOver ? { borderTopColor: 'var(--success)' } : {}),
     }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -348,10 +369,10 @@ const ComposerBase = ({
           position: 'absolute', inset: 0, zIndex: 50,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'rgba(74,222,128,0.08)',
-          border: '2px dashed #4ade80',
+          border: '2px dashed var(--success)',
           borderRadius: 8, margin: 4,
           pointerEvents: 'none',
-          fontSize: 14, fontWeight: 600, color: '#4ade80',
+          fontSize: 14, fontWeight: 600, color: 'var(--success)',
           letterSpacing: 1,
         }}>
           📎 释放文件以上传
@@ -384,7 +405,7 @@ const ComposerBase = ({
           background: MODE_CONFIG[suggestedMode].color + '18',
           border: `1px solid ${MODE_CONFIG[suggestedMode].color}44`,
           fontSize: 12,
-          color: '#ddd',
+          color: 'var(--fg-2)',
           display: 'flex',
           alignItems: 'center',
           gap: 8,
@@ -412,6 +433,24 @@ const ComposerBase = ({
         overflow: 'hidden',
         boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
       }}>
+        {/* 对话改图模式提示 */}
+        {chatMode === 'image_edit' && (
+          <div style={{
+            padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8,
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(236,72,153,0.08))',
+            borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--accent)',
+          }}>
+            <PictureOutlined style={{ fontSize: 14 }} />
+            <span>🎨 对话改图模式 — 上传图片后输入修改指令</span>
+            <button
+              className="icon-btn-sm"
+              onClick={() => imageInputRef.current?.click()}
+              style={{ marginLeft: 'auto', background: 'var(--accent)', color: 'var(--fg)', borderRadius: 4, padding: '2px 10px', fontSize: 11, border: 'none', cursor: 'pointer' }}
+            >
+              上传图片
+            </button>
+          </div>
+        )}
         {/* URL 链接卡片 */}
         {detectedUrls.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 12px 0', borderBottom: '1px solid var(--border)' }}>
@@ -483,9 +522,9 @@ const ComposerBase = ({
                   />
                 )}
                 {/* Excel图标 */}
-                {att.kind === 'table' && <FileExcelOutlined style={{ color: '#22c55e', fontSize: 13 }} />}
+                {att.kind === 'table' && <FileExcelOutlined style={{ color: 'var(--success)', fontSize: 13 }} />}
                 {/* 文本文件图标 */}
-                {att.kind === 'text' && <FileTextOutlined style={{ color: '#60a5fa', fontSize: 13 }} />}
+                {att.kind === 'text' && <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 13 }} />}
                 {/* 文件名 */}
                 <span style={{ maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {att.name}
@@ -554,7 +593,7 @@ const ComposerBase = ({
                   key: 'websearch',
                   label: (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                      <GlobalOutlined style={{ color: webSearch ? '#4ade80' : 'var(--muted-2)' }} />
+                      <GlobalOutlined style={{ color: webSearch ? 'var(--success)' : 'var(--muted-2)' }} />
                       {webSearch ? '关闭联网搜索' : '开启联网搜索'}
                     </span>
                   ),
@@ -564,7 +603,7 @@ const ComposerBase = ({
                   key: 'thinking',
                   label: (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                      <BulbOutlined style={{ color: thinking ? '#8B5CF6' : 'var(--muted-2)' }} />
+                      <BulbOutlined style={{ color: thinking ? 'var(--violet)' : 'var(--muted-2)' }} />
                       {thinking ? '关闭深度思考' : '开启深度思考'}
                     </span>
                   ),
@@ -574,7 +613,7 @@ const ComposerBase = ({
                   key: 'voice',
                   label: (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                      <AudioOutlined style={{ color: recording ? '#ef4444' : 'var(--muted-2)' }} />
+                      <AudioOutlined style={{ color: recording ? 'var(--danger)' : 'var(--muted-2)' }} />
                       {recording ? '停止语音输入' : '开始语音输入'}
                     </span>
                   ),
@@ -594,40 +633,18 @@ const ComposerBase = ({
                   disabled: optimizeDisabled || !draft.trim(),
                 },
                 { type: 'divider' as const },
-                {
-                  key: 'tts',
-                  label: (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                      <SoundOutlined style={{ color: ttsOn ? 'var(--accent)' : 'var(--muted-2)' }} />
-                      {ttsOn ? '关闭语音播报' : '开启语音播报'}
-                    </span>
-                  ),
-                  onClick: () => {
-                    const next = !ttsOn;
-                    setTtsEnabled(next); setTtsOn(next);
-                  },
-                },
+                // 语音播报已移到对话框内部底部栏 (2026-07-31)
                 {
                   key: 'wake',
                   label: (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                      <BellOutlined style={{ color: wakeOn ? '#F59E0B' : 'var(--muted-2)' }} />
+                      <BellOutlined style={{ color: wakeOn ? 'var(--warning)' : 'var(--muted-2)' }} />
                       {wakeOn ? '关闭语音唤醒' : '开启语音唤醒'}
                     </span>
                   ),
                   onClick: () => {
                     const v = !wakeOn; v ? startWakeWord() : stopWakeWord(); setWakeOn(v);
                   },
-                },
-                {
-                  key: 'voicesettings',
-                  label: (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                      <SoundOutlined style={{ color: 'var(--muted-2)' }} />
-                      语音设置...
-                    </span>
-                  ),
-                  onClick: () => setVoiceSettingsOpen(true),
                 },
               ],
             }}
@@ -655,7 +672,7 @@ const ComposerBase = ({
             if (visibleModels.length === 0) return null;
 
             // 工厂组按 provider 聚合, 独立模型各自一组
-            const isFactory = (m: typeof models[0]) => ['superapi', 'nvidia', 'sensenova', 'longcat'].includes(m.provider || '');
+            const isFactory = (m: typeof models[0]) => ['superapi', 'sensenova', 'longcat'].includes(m.provider || '');
             const groupMap = new Map<string, { label: string; color: string; models: typeof models; isFactory: boolean }>();
             for (const m of visibleModels) {
               const factory = isFactory(m);
@@ -674,15 +691,12 @@ const ComposerBase = ({
                 style={{ width: 170, fontSize: 11 }}
                 variant="borderless"
                 popupMatchSelectWidth={false}
+                getPopupContainer={() => document.body}
                 options={groupedArr.map(([gKey, g]) => ({
                   label: <span style={{ fontSize: 9, color: 'var(--muted-2)', fontWeight: 600 }}>{g.label} ({g.models.length})</span>,
                   title: g.label,
                   options: [
-                    // NVIDIA 组添加 Auto 选项
-                    ...(gKey === 'nvidia' ? [{
-                      value: 'nvidia-auto',
-                      label: <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 5, height: 5, borderRadius: '50%', background: '#76B900', display: 'inline-block' }} />NVIDIA Auto (智能择优)</span>,
-                    }] : []),
+// NVIDIA Auto 选项已移除
                     ...g.models.map(m => ({
                       value: m.id,
                       label: (
@@ -719,10 +733,31 @@ const ComposerBase = ({
 
           <span className="ui-divider" />
 
+          {/* ── 连接器下拉菜单 (类似 Claude Connectors) ── */}
+          <ConnectorsDropdown />
+
+          <span className="ui-divider" />
+
+          {/* ── 语音设置图标 ── */}
+          <Tooltip title="语音设置">
+            <button
+              className="icon-btn-sm"
+              onClick={() => setVoiceSettingsOpen(true)}
+              style={{ color: 'var(--muted-2)' }}
+            >
+              <MoreOutlined style={{ fontSize: 10 }} />
+            </button>
+          </Tooltip>
+
+          <span className="ui-divider" />
+
+          {/* ── 远程环境按钮 ── */}
+          <RemoteEnvironmentButton />
+
           {/* ── 发送/中止 ── */}
           {busy ? (
             <button onClick={onAbort} className="send-btn" style={{ background: 'var(--danger)' }}>
-              <StopOutlined style={{ fontSize: 14, color: '#fff' }} />
+              <StopOutlined style={{ fontSize: 14, color: 'var(--fg)' }} />
             </button>
           ) : (
             <button
@@ -812,3 +847,191 @@ const sendBtnStyle: React.CSSProperties = {
   border: 'none', cursor: 'pointer', flexShrink: 0,
   transition: 'all 0.15s',
 };
+
+/* ════════════════ ConnectorsDropdown — 类似 Claude Connectors 的下拉菜单 ════════════════ */
+
+/** 连接器定义 */
+interface ConnectorDef {
+  id: string;
+  name: string;
+  icon: React.ReactNode;
+  description: string;
+  enabled: boolean;
+  status: 'online' | 'offline' | 'error';
+  /** 后端 API 路径 (toggle) */
+  toggleApi: string;
+}
+
+const ConnectorsDropdown: React.FC = () => {
+  const [connectors, setConnectors] = useState<ConnectorDef[]>([
+    // ── Android 设备控制 ──
+    {
+      id: 'android',
+      name: 'Android 手机',
+      icon: <DesktopOutlined />,
+      description: '通用手机自动化 — AI操作微信/抖音/小红书/快手等任何App。需安装Another桌面应用+连接Android设备(USB调试开启)。MCP Server运行在localhost:7070。',
+      enabled: false,
+      status: 'offline',
+      toggleApi: '/api/connectors/android',
+    },
+    // ── 浏览器控制 ──
+    {
+      id: 'browser',
+      name: '浏览器控制',
+      icon: <ThunderboltOutlined />,
+      description: 'AI操控浏览器 — 自动浏览网页、填表、截图、提取数据。需启动Browser Engine服务。',
+      enabled: false,
+      status: 'offline',
+      toggleApi: '/api/connectors/browser',
+    },
+    // ── QQ Bot ──
+    {
+      id: 'qq-bot',
+      name: 'QQ Bot',
+      icon: <QQIcon />,
+      description: 'AI通过QQ接收消息并自动回复。需配置go-cqhttp反向WS连接。',
+      enabled: false,
+      status: 'offline',
+      toggleApi: '/api/connectors/qq-bot',
+    },
+    // ── 微信公众号自动化 ──
+    {
+      id: 'wechat-automation',
+      name: '公众号运营',
+      icon: <ThunderboltOutlined />,
+      description: 'AI全自动运营公众号: 对标拆解→写稿→deAI→质量闸门→配图→发布草稿箱。需配置DeepSeek API Key + 公众号AppID/AppSecret。',
+      enabled: false,
+      status: 'offline',
+      toggleApi: '/api/connectors/wechat-automation',
+    },
+    // ── SketchUp 3D 建模 ──
+    {
+      id: 'sketchup',
+      name: 'SketchUp建模',
+      icon: <PictureOutlined />,
+      description: 'AI直接操控SketchUp进行建模操作(建筑/室内/家具设计)。需安装sketchup-mcp2+Ruby扩展+SketchUp已打开。',
+      enabled: false,
+      status: 'offline',
+      toggleApi: '/api/connectors/sketchup',
+    },
+    // 语音播报 TTS 已移至底部栏独立按钮 (2026-07-31)，不再在连接器中显示
+    // 原因: 避免与底部栏 SoundOutlined 图标重复造成混淆
+    // ── 语音唤醒 ──
+    {
+      id: 'wake-word',
+      name: '语音唤醒',
+      icon: <BellOutlined />,
+      description: '随时语音唤醒AI助手。需配置麦克风权限和唤醒词模型。',
+      enabled: false,
+      status: 'offline',
+      toggleApi: '/api/connectors/wake-word',
+    },
+    // ── 音乐播放 ──
+    {
+      id: 'music',
+      name: '音乐播放',
+      icon: <AudioOutlined />,
+      description: 'AI根据对话内容推荐并播放音乐。使用Moss音乐代理服务。',
+      enabled: false,
+      status: 'offline',
+      toggleApi: '/api/connectors/music',
+    },
+    // ── Git 版本控制 ──
+    {
+      id: 'git',
+      name: 'Git版本控制',
+      icon: <GithubOutlined />,
+      description: 'AI自动提交代码、创建分支、推送远程仓库。需配置Git SSH密钥。',
+      enabled: false,
+      status: 'offline',
+      toggleApi: '/api/connectors/git',
+    },
+  ]);
+  const [loading, setLoading] = useState(false);
+
+  // 加载连接器状态
+  useEffect(() => {
+    fetch('/api/connectors/status')
+      .then(r => r.json())
+      .then(data => {
+        setConnectors(prev => prev.map(c => ({
+          ...c,
+          enabled: data[c.id]?.enabled ?? c.enabled,
+          status: data[c.id]?.status ?? c.status,
+        })));
+      })
+      .catch(() => {});
+  }, []);
+
+  const toggleConnector = async (id: string) => {
+    setLoading(true);
+    try {
+      const conn = connectors.find(c => c.id === id);
+      if (!conn) return;
+      
+      const response = await fetch(conn.toggleApi, { method: 'POST' });
+      if (response.ok) {
+        setConnectors(prev => prev.map(c =>
+          c.id === id ? { ...c, enabled: !c.enabled, status: !c.enabled ? 'online' : 'offline' } : c
+        ));
+      }
+    } catch (e) {
+      console.warn('[ConnectorsDropdown] Toggle failed:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'online': return '#52c41a';
+      case 'offline': return 'var(--muted-2)';
+      case 'error': return '#ff4d4f';
+      default: return 'var(--muted-2)';
+    }
+  };
+
+  const items = connectors.map(conn => ({
+    key: conn.id,
+    label: (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
+        <span style={{ color: conn.enabled ? 'var(--accent)' : 'var(--muted-2)' }}>{conn.icon}</span>
+        <span style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 500 }}>{conn.name}</div>
+          <div style={{ fontSize: 10, color: 'var(--muted)' }}>{conn.description}</div>
+        </span>
+        <span
+          onClick={(e) => { e.stopPropagation(); toggleConnector(conn.id); }}
+          style={{
+            width: 16, height: 16, borderRadius: '50%',
+            background: getStatusColor(conn.status),
+            display: 'inline-block', flexShrink: 0,
+            cursor: 'pointer',
+          }}
+          title={conn.enabled ? '已启用' : '未启用'}
+        />
+      </div>
+    ),
+  }));
+
+  return (
+    <Dropdown
+      menu={{ items }}
+      trigger={['click']}
+      getPopupContainer={() => document.body}
+    >
+      <button
+        className="icon-btn-sm"
+        disabled={loading}
+        style={{
+          color: connectors.some(c => c.enabled) ? 'var(--accent)' : 'var(--muted-2)',
+        }}
+        title="外部连接"
+      >
+        <ThunderboltOutlined style={{ fontSize: 12 }} />
+      </button>
+    </Dropdown>
+  );
+};
+
+export { ConnectorsDropdown };

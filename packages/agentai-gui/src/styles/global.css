@@ -1,8 +1,26 @@
-/* global.css — 现在仅作 reasonix-theme.css 的补充层
- * 主主题变量在 ./reasonix-theme.css, 本文件不重复定义
+/* global.css — 补充层
+ * 注意: agentai-theme.css 现在在 main.tsx 中直接导入，确保加载顺序
  * 这里只放一些全局微调 + 旧组件兼容
  */
-@import './reasonix-theme.css';
+
+/* ═══ CSS 变量回退保护 ═══
+ * 如果任何 CSS 变量未定义，使用 var() 的 fallback 值
+ * 语法: var(--variable, fallback-value)
+ */
+html {
+  /* 确保基本颜色始终可用 */
+  --bg: #1c1c26;
+  --fg: #f2f2f5;
+  --border: #353550;
+}
+
+[data-theme="light"],
+[data-theme-style="sandstone"],
+[data-theme-style="porcelain"] {
+  --bg: #f5f1ea;
+  --fg: #38352e;
+  --border: #ddd5c5;
+}
 
 .fade-in { animation: fadeIn 0.2s ease-out; }
 @keyframes fadeIn {
@@ -18,5 +36,5 @@
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+::-webkit-scrollbar-thumb { background: var(--border, #353550); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong, #454565); }

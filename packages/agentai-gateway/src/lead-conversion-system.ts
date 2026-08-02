@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * LeadConversionSystem - 线索转化自动化系统
  * 

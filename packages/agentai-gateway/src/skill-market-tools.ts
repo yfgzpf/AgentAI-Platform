@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Skill Market Tools - AI可调用的技能市场工具
  * 

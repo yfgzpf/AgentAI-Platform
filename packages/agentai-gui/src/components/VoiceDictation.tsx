@@ -17,7 +17,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Button, Tag, Tooltip, Alert } from 'antd';
 import {
   AudioOutlined, AudioMutedOutlined, RobotOutlined,
-  ClearOutlined, LoadingOutlined, CloseOutlined,
+  ClearOutlined, LoadingOutlined, CloseOutlined, SendOutlined,
 } from '@ant-design/icons';
 import {
   startSpeechRecognition,
@@ -27,7 +27,7 @@ import { GATEWAY_HTTP } from '../services/config';
 
 // ===== 停顿检测参数 =====
 const PAUSE_MS = 1500; // 1.5s 无新词判定为停顿
-const MAX_CHARS_BEFORE_SEND = 500; // 累计这么多字自动发送
+const MAX_CHARS_BEFORE_SEND = 1000; // 累计这么多字自动发送 (由 500 → 1000, 避免频繁打断)
 
 // ===== AI 整理 prompt =====
 const ORGANIZE_PROMPT = `你是一个听写整理助手。
@@ -107,8 +107,20 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
         }
         setOrganizing(false);
       })
-      .catch(() => {
+      .catch((err) => {
         setOrganizing(false);
+        setError('AI 整理失败: ' + (err?.message || err || '未知错误') + '。可点击"原始发送"直接发送原文字');
+        // 失败时不丢失文字: 放回 segments
+        if (all.trim()) {
+          const restoreSeg: TranscriptionSegment = {
+            id: `restore-${Date.now()}`,
+            text: all,
+            final: true,
+            ts: Date.now(),
+          };
+          segmentsRef.current = [restoreSeg];
+          setSegments([restoreSeg]);
+        }
       });
 
     // 清空已发的分段
@@ -300,7 +312,7 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
         >
           {listening ? '停止' : '开始'}
         </Button>
-        <Tooltip title="手动发送整理">
+        <Tooltip title="AI 整理后发送 (停顿 1.5s 自动触发)">
           <Button
             size="small"
             icon={<RobotOutlined />}
@@ -309,6 +321,26 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
             loading={organizing}
           >
             整理
+          </Button>
+        </Tooltip>
+        {/* 手动直接发送: 不经过 AI 整理, 直接将原始文字回调 */}
+        <Tooltip title="直接发送原始文字 (不经过 AI 整理)">
+          <Button
+            size="small"
+            icon={<SendOutlined />}
+            onClick={() => {
+              const all = segments.filter(s => s.final).map(s => s.text).join('') + ' ' + interimText;
+              const trimmed = all.trim();
+              if (trimmed.length < 3) return;
+              onOrganized(trimmed, trimmed);
+              segmentsRef.current = [];
+              setSegments([]);
+              setInterimText('');
+              interimRef.current = '';
+            }}
+            disabled={segments.length === 0 && !interimText}
+          >
+            直接发送
           </Button>
         </Tooltip>
         <Tooltip title="清空">

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SkillMarket 集成演示 - AI真实调用示例
  * 

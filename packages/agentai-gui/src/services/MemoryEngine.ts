@@ -81,7 +81,7 @@ class MemoryEngineImpl {
         // 将后端记忆合并到前端 (不重复)
         for (const sm of data.memories) {
           const exists = this.memories.some(m =>
-            m.type === 'session_memory' && m.content.includes(sm.content?.slice(0, 50))
+            m.type === 'session_memory' && String(m.content || '').includes(String(sm.content || '').slice(0, 50))
           );
           if (!exists && sm.content) {
             this.add({

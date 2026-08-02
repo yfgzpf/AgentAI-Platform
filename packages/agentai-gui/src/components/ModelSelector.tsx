@@ -17,29 +17,35 @@
  *   NVIDIA 组首项为 "NVIDIA Auto (智能择优)" — 系统自动选择最佳模型
  */
 import React, { useState } from 'react';
-import { Select, Space, Tag, Tooltip, Badge, Dropdown } from 'antd';
+import { Select, Space, Tag, Tooltip, Badge, Dropdown, Checkbox } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined, CheckCircleFilled, ThunderboltOutlined, CrownOutlined, RobotOutlined,
   DownOutlined,
 } from '@ant-design/icons';
 import { useModelStore, type ModelConfig } from '../store/modelStore';
+import { useModelMetrics } from '../hooks/useModelMetrics'; // Phase 3: 模型性能指标
 
 /* ===== 密钥检查 ===== */
 function hasApiKey(m: ModelConfig, commercialKeys: Record<string, string>): boolean {
   const envVar = m.apiKeyEnv || `${m.id.toUpperCase()}_API_KEY`;
-  return !!commercialKeys[envVar] || !!localStorage.getItem(envVar) || !!localStorage.getItem(`__agentai_key_${m.provider || m.id}`);
+  // 检查商业密钥、localStorage、sessionStorage（安全存储）
+  return !!commercialKeys[envVar] ||
+    !!localStorage.getItem(envVar) ||
+    !!localStorage.getItem(`__agentai_key_${m.provider || m.id}`) ||
+    !!sessionStorage.getItem('agentai.' + envVar) ||  // 🔧 修复: 也检查 sessionStorage
+    !!sessionStorage.getItem(`agentai.__agentai_key_${m.provider || m.id}`);  // 🔧 兼容旧格式
 }
 
 function isFreeModel(m: ModelConfig): boolean {
-  return m.id === 'agentai' || m.id === 'zhipu';
+  return m.id === 'agentai' || m.id === 'zhipu' || m.provider === 'agnes';
 }
 
 /** 从 baseURL 提取渠道简称 */
 function channelName(baseURL: string): string {
   const host = baseURL.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
   const map: Record<string, string> = {
-    'apihub.agnes-ai.com': 'Agnes',
+    'api.agnes-ai.cn': 'Agnes',
     'api.deepseek.com': 'DeepSeek',
     'api.openai.com': 'OpenAI',
     'open.bigmodel.cn': '智谱',
@@ -52,14 +58,14 @@ function channelName(baseURL: string): string {
     'superapi.vanguard.dpdns.org': 'SuperAPI',
     'token.sensenova.cn': 'SenseNova',
     'api.longcat.chat': 'LongCat',
-    'integrate.api.nvidia.com': 'NVIDIA',
+    // nvidia 已移除
   };
   return map[host] || host.split('.')[0];
 }
 
 /** 判断是否为工厂组 (单一密钥共享多模型) */
 function isFactoryGroup(m: ModelConfig): boolean {
-  return ['superapi', 'nvidia', 'sensenova', 'longcat'].includes(m.provider || '');
+  return ['superapi', 'sensenova', 'longcat'].includes(m.provider || '');
 }
 
 /* ===== Props ===== */
@@ -68,20 +74,45 @@ type DisplayMode = 'full' | 'compact' | 'minimal';
 interface Props {
   mode?: DisplayMode;
   onSelect?: () => void;
+  compact?: boolean;
 }
 
 /* ===== 组件 ===== */
 export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
-  const { models, activeModelId, setActive, commercialKeys } = useModelStore();
+  const { models, activeModelId, setActive, commercialKeys, chatMode } = useModelStore();
   const activeModel = models.find(m => m.id === activeModelId) || models[0];
+  
+  // Phase 3: 模型性能指标
+  const { getModelMetrics } = useModelMetrics();
+  
+  // 辅助函数：格式化性能指标显示
+  const formatMetrics = (modelId: string) => {
+    const m = getModelMetrics(modelId);
+    if (!m || m.totalCalls === 0) return null;
+    return {
+      avgLatency: m.avgLatency > 0 ? `${(m.avgLatency / 1000).toFixed(1)}s` : '-',
+      avgCost: m.avgCost > 0 ? `¥${m.avgCost.toFixed(4)}` : '-',
+      successRate: m.successRate > 0 ? `${(m.successRate * 100).toFixed(0)}%` : '-',
+      totalCalls: m.totalCalls,
+    };
+  };
 
   // ===== 过滤: 有密钥或免费或已启用 =====
   const visibleModels = models.filter(m => {
     if (isFreeModel(m)) return true;
     if (hasApiKey(m, commercialKeys)) return true;
-    if (m.enabled) return true; // 内置商用模型启用后也显示
+    if (m.enabled) return true;
     return false;
   });
+
+  // 对话改图模式: 仅显示 chat(多模态) + image 类型模型
+  const imageCapableModels = visibleModels.filter(m =>
+    m.modelType === 'image' ||
+    (m.modelType === 'chat' && ['zhipu', 'doubao-chat', 'qwen-chat', 'longcat-2.0'].includes(m.id))
+  );
+
+  // chatMode 感知: 图片模式用 imageCapableModels, 否则用 visibleModels
+  const activeModels = chatMode === 'image_edit' ? imageCapableModels : visibleModels;
 
   // ===== 分组: 工厂组按 provider 聚合, 独立模型各自一组 =====
   interface Group {
@@ -93,7 +124,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
   }
 
   const groupMap = new Map<string, Group>();
-  for (const m of visibleModels) {
+  for (const m of activeModels) {
     const isFactory = isFactoryGroup(m);
     const gKey = isFactory ? (m.provider || m.groupLabel || '其他') : m.id;
     const gLabel = isFactory ? (m.groupLabel || channelName(m.baseURL)) : m.label;
@@ -118,18 +149,27 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
         </span>
       ),
       title: g.label,
-      options: g.models.map(m => ({
-        value: m.id,
-        label: (
-          <Space size={4}>
-            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: m.color }} />
-            <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
-            {isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="green">免费</Tag>}
-            {m.freeQuotaNote && !isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="blue">{m.freeQuotaNote}</Tag>}
-            {m.isDefault && <Badge count="默认" size="small" style={{ backgroundColor: '#4F46E5', fontSize: 9 }} />}
-          </Space>
-        ),
-      })),
+      options: g.models.map(m => {
+        const metrics = formatMetrics(m.id);
+        return {
+          value: m.id,
+          label: (
+            <Space size={4}>
+              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: m.color }} />
+              <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
+              {isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="green">免费</Tag>}
+              {m.freeQuotaNote && !isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="blue">{m.freeQuotaNote}</Tag>}
+              {m.isDefault && <Badge count="默认" size="small" style={{ backgroundColor: '#4F46E5', fontSize: 9 }} />}
+              {/* Phase 3: 显示平均性能指标 */}
+              {metrics && (
+                <span style={{ fontSize: 9, color: 'var(--muted-2)', marginLeft: 4 }}>
+                  ⏱️ {metrics.avgLatency} · 💰 {metrics.avgCost} · ✅ {metrics.successRate}
+                </span>
+              )}
+            </Space>
+          ),
+        };
+      }),
     }));
 
     return (
@@ -145,6 +185,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
           size="small"
           optionLabelProp="label"
           popupMatchSelectWidth={false}
+          getPopupContainer={() => document.body}
           options={groupedOptions}
         />
         {/* 模型标签列表 */}
@@ -172,20 +213,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
     if (g.isFactory && g.models.length > 1) {
       // 工厂组: 子菜单展开
       const children: NonNullable<MenuProps['items']>[number][] = [];
-      // NVIDIA 组: 添加 Auto 选项
-      if (g.key === 'nvidia') {
-        children.push({
-          key: 'nvidia-auto',
-          label: (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 180 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#76B900', flexShrink: 0 }} />
-              <span style={{ fontWeight: activeModelId === 'nvidia-auto' ? 600 : 400 }}>NVIDIA Auto (智能择优)</span>
-              <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 'auto' }} color="green">推荐</Tag>
-              {activeModelId === 'nvidia-auto' && <CheckCircleFilled style={{ color: '#76B900', fontSize: 10 }} />}
-            </div>
-          ),
-        });
-      }
+      // NVIDIA Auto 选项已移除
       g.models.forEach(m => {
         children.push({
           key: m.id,
@@ -242,6 +270,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
   return (
     <Dropdown
       trigger={['click']}
+      getPopupContainer={() => document.body}
       menu={{
         items: menuItems,
         onClick: ({ key }) => handleSelect(key),
@@ -281,6 +310,7 @@ const GroupTags: React.FC<{
   activeModelId: string;
   onSelect: (id: string) => void;
 }> = ({ group, activeModelId, onSelect }) => {
+  const { toggleModel } = useModelStore();
   const [expanded, setExpanded] = useState(group.models.some(m => m.id === activeModelId));
 
   if (group.isFactory && group.models.length > 1) {
@@ -294,39 +324,39 @@ const GroupTags: React.FC<{
         </div>
         {expanded && (
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4, paddingLeft: 12 }}>
-            {/* NVIDIA Auto 选项 */}
-            {group.key === 'nvidia' && (
-              <Tooltip title="系统自动根据任务复杂度选择最佳 NVIDIA 模型">
-                <Tag
-                  color={activeModelId === 'nvidia-auto' ? '#76B900' : undefined}
-                  style={{
-                    cursor: 'pointer', margin: 0,
-                    border: activeModelId === 'nvidia-auto' ? '2px solid #76B900' : '1px solid var(--border)',
-                    opacity: activeModelId === 'nvidia-auto' ? 1 : 0.6, fontSize: 11,
-                  }}
-                  onClick={() => onSelect('nvidia-auto')}
-                  icon={activeModelId === 'nvidia-auto' ? <CheckCircleFilled /> : <ThunderboltOutlined />}
-                >
-                  NVIDIA Auto
-                </Tag>
-              </Tooltip>
-            )}
+            {/* NVIDIA Auto 选项已移除 */}
             {group.models.map(m => {
               const isActive = m.id === activeModelId;
+              const checked = m.enabled;
               return (
                 <Tooltip key={m.id} title={`${m.label}\n${m.baseURL}\n上下文: ${((m.contextWindow || 0) / 1000).toFixed(0)}K${m.freeQuotaNote ? `\n${m.freeQuotaNote}` : ''}`}>
-                  <Tag
-                    color={isActive ? m.color : undefined}
+                  <span
                     style={{
-                      cursor: 'pointer', margin: 0,
-                      border: isActive ? `2px solid ${m.color}` : '1px solid var(--border)',
-                      opacity: isActive ? 1 : 0.6, fontSize: 11,
+                      display: 'inline-flex', alignItems: 'center', gap: 2,
+                      padding: '2px 4px', borderRadius: 4,
+                      background: isActive ? 'var(--accent-bg, rgba(79,70,229,0.1))' : 'transparent',
+                      cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap',
                     }}
                     onClick={() => onSelect(m.id)}
-                    icon={isActive ? <CheckCircleFilled /> : undefined}
                   >
-                    {m.label}
-                  </Tag>
+                    {/* 独立勾选框: 工厂组中每个模型可独立启用/禁用 */}
+<Checkbox
+checked={checked}
+style={{ fontSize: 9 }}
+onChange={(e) => {
+                        e.stopPropagation();
+                        toggleModel(m.id, e.target.checked);
+                      }}
+                    />
+                    <span style={{
+                      width: 6, height: 6, borderRadius: '50%', background: m.color,
+                      flexShrink: 0, margin: '0 2px',
+                    }} />
+                    <span style={{ fontWeight: isActive ? 600 : 400, opacity: checked ? 1 : 0.5 }}>
+                      {m.label}
+                    </span>
+                    {isActive && <CheckCircleFilled style={{ color: m.color, fontSize: 10, marginLeft: 2 }} />}
+                  </span>
                 </Tooltip>
               );
             })}
@@ -346,20 +376,38 @@ const GroupTags: React.FC<{
         {group.models.map(m => {
           const isActive = m.id === activeModelId;
           const free = isFreeModel(m);
+          const checked = m.enabled;
           return (
             <Tooltip key={m.id} title={`${m.label}\n${m.baseURL}\n上下文: ${((m.contextWindow || 0) / 1000).toFixed(0)}K${m.freeQuotaNote ? `\n${m.freeQuotaNote}` : ''}`}>
-              <Tag
-                color={isActive ? m.color : undefined}
+              <span
                 style={{
-                  cursor: 'pointer', margin: 0,
-                  border: isActive ? `2px solid ${m.color}` : '1px solid var(--border)',
-                  opacity: isActive ? 1 : 0.6, fontSize: 11,
+                  display: 'inline-flex', alignItems: 'center', gap: 2,
+                  padding: '2px 4px', borderRadius: 4,
+                  background: isActive ? 'var(--accent-bg, rgba(79,70,229,0.1))' : 'transparent',
+                  cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap',
                 }}
                 onClick={() => onSelect(m.id)}
-                icon={isActive ? <CheckCircleFilled /> : (free ? <ThunderboltOutlined /> : <CrownOutlined />)}
               >
-                {m.label}
-              </Tag>
+                {/* 独立勾选框 */}
+<Checkbox
+checked={checked}
+style={{ fontSize: 9 }}
+onChange={(e) => {
+                    e.stopPropagation();
+                    toggleModel(m.id, e.target.checked);
+                  }}
+                />
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%', background: m.color,
+                  flexShrink: 0, margin: '0 2px',
+                }} />
+                <span style={{ fontWeight: isActive ? 600 : 400, opacity: checked ? 1 : 0.5 }}>
+                  {m.label}
+                </span>
+                {isActive && <CheckCircleFilled style={{ color: m.color, fontSize: 10, marginLeft: 2 }} />}
+                {free && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 2 }} color="green">免费</Tag>}
+                {!free && m.freeQuotaNote && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 2 }} color="blue">{m.freeQuotaNote}</Tag>}
+              </span>
             </Tooltip>
           );
         })}

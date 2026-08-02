@@ -166,9 +166,38 @@ export function speakText(
 
     // 匹配音色
     if (options?.voice && window.speechSynthesis.getVoices().length > 0) {
-      const found = window.speechSynthesis.getVoices().find(
+      const allVoices = window.speechSynthesis.getVoices();
+      // 先尝试直接匹配 (Microsoft 英文名)
+      let found = allVoices.find(
         v => v.name.includes(options.voice!) || v.voiceURI.includes(options.voice!),
       );
+      // 再尝试中文 ID 映射匹配 (如 zh-CN-XiaoxiaoNeural → Microsoft Huihui)
+      if (!found) {
+        const zhMap: Record<string, string[]> = {
+          'zh-CN-XiaoxiaoNeural': ['Xiaoxiao', 'Huihui'],
+          'zh-CN-YunxiNeural': ['Yunxi', 'Kangkang'],
+          'zh-CN-YunjianNeural': ['Yunjian'],
+          'zh-CN-XiaoyiNeural': ['Xiaoyi', 'Yaoyao'],
+          'zh-CN-YunyangNeural': ['Yunyang'],
+          'zh-CN-XiaochenNeural': ['Xiaochen'],
+          'zh-CN-XiaohanNeural': ['Xiaohan'],
+          'zh-CN-XiaomengNeural': ['Xiaomeng'],
+          'zh-CN-YunfengNeural': ['Yunfeng'],
+          'zh-CN-YunhaoNeural': ['Yunhao'],
+          'zh-HK-HiuMaanNeural': ['HiuMaan'],
+          'zh-HK-WanLungNeural': ['WanLung'],
+          'zh-TW-HsiaoChenNeural': ['HsiaoChen'],
+          'zh-TW-YunJheNeural': ['YunJhe'],
+          'en-US-AriaNeural': ['Aria'],
+          'en-US-GuyNeural': ['Guy'],
+          'ja-JP-NanamiNeural': ['Nanami'],
+          'ko-KR-SunHiNeural': ['SunHi'],
+        };
+        const keywords = zhMap[options.voice];
+        if (keywords) {
+          found = allVoices.find(v => keywords.some(k => v.name.includes(k)));
+        }
+      }
       if (found) utterance.voice = found;
     }
 
@@ -202,11 +231,19 @@ export function stopSpeaking(): void {
 /**
  * 使用后端 API 获取高质量 TTS 音频并播放
  */
-export async function speakWithApi(text: string, voice?: string): Promise<void> {
+export async function speakWithApi(
+  text: string,
+  options?: { voice?: string; speed?: number; provider?: string },
+): Promise<void> {
   const resp = await fetch('/v1/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice }),
+    body: JSON.stringify({
+      text,
+      voice: options?.voice,
+      speed: options?.speed,
+      provider: options?.provider,
+    }),
   });
 
   if (!resp.ok) {

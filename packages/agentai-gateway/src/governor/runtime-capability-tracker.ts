@@ -61,6 +61,10 @@ export interface RuntimeStats {
   avgIterations: number;
   /** 平均延迟 (ms, EMA) */
   avgLatencyMs: number;
+  /** 实测上下文容量 (从 usage.promptTokens 学习) */
+  contextCapacity: number;
+  /** 置信度: 采样次数 */
+  contextSamples: number;
   
   // ── 错误模式 ──
   /** 错误类型频率 (errorType → count) */
@@ -296,6 +300,24 @@ export class RuntimeCapabilityTracker extends EventEmitter {
    * 获取模型的动态能力评分
    * 将静态评分与运行时数据融合
    */
+  /** 获取模型实测上下文容量 */
+  getContextCapacity(provider: string): number {
+    const key = provider;
+    const s = this.matrix.get(key);
+    if (!s || s.contextSamples < 2) return 0;
+    return Math.floor(s.contextCapacity * 1.5);
+  }
+
+  /** 更新模型实测上下文容量 */
+  updateContextCapacity(provider: string, actualTokens: number): void {
+    const key = provider;
+    if (!this.matrix.has(key)) return;
+    const s = this.matrix.get(key)!;
+    s.contextCapacity = Math.max(s.contextCapacity, actualTokens);
+    s.contextSamples++;
+    this.schedulePersist();
+  }
+
   getDynamicCapabilities(modelId: string, taskType: TaskType = 'general'): DynamicCapability {
     const staticCap = getCapabilitiesById(
       modelId.includes(':') ? modelId.split(':')[0]! : modelId,
@@ -476,6 +498,8 @@ export class RuntimeCapabilityTracker extends EventEmitter {
         totalFailure: 0,
         avgIterations: 0,
         avgLatencyMs: 0,
+    contextCapacity: 0,
+    contextSamples: 0,
         errorPatterns: {},
         diagnosisPatterns: {},
         lastUpdated: Date.now(),

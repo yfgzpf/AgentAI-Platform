@@ -17,7 +17,7 @@ interface AutoModelState {
 }
 
 export const MODEL_TIERS = [
-  { label: 'Free (Agnes)', apiProvider: 'agentai', model: 'agnes-2.0-flash', strength: 3, keywords: [] },
+  { label: 'Free (PulseFlow)', apiProvider: 'agentai', model: 'agnes-2.5-flash', strength: 3, keywords: [] },
   { label: 'DeepSeek Flash', apiProvider: 'deepseek', model: 'deepseek-v4-flash', strength: 4, keywords: ['review', 'analyze', 'refactor', 'implement'] },
   { label: 'DeepSeek Pro', apiProvider: 'deepseek', model: 'deepseek-v4-pro', strength: 8, keywords: ['architecture', 'security', 'optimization'] },
 ];

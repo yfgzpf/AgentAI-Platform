@@ -1,0 +1,816 @@
+/* =================================================================
+ * ATLAS Theme System — 自研 OKLCH 色域主题 (带 hex 回退)
+ * 通过 :root / [data-theme] / [data-theme-style] 三层属性切换
+ * ================================================================= */
+
+/* ---------- DARK (default) ---------- */
+:root,
+[data-theme="dark"],
+[data-theme-style="graphite"] {
+  /* Fallback: hex values for browsers without oklch support */
+  --bg: #1c1c26;
+  --bg-2: #202030;
+  --panel: #242435;
+  --panel-2: #2a2a40;
+  --card: #272738;
+  --card-hover: #2f2f45;
+  --border: #353550;
+  --border-strong: #454565;
+  --fg: #f2f2f5;
+  --fg-2: #cfcfd8;
+  --muted: #9a9aaa;
+  --muted-2: #7a7a8a;
+
+  --accent: #CD7A3A;
+  --accent-soft: rgba(205, 122, 58, 0.15);
+  --accent-strong: #e08a4a;
+
+  --success: #22c55e;
+  --success-soft: rgba(34, 197, 94, 0.14);
+  --warning: #eab308;
+  --warning-soft: rgba(234, 179, 8, 0.16);
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.16);
+  --violet: #8b5cf6;
+  --violet-soft: rgba(139, 92, 246, 0.16);
+
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 60px -16px rgba(0, 0, 0, 0.65);
+
+  /* ── Design Tokens (统一圆角/阴影/间距) ── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-bubble: 0 4px 16px var(--accent-soft), 0 1px 4px rgba(0,0,0,0.1);
+  --shadow-hover: 0 8px 24px -8px rgba(0, 0, 0, 0.25);
+
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --titlebar-bg: linear-gradient(180deg, #242438 0%, #1e1e2a 100%);
+  --titlebar-border: #2e2e45;
+
+  /* ── Editor 专用变量 (替代以前的硬编码) ── */
+  --editor-bg: #181825;
+  --editor-header: #202035;
+  --editor-tree: #151520;
+  --editor-tab-bar: #1a1a2a;
+  --editor-tab-active: #282840;
+  --editor-tab-active-fg: #4ade80;
+  --editor-divider: #2e2e45;
+  --editor-footer: #151520;
+  --editor-comment: #3d3d55;
+
+  /* ── 对话字体大小系统 (可调) ── */
+  --chat-font-size: 13px;
+  --chat-line-height: 1.65;
+  --chat-code-font-size: 12px;
+  --tool-font-size: 11px;
+  --ui-font-size: 12px;
+
+  /* ── 图标尺寸标准 ── */
+  --icon-size-xs: 10px;   /* 标签/徽章内小图标 */
+  --icon-size-sm: 12px;   /* 列表项、行内图标 */
+  --icon-size-md: 14px;   /* 工具栏、按钮图标 */
+  --icon-size-lg: 18px;   /* 侧边栏导航图标 */
+  --icon-size-xl: 24px;   /* 卡片头部大图标 */
+
+  /* ── oklch 增强值 (现代浏览器使用) ── */
+  @supports (background: oklch(0% 0 0)) {
+    --bg: oklch(17% 0.005 280);
+    --bg-2: oklch(20% 0.006 275);
+    --panel: oklch(21.5% 0.007 275);
+    --panel-2: oklch(24.5% 0.008 275);
+    --card: oklch(23.5% 0.007 275);
+    --card-hover: oklch(26.5% 0.008 275);
+    --border: oklch(30% 0.008 275);
+    --border-strong: oklch(38% 0.01 275);
+    --fg: oklch(96% 0.004 280);
+    --fg-2: oklch(81% 0.005 280);
+    --muted: oklch(63% 0.006 280);
+    --muted-2: oklch(49% 0.006 280);
+    --accent: oklch(68% 0.16 38);
+    --accent-soft: oklch(68% 0.16 38 / 0.15);
+    --accent-strong: oklch(72% 0.18 36);
+    --success: oklch(70% 0.14 145);
+    --success-soft: oklch(70% 0.14 145 / 0.14);
+    --warning: oklch(78% 0.14 85);
+    --warning-soft: oklch(78% 0.14 85 / 0.16);
+    --danger: oklch(66% 0.18 25);
+    --danger-soft: oklch(66% 0.18 25 / 0.16);
+    --violet: oklch(72% 0.14 295);
+    --violet-soft: oklch(72% 0.14 295 / 0.16);
+    --shadow-sm: 0 1px 0 oklch(0% 0 0 / 0.35);
+    --shadow-md: 0 8px 24px -8px oklch(0% 0 0 / 0.5);
+    --shadow-lg: 0 24px 60px -16px oklch(0% 0 0 / 0.65);
+    --shadow-hover: 0 8px 24px -8px oklch(0% 0 0 / 0.25);
+    --titlebar-bg: linear-gradient(180deg, oklch(20.5% 0.006 275) 0%, oklch(19% 0.005 280) 100%);
+    --titlebar-border: oklch(28% 0.008 275);
+    --editor-bg: oklch(14% 0.003 275);
+    --editor-header: oklch(18% 0.004 275);
+    --editor-tree: oklch(12% 0.003 275);
+    --editor-tab-bar: oklch(15% 0.004 275);
+    --editor-tab-active: oklch(22% 0.01 275);
+    --editor-tab-active-fg: oklch(75% 0.14 155);
+    --editor-divider: oklch(25% 0.005 275);
+    --editor-footer: oklch(12% 0.003 275);
+    --editor-comment: oklch(30% 0.005 275);
+  }
+}
+
+/* ---------- LIGHT (sandstone) ---------- */
+[data-theme="light"],
+[data-theme-style="sandstone"] {
+  /* Fallback: hex values for browsers without oklch support */
+  /* 降低亮度，使用更柔和的暖灰色调 */
+  --bg: #e8e4dc;
+  --bg-2: #ded9cf;
+  --panel: #f0ece4;
+  --panel-2: #d8d3c8;
+  --card: #f5f2ea;
+  --card-hover: #e5e0d5;
+  --border: #c9c2b3;
+  --border-strong: #b0a896;
+  --fg: #2d2b26;
+  --fg-2: #4a4740;
+  --muted: #6b665c;
+  --muted-2: #8a8478;
+
+  --accent: #b8651a;
+  --accent-soft: rgba(184, 101, 26, 0.1);
+  --accent-strong: #a05510;
+
+  --success: #16a34a;
+  --success-soft: rgba(22, 163, 74, 0.1);
+  --warning: #ca8a04;
+  --warning-soft: rgba(202, 138, 4, 0.12);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.1);
+  --violet: #7c3aed;
+  --violet-soft: rgba(124, 58, 237, 0.10);
+
+  --shadow-sm: 0 1px 0 rgba(40, 30, 20, 0.05);
+  --shadow-md: 0 8px 24px -10px rgba(40, 30, 20, 0.13);
+  --shadow-lg: 0 24px 60px -20px rgba(40, 30, 20, 0.20);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 2px 12px rgba(30, 20, 10, 0.06), 0 1px 3px rgba(30, 20, 10, 0.04);
+  --shadow-bubble: 0 4px 16px var(--accent-soft), 0 1px 4px rgba(30, 20, 10, 0.1);
+  --shadow-hover: 0 8px 24px -8px rgba(30, 20, 10, 0.12);
+
+  --titlebar-bg: linear-gradient(180deg, #f8f5ef 0%, #f0ebe0 100%);
+  --titlebar-border: #d5cdb8;
+
+  /* ── oklch 增强值 (现代浏览器使用) ── */
+  @supports (background: oklch(0% 0 0)) {
+    --bg: oklch(97.5% 0.008 80);
+    --bg-2: oklch(95.5% 0.011 78);
+    --panel: oklch(98.5% 0.005 80);
+    --panel-2: oklch(93.5% 0.014 76);
+    --card: oklch(99.5% 0.003 80);
+    --card-hover: oklch(96.5% 0.009 78);
+    --border: oklch(88% 0.016 76);
+    --border-strong: oklch(78% 0.020 72);
+    --fg: oklch(22% 0.014 55);
+    --fg-2: oklch(36% 0.013 55);
+    --muted: oklch(53% 0.011 60);
+    --muted-2: oklch(67% 0.010 65);
+    --accent: oklch(60% 0.19 38);
+    --accent-soft: oklch(60% 0.19 38 / 0.1);
+    --accent-strong: oklch(54% 0.21 36);
+    --success: oklch(48% 0.14 155);
+    --success-soft: oklch(48% 0.14 155 / 0.1);
+    --warning: oklch(58% 0.14 75);
+    --warning-soft: oklch(58% 0.14 75 / 0.12);
+    --danger: oklch(54% 0.2 22);
+    --danger-soft: oklch(54% 0.2 22 / 0.1);
+    --violet: oklch(62% 0.16 52);
+    --violet-soft: oklch(62% 0.16 52 / 0.10);
+    --shadow-sm: 0 1px 0 oklch(30% 0.05 50 / 0.05);
+    --shadow-md: 0 8px 24px -10px oklch(30% 0.05 50 / 0.13);
+    --shadow-lg: 0 24px 60px -20px oklch(30% 0.05 50 / 0.20);
+    --shadow-card: 0 2px 12px oklch(20% 0.02 50 / 0.06), 0 1px 3px oklch(20% 0.02 50 / 0.04);
+    --shadow-hover: 0 8px 24px -8px oklch(20% 0.02 50 / 0.12);
+    --titlebar-bg: linear-gradient(180deg, oklch(98% 0.005 80) 0%, oklch(96% 0.009 78) 100%);
+    --titlebar-border: oklch(86% 0.018 76);
+  }
+}
+
+/* ---------- PORCELAIN (柔和白瓷) ---------- */
+[data-theme-style="porcelain"] {
+  /* 降低亮度，避免刺眼的高对比度 */
+  --bg: oklch(94% 0.002 100);
+  --bg-2: oklch(91% 0.003 100);
+  --panel: oklch(96% 0.001 100);
+  --panel-2: oklch(88% 0.004 100);
+  --card: oklch(98% 0.001 100);
+  --card-hover: oklch(92% 0.002 100);
+  --border: oklch(82% 0.004 100);
+  --border-strong: oklch(74% 0.005 100);
+  --fg: oklch(22% 0.008 260);
+  --fg-2: oklch(35% 0.007 260);
+  --muted: oklch(50% 0.006 260);
+  --muted-2: oklch(62% 0.005 260);
+
+  --accent: oklch(58% 0.18 36);
+  --accent-soft: oklch(58% 0.18 36 / 0.1);
+  --accent-strong: oklch(52% 0.2 34);
+
+  --success: oklch(48% 0.13 155);
+  --success-soft: oklch(48% 0.13 155 / 0.1);
+  --warning: oklch(58% 0.14 78);
+  --warning-soft: oklch(58% 0.14 78 / 0.12);
+  --danger: oklch(54% 0.2 22);
+  --danger-soft: oklch(54% 0.2 22 / 0.1);
+  --violet: oklch(60% 0.16 290);
+  --violet-soft: oklch(60% 0.16 290 / 0.10);
+
+  --shadow-sm: 0 1px 0 oklch(20% 0.005 260 / 0.04);
+  --shadow-md: 0 6px 20px -10px oklch(20% 0.005 260 / 0.10);
+  --shadow-lg: 0 20px 50px -20px oklch(20% 0.005 260 / 0.18);
+
+  --titlebar-bg: linear-gradient(180deg, oklch(100% 0 0) 0%, oklch(98% 0.001 100) 100%);
+  --titlebar-border: oklch(89% 0.002 100);
+}
+
+/* ---------- Mid variants (warm/cool) ---------- */
+[data-theme-style="midnight"] {
+  --bg: oklch(13% 0.012 270);
+  --bg-2: oklch(16% 0.013 270);
+  --panel: oklch(18% 0.014 270);
+  --accent: oklch(70% 0.18 285);
+  --accent-strong: oklch(76% 0.20 285);
+  --violet: oklch(74% 0.18 290);
+  --violet-soft: oklch(74% 0.18 290 / 0.16);
+}
+
+[data-theme-style="ember"] {
+  --bg: oklch(15% 0.010 30);
+  --bg-2: oklch(18% 0.011 30);
+  --panel: oklch(20% 0.012 30);
+  --accent: oklch(72% 0.18 32);
+  --accent-strong: oklch(76% 0.20 30);
+}
+
+/* ====================== GLOBAL ====================== */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+#root { height: 100vh; }
+
+/* ====================== Ant Design dark override ====================== */
+.ant-btn-default { background: var(--bg-2) !important; border-color: var(--border) !important; color: var(--fg) !important; }
+.ant-btn-primary { background: var(--accent) !important; border-color: var(--accent) !important; }
+.ant-btn-primary:hover { background: var(--accent-strong) !important; }
+.ant-input { background: var(--bg-2) !important; border-color: var(--border) !important; color: var(--fg) !important; }
+.ant-tag { border-radius: 4px !important; }
+.ant-card { background: var(--card) !important; border-color: var(--border) !important; }
+.ant-card-head { border-bottom-color: var(--border) !important; color: var(--fg) !important; }
+.ant-card-body { color: var(--fg-2) !important; }
+.ant-layout { background: var(--bg) !important; }
+.ant-layout-header { background: var(--bg-2) !important; }
+.ant-layout-sider { background: var(--panel) !important; }
+.ant-modal-content { background: var(--bg-2) !important; }
+.ant-modal-header { background: transparent !important; }
+.ant-select-selector { background: var(--bg-2) !important; border-color: var(--border) !important; color: var(--fg) !important; }
+.ant-empty-description { color: var(--muted) !important; }
+
+/* ====================== Ant Design Tabs 覆盖 ====================== */
+.ant-tabs { color: var(--fg) !important; }
+.ant-tabs-tab { color: var(--muted) !important; }
+.ant-tabs-tab:hover { color: var(--fg-2) !important; }
+.ant-tabs-tab-active { color: var(--accent) !important; }
+.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--accent) !important; }
+.ant-tabs-ink-bar { background: var(--accent) !important; }
+.ant-tabs-top > .ant-tabs-nav::before { border-bottom: 1px solid var(--border) !important; }
+.ant-tabs-left > .ant-tabs-nav::before { border-right: 1px solid var(--border) !important; }
+.ant-tabs-content { color: var(--fg) !important; }
+
+/* ====================== Ant Design Collapse 覆盖 ====================== */
+.ant-collapse { background: var(--panel) !important; border-color: var(--border) !important; }
+.ant-collapse > .ant-collapse-item { border-bottom-color: var(--border) !important; }
+.ant-collapse > .ant-collapse-item > .ant-collapse-header { color: var(--fg) !important; }
+.ant-collapse-content { background: var(--bg) !important; color: var(--fg-2) !important; }
+.ant-collapse-content > .ant-collapse-content-box { color: var(--fg-2) !important; }
+.ant-collapse-ghost > .ant-collapse-item > .ant-collapse-content { background: transparent !important; }
+
+/* ====================== Ant Design Divider 覆盖 ====================== */
+.ant-divider { border-color: var(--border) !important; }
+.ant-divider-horizontal { border-color: var(--border) !important; }
+.ant-divider-vertical { border-color: var(--border) !important; }
+.ant-divider-inner-text { color: var(--muted) !important; }
+
+/* ====================== Ant Design Form 覆盖 ====================== */
+.ant-form { color: var(--fg) !important; }
+.ant-form-item-label > label { color: var(--fg) !important; }
+.ant-form-item-explain { color: var(--muted) !important; }
+.ant-form-item-extra { color: var(--muted-2) !important; }
+
+/* ====================== Ant Design Space 覆盖 ====================== */
+.ant-space { color: var(--fg) !important; }
+.ant-space-item { color: var(--fg) !important; }
+
+/* ====================== Ant Design Descriptions 覆盖 ====================== */
+.ant-descriptions { color: var(--fg) !important; }
+.ant-descriptions-item-label { color: var(--muted) !important; }
+.ant-descriptions-item-content { color: var(--fg) !important; }
+.ant-descriptions-bordered .ant-descriptions-item-label { background: var(--bg-2) !important; border-color: var(--border) !important; }
+.ant-descriptions-bordered .ant-descriptions-item-content { border-color: var(--border) !important; }
+
+/* ====================== Ant Design Table 覆盖 ====================== */
+.ant-table { background: var(--card) !important; color: var(--fg) !important; }
+.ant-table-thead > tr > th { background: var(--bg-2) !important; color: var(--fg) !important; border-color: var(--border) !important; }
+.ant-table-tbody > tr > td { border-color: var(--border) !important; }
+.ant-table-tbody > tr:hover > td { background: var(--card-hover) !important; }
+
+/* ====================== Ant Design Alert 覆盖 ====================== */
+.ant-alert { background: var(--bg-2) !important; border-color: var(--border) !important; }
+.ant-alert-message { color: var(--fg) !important; }
+.ant-alert-description { color: var(--fg-2) !important; }
+
+/* ====================== Ant Design Tooltip 覆盖 ====================== */
+.ant-tooltip-inner { background: var(--panel-2) !important; color: var(--fg) !important; }
+.ant-tooltip-arrow-content { background: var(--panel-2) !important; }
+
+/* ====================== Ant Design Dropdown 覆盖 ====================== */
+.ant-dropdown-menu { background: var(--panel) !important; }
+.ant-dropdown-menu-item { color: var(--fg) !important; }
+.ant-dropdown-menu-item:hover { background: var(--card-hover) !important; }
+
+/* ====================== Ant Design Menu 覆盖 ====================== */
+.ant-menu { background: var(--panel) !important; color: var(--fg) !important; }
+.ant-menu-item { color: var(--fg) !important; }
+.ant-menu-item:hover { background: var(--card-hover) !important; }
+.ant-menu-item-selected { background: var(--accent-soft) !important; color: var(--accent) !important; }
+
+/* ====================== Ant Design Popover 覆盖 ====================== */
+.ant-popover-inner { background: var(--panel) !important; }
+.ant-popover-title { color: var(--fg) !important; border-color: var(--border) !important; }
+.ant-popover-inner-content { color: var(--fg-2) !important; }
+
+/* ====================== Ant Design Drawer 覆盖 ====================== */
+.ant-drawer-content { background: var(--panel) !important; }
+.ant-drawer-header { background: var(--bg-2) !important; border-color: var(--border) !important; }
+.ant-drawer-title { color: var(--fg) !important; }
+
+/* ====================== Ant Design List 覆盖 ====================== */
+.ant-list { background: transparent !important; }
+.ant-list-item { border-color: var(--border) !important; }
+
+/* ====================== Ant Design Input 覆盖 (防止溢出) ====================== */
+.ant-input-affix-wrapper { background: var(--bg-2) !important; border-color: var(--border) !important; }
+.ant-input-affix-wrapper > input.ant-input { background: transparent !important; }
+
+/* ====================== Ant Design Select 覆盖 (防止溢出) ====================== */
+.ant-select { width: 100% !important; }
+.ant-select-dropdown { background: var(--panel) !important; }
+.ant-select-item { color: var(--fg) !important; }
+.ant-select-item-option-active { background: var(--card-hover) !important; }
+.ant-select-item-option-selected { background: var(--accent-soft) !important; }
+
+/* ====================== 全局溢出保护 ====================== */
+.ant-form-item-control-input { min-width: 0 !important; }
+.ant-col { min-width: 0 !important; }
+.ant-row { flex-wrap: wrap !important; }
+
+/* ====================== App 架构层样式 ====================== */
+
+/* 标题栏 — ZCode 风格: 紧凑 (36px) + 原生窗口控制 */
+.app-titlebar {
+  display: flex;
+  align-items: center;
+  height: 36px;  /* 从 44px 减到 36px，更紧凑 */
+  padding: 0 12px; /* 从 16px 减到 12px */
+  background: var(--titlebar-bg);
+  border-bottom: 1px solid var(--titlebar-border);
+  gap: 8px;       /* 从 12px 减到 8px */
+  backdrop-filter: blur(8px);
+  -webkit-app-region: drag;
+  position: relative;
+  z-index: 100;
+}
+.app-titlebar > * { -webkit-app-region: no-drag; }
+.app-titlebar::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* ═════ Tauri 窗口控制按钮 (ZCode/VS Code 风格) ═════ */
+.window-control-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 28px;   /* 匹配 36px 标题栏 */
+  cursor: pointer;
+  color: var(--fg-2, #aaa);
+  transition: all 0.08s ease;
+  -webkit-app-region: no-drag;
+  border-radius: 0;
+}
+.window-control-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
+}
+.window-control-close:hover {
+  background: #e81123 !important;
+  color: #fff !important;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.4px;
+  color: var(--fg);
+}
+.app-brand-mark {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--violet) 100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 900;
+  font-size: 12px;
+  box-shadow: 0 2px 8px var(--accent-soft);
+  flex-shrink: 0;
+}
+.app-brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+.app-brand-name { font-weight: 700; }
+.app-brand-tag { font-size: 9px; color: var(--muted); font-weight: 500; }
+
+/* 左侧 Sidebar */
+.app-sidebar {
+  width: 56px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.app-sidebar-item {
+  width: 40px; height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--muted-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+  font-size: 18px;
+}
+.app-sidebar-item:hover {
+  background: var(--card-hover);
+  color: var(--fg-2);
+}
+.app-sidebar-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.app-sidebar-item.active::before {
+  content: '';
+  position: absolute;
+  left: -8px; top: 8px; bottom: 8px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+.app-sidebar-divider {
+  width: 24px;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* 主区布局 */
+.app-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+.app-content {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg);
+  min-width: 0;
+  position: relative;
+}
+
+/* 面包屑 */
+.app-breadcrumb {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 16px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+  gap: 6px;
+}
+.app-breadcrumb-current { color: var(--fg); font-weight: 500; }
+.app-breadcrumb-sep { color: var(--muted-2); }
+
+/* Tab Bar (二级导航) */
+.app-tabbar {
+  display: flex;
+  height: 36px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+  gap: 2px;
+  align-items: center;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.app-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--muted-2);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid transparent;
+  position: relative;
+}
+.app-tab:hover {
+  background: var(--card-hover);
+  color: var(--fg-2);
+  transform: translateY(-1px);
+}
+.app-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-soft);
+  font-weight: 600;
+}
+.app-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 50%; bottom: -1px;
+  width: 60%; height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: translateX(-50%);
+  opacity: 0.6;
+}
+
+/* 状态栏 */
+.app-statusbar {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 12px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  gap: 14px;
+  flex-shrink: 0;
+}
+.app-statusbar-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.app-statusbar-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.app-statusbar-spacer { flex: 1; }
+
+/* 通用工具类 */
+.fade-in { animation: fadeIn 0.2s ease-out; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.pulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* ChatView / Editor / RightPanel 内部覆盖 */
+.chatview-bg { background: var(--bg) !important; }
+.chatview-toolbar { background: var(--bg-2) !important; border-color: var(--border) !important; }
+.chatview-input { background: var(--bg-2) !important; border-color: var(--border) !important; color: var(--fg) !important; }
+.chatview-input::placeholder { color: var(--muted-2) !important; }
+.rightpanel-card { background: var(--card) !important; border-color: var(--border) !important; }
+.rightpanel-input { background: var(--bg-2) !important; border-color: var(--border) !important; color: var(--fg) !important; }
+
+/* ====================== 原子工具类 (减少内联样式) ====================== */
+
+/* 图标按钮 */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: var(--radius-sm);
+  cursor: pointer; border: none; background: transparent;
+  color: var(--muted-2); transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.icon-btn:hover { background: var(--card-hover); color: var(--fg-2); transform: scale(1.06); }
+.icon-btn:active { transform: scale(0.94); }
+.icon-btn.active { color: var(--accent); background: var(--accent-soft); }
+
+/* 紧凑图标按钮 (Composer 内) */
+.icon-btn-sm {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: var(--radius-sm);
+  cursor: pointer; border: none; background: transparent;
+  color: var(--muted-2); transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.icon-btn-sm:hover { background: var(--card-hover); color: var(--fg-2); transform: scale(1.08); }
+.icon-btn-sm:active { transform: scale(0.92); }
+.icon-btn-sm.active { color: var(--accent); background: var(--accent-soft); }
+
+/* 发送按钮 */
+.send-btn {
+  width: 28px; height: 28px; border-radius: var(--radius-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; cursor: pointer; flex-shrink: 0; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.send-btn:not(:disabled):hover {
+  transform: scale(1.08);
+  box-shadow: 0 2px 8px var(--accent-soft);
+}
+.send-btn:not(:disabled):active {
+  transform: scale(0.95);
+}
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 通用卡片 */
+.ui-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-card);
+}
+
+/* 用户消息气泡 */
+.user-bubble {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #fff; box-shadow: var(--shadow-bubble);
+  transition: box-shadow 0.2s ease;
+}
+.user-bubble:hover {
+  box-shadow: 0 6px 20px var(--accent-soft), 0 2px 6px rgba(0,0,0,0.12);
+}
+
+/* AI 消息气泡 */
+.ai-bubble {
+  background: var(--card); border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+}
+
+/* 工具卡片容器 */
+.tool-card-container {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel); box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+}
+
+/* 分隔线 */
+.ui-divider { width: 1px; height: 14px; background: var(--border); margin: 0 4px; }
+
+/* ====================== Thread 动画 (从 Thread.tsx 运行时注入移入) ====================== */
+@keyframes msgSlideIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes bubbleIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 4px var(--accent-soft); }
+  50%      { box-shadow: 0 0 12px var(--accent-soft); }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 0.3; }
+}
+
+.msg-enter { animation: msgSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.bubble-enter { animation: bubbleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* ====================== 微交互增强 ====================== */
+
+/* Composer 输入框聚焦光晕 — 通过 :focus-within 让整个容器获得光晕 */
+.composer-focus-container {
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.composer-focus-container:focus-within {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 2px 8px rgba(0,0,0,0.06);
+}
+
+/* 文件树行 hover 左侧高亮条 */
+.file-tree-row {
+  transition: background 0.12s ease;
+  position: relative;
+}
+.file-tree-row:hover {
+  background: var(--card-hover);
+}
+.file-tree-row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 2px; bottom: 2px;
+  width: 2px;
+  border-radius: 0 1px 1px 0;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.file-tree-row:hover::before {
+  opacity: 0.5;
+}
+
+/* Antd Input/Select 聚焦光晕统一 */
+.ant-input:focus,
+.ant-input-focused,
+.ant-select-focused .ant-select-selector {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent-soft) !important;
+}
+
+/* Antd Button 点击反馈 */
+.ant-btn:active {
+  transform: scale(0.97);
+}
+.ant-btn {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+/* 链接/可点击 span 统一 hover 效果 */
+.app-titlebar span[style*="cursor: pointer"]:hover {
+  transform: scale(1.06);
+}
+
+/* 消息气泡 hover 微浮 */
+.user-bubble, .ai-bubble {
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.ai-bubble:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+}
+
+/* 卡片 hover 微浮 */
+.ui-card {
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+.ui-card:hover {
+  box-shadow: var(--shadow-hover);
+}

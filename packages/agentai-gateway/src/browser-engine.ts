@@ -31,24 +31,41 @@ async function getChromium(): Promise<any> {
   }
 }
 
-/** 查找已安装的 Chromium 可执行文件 (兼容多版本) */
+/** 查找已安装的 Chromium 可执行文件 (兼容多版本，支持打包环境) */
 function findExistingChromium(): string | undefined {
   try {
+    // 1. 首先检查打包目录内的 ms-playwright (桌面端打包后)
+    const bundledPath = path.join(process.cwd(), 'ms-playwright');
+    if (fs.existsSync(bundledPath)) {
+      const dirs = fs.readdirSync(bundledPath)
+        .filter((d: string) => d.startsWith('chromium_headless_shell-') || d.startsWith('chromium-'))
+        .sort()
+        .reverse();
+      for (const d of dirs) {
+        const shellExe = path.join(bundledPath, d, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
+        if (fs.existsSync(shellExe)) return shellExe;
+        const chromeExe = path.join(bundledPath, d, 'chrome-win64', 'chrome.exe');
+        if (fs.existsSync(chromeExe)) return chromeExe;
+        const chromeExe6 = path.join(bundledPath, d, 'chrome-win', 'chrome.exe');
+        if (fs.existsSync(chromeExe6)) return chromeExe6;
+      }
+    }
+    
+    // 2. 检查系统 ms-playwright (开发环境)
     const base = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
-    if (!fs.existsSync(base)) return undefined;
-    // 优先找 headless_shell (更高版本优先)
-    const dirs = fs.readdirSync(base)
-      .filter((d: string) => d.startsWith('chromium_headless_shell-') || d.startsWith('chromium-'))
-      .sort()
-      .reverse();
-    for (const d of dirs) {
-      const shellExe = path.join(base, d, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
-      if (fs.existsSync(shellExe)) return shellExe;
-      const chromeExe = path.join(base, d, 'chrome-win64', 'chrome.exe');
-      if (fs.existsSync(chromeExe)) return chromeExe;
-      // 旧版命名格式
-      const chromeExe6 = path.join(base, d, 'chrome-win', 'chrome.exe');
-      if (fs.existsSync(chromeExe6)) return chromeExe6;
+    if (fs.existsSync(base)) {
+      const dirs = fs.readdirSync(base)
+        .filter((d: string) => d.startsWith('chromium_headless_shell-') || d.startsWith('chromium-'))
+        .sort()
+        .reverse();
+      for (const d of dirs) {
+        const shellExe = path.join(base, d, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
+        if (fs.existsSync(shellExe)) return shellExe;
+        const chromeExe = path.join(base, d, 'chrome-win64', 'chrome.exe');
+        if (fs.existsSync(chromeExe)) return chromeExe;
+        const chromeExe6 = path.join(base, d, 'chrome-win', 'chrome.exe');
+        if (fs.existsSync(chromeExe6)) return chromeExe6;
+      }
     }
     return undefined;
   } catch {

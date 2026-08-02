@@ -79,6 +79,8 @@ export const AutomationPanel: React.FC = () => {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [stats, setStats] = useState<ScheduleStats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [presets, setPresets] = useState<any[]>([]);
+  const [showPresets, setShowPresets] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
@@ -112,6 +114,36 @@ export const AutomationPanel: React.FC = () => {
       console.error('加载统计失败:', error);
     }
   };
+
+  const installPreset = async (preset: any) => {
+    try {
+      const r = await fetch(baseUrl() + "/v1/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: preset.name,
+          cron: preset.defaultExpression,
+          type: "custom",
+          description: preset.description,
+        }),
+      });
+      const data = await r.json();
+      if (data.success) {
+        message.success("✅ 已安装: " + preset.name);
+        setShowPresets(false);
+        setTimeout(() => loadSchedules(), 500);
+      } else {
+        message.error("安装失败: " + (data.error || "未知错误"));
+      }
+    } catch (e: any) {
+      message.error("安装失败: " + (e.message || String(e)));
+    }
+  };
+
+  // 加载预设模板
+  useEffect(() => {
+    fetch(baseUrl() + "/v1/automation/presets").then(r=>r.json()).then(d=>{if(d.ok)setPresets(d.presets||[]);}).catch(e=>console.warn("[presets] fetch failed:",e));
+  }, []);
 
   useEffect(() => {
     loadSchedules();
@@ -464,6 +496,12 @@ export const AutomationPanel: React.FC = () => {
             >
               新建任务
             </Button>
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={() => setShowPresets(true)}
+            >
+              预设模板
+            </Button>
           </Space>
         }
       >
@@ -524,6 +562,52 @@ export const AutomationPanel: React.FC = () => {
               <p><strong>成功通知:</strong> {selectedSchedule.notifyOnSuccess ? '开启' : '关闭'}</p>
             </Card>
           </div>
+        )}
+      </Modal>
+
+      {/* 🎯 预设模板弹窗 */}
+      <Modal
+        title="🎯 一键安装自动化预设"
+        open={showPresets}
+        onCancel={() => setShowPresets(false)}
+        footer={null}
+        width={700}
+      >
+        {presets.length === 0 ? <Spin /> : (
+          <Row gutter={[12, 12]}>
+            {presets.map((p: any) => (
+              <Col span={12} key={p.id}>
+                <Card
+                  size="small"
+                  hoverable
+                  actions={[
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<ThunderboltOutlined />}
+                      onClick={() => installPreset(p)}
+                    >
+                      一键安装
+                    </Button>
+                  ]}
+                >
+                  <Card.Meta
+                    title={<span style={{ fontSize: 13 }}>{p.name}</span>}
+                    description={
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>{p.description}</div>
+                        <Tag style={{ fontSize: 10 }}>{p.defaultExpression}</Tag>
+                        <Tag color="blue" style={{ fontSize: 10 }}>{p.defaultAction}</Tag>
+                        <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4, padding: 4, background: 'var(--bg-2)', borderRadius: 4 }}>
+                          💡 {p.guide}
+                        </div>
+                      </div>
+                    }
+                  />
+                </Card>
+              </Col>
+            ))}
+          </Row>
         )}
       </Modal>
 

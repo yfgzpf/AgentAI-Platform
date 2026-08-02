@@ -6,15 +6,23 @@
  *   PUT    /v1/sandbox/rules         - 替换规则 (校验 + 写盘)
  *   POST   /v1/sandbox/check         - 试检查某路径 (不真操作)
  *   POST   /v1/sandbox/approve       - 批准 prompt 路径 (临时加 allow)
+ *   GET    /v1/sandbox/presets       - 路径预置 (盘符+常用目录, 供前端设置页)
  */
 
 import { Router, type Request, type Response } from 'express';
 import type { Sandbox } from './index.js';
 import { persistSandboxState } from './index.js';
 import type { SandboxCheckRequest, SandboxRules } from './types.js';
+import { getPathPresets } from './rules.js';
 
 export function createSandboxRouter(sandbox: Sandbox): Router {
     const r = Router();
+
+    /** GET /v1/sandbox/presets — 返回可用的路径预置 (盘符 + 常用目录) */
+    r.get('/presets', (_req: Request, res: Response) => {
+        const presets = getPathPresets();
+        res.json({ presets, total: presets.length });
+    });
 
     /** GET /v1/sandbox/rules */
     r.get('/rules', (_req: Request, res: Response) => {

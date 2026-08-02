@@ -1,6 +1,6 @@
 /**
  * 缺口分析器
- * ALTES | 岐黄 - 望闻问切之"闻"
+ * 岐枢 | PulseFlow - 望闻问切之"闻"
  *
  * 职责：
  * 1. 深度分析信息缺口
@@ -181,9 +181,12 @@ const ANALYSIS_GAPS: GapPattern[] = [
 // ═══════════════════════════════════════════════════════════
 
 /**
- * 分析缺口
+ * 分析缺口（纯规则模式）
+ * @deprecated 生产环境请使用 analyzeGapsFrom gap-analyzer-llm.ts
+ *
+ * 此函数保留供单元测试和调试使用，签名与 gap-analyzer-llm.ts 不同。
  */
-export function analyzeGaps(
+export function analyzeGapsByRules(
   userText: string,
   taskType: TaskType,
   complexity: ComplexityLevel,
@@ -390,7 +393,10 @@ function adjustSeverityByComplexity(
 /**
  * 测试缺口分析
  */
-export function testGapAnalyzer(): void {
+/**
+ * 测试缺口分析（私有函数，不导出）
+ */
+function testGapAnalyzer(): void {
   const testCases = [
     {
       text: '帮我看一下这个文件',
@@ -410,12 +416,12 @@ export function testGapAnalyzer(): void {
   ];
   
   for (const testCase of testCases) {
-    const gaps = analyzeGaps(testCase.text, testCase.taskType, testCase.complexity);
+    const gaps = analyzeGapsByRules(testCase.text, testCase.taskType, testCase.complexity);
     const impact = assessGapImpact(gaps, testCase.taskType);
     const questions = generateClarificationQuestions(gaps);
     
     console.log('输入:', testCase.text);
-    console.log('缺口:', gaps.map(g => `[${g.severity}] ${g.type}: ${g.description}`));
+    console.log('缺口:', gaps.map((g: any) => `[${(g as any).severity}] ${(g as any).type}: ${(g as any).description}`));
     console.log('影响:', impact);
     console.log('追问:', questions);
     console.log('---');

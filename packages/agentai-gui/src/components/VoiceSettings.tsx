@@ -18,7 +18,7 @@ import { speakText, getAvailableVoices, speakWithApi } from '../services/voice';
 /* ===== 类型 ===== */
 export interface VoiceSettingsState {
   enabled: boolean;
-  engine: 'browser' | 'openai' | 'moss' | 'nvidia';
+  engine: 'browser' | 'openai' | 'moss' | 'agnes';
   voice: string;
   rate: number;
   pitch: number;
@@ -37,15 +37,46 @@ const ENGINE_OPTIONS = [
   { value: 'browser' as const, label: '浏览器内置 TTS' },
   { value: 'agnes' as const, label: 'Agnes Audio TTS' },
   { value: 'moss' as const, label: 'MOSS 本地 TTS' },
-  { value: 'nvidia' as const, label: 'NVIDIA Chatterbox (免费)' },
+  // NVIDIA Chatterbox 已移除 (NIM 不可用)
 ];
 
 const ENGINE_PROVIDER_MAP: Record<string, string> = {
   browser: 'browser',
   agnes: 'agnes',
   moss: 'moss',
-  nvidia: 'nvidia',
+  // nvidia 已移除
 };
+
+// 中文命名音色映射: browser 引擎下用中文名替代 Microsoft Huihui 等英文名
+const BROWSER_VOICE_NAME_MAP: Record<string, string> = {
+  'zh-CN-XiaoxiaoNeural': '晓晓',
+  'zh-CN-YunxiNeural': '云希',
+  'zh-CN-YunjianNeural': '云健',
+  'zh-CN-XiaoyiNeural': '晓伊',
+  'zh-CN-YunyangNeural': '云扬',
+  'zh-CN-XiaochenNeural': '晓辰',
+  'zh-CN-XiaohanNeural': '晓涵',
+  'zh-CN-XiaomengNeural': '晓梦',
+  'zh-CN-YunfengNeural': '云枫',
+  'zh-CN-YunhaoNeural': '云皓',
+  'zh-HK-HiuMaanNeural': '晓曼(粤语)',
+  'zh-HK-WanLungNeural': '云龙(粤语)',
+  'zh-TW-HsiaoChenNeural': '晓臻(台湾)',
+  'zh-TW-YunJheNeural': '云哲(台湾)',
+  'en-US-AriaNeural': 'Aria (EN)',
+  'en-US-GuyNeural': 'Guy (EN)',
+  'ja-JP-NanamiNeural': '七海 (JP)',
+  'ko-KR-SunHiNeural': '善熙 (KR)',
+};
+
+// browser 引擎下优先使用的中文音色 ID 列表
+const PREFERRED_BROWSER_VOICES = [
+  'zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunjianNeural',
+  'zh-CN-XiaoyiNeural', 'zh-CN-YunyangNeural', 'zh-CN-XiaochenNeural',
+  'zh-CN-XiaohanNeural', 'zh-CN-XiaomengNeural', 'zh-CN-YunfengNeural', 'zh-CN-YunhaoNeural',
+  'zh-HK-HiuMaanNeural', 'zh-HK-WanLungNeural', 'zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural',
+  'en-US-AriaNeural', 'en-US-GuyNeural', 'ja-JP-NanamiNeural', 'ko-KR-SunHiNeural',
+];
 
 function loadSettings(): VoiceSettingsState {
   try {
@@ -235,17 +266,38 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
 
   let voiceOptions: { value: string; label: string }[];
   if (state.engine === 'browser') {
-    voiceOptions = browserVoices.map(v => ({
-      value: v.name,
-      label: `${v.name} (${v.lang})`,
-    }));
+    // browser 引擎: 使用中文命名列表 (与设置页 VoiceSelector 一致)
+    // 实际播放时通过 browserVoices 匹配对应的 Microsoft 语音
+    const zhVoices = PREFERRED_BROWSER_VOICES
+      .filter(id => BROWSER_VOICE_NAME_MAP[id])
+      .map(id => ({
+        value: id,
+        label: BROWSER_VOICE_NAME_MAP[id],
+      }));
+    // 追加浏览器中其他可用中文语音 (不在预设列表中的)
+    const existingIds = new Set(PREFERRED_BROWSER_VOICES);
+    const extraVoices = browserVoices
+      .filter(v => v.lang?.startsWith('zh') && !existingIds.has(v.name))
+      .map(v => ({ value: v.name, label: `${v.name} (${v.lang})` }));
+    voiceOptions = [...zhVoices, ...extraVoices];
   } else {
+    // agnes 引擎: 同时显示 agnes 和 edge 提供商的音色（共享 Azure Neural 音色名）
+    // moss 引擎: 只显示 moss 音色
+    // 其他引擎: 精确匹配 provider
+    const isAgnesEngine = state.engine === 'agnes';
     voiceOptions = apiVoices
-      .filter(v => v.provider === currentProvider)
+      .filter(v => {
+        if (isAgnesEngine) return v.provider === 'agnes' || v.provider === 'edge';
+        return v.provider === currentProvider;
+      })
       .map(v => ({
         value: v.id,
         label: `${v.name}${v.gender !== 'neutral' ? ` (${v.gender === 'male' ? '男' : '女'})` : ''}`,
       }));
+    // 如果 agnes 引擎没有可用音色，提示用户
+    if (isAgnesEngine && voiceOptions.length === 0) {
+      voiceOptions = [{ value: '', label: '无可用音色 (将使用 Edge TTS)' }];
+    }
   }
 
   return (

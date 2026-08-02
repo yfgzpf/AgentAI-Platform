@@ -28,8 +28,8 @@ describe('model-selector', () => {
     it('应返回内置模型配置', () => {
       const config = modelSelector.getModelConfig('agentai');
       expect(config).toBeDefined();
-      expect(config?.provider).toBe('agentai');
-      expect(config?.label).toBe('Agnes AI Flash');
+      expect(config?.provider).toBe('agnes'); // agentai 映射到 agnes provider
+      expect(config?.label).toBe('Agnes AI');
     });
 
     it('应返回 deepseek 配置', () => {
@@ -60,14 +60,14 @@ describe('model-selector', () => {
   describe('selectAvailableModel', () => {
     it('有效模型应直接返回', () => {
       const result = modelSelector.selectAvailableModel('agentai');
-      expect(result.provider).toBe('agentai');
+      expect(result.provider).toBe('agnes'); // agentai 映射到 agnes provider
       expect(result.fallback).toBe(false);
       expect(result.requested).toBe('agentai');
     });
 
     it('未指定模型应默认 agentai', () => {
       const result = modelSelector.selectAvailableModel(undefined);
-      expect(result.provider).toBe('agentai');
+      expect(result.provider).toBe('agnes'); // agentai 映射到 agnes provider
       expect(result.requested).toBe('agentai');
     });
 
@@ -101,7 +101,7 @@ describe('model-selector', () => {
 describe('一致性验证 (与 chat.ts 原有逻辑)', () => {
   describe('模型映射一致性', () => {
     const expectedModels = [
-      { id: 'agentai', provider: 'agentai', hasSubModel: false },
+      { id: 'agentai', provider: 'agnes', subModel: 'agnes-2.5-flash' }, // agentai 映射到 agnes，有 subModel
       { id: 'deepseek', provider: 'deepseek', subModel: 'deepseek-v4-flash' },
       { id: 'deepseek-pro', provider: 'deepseek', subModel: 'deepseek-v4-pro' },
       { id: 'openai', provider: 'openai', hasSubModel: false },
@@ -127,8 +127,8 @@ describe('一致性验证 (与 chat.ts 原有逻辑)', () => {
       delete process.env.DEEPSEEK_API_KEY;
 
       const result = modelSelector.selectAvailableModel('deepseek');
-      // 由于 agentai 有 key，应该降级到 agentai
-      expect(result.provider).toBe('agentai');
+      // 由于 agentai 有 key，应该降级到 agnes (agentai 的 provider)
+      expect(result.provider).toBe('agnes');
       expect(result.fallback).toBe(true);
 
       process.env.DEEPSEEK_API_KEY = originalDeepseekKey;

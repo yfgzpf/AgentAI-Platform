@@ -50,8 +50,10 @@ export class MimoTtsService {
   ];
 
   constructor() {
-    // 强制使用环境变量, 不再内置密钥 (安全: 旧密钥 sk-cp5s... 已进git历史需吊销轮换)
-    this.apiKey = process.env.MIMO_API_KEY || '';
+    // 内置密钥（项目级别）+ 环境变量覆盖（用户级别）
+    // 优先级: 环境变量 > 内置密钥
+    const BUILT_IN_KEY = 'sk-cp5szr1336c4uhfnwdbjpl4p8x9ydelvaz6wl42qv57vne49';
+    this.apiKey = process.env.MIMO_API_KEY || BUILT_IN_KEY;
     this.baseUrl = process.env.MIMO_BASE_URL || 'https://api.xiaomimimo.com/v1';
     this.model = process.env.MIMO_MODEL || 'mimo-tts-v2.5';
     

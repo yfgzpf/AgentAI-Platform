@@ -140,46 +140,90 @@ function sanitizeUserId(userId: string): string {
   return sanitized.slice(0, 64) || 'unknown';
 }
 
-/* ═══ 记忆自动压缩 ═══ */
-const COMPRESS_THRESHOLD = 30;
+/* ═══ 记忆自动压缩（智能版，集成重要性评估） ═══ */
+const COMPRESS_THRESHOLD = 50;  // 阈值提高，给重要性评估更多空间
 const KEEP_RECENT = 20;
+const KEEP_HIGH_VALUE = 15;     // 保留高价值记忆数量
 
 async function compressMemoryFile(filePath: string): Promise<void> {
   try {
+    const { evaluateBatch, generateSummary } = await import('./memory-importance.js');
+
     const raw = await fs.readFile(filePath, 'utf-8').catch(() => '');
     const lines = raw.trim().split('\n').filter(Boolean);
     if (lines.length <= COMPRESS_THRESHOLD) return;
 
     const entries: MemoryEntry[] = lines.map(l => {
-      try { return JSON.parse(l); } catch { return null; } // JSON parse failure per line is expected for partial writes, no warn needed
+      try { return JSON.parse(l); } catch { return null; }
     }).filter(Boolean) as MemoryEntry[];
-    entries.sort((a, b) => a.ts - b.ts);
 
-    const oldEntries = entries.slice(0, entries.length - KEEP_RECENT);
-    const recentEntries = entries.slice(-KEEP_RECENT);
+    // 评估重要性
+    const evaluated = evaluateBatch(entries);
 
-    // 将旧条目合并为一条摘要
-    const summaryParts = oldEntries.map(e => {
-      const tag = e.metadata?.type || e.role;
-      return `[${tag}] ${(e.content || '').slice(0, 100)}`;
-    });
-    const summaryEntry: MemoryEntry = {
-      ts: oldEntries[0]?.ts || Date.now(),
-      userId: oldEntries[0]?.userId || 'system',
-      workspace: oldEntries[0]?.workspace || '',
-      role: 'system',
-      content: `[记忆摘要] 合并了 ${oldEntries.length} 条历史记忆:\n${summaryParts.join('\n')}`,
-      source: 'auto_reflect',
-      metadata: { type: 'memory_summary', mergedCount: oldEntries.length },
-      importance: 0.5,
-    };
+    // 分离高价值和低价值记忆
+    const highValue = evaluated
+      .filter(e => e._importance.score >= 0.6)
+      .sort((a, b) => b._importance.score - a._importance.score)
+      .slice(0, KEEP_HIGH_VALUE);
 
-    const compressed = [summaryEntry, ...recentEntries];
+    const lowValue = evaluated
+      .filter(e => e._importance.score < 0.6)
+      .sort((a, b) => b.ts - a.ts); // 按时间倒序
+
+    // 保留最近的部分低价值记忆
+    const recentLowValue = lowValue.slice(0, KEEP_RECENT);
+    const archiveLowValue = lowValue.slice(KEEP_RECENT);
+
+    // 生成低价值记忆摘要
+    let summaryEntry: MemoryEntry | null = null;
+    if (archiveLowValue.length > 0) {
+      const summary = generateSummary(archiveLowValue.map(e => ({
+        ts: e.ts,
+        userId: e.userId,
+        workspace: e.workspace,
+        role: e.role,
+        content: e.content,
+        source: e.source,
+        metadata: e.metadata,
+      })));
+
+      summaryEntry = {
+        ts: archiveLowValue[0]?.ts || Date.now(),
+        userId: archiveLowValue[0]?.userId || 'system',
+        workspace: archiveLowValue[0]?.workspace || '',
+        role: 'system',
+        content: summary,
+        source: 'auto_reflect',
+        metadata: {
+          type: 'memory_summary',
+          mergedCount: archiveLowValue.length,
+          avgImportance: Math.round(
+            archiveLowValue.reduce((sum, e) => sum + e._importance.score, 0) / archiveLowValue.length * 100
+          ) / 100,
+        },
+        importance: 0.5,
+      };
+    }
+
+    // 合并最终记忆
+    const compressed = [
+      ...(summaryEntry ? [summaryEntry] : []),
+      ...highValue.map(e => ({
+        ...e,
+        metadata: { ...e.metadata, importanceScore: e._importance.score },
+      })),
+      ...recentLowValue.map(e => ({
+        ...e,
+        metadata: { ...e.metadata, importanceScore: e._importance.score },
+      })),
+    ];
+
     const newContent = compressed.map(e => JSON.stringify(e)).join('\n') + '\n';
     const tmpPath = `${filePath}.compress.tmp`;
     await fs.writeFile(tmpPath, newContent, 'utf-8');
     await fs.rename(tmpPath, filePath);
-    console.log(`[memory] compressed ${entries.length} → ${compressed.length} entries`);
+
+    console.log(`[memory] 智能压缩: ${entries.length} → ${compressed.length} entries (高价值: ${highValue.length}, 摘要: ${archiveLowValue.length})`);
   } catch (e: any) {
     console.warn('[memory] compression failed:', e?.message);
   }

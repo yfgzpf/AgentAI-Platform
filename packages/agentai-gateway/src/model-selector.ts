@@ -18,17 +18,33 @@ export interface ModelConfig {
 
 /** 内置模型映射 - 与 chat.ts 原有 MODEL_MAP 保持一致 */
 export const BUILTIN_MODELS: Record<string, ModelConfig> = {
-  'agentai': { provider: 'agentai', label: 'Agnes AI Flash' },
+  // Agnes AI 模型 (首选)
+  'agnes-2.5-flash': { provider: 'agnes', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash' },
+  'agnes-2.0': { provider: 'agnes', subModel: 'agnes-2.0', label: 'Agnes 2.0' },
+  // 兼容旧版
+  'agentai': { provider: 'agnes', subModel: 'agnes-2.5-flash', label: 'Agnes AI' },
+  'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
+  // DeepSeek (前端 id + 旧兼容 id)
   'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
   'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+  'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  // OpenAI
   'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
-  'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
-  'qwen': { provider: 'qwen', label: '通义千问 (阿里云)' },
-  'moonshot': { provider: 'moonshot', label: '月之暗面 Moonshot' },
+  'openai-gpt4o': { provider: 'openai', label: 'OpenAI GPT-4o' },
+  // 传统独立商业模型 (前端 id + 旧兼容 id)
+  'qwen': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 (阿里云)' },
+  'qwen-max': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 Qwen-Max' },
+  'moonshot': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Moonshot' },
+  'moonshot-kimi': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Kimi' },
+  'anthropic': { provider: 'anthropic', subModel: 'claude-sonnet-4-5-20250929', label: 'Anthropic Claude' },
+  'anthropic-claude': { provider: 'anthropic', subModel: 'claude-sonnet-4-5-20250929', label: 'Anthropic Claude' },
+  'minimax': { provider: 'minimax', subModel: 'MiniMax-M3', label: 'MiniMax' },
+  'minimax-hailuo': { provider: 'minimax', subModel: 'MiniMax-M3', label: 'MiniMax 海螺' },
+  'doubao-seed-2.0-pro': { provider: 'doubao', subModel: 'doubao-seed-2.0-pro-250728', label: '豆包 Seed-2.0 Pro' },
+  'doubao-1.5-thinking': { provider: 'doubao', subModel: 'doubao-1.5-thinking-vision-pro', label: '豆包 1.5 视觉深度思考' },
   'yi': { provider: 'yi', label: '零一万物 Yi' },
   'baichuan': { provider: 'baichuan', label: '百川智能' },
-  'minimax': { provider: 'minimax', label: 'MiniMax' },
-  'anthropic': { provider: 'anthropic', label: 'Anthropic Claude' },
   'superapi-deepseek-v4-flash': { provider: 'superapi', subModel: 'deepseek-v4-flash', label: 'SuperAPI · DeepSeek V4 Flash' },
   'superapi-deepseek-v4-pro':  { provider: 'superapi', subModel: 'deepseek-v4-pro',  label: 'SuperAPI · DeepSeek V4 Pro' },
   'superapi-glm-5.2':          { provider: 'superapi', subModel: 'glm-5.2',           label: 'SuperAPI · GLM-5.2' },
@@ -41,15 +57,32 @@ export const BUILTIN_MODELS: Record<string, ModelConfig> = {
   'superapi-step-3.7-flash':   { provider: 'superapi', subModel: 'step-3.7-flash',    label: 'SuperAPI · Step 3.7 Flash' },
   'superapi-mimo-v2.5-pro':    { provider: 'superapi', subModel: 'mimo-v2.5-pro',     label: 'SuperAPI · Mimo V2.5 Pro' },
   'superapi-minimax-m3':       { provider: 'superapi', subModel: 'MiniMax-M3',        label: 'SuperAPI · MiniMax M3' },
+  // 商汤 SenseNova (免费额度)
+  'sensenova-6.7-flash-lite': { provider: 'sensenova', subModel: 'sensenova-6.7-flash-lite', label: 'SenseNova 6.7 Flash-Lite' },
+  'sensenova-u1-fast': { provider: 'sensenova', subModel: 'sensenova-u1-fast', label: 'SenseNova U1 Fast' },
+  'sensenova-deepseek-v4-flash': { provider: 'sensenova', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (SenseNova)' },
+  'sensenova-glm-5.2': { provider: 'sensenova', subModel: 'glm-5.2', label: 'GLM-5.2 (SenseNova)' },
+  // 美团 LongCat (免费额度)
+  'longcat-2.0': { provider: 'longcat', subModel: 'LongCat-2.0', label: 'LongCat-2.0' },
+  // NVIDIA NIM 模型已移除 (2026-07-25)
 };
 
 /** Provider → 环境变量 Key 映射 */
 const PROVIDER_ENV_KEY: Record<string, string> = {
-  agentai: 'AGENTAI_API_KEY',
+  agnes: 'AGENTAI_API_KEY',  // Agnes AI 使用 AGENTAI_API_KEY
+  agentai: 'AGENTAI_API_KEY', // 兼容旧版
   deepseek: 'DEEPSEEK_API_KEY',
   openai: 'OPENAI_API_KEY',
   zhipu: 'ZHIPU_API_KEY',
   superapi: 'SUPERAPI_API_KEY',
+  sensenova: 'SENSENOVA_API_KEY',
+  longcat: 'LONGCAT_API_KEY',
+  // nvidia: 'NVIDIA_API_KEY', 已移除
+  qwen: 'DASHSCOPE_API_KEY',
+  moonshot: 'MOONSHOT_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  minimax: 'MINIMAX_API_KEY',
+  doubao: 'VOLCANO_API_KEY',
 };
 
 /** 动态注册的自定义模型 */
@@ -60,6 +93,34 @@ export function registerCustomModel(id: string, config: ModelConfig): void {
   customModels.set(id, config);
   console.log(`[model-selector] registered custom model: ${id} -> ${config.provider}`);
 }
+
+/**
+ * 自动注册有密钥的模型
+ * 扫描 PROVIDER_ENV_KEY，如果有密钥但未在 BUILTIN_MODELS 中定义，自动注册
+ */
+export function autoRegisterModels(): void {
+  for (const [provider, envKey] of Object.entries(PROVIDER_ENV_KEY)) {
+    if (!process.env[envKey]) continue; // 没有密钥，跳过
+    
+    // 检查是否已定义
+    const alreadyDefined = Object.entries(BUILTIN_MODELS).some(
+      ([, config]) => config.provider === provider
+    );
+    
+    if (!alreadyDefined) {
+      // 自动注册为 provider-default
+      const autoId = `${provider}-default`;
+      customModels.set(autoId, {
+        provider,
+        label: `${provider} (auto-registered)`,
+      });
+      console.log(`[model-selector] auto-registered: ${autoId} (found ${envKey})`);
+    }
+  }
+}
+
+// 初始化时自动注册
+autoRegisterModels();
 
 /** 获取模型配置 */
 export function getModelConfig(id: string): ModelConfig | undefined {

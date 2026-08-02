@@ -38,6 +38,13 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, disabled }) =
     setShowPanel(true);
 
     try {
+      // P3修复 (2026-07-25): 提示词优化是轻量任务, 优先使用免费模型避免浪费付费配额
+      const state = useModelStore.getState();
+      const freeModelIds = ['agentai', 'zhipu'];
+      const optimizeModel = freeModelIds.includes(state.activeModelId)
+        ? state.activeModelId
+        : 'agentai';  // 非免费模型时回退到默认免费模型
+
       const resp = await fetch('/v1/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -53,7 +60,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, disabled }) =
 用户提示词：
 """${draft}"""`,
           stream: false,
-          model: useModelStore.getState().activeModelId,
+          model: optimizeModel,
           mode: 'auto',
           system: '你只输出 JSON，不要包裹 markdown 代码块。score 字段是整数。',
         }),

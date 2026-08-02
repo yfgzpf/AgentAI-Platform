@@ -10,7 +10,7 @@
 
 import axios from 'axios';
 
-const API_KEY = 'sk_live_skillsmp_-N5eZkkHAHhGmM3EVjmRlLAEmHzseZCv5xBJ8lxh3rM';
+const API_KEY = process.env.SKILLMP_API_KEY || 'sk_live_skillsmp_-N5eZkkHAHhGmM3EVjmRlLAEmHzseZCv5xBJ8lxh3rM'; // ⚠️ 生产环境请使用环境变量
 const BASE_URL = 'https://skillsmp.com/api/v1';
 
 console.log('='.repeat(70));

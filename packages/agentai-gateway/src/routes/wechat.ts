@@ -302,8 +302,9 @@ async function startWechatDaemon(account: AccountData) {
 
 export { router as wechatRouter };
 
-// ===== 启动时自动恢复 daemon =====
-try {
+// ===== 启动时自动恢复 daemon (延迟3秒异步启动) =====
+setTimeout(() => {
+  try {
   const savedAccount = loadLatestAccount();
   if (savedAccount) {
     logger.info('[wechat] found saved account, auto-starting daemon', { accountId: savedAccount.accountId });
@@ -312,3 +313,4 @@ try {
     });
   }
 } catch { /* best-effort */ }
+}, 3000);

@@ -25,7 +25,7 @@ export const GeneratedFilesPanel: React.FC = () => {
               if (!/^(write_file|edit_file|create_file|multi_edit|str_replace|run_code|generate_image|generate_diagram)$/i.test(name)) continue;
               // 从 args 提取文件路径 (args 包含 path/file_path/file)
               const args = typeof seg.args === 'string' ? safeJson(seg.args) : seg.args;
-              let filePath = args?.path || args?.file_path || args?.file || '';
+              let filePath = args?.path || args?.filePath || args?.file_path || args?.file || '';
               // run_code: 从结果中提取生成的文件路径
               if (!filePath && name === 'run_code' && seg.result) {
                 const resultStr = typeof seg.result === 'string' ? seg.result : JSON.stringify(seg.result);

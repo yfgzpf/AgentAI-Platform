@@ -1,0 +1,17 @@
+{
+  "name": "read-excel",
+  "description": "读取Excel文件内容并转换为JSON格式",
+  "category": "code",
+  "version": "1.0.0",
+  "created_by": "ai-auto",
+  "created_at": "2026-06-14T19:02:49.149Z",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "input": {
+        "type": "string",
+        "description": "输入内容"
+      }
+    }
+  }
+}

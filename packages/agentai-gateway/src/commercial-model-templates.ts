@@ -48,7 +48,7 @@ export const COMMERCIAL_MODEL_TEMPLATES: CommercialModelTemplate[] = [
     id: 'moonshot',
     label: '月之暗面 Moonshot',
     baseURL: 'https://api.moonshot.cn/v1',
-    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    models: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k3'],
     docsUrl: 'https://platform.moonshot.cn/console/api-keys',
     color: '#6466F1',
     contextWindow: 128_000,
@@ -75,7 +75,7 @@ export const COMMERCIAL_MODEL_TEMPLATES: CommercialModelTemplate[] = [
     id: 'minimax',
     label: 'MiniMax',
     baseURL: 'https://api.minimax.chat/v1',
-    models: ['MiniMax-M3-Flash', 'MiniMax-M3-Turbo'],
+    models: ['MiniMax-M3'],
     docsUrl: 'https://platform.minimaxi.com',
     color: '#06B6D4',
     contextWindow: 128_000,
@@ -84,7 +84,7 @@ export const COMMERCIAL_MODEL_TEMPLATES: CommercialModelTemplate[] = [
     id: 'anthropic',
     label: 'Anthropic Claude',
     baseURL: 'https://api.anthropic.com/v1',
-    models: ['claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
+    models: ['claude-sonnet-4-5-20250929', 'claude-opus-4-1-20250805', 'claude-haiku-3-5-20241022'],
     docsUrl: 'https://console.anthropic.com/',
     color: '#D97706',
     contextWindow: 200_000,
@@ -107,6 +107,7 @@ export const COMMERCIAL_MODEL_TEMPLATES: CommercialModelTemplate[] = [
     color: '#FFD700',
     contextWindow: 1_000_000,
   },
+  // NVIDIA NIM 已移除 (2026-07-25): 需自建 GPU Docker + 端点不稳定 + 中国大陆不可达
 ];
 
 /** 获取商用模型模板 by id */

@@ -126,7 +126,7 @@ export const SkillLibrary: React.FC = () => {
                   title={<span style={{ fontSize: 13 }}>{s.name}</span>}
                   description={<span style={{ fontSize: 11, color: '#888' }}>{s.description}</span>}
                 />
-                <Tag color={CATEGORIES.find((c) => c.key === s.category)?.color}>{s.category}</Tag>
+                <Tag color={CATEGORIES.find((c) => c.key === s.category)?.color || 'default'}>{s.category || 'unknown'}</Tag>
               </List.Item>
             )}
           />

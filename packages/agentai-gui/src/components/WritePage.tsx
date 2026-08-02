@@ -198,11 +198,11 @@ export const WritePage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0f0f0f' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
       {/* 工具栏 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: '1px solid #1f1f1f', background: '#141414', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: '1px solid var(--panel-2)', background: 'var(--bg-2)', flexWrap: 'wrap' }}>
         <input value={title} onChange={e => { setTitle(e.target.value); }}
-          style={{ background: 'transparent', border: 'none', color: '#ddd', fontSize: 14, fontWeight: 600, outline: 'none', flex: 1, minWidth: 120 }} />
+          style={{ background: 'transparent', border: 'none', color: 'var(--border)', fontSize: 14, fontWeight: 600, outline: 'none', flex: 1, minWidth: 120 }} />
 
         {/* 模型选择器 */}
         <Select
@@ -220,7 +220,7 @@ export const WritePage: React.FC = () => {
           context={content}
         />
 
-        <div style={{ width: 1, height: 20, background: '#2a2a2a' }} />
+        <div style={{ width: 1, height: 20, background: 'var(--card-hover)' }} />
 
         {/* 模板 */}
         <Select
@@ -236,47 +236,47 @@ export const WritePage: React.FC = () => {
           {preview ? '编辑' : '预览'}
         </Button>
 
-        <div style={{ width: 1, height: 20, background: '#2a2a2a' }} />
+        <div style={{ width: 1, height: 20, background: 'var(--card-hover)' }} />
 
         {/* 导出 */}
-        <Tooltip title="导出 Markdown"><Button size="small" type="text" icon={<ExportOutlined />} onClick={() => exportDoc('md')} style={{ color: '#888' }}>MD</Button></Tooltip>
-        <Tooltip title="导出 PDF"><Button size="small" type="text" icon={<FileTextOutlined />} onClick={() => exportDoc('pdf')} style={{ color: '#888' }}>PDF</Button></Tooltip>
-        <Tooltip title="导出 Word (docx)"><Button size="small" type="text" icon={<FileTextOutlined />} onClick={() => exportDoc('docx')} style={{ color: '#888' }}>DOCX</Button></Tooltip>
-        <Tooltip title="保存"><Button size="small" type="text" icon={<SaveOutlined />} onClick={handleSave} style={{ color: '#888' }} /></Tooltip>
-        <Tooltip title="清空"><Button size="small" type="text" icon={<ClearOutlined />} onClick={() => { setContent(''); localStorage.removeItem('agentai-write-draft'); }} style={{ color: '#888' }} /></Tooltip>
+        <Tooltip title="导出 Markdown"><Button size="small" type="text" icon={<ExportOutlined />} onClick={() => exportDoc('md')} style={{ color: 'var(--muted)' }}>MD</Button></Tooltip>
+        <Tooltip title="导出 PDF"><Button size="small" type="text" icon={<FileTextOutlined />} onClick={() => exportDoc('pdf')} style={{ color: 'var(--muted)' }}>PDF</Button></Tooltip>
+        <Tooltip title="导出 Word (docx)"><Button size="small" type="text" icon={<FileTextOutlined />} onClick={() => exportDoc('docx')} style={{ color: 'var(--muted)' }}>DOCX</Button></Tooltip>
+        <Tooltip title="保存"><Button size="small" type="text" icon={<SaveOutlined />} onClick={handleSave} style={{ color: 'var(--muted)' }} /></Tooltip>
+        <Tooltip title="清空"><Button size="small" type="text" icon={<ClearOutlined />} onClick={() => { setContent(''); localStorage.removeItem('agentai-write-draft'); }} style={{ color: 'var(--muted)' }} /></Tooltip>
       </div>
 
       {/* 编辑器/预览 */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {!preview && (
           <textarea ref={textareaRef} value={content} onChange={e => setContent(e.target.value)}
-            style={{ flex: 1, padding: 20, background: '#0a0a0a', color: '#ddd', border: 'none', outline: 'none', fontSize: 14, lineHeight: 1.8, fontFamily: 'monospace', resize: 'none' }} />
+            style={{ flex: 1, padding: 20, background: 'var(--card)', color: 'var(--border)', border: 'none', outline: 'none', fontSize: 14, lineHeight: 1.8, fontFamily: 'monospace', resize: 'none' }} />
         )}
         {preview && (
-          <div style={{ flex: 1, padding: 20, overflow: 'auto', color: '#ccc', lineHeight: 1.8 }}>
+          <div style={{ flex: 1, padding: 20, overflow: 'auto', color: 'var(--border)', lineHeight: 1.8 }}>
             <Markdown content={content} />
           </div>
         )}
       </div>
 
       {/* 底栏: 字数统计 */}
-      <div style={{ borderTop: '1px solid #1f1f1f', background: '#141414' }}>
+      <div style={{ borderTop: '1px solid var(--panel-2)', background: 'var(--bg-2)' }}>
         {/* 字数 + 替换模式 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 12px', color: '#666', fontSize: 11 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 12px', color: 'var(--muted)', fontSize: 11 }}>
           <span>{wordCount} 字</span>
           <span>{readTime} min 阅读</span>
           <div style={{ flex: 1 }} />
           <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
             <Switch size="small" checked={replaceMode} onChange={setReplaceMode} />
-            <span style={{ color: replaceMode ? '#4F46E5' : '#666' }}>选中替换</span>
+            <span style={{ color: replaceMode ? 'var(--accent)' : 'var(--muted)' }}>选中替换</span>
           </label>
-          {replaceMode && <span style={{ color: '#888' }}>选中文字后输出将替换选中区域</span>}
+          {replaceMode && <span style={{ color: 'var(--muted)' }}>选中文字后输出将替换选中区域</span>}
         </div>
 
         {/* 动作标签 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', flexWrap: 'wrap' }}>
           {AI_ACTIONS.slice(0, 4).map(a => (
-            <Tag key={a.key} color={aiAction === a.key ? '#4F46E5' : 'default'}
+            <Tag key={a.key} color={aiAction === a.key ? 'volcano' : 'default'}
               style={{ cursor: 'pointer', margin: 0 }}
               onClick={() => setAiAction(a.key)}>
               {a.key}
@@ -289,7 +289,7 @@ export const WritePage: React.FC = () => {
             style={{ width: 100 }}
             options={AI_ACTIONS.slice(4).map(a => ({ value: a.key, label: a.key }))}
           />
-          <div style={{ width: 1, height: 20, background: '#2a2a2a' }} />
+          <div style={{ width: 1, height: 20, background: 'var(--card-hover)' }} />
         </div>
 
         {/* 输入 */}
@@ -300,7 +300,7 @@ export const WritePage: React.FC = () => {
             placeholder={replaceMode ? '选中文字后点生成 → 替换选中' : `AI ${aiAction}: 输入指令或直接点生成...`}
             onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); aiComplete(); } }}
             autoSize={{ minRows: 1, maxRows: 3 }}
-            style={{ flex: 1, background: '#0f0f0f', borderColor: '#262626', color: '#ddd', fontSize: 12 }}
+            style={{ flex: 1, background: 'var(--bg)', borderColor: '#262626', color: 'var(--border)', fontSize: 12 }}
           />
           <Button icon={<RobotOutlined />} onClick={aiComplete} loading={aiBusy} type="primary" ghost style={{ alignSelf: 'flex-end' }}>
             生成

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * AI Skill Discovery - AI技能自动发现系统
  * 

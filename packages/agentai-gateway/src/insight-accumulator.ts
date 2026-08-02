@@ -179,7 +179,7 @@ export class InsightAccumulator extends EventEmitter {
         if (msgLower.includes(kw.toLowerCase())) hits++;
       }
       const confidence = hits / config.keywords.length;
-      if (confidence > 0.1 && (!bestMatch || confidence > bestMatch.confidence)) {
+      if (confidence > 0.3 && (!bestMatch || confidence > bestMatch.confidence)) {
         bestMatch = { industryId: id, confidence };
       }
     }
@@ -193,7 +193,7 @@ export class InsightAccumulator extends EventEmitter {
    */
   extractInsight(message: string, response: string): IndustryInsight | null {
     const industry = this.detectIndustry(message);
-    if (!industry || industry.confidence < 0.15) return null;
+    if (!industry || industry.confidence < 0.6) return null;
 
     const config = INDUSTRY_KEYWORDS[industry.industryId];
     if (!config) return null;

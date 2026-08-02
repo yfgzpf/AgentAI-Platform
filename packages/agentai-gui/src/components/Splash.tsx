@@ -7,7 +7,9 @@
  *   Stage 4 (2.4-3.2s): Slogan + 状态
  *   Stage 5 (3.2-3.6s): 整体淡出
  *
- * 品牌: PulseFlow = Pulse (脉动/状态感知) + Flow (流动/智能演进)
+ * 品牌: 岐枢智能体平台 | PulseFlow
+ *   - 岐枢: 岐黄之术 + 枢纽核心，中医智慧 × AI 智能体
+ *   - PulseFlow: Pulse (脉动/状态感知) + Flow (流动/智能演进)
  * 理念: 望闻问切 · 因证施治 · 越用越懂你的 AI 智能体
  */
 import React, { useEffect, useState } from 'react';
@@ -23,8 +25,8 @@ const CAPABILITY_TAGS = [
   { label: '146+ 工具', color: '#43e97b' },
   { label: '多 Agent', color: '#4facfe' },
   { label: '自进化', color: '#f5576c' },
-  { label: '任务快照', color: '#f093fb' },
-  { label: '中医辨证', color: '#E89055' },
+  { label: '医案传承', color: '#f093fb' },  // 品牌：任务快照 → 医案传承
+  { label: '辨证施治', color: '#E89055' },  // 品牌：中医辨证 → 辨证施治
 ];
 
 export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration = 2400 }) => {
@@ -61,16 +63,11 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
         overflow: 'hidden',
       }}
     >
-      {/* 背景: 动画网格 */}
+      {/* 背景: 纯深色渐变 */}
       <div style={{
         position: 'absolute',
         inset: 0,
-        backgroundImage: `
-          linear-gradient(rgba(205,122,58,0.04) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(205,122,58,0.04) 1px, transparent 1px)
-        `,
-        backgroundSize: '40px 40px',
-        animation: 'pulseflow-grid-move 12s linear infinite',
+        background: 'linear-gradient(180deg, #1a1a20 0%, #131318 50%, #0d0d12 100%)',
         pointerEvents: 'none',
       }} />
 
@@ -126,30 +123,20 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
             animation: 'pulseflow-heartbeat 2s ease-out infinite',
             animationDelay: '0.8s',
           }} />
-          {/* LOGO 图标 */}
-          <svg
-            width="84" height="84" viewBox="0 0 64 64"
+          {/* LOGO 图标 - 使用品牌 logo.jpg */}
+          <img
+            src="./logo.jpg"
+            alt="PulseFlow"
             style={{
+              width: 84,
+              height: 84,
               animation: 'pulseflow-pulse 2s ease-in-out infinite',
               zIndex: 2,
-              filter: 'drop-shadow(0 6px 24px rgba(205, 122, 58, 0.5))',
+              borderRadius: 16,
+              objectFit: 'cover',
+              boxShadow: '0 6px 24px rgba(205, 122, 58, 0.5)',
             }}
-          >
-            <defs>
-              <linearGradient id="pulseflow-tower" x1="0%" y1="100%" x2="0%" y2="0%">
-                <stop offset="0%" stopColor="#CD7A3A" stopOpacity="0.3" />
-                <stop offset="50%" stopColor="#CD7A3A" stopOpacity="0.7" />
-                <stop offset="100%" stopColor="#FFB077" />
-              </linearGradient>
-            </defs>
-            <rect width="64" height="64" rx="16" fill="#1a1a22" stroke="#CD7A3A44" strokeWidth="1" />
-            <path d="M32 10 L50 46 L42 46 L32 26 L22 46 L14 46 Z" fill="url(#pulseflow-tower)" />
-            <path d="M32 24 L40 44 L32 38 L24 44 Z" fill="#CD7A3A" />
-            <circle cx="32" cy="14" r="3" fill="#FFB077">
-              <animate attributeName="r" values="3;4;3" dur="1.5s" repeatCount="indefinite" />
-              <animate attributeName="opacity" values="1;0.6;1" dur="1.5s" repeatCount="indefinite" />
-            </circle>
-          </svg>
+          />
         </div>
 
         {/* ─── Stage 2: 品牌名 + 副标题 ─── */}
@@ -159,14 +146,28 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
             animation: 'pulseflow-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both',
           }}
         >
-          {/* 英文品牌名 (大字) */}
+          {/* 中文品牌名 (大字) - 草书风格 */}
           <div style={{
-            fontSize: 38, fontWeight: 800,
+            fontSize: 42, fontWeight: 700,
             letterSpacing: 12, color: '#f0f0f4',
-            textShadow: '0 2px 24px rgba(205, 122, 58, 0.25)',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            textShadow: '0 2px 24px rgba(205, 122, 58, 0.25), 0 0 60px rgba(205, 122, 58, 0.15)',
+            fontFamily: '"Ma Shan Zheng", "ZCOOL XiaoWei", "Noto Serif SC", cursive',
+            fontStyle: 'italic',
+            transform: 'skewX(-5deg)',
+            WebkitFontSmoothing: 'antialiased',
           }}>
-            PULSEFLOW
+            岐枢智能体
+          </div>
+          {/* 英文副品牌名 - 艺术字体 */}
+          <div style={{
+            fontSize: 13, fontWeight: 600,
+            letterSpacing: 8, color: '#CD7A3A',
+            marginTop: 8,
+            fontFamily: '"Orbitron", "Exo 2", "Syncopate", sans-serif',
+            textTransform: 'uppercase',
+            opacity: 0.9,
+          }}>
+            PulseFlow
           </div>
           {/* 分隔符 + 装饰点 */}
           <div style={{
@@ -216,18 +217,21 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
           }}
         >
           <div style={{
-            fontSize: 14, color: '#CD7A3A',
-            fontFamily: '"Noto Serif SC", "Source Han Serif SC", serif',
-            letterSpacing: 6, fontWeight: 600,
+            fontSize: 16, color: '#CD7A3A',
+            fontFamily: '"ZCOOL XiaoWei", "Ma Shan Zheng", "Noto Serif SC", cursive',
+            letterSpacing: 8, fontWeight: 500,
+            opacity: 0.95,
           }}>
             望闻问切 · 因证施治
           </div>
           <div style={{
             fontSize: 11, color: '#888892',
-            letterSpacing: 3, marginTop: 6,
-            fontStyle: 'italic',
+            letterSpacing: 4, marginTop: 8,
+            fontFamily: '"Orbitron", sans-serif',
+            textTransform: 'lowercase',
+            opacity: 0.7,
           }}>
-            越用越懂你的 AI 智能体
+            evolving with you
           </div>
         </div>
 
@@ -296,10 +300,6 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
         @keyframes pulseflow-blink {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.3; }
-        }
-        @keyframes pulseflow-grid-move {
-          0% { background-position: 0 0; }
-          100% { background-position: 40px 40px; }
         }
         @keyframes pulseflow-float {
           0%, 100% { transform: translate(0, 0); }

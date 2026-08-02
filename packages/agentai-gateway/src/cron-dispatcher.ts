@@ -214,7 +214,23 @@ export class CronDispatcher extends EventEmitter {
       }
     }));
 
-    // 9. 每周深度评估报告 — 每周一早上 9 点
+    // 9. 模型蒸馏夜间巩固 — 每天凌晨 2 点 (与 nightlyConsolidation 注释对齐)
+    this.jobs.push(new CronJob('0 2 * * *', async () => {
+      console.log('[cron] daily 2AM: running nightly distillation consolidation');
+      try {
+        const { nightlyConsolidation } = await import('./model-distiller.js');
+        if (typeof nightlyConsolidation !== 'function') {
+          console.warn('[cron] nightlyConsolidation not available');
+          return;
+        }
+        await nightlyConsolidation();
+        console.log('[cron] nightly distillation complete');
+      } catch (e: any) {
+        console.warn(`[cron] nightly distillation failed: ${e.message}`);
+      }
+    }));
+
+    // 10. 每周深度评估报告 — 每周一早上 9 点
     this.jobs.push(new CronJob('0 9 * * 1', async () => {
       console.log('[cron] weekly: generating deep evaluation report');
       try {

@@ -1,0 +1,20 @@
+{
+  "name": "WorkRally",
+  "installedAt": 1783266552950,
+  "source": "marketplace",
+  "version": "2.4.1",
+  "skillId": "skill_2053083918768267264",
+  "examples_zh": [
+    "用WorkRally生成一张科幻风格的人物图片",
+    "生成一段10秒的产品展示视频",
+    "把素材上传到WorkRally媒资库"
+  ],
+  "examples_en": [
+    "Generate a sci-fi character image with WorkRally",
+    "Create a 10-second product showcase video",
+    "Upload assets to WorkRally media library"
+  ],
+  "iconSource": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/workrally.png",
+  "iconLocalPath": "C:\\Users\\Administrator\\.workbuddy\\skills\\skill_2053083918768267264\\_icon.png",
+  "iconDownloadedFrom": "https://openplatform-cdn.codebuddy.cn/public/skills/icons/workrally.png"
+}

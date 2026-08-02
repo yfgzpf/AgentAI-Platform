@@ -9,11 +9,13 @@ export interface ApiStreamHandlers {
   onThinking?: (text: string) => void;
   onAutoFix?: (info: { type: string; module?: string; tool?: string; error?: string }) => void;
   onToolStart?: (info: { callId: string; name: string; args: any }) => void;
-  onToolResult?: (info: { callId: string; name: string; result: string; ok: boolean; durationMs: number }) => void;
+  onToolResult?: (info: { callId: string; name: string; result: string; ok: boolean; durationMs: number; data?: any }) => void;
   onPlanCreated?: (info: { chainId: string; goal: string; stages: string[]; currentStage: string }) => void;
   onPlanStage?: (info: { chainId: string; stage: string; status: string }) => void;
   onApprovalRequired?: (info: { id: string; type: string; filePath: string; summary: string; riskLevel: string }) => void;
   onAskUser?: (info: { question: string; options: string[] }) => void;
+  onSessionRollover?: (info: { ratio: number; promptTokens: number; ctxMax: number; timestamp: number }) => void;
+  onClarifyRequired?: (info: { id: string; originalMessage: string; questions: Array<{ id: string; question: string; type: string; options?: string[] }>; ambiguities?: Array<{ type: string; text: string }> }) => void;
   onModelFallback?: (info: { from: string; to: string; reason: string }) => void;
   onSubagentStart?: (info: { id: string; type: string; task: string }) => void;
   onSubagentDone?: (info: { id: string; result: string }) => void;
@@ -44,20 +46,18 @@ export function makeChatHandlers(
     onReasoning: (text: string) => {
       // 推理过程 → 插入 reasoning segment (前端会渲染为可折叠卡片)
       // 当LLM调工具时, 之前的文本输出就是推理过程, 需要把text→reasoning
+      // 仅追加到已有的 reasoning segment, 不将已有的 text 转为 reasoning
+      // (空的 reasoning 事件已在后端去除, 不会出现"调工具时text消失"的问题)
+      if (!text) return;
       updateMessage(botId, (m: any) => {
         const segs = [...m.segments];
-        // 把已有的 text segments 转为 reasoning (LLM在调工具前的文字就是推理)
-        const converted = segs.map((s: any) =>
-          s.kind === 'text' ? { ...s, kind: 'reasoning' } : s
-        );
-        // 追加到已有的 reasoning segment 或创建新的
-        const lastSeg = converted[converted.length - 1];
+        const lastSeg = segs[segs.length - 1];
         if (lastSeg && lastSeg.kind === 'reasoning') {
           lastSeg.text += text;
         } else {
-          converted.push({ kind: 'reasoning', text });
+          segs.push({ kind: 'reasoning', text });
         }
-        return { ...m, segments: converted, streaming: true };
+        return { ...m, segments: segs, streaming: true };
       });
     },
     onThinking: (text: string) => {
@@ -75,7 +75,7 @@ export function makeChatHandlers(
     },
     onToolStart: (info: any) => {
       updateMessage(botId, (m: any) => ({
-        ...m, segments: [...m.segments, { kind: 'tool', callId: info.callId, name: info.name, state: 'running' }],
+        ...m, segments: [...m.segments, { kind: 'tool', callId: info.callId, name: info.name, args: info.args || undefined, state: 'running' }],
       }));
     },
     onAutoFix: (info: any) => {
@@ -190,6 +190,8 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
               case 'plan_stage': handlers.onPlanStage?.(data); break;
               case 'approval_required': handlers.onApprovalRequired?.(data); break;
               case 'ask_user': handlers.onAskUser?.(data); break;
+              case 'clarify:required': handlers.onClarifyRequired?.(data); break;
+              case 'session:rollover': handlers.onSessionRollover?.(data); break;
               case 'model_fallback': handlers.onModelFallback?.(data); break;
               case 'subagent_start': handlers.onSubagentStart?.(data); break;
               case 'subagent_done': handlers.onSubagentDone?.(data); break;
@@ -225,12 +227,24 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
 import { GATEWAY_HTTP } from './config';
 import { gatewayFallback } from './GatewayFallback';
 
-/** 拼接完整 URL: dev 用相对路径走 proxy, 打包后用 GATEWAY_HTTP */
-function apiUrl(path: string): string {
-  const isDev = import.meta.env.DEV;
-  if (isDev) return path;
+/** 判断是否开发模式 */
+function isDevMode(): boolean {
+  return typeof window !== 'undefined' && (
+    window.location?.hostname === 'localhost' || 
+    window.location?.hostname === '127.0.0.1' || 
+    window.location?.port === '5173' ||
+    window.location?.port === '5174' ||
+    window.location?.port === '5176'
+  );
+}
+
+/** 拼接完整 URL: 始终使用 gatewayFallback.url 获取正确地址 */
+export function apiUrl(path: string): string {
+  // 始终使用 gatewayFallback.url，它已处理开发/生产环境
   const base = gatewayFallback.isOnline ? GATEWAY_HTTP : gatewayFallback.url;
-  return base + path;
+  // 确保 path 以 / 开头
+  const normalizedPath = path.startsWith('/') ? path : '/' + path;
+  return base + normalizedPath;
 }
 
 export async function apiPost<T = any>(url: string, body: any): Promise<T> {

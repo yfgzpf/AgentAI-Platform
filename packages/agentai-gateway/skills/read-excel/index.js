@@ -1,0 +1,1 @@
+"import pandas as pd\ndef read_excel(file_path):\n    df = pd.read_excel(file_path)\n    return df.to_dict('records')"

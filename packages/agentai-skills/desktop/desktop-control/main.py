@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 桌面控制技能
-支持打开应用、执行命令、键盘鼠标模拟、截图
+支持打开应用、执行命令、键盘鼠标模拟、截图、CAD控制
 """
 
 import argparse
@@ -11,6 +11,22 @@ import os
 import sys
 import subprocess
 from datetime import datetime
+
+# CAD 控制模块导入
+try:
+    # 尝试导入同级目录的 cad-control 模块
+    cad_control_path = os.path.join(os.path.dirname(__file__), '..', 'cad-control', 'main.py')
+    if os.path.exists(cad_control_path):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("cad_control", cad_control_path)
+        cad_control = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cad_control)
+        CAD_CONTROL_AVAILABLE = True
+    else:
+        CAD_CONTROL_AVAILABLE = False
+except Exception as e:
+    CAD_CONTROL_AVAILABLE = False
+    print(f"[WARN] CAD control module not available: {e}")
 
 try:
     import pyautogui
@@ -159,7 +175,8 @@ def open_folder(folder_path: str):
 def main():
     parser = argparse.ArgumentParser(description='桌面控制技能')
     parser.add_argument('--action', required=True, 
-                       choices=['open', 'cmd', 'keypress', 'hotkey', 'click', 'type', 'screenshot', 'open_folder'],
+                       choices=['open', 'cmd', 'keypress', 'hotkey', 'click', 'type', 'screenshot', 'open_folder',
+                                'cad_script', 'cad_execute', 'cad_parse_dxf', 'cad_write_dxf'],
                        help='操作类型')
     parser.add_argument('--app', help='应用程序路径')
     parser.add_argument('--cmd', help='要执行的命令')
@@ -172,6 +189,12 @@ def main():
     parser.add_argument('--output', help='输出文件路径')
     parser.add_argument('--path', help='文件夹路径')
     parser.add_argument('--params', type=str, help='JSON格式的参数')
+    # CAD 控制相关参数
+    parser.add_argument('--commands', help='CAD 命令列表（JSON 格式）')
+    parser.add_argument('--script-path', help='CAD 脚本路径')
+    parser.add_argument('--acad-path', help='AutoCAD 安装路径')
+    parser.add_argument('--file-path', help='DXF 文件路径')
+    parser.add_argument('--entities', help='DXF 实体列表（JSON 格式）')
     
     args = parser.parse_args()
     
@@ -202,6 +225,38 @@ def main():
         
         elif args.action == 'open_folder':
             result = open_folder(args.path or args.app)
+        
+        # CAD 控制相关操作
+        elif args.action == 'cad_script':
+            if not CAD_CONTROL_AVAILABLE:
+                result = {"success": False, "error": "CAD 控制模块未加载"}
+            else:
+                commands = json.loads(args.commands) if args.commands else []
+                output_path = args.output or "cad_script.scr"
+                result = cad_control.generate_script(commands, output_path)
+        
+        elif args.action == 'cad_execute':
+            if not CAD_CONTROL_AVAILABLE:
+                result = {"success": False, "error": "CAD 控制模块未加载"}
+            else:
+                script_path = args.script_path
+                acad_path = args.acad_path
+                result = cad_control.execute_script(script_path, acad_path)
+        
+        elif args.action == 'cad_parse_dxf':
+            if not CAD_CONTROL_AVAILABLE:
+                result = {"success": False, "error": "CAD 控制模块未加载"}
+            else:
+                file_path = args.file_path
+                result = cad_control.parse_dxf(file_path)
+        
+        elif args.action == 'cad_write_dxf':
+            if not CAD_CONTROL_AVAILABLE:
+                result = {"success": False, "error": "CAD 控制模块未加载"}
+            else:
+                entities = json.loads(args.entities) if args.entities else []
+                output_path = args.output or "output.dxf"
+                result = cad_control.write_dxf(entities, output_path)
     
     except Exception as e:
         result = {"success": False, "error": str(e)}

@@ -23,36 +23,58 @@ const DEFAULT_VOICES: Voice[] = [
   { id: 'mimo-qingnian', name: '青年', gender: 'male', provider: 'mimo', locale: 'zh-CN', style: '阳光活力男声' },
   { id: 'mimo-shaonv', name: '少女', gender: 'female', provider: 'mimo', locale: 'zh-CN', style: '甜美可爱女声' },
   { id: 'mimo-dianshang', name: '电商', gender: 'female', provider: 'mimo', locale: 'zh-CN', style: '专业电商主播声' },
-  // Agnes 音色
-  { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-  { id: 'zh-CN-YunxiNeural', name: '云希', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'general' },
-  { id: 'zh-CN-YunjianNeural', name: '云健', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'news' },
-  { id: 'zh-CN-XiaoyiNeural', name: '晓伊', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'gentle' },
-  { id: 'zh-CN-YunyangNeural', name: '云扬', gender: 'male', provider: 'agnes', locale: 'zh-CN', style: 'professional' },
-  { id: 'zh-CN-XiaochenNeural', name: '晓辰', gender: 'female', provider: 'agnes', locale: 'zh-CN', style: 'lively' },
+  // Edge TTS 音色 (免费, 稳定, 推荐) — 注意: 这些音色名同时兼容 Edge 和 Agnes
+  { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', gender: 'female', provider: 'edge', locale: 'zh-CN', style: 'general' },
+  { id: 'zh-CN-YunxiNeural', name: '云希', gender: 'male', provider: 'edge', locale: 'zh-CN', style: 'general' },
+  { id: 'zh-CN-YunjianNeural', name: '云健', gender: 'male', provider: 'edge', locale: 'zh-CN', style: 'news' },
+  { id: 'zh-CN-XiaoyiNeural', name: '晓伊', gender: 'female', provider: 'edge', locale: 'zh-CN', style: 'gentle' },
+  { id: 'zh-CN-YunyangNeural', name: '云扬', gender: 'male', provider: 'edge', locale: 'zh-CN', style: 'professional' },
+  { id: 'zh-CN-XiaochenNeural', name: '晓辰', gender: 'female', provider: 'edge', locale: 'zh-CN', style: 'lively' },
   // 其他中文
-  { id: 'zh-CN-XiaohanNeural', name: '晓涵', gender: 'female', provider: 'agnes', locale: 'zh-CN' },
-  { id: 'zh-CN-XiaomengNeural', name: '晓梦', gender: 'female', provider: 'agnes', locale: 'zh-CN' },
-  { id: 'zh-CN-YunfengNeural', name: '云枫', gender: 'male', provider: 'agnes', locale: 'zh-CN' },
-  { id: 'zh-CN-YunhaoNeural', name: '云皓', gender: 'male', provider: 'agnes', locale: 'zh-CN' },
+  { id: 'zh-CN-XiaohanNeural', name: '晓涵', gender: 'female', provider: 'edge', locale: 'zh-CN' },
+  { id: 'zh-CN-XiaomengNeural', name: '晓梦', gender: 'female', provider: 'edge', locale: 'zh-CN' },
+  { id: 'zh-CN-YunfengNeural', name: '云枫', gender: 'male', provider: 'edge', locale: 'zh-CN' },
+  { id: 'zh-CN-YunhaoNeural', name: '云皓', gender: 'male', provider: 'edge', locale: 'zh-CN' },
   // 方言
-  { id: 'zh-HK-HiuMaanNeural', name: '晓曼(粤语)', gender: 'female', provider: 'agnes', locale: 'zh-HK' },
-  { id: 'zh-HK-WanLungNeural', name: '云龙(粤语)', gender: 'male', provider: 'agnes', locale: 'zh-HK' },
-  { id: 'zh-TW-HsiaoChenNeural', name: '晓臻(台湾)', gender: 'female', provider: 'agnes', locale: 'zh-TW' },
-  { id: 'zh-TW-YunJheNeural', name: '云哲(台湾)', gender: 'male', provider: 'agnes', locale: 'zh-TW' },
+  { id: 'zh-HK-HiuMaanNeural', name: '晓曼(粤语)', gender: 'female', provider: 'edge', locale: 'zh-HK' },
+  { id: 'zh-HK-WanLungNeural', name: '云龙(粤语)', gender: 'male', provider: 'edge', locale: 'zh-HK' },
+  { id: 'zh-TW-HsiaoChenNeural', name: '晓臻(台湾)', gender: 'female', provider: 'edge', locale: 'zh-TW' },
+  { id: 'zh-TW-YunJheNeural', name: '云哲(台湾)', gender: 'male', provider: 'edge', locale: 'zh-TW' },
   // 外语
-  { id: 'en-US-AriaNeural', name: 'Aria (EN)', gender: 'female', provider: 'agnes', locale: 'en-US' },
-  { id: 'en-US-GuyNeural', name: 'Guy (EN)', gender: 'male', provider: 'agnes', locale: 'en-US' },
-  { id: 'ja-JP-NanamiNeural', name: '七海 (JP)', gender: 'female', provider: 'agnes', locale: 'ja-JP' },
-  { id: 'ko-KR-SunHiNeural', name: '善熙 (KR)', gender: 'female', provider: 'agnes', locale: 'ko-KR' },
+  { id: 'en-US-AriaNeural', name: 'Aria (EN)', gender: 'female', provider: 'edge', locale: 'en-US' },
+  { id: 'en-US-GuyNeural', name: 'Guy (EN)', gender: 'male', provider: 'edge', locale: 'en-US' },
+  { id: 'ja-JP-NanamiNeural', name: '七海 (JP)', gender: 'female', provider: 'edge', locale: 'ja-JP' },
+  { id: 'ko-KR-SunHiNeural', name: '善熙 (KR)', gender: 'female', provider: 'edge', locale: 'ko-KR' },
 ];
 
 const TEST_TEXT = '你好，我是你的 AI 助手，很高兴为你服务。';
 
+const TTS_SETTINGS_KEY = 'agentai.tts.settings';
+
+interface TtsSettings {
+  enabled: boolean;
+  engine: string;
+  voice: string;
+  rate: number;
+  pitch: number;
+}
+
+function loadTtsSettings(): TtsSettings {
+  try {
+    const raw = localStorage.getItem(TTS_SETTINGS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { enabled: false, engine: 'browser', voice: 'mimo-zhinv', rate: 1.0, pitch: 1.0 };
+}
+
+function saveTtsSettings(s: TtsSettings) {
+  localStorage.setItem(TTS_SETTINGS_KEY, JSON.stringify(s));
+}
+
 export const VoiceSelector: React.FC = () => {
   const [voices, setVoices] = useState<Voice[]>(DEFAULT_VOICES);
   const [selectedVoice, setSelectedVoice] = useState<string>(() => {
-    return localStorage.getItem('agentai.tts.voice') || 'mimo-zhinv';
+    return loadTtsSettings().voice || 'mimo-zhinv';
   });
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -68,11 +90,7 @@ export const VoiceSelector: React.FC = () => {
       if (resp.ok) {
         const data = await resp.json();
         if (data.voices && data.voices.length > 0) {
-          // 过滤 Agnes 音色
-          const agnesVoices = data.voices.filter((v: Voice) => v.provider === 'agnes');
-          if (agnesVoices.length > 0) {
-            setVoices(agnesVoices);
-          }
+          setVoices(data.voices);
         }
       }
     } catch (err) {
@@ -82,15 +100,25 @@ export const VoiceSelector: React.FC = () => {
 
   const handleVoiceChange = (voiceId: string) => {
     setSelectedVoice(voiceId);
-    localStorage.setItem('agentai.tts.voice', voiceId);
+    const settings = loadTtsSettings();
+    settings.voice = voiceId;
+    saveTtsSettings(settings);
     message.success('音色已保存');
   };
 
-  // 根据音色ID获取provider
+  // 根据音色ID获取provider — 优先从 voices 列表中查找，fallback 到启发式
   const getProvider = (voiceId: string): string => {
+    const found = voices.find(v => v.id === voiceId);
+    if (found) {
+      // 映射: agnes provider 实际走 Edge TTS 降级(因为 Agnes TTS 常失败)
+      // edge provider 直接用 Edge TTS
+      // mimo provider 走 MIMO TTS
+      // moss provider 走 MOSS TTS
+      return found.provider;
+    }
     if (voiceId.startsWith('mimo-')) return 'mimo';
-    if (voiceId.includes('Neural')) return 'agnes';
-    return 'agnes';
+    if (voiceId.includes('Neural')) return 'edge'; // Neural 系列是 Edge/Agnes 共享的 Azure 音色名
+    return 'edge'; // 默认使用 edge（免费可用）
   };
 
   const testVoice = async () => {

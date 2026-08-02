@@ -7,6 +7,29 @@
  *   - 上下文压缩: 达到阈值自动摘要+开新对话
  */
 
+/**
+ * AutoHideTaskBar - 自动隐藏的任务提示条包装器
+ * 用户未操作时自动收起，避免常驻遮挡视线
+ */
+function AutoHideTaskBar({ children, visible, delay = 8000, onHidden }: { 
+  children: React.ReactNode; visible: boolean; delay?: number; onHidden?: () => void;
+}) {
+  const [show, setShow] = useState(visible);
+  
+  useEffect(() => {
+    if (!visible) { setShow(false); return; }
+    setShow(true);
+    const timer = setTimeout(() => {
+      setShow(false);
+      onHidden?.();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [visible, delay]);
+  
+  if (!show) return null;
+  return <>{children}</>;
+}
+
 /** 自动生成对话摘要 (前端本地压缩, 不调LLM) */
 function generateConversationSummary(messages: any[]): string {
   const userMsgs = messages.filter(m => m.role === 'user');
@@ -57,8 +80,12 @@ function detectAndInsertImage(
   toolName: string,
   result: string | undefined,
   updateMessage: (id: string, fn: (m: any) => any) => void,
+  onImageDetected?: (url: string, alt: string, filePath?: string) => void,
 ) {
   if (!result) return;
+  // 黑名单: 以下工具永远不会产生图片, 跳过检测
+  const NON_IMAGE_TOOLS = new Set(['run_background', 'run_command', 'run_code', 'read_file', 'write_file', 'edit_file', 'execute_command', 'Bash', 'PowerShell', 'list_directory', 'directory_tree', 'search_content', 'search_files', 'glob', 'get_file_info', 'find_references', 'get_outline', 'get_symbols', 'search_codebase']);
+  if (NON_IMAGE_TOOLS.has(toolName)) return;
   try {
     const parsed = typeof result === 'string' ? JSON.parse(result) : result;
 
@@ -201,9 +228,15 @@ function detectAndInsertImage(
       return;
     }
 
-    // 4. 检查是否包含图片文件路径
-    const imgMatch = text.match(/([^\s`'"]+\.(png|jpg|jpeg|gif|webp|bmp|svg))/i);
-    if (imgMatch) {
+    // 4. 检查是否包含图片文件路径 (排除 file:/// 协议路径和系统路径)
+    const textClean = text.replace(/file:\/\/\/?/gi, '');
+    if (textClean !== text) return; // 含 file:// 协议的不是图片
+    const nonImageSystemPaths = /\\windows\\|\/windows\/|system32|cmd\.exe|powershell\.exe|Program\s*Files|favicon\.svg|icon\.png|logo\.jpg/i;
+    if (nonImageSystemPaths.test(text)) return;
+    const imgMatch = text.match(/([^\s`'"]+\.(png|jpg|jpeg|gif|webp|bmp))/i);
+    if (imgMatch && !/^\//.test(imgMatch[1])) {
+      // SVG 文件通常不是生成的图片，跳过
+      if (imgMatch[2] === 'svg') return;
       const imgPath = imgMatch[1];
       const imgName = imgPath.split(/[\\/]/).pop() || imgPath;
       // 通过 gateway API 加载图片
@@ -241,9 +274,10 @@ import { UserMsg, AssistantMsg, TurnDivider } from './Thread';
 import { WorkspaceSummaryBar } from './WorkspaceSummaryBar';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { countTokens, formatTokens } from '../services/tokenCounter';
+import { Scene3DViewer, type Scene3DData } from './Scene3DViewer';
 import { EmotionIndicator } from './EmotionIndicator';
 import { analyzeEmotionQuick, type EmotionResult } from '../services/emotion';
-import { apiStream, makeChatHandlers, apiApproveFileChange, apiApprovePlan, suggestMode } from '../services/api';
+import { apiStream, makeChatHandlers, apiApproveFileChange, apiApprovePlan, suggestMode, apiWriteMemory } from '../services/api';
 import { MemoryEngine } from '../services/MemoryEngine';
 import { TaskChainCard, type StageStatus } from './TaskChainCard';
 import { SandboxStatusPanel } from './SandboxStatusPanel';
@@ -278,7 +312,7 @@ function guessImgMimetype(name: string): string {
 
 export const ChatView: React.FC = () => {
   const { messages, appendMessage, updateMessage, clearMessages, removeMessages, setMessages } = useChatStore();
-  const { activeModelId } = useModelStore();
+  const { activeModelId, chatMode, setChatMode } = useModelStore();
   const { mode, setMode, setSuggestedMode, recommendEnabled } = useModeStore();
   const { sessions, activeId, createSession, addMessage, updateTitle } = useSessionStore();
   // 长任务快照: 订阅 resumableTasks 和 activeTaskId 用于顶部提示条
@@ -359,6 +393,9 @@ export const ChatView: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [queuedSends, setQueuedSends] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ParsedAttachment[]>([]);
+  // 最近生成的图片（用于对话改图模式无缝衔接）
+  const [lastGeneratedImage, setLastGeneratedImage] = useState<ParsedAttachment | null>(null);
+  const [scene3D, setScene3D] = useState<Scene3DData | null>(null);
   const [emotionMap, setEmotionMap] = useState<Record<string, EmotionResult>>({});
   const [thinking, setThinking] = useState(true);
   // 2026-06-24 新增: 透明进度状态
@@ -394,11 +431,18 @@ export const ChatView: React.FC = () => {
         content: m.segments?.filter(s => s.kind === 'text').map(s => s.text).join('') || '',
       }));
       if (allText.length > 2) {
-        MemoryEngine.autoSaveOnTaskComplete(allText, '', '对话清空前自动保存');
+        MemoryEngine.autoSaveOnTaskComplete(allText, currentWorkspace, '对话清空前自动保存');
+        apiWriteMemory({
+          userId: 'default',
+          workspace: currentWorkspace,
+          role: 'assistant',
+          content: allText.filter(m => m.role === 'assistant').pop()?.content?.slice(0, 500) || '',
+          source: 'frontend-clear',
+        });
       }
     } catch { /* best-effort */ }
     clearMessages();
-  }, [messages, clearMessages]);
+  }, [messages, clearMessages, currentWorkspace]);
 
   /* ---- 启动自检: 加载时查询 gateway 健康状态 ---- */
   const [systemReady, setSystemReady] = useState(false);
@@ -422,7 +466,7 @@ export const ChatView: React.FC = () => {
           } catch { /* ignore */ }
         }
         if (cancelled) return;
-        const label = process.env.AGENTAI_MODEL || 'Agnes AI Flash';
+        const label = import.meta.env.VITE_AGENTAI_MODEL || 'Agnes AI Flash';
         setSystemInfo(`${configured}/${providers.length} API Key 已配置 · ${label}`);
         setSystemReady(true);
       } catch {
@@ -451,13 +495,27 @@ export const ChatView: React.FC = () => {
           content: m.segments?.filter(s => s.kind === 'text').map(s => s.text).join('') || '',
         }));
         if (allText.length > 2) {
-          MemoryEngine.autoSaveOnTaskComplete(allText, '', '页面关闭前自动保存');
+          MemoryEngine.autoSaveOnTaskComplete(allText, currentWorkspace, '页面关闭前自动保存');
+        }
+        // sendBeacon 确保页面关闭时请求能送达
+        const lastAsst = allText.filter(m => m.role === 'assistant').pop();
+        if (lastAsst?.content && lastAsst.content.length > 30) {
+          try {
+            const payload = JSON.stringify({
+              userId: 'default',
+              workspace: currentWorkspace,
+              role: 'assistant',
+              content: lastAsst.content.slice(0, 500),
+              source: 'frontend-beforeunload',
+            });
+            navigator.sendBeacon('/v1/memory', new Blob([payload], { type: 'application/json' }));
+          } catch { /* best-effort */ }
         }
       } catch { /* best-effort */ }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [messages]);
+  }, [messages, currentWorkspace]);
 
   /* ---- QQ Bot socket.io 桥接: 实时接收 QQ 消息并显示在对话窗口 ---- */
   const socketRef = useRef<Socket | null>(null);
@@ -832,6 +890,12 @@ export const ChatView: React.FC = () => {
         updateMessage(botId, (m: any) => ({
           ...m, segments: [...m.segments, { kind: 'tool', callId: info.callId, name: info.name, state: 'running', args: info.args }],
         }));
+        // ═══ 浏览器工具自动激活: AI 调 browser_* 时前端自动弹出浏览器面板 ═══
+        if (info.name && /^browser_/.test(info.name)) {
+          window.dispatchEvent(new CustomEvent('agentai:show-browser', {
+            detail: { name: info.name, args: info.args, url: info.args?.url || info.args?.target || '' },
+          }));
+        }
         // 桥接 → 全局任务编排器
         useTaskOrchestrator.getState().addToolCall({
           callId: info.callId, name: info.name, args: info.args,
@@ -866,7 +930,20 @@ export const ChatView: React.FC = () => {
         } catch { /* best-effort */ }
 
         // 图片检测: 如果工具结果包含图片数据, 自动插入 image segment
-        detectAndInsertImage(botId, info.name, info.result, updateMessage);
+        detectAndInsertImage(botId, info.name, info.result, updateMessage, (url, alt, filePath) => {
+          const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
+          const imgDataUrl = filePath
+            ? `${gatewayHttp}/api/files/download?path=${encodeURIComponent(filePath)}`
+            : url;
+          setLastGeneratedImage({
+            name: alt || 'generated.png',
+            mimetype: 'image/png',
+            size: 0,
+            content: `[图片: ${alt}]`,
+            dataUrl: imgDataUrl,
+            kind: 'image' as const,
+          });
+        });
 
         // SVG 图表渲染: generate_diagram 结果自动注入为 text segment
         if (info.name === 'generate_diagram' && info.ok) {
@@ -882,27 +959,57 @@ export const ChatView: React.FC = () => {
           } catch { /* svg extraction best-effort */ }
         }
 
-        // 生成文件: 在对话中显示可点击的文件链接（不注入文件内容）
-        if (['write_file', 'create_file', 'run_code'].includes(info.name) && info.ok) {
+        // 3D 场景渲染: generate_3d_scene 结果自动渲染为可交互 3D 预览
+        if (info.name === 'generate_3d_scene' && info.ok) {
           try {
-            // 从缓存读取 args（不依赖 orchestrator store）
-            const cachedArgs = handlers._toolArgsCache[info.callId];
+            const result = typeof info.result === 'string' ? JSON.parse(info.result) : info.result;
+            if (result?.data?.scene) {
+              setScene3D(result.data.scene);
+            }
+          } catch { /* 3d scene best-effort */ }
+        }
+
+        // 生成文件: 将文件路径写入工具结果 data 字段，供 Threads/FilesFromToolSegment/FileCard 渲染可点击卡片
+        // note: tool:start 已携带 args（含 path），FileCard 会直接从 args.path 提取，此处仅需补充从 run_code 输出中解析的路径
+        // AI 创建文件后触发文件树刷新事件
+        if (info.ok && ['write_file', 'create_file'].includes(info.name)) {
+          window.dispatchEvent(new CustomEvent('agentai:file-created', { detail: { toolName: info.name } }));
+          try {
+            const cachedArgs = handlers._toolArgsCache?.[info.callId] || undefined;
             const args = typeof cachedArgs === 'string' ? JSON.parse(cachedArgs) : cachedArgs;
-            let filePath = args?.file_path || args?.path || '';
-            // run_code: 从结果中提取文件路径
-            if (!filePath && info.name === 'run_code' && info.result) {
+            let filePath = args?.path || args?.filePath || args?.file || args?.file_path || '';
+            // run_code: 从输出文本中提取文件路径
+            if (!filePath && info.result) {
               const resultStr = typeof info.result === 'string' ? info.result : JSON.stringify(info.result);
               const fileMatch = resultStr.match(/(?:已生成|已创建|saved?|wrote|created|output)[:\s]*[`'"]*([^\s`'"]+\.\w{2,5})/i);
               if (fileMatch) filePath = fileMatch[1];
             }
             if (filePath) {
-              const fileName = filePath.split(/[\\/]/).pop() || filePath;
               updateMessage(botId, (m: any) => ({
                 ...m,
-                segments: [...m.segments, { kind: 'text', text: `\n\n> 📄 **已生成文件**: [${fileName}](agentai://open?path=${encodeURIComponent(filePath)}) · [查看修改](agentai://diff?path=${encodeURIComponent(filePath)})\n> 📂 路径: \`${filePath}\`\n` }],
+                segments: m.segments.map((s: any) =>
+                  s.kind === 'tool' && s.callId === info.callId
+                    ? { ...s, data: { ...s.data, generatedPath: filePath } }
+                    : s,
+                ),
               }));
             }
-          } catch { /* file link best-effort */ }
+          } catch { /* best-effort */ }
+        }
+
+        // ═══ 桥接 → 全局任务编排器: plan_task 创建计划 ═══
+        if (info.name === 'plan_task' && info.ok && info.data?.action === 'plan_created' && info.data?.plan) {
+          const plan = info.data.plan;
+          const stages = (plan.subtasks || []).map((t: any, i: number) => ({
+            key: t.id || `task-${i}`,
+            label: t.title || `任务 ${i + 1}`,
+            status: (t.status === 'completed' ? 'success' : 'pending') as TaskStatus,
+          }));
+          useTaskOrchestrator.getState().startTask(
+            plan.id || `plan-${Date.now()}`,
+            plan.goal || info.result || '任务规划',
+            stages,
+          );
         }
 
         // 桥接 → 全局任务编排器: 更新工具调用结果
@@ -951,7 +1058,7 @@ export const ChatView: React.FC = () => {
           }
         }, 100);
 
-        // 自动记忆: 检测任务完成, 保存到 MemoryEngine
+        // 自动记忆: 检测任务完成, 保存到 MemoryEngine + 后端持久化
         try {
           const allText = messages.map(m => ({
             role: m.role,
@@ -961,9 +1068,17 @@ export const ChatView: React.FC = () => {
           if (lastAssistant && lastAssistant.content && lastAssistant.content.length > 30) {
             MemoryEngine.autoSaveOnTaskComplete(
               allText,
-              '', // workspace (由 EditorRightPanel 处理)
+              currentWorkspace,
               String(lastAssistant.content).slice(0, 80).replace(/\n/g, ' ').trim(),
             );
+            // 同步写入后端记忆 (POST /v1/memory)
+            apiWriteMemory({
+              userId: 'default',
+              workspace: currentWorkspace,
+              role: 'assistant',
+              content: String(lastAssistant.content).slice(0, 500),
+              source: 'frontend-auto',
+            });
           }
         } catch { /* memory save is best-effort */ }
 
@@ -1022,16 +1137,19 @@ export const ChatView: React.FC = () => {
         const stageLabels: Record<string, string> = {
           plan: '规划', solve: '执行', verify: '验证', fix: '修复', report: '报告',
           explore: '探索', analyze: '分析', implement: '实现', test: '测试', deploy: '部署',
+          understand: '理解', execute: '执行', report: '报告',
         };
-        const stageKeys = info.stages || ['plan', 'solve', 'verify', 'fix', 'report'];
+        // 修复: 处理后端发送的 stages 格式，确保每个 stage 有 status 字段
+        const incomingStages = info.stages || [{ key: 'plan', label: '规划' }, { key: 'solve', label: '执行' }, { key: 'verify', label: '验证' }];
+        const normalizedStages = incomingStages.map((s: any, index: number) => ({
+          key: s.key || `stage-${index}`,
+          label: s.label || stageLabels[s.key] || s.key || `阶段 ${index + 1}`,
+          status: (s.status || (index === 0 ? 'running' : 'pending')) as TaskStatus,
+        }));
         useTaskOrchestrator.getState().startTask(
           info.chainId || `task-${Date.now()}`,
           info.goal || messageText,
-          stageKeys.map((key: string) => ({
-            key,
-            label: stageLabels[key] || key,
-            status: key === 'plan' ? 'running' as const : 'pending' as const,
-          })),
+          normalizedStages,
         );
         if (info.needsApproval) {
           useTaskOrchestrator.getState().activeTask!.needsApproval = true;
@@ -1069,17 +1187,32 @@ export const ChatView: React.FC = () => {
           ts: Date.now(),
         });
       },
-onAskUser: (info: any) => {
-setAskUserCard({ question: info.question, options: info.options || [] });
-},
-onClarifyRequired: (info: any) => {
-setClarificationReq({
-id: info.id,
-originalMessage: info.originalMessage,
-questions: info.questions,
-ambiguities: info.ambiguities,
-});
-},
+      onAskUser: (info: any) => {
+        setAskUserCard({ question: info.question, options: info.options || [] });
+      },
+      onSessionRollover: (info: any) => {
+        // 上下文超额 → 自动生成摘要并开新对话
+        const pct = (info.ratio * 100).toFixed(0);
+        const summary = "📋 前一个对话已达 " + pct + "% 上下文 (使用 " + info.promptTokens + " tokens / 共 " + info.ctxMax + " tokens)。";
+        try { apiWriteMemory({ userId: 'user', workspace: ws, role: 'summarize', content: summary }); } catch {}
+        setTimeout(() => {
+          try {
+            const firstMsg = messages[0];
+            const firstText = firstMsg?.segments?.[0]?.text || '';
+            const id = createSession("续: " + firstText.slice(0, 30));
+            setActiveId(id);
+            clearMessages();
+          } catch {}
+        }, 2000);
+      },
+      onClarifyRequired: (info: any) => {
+        setClarificationReq({
+          id: info.id,
+          originalMessage: info.originalMessage,
+          questions: info.questions,
+          ambiguities: info.ambiguities,
+        });
+      },
       // 子智能体事件: 渲染为可见文本
       onSubagentStart: (info: any) => {
         lastActivityTs = Date.now();
@@ -1137,8 +1270,8 @@ ambiguities: info.ambiguities,
       // 获取当前模型的上下文窗口大小
       const activeModelConfig = useModelStore.getState().models.find(m => m.id === provider);
       const contextWindow = activeModelConfig?.contextWindow || 128000;
-      // 自定义模型需传递 baseURL 和 modelName 给 gateway
-      const modelConfig = activeModelConfig && !activeModelConfig.isBuiltIn ? {
+      // 传递模型配置给 gateway (所有模型都传, 包括内置模型)
+      const modelConfig = activeModelConfig ? {
         baseURL: activeModelConfig.baseURL,
         modelName: activeModelConfig.models?.[0] || activeModelConfig.label,
         provider: activeModelConfig.provider,
@@ -1184,6 +1317,7 @@ ambiguities: info.ambiguities,
           thinking, modelConfig,
           systemRules: buildTimelinePrompt(),
           taskId: activeTaskId,  // 长任务快照 ID (跨会话恢复)
+          contextInject: useModelStore.getState().contextInject,
         }, handlers, controller.signal);
       }
     } catch (e: any) {
@@ -1206,11 +1340,23 @@ ambiguities: info.ambiguities,
   }, [loading, activeModelId, mode, appendMessage, updateMessage, activeId, createSession, addMessage, attachments, setAttachments]);
 
   /** 用户手动中止当前任务 */
+  /** 中止后要自动发送的排队消息 (避免 setQueuedSends 内递归调 handleSend) */
+  const pendingAbortSendRef = useRef<string | null>(null);
+
   const handleStop = useCallback(() => {
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
     }
+    // 记录中止时排队的首条消息 (用户排队就是想替代当前任务)
+    // 由 useEffect([loading]) 在 loading=false 后自动发送, 消除两队竞争
+    setQueuedSends(prev => {
+      if (prev.length > 0) {
+        pendingAbortSendRef.current = prev[0];
+        return prev.slice(1);
+      }
+      return prev;
+    });
     setLoading(false);
     const lastBot = messages.filter(m => m.role === 'assistant').pop();
     if (lastBot) {
@@ -1219,16 +1365,6 @@ ambiguities: info.ambiguities,
         segments: [...m.segments, { kind: 'text', text: '\n\n⏹ 已中止' }],
       }));
     }
-    // 中止后立即发送排队的第一条消息（用户排队就是想替代当前任务）
-    setQueuedSends(prev => {
-      if (prev.length > 0) {
-        const [first, ...rest] = prev;
-        // 延迟发送，等 loading=false 生效
-        setTimeout(() => handleSend(first), 100);
-        return rest;
-      }
-      return prev;
-    });
   }, [messages, updateMessage, handleSend]);
 
   /**
@@ -1269,6 +1405,17 @@ ambiguities: info.ambiguities,
     // 重新发送 (携带恢复的附件)
     handleSend(userText, restoredAttachments.length > 0 ? restoredAttachments : undefined);
   }, [messages, handleSend, removeMessages]);
+
+  /**
+   * 删除用户消息及其后续 AI 回复
+   */
+  const deleteMessageAndResponse = useCallback((messageId: string) => {
+    const idx = messages.findIndex(m => m.id === messageId);
+    if (idx < 0) return;
+    // 删除该用户消息及之后所有消息（包括 AI 回复）
+    const idsToRemove = messages.slice(idx).map(m => m.id);
+    removeMessages?.(idsToRemove);
+  }, [messages, removeMessages]);
 
   /**
    * 反馈 (点赞/点踩): 写入 localStorage, 不再依赖后端
@@ -1326,7 +1473,7 @@ ambiguities: info.ambiguities,
     { cmd: '/abort', desc: '中断当前回复', run: () => handleStop() },
     { cmd: '/help', desc: '查看帮助', run: () => {
       appendMessage({ id: 'help', role: 'system', segments: [{ kind: 'text', text: `
-**Atlas 命令指南**
+**岐枢命令指南**
 
 - \`/clear\` — 清空当前对话
 - \`/new\` — 新建对话
@@ -1398,6 +1545,14 @@ ambiguities: info.ambiguities,
     return () => window.removeEventListener('agentai:add-file-context', handler);
   }, []);
 
+  // ── 对话改图模式切换时自动填充最近生成的图片 ──
+  useEffect(() => {
+    if (chatMode === 'image_edit' && lastGeneratedImage && attachments.length === 0) {
+      console.log('[ChatView] 对话改图模式激活，自动填充最近生成的图片');
+      setAttachments([lastGeneratedImage]);
+    }
+  }, [chatMode, lastGeneratedImage, attachments.length]);
+
   /* ✨ 监听建议采纳事件 — 自动将建议 action 发送到对话 */
   useEffect(() => {
     const handler = (e: Event) => {
@@ -1410,6 +1565,38 @@ ambiguities: info.ambiguities,
     };
     window.addEventListener('agentai:suggestion-accept', handler);
     return () => window.removeEventListener('agentai:suggestion-accept', handler);
+  }, [handleSend]);
+
+  /* ✨ 监听预置工作流触发事件 */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ workflow: string; message: string; parameters: any[] }>;
+      const { workflow, message, parameters } = ce.detail || {};
+      if (workflow && message) {
+        // 构建工作流触发消息
+        let fullMessage = message;
+        
+        // 如果有参数，添加参数说明
+        if (parameters && parameters.length > 0) {
+          fullMessage += '\n\n参数说明:\n';
+          parameters.forEach((p: any) => {
+            const required = p.required ? ' (必填)' : ' (可选)';
+            fullMessage += `- ${p.label}: ${p.description || p.name}${required}\n`;
+          });
+          fullMessage += '\n请提供上述参数值，或直接告诉我你的具体需求。';
+        }
+        
+        // 设置到输入框并自动发送
+        setInputValue(fullMessage);
+        
+        // 延迟发送，让用户看到消息
+        setTimeout(() => {
+          handleSend(fullMessage);
+        }, 300);
+      }
+    };
+    window.addEventListener('agentai:trigger-workflow', handler);
+    return () => window.removeEventListener('agentai:trigger-workflow', handler);
   }, [handleSend]);
 
   /* ---- Drag-drop handler ---- */
@@ -1449,9 +1636,18 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
     }
   }, [pendingAnswer, loading, handleSend]);
 
-  /* ---- 队列消息: loading=false 后自动发送第一条 ---- */
+  /* ---- 队列消息: loading=false 后自动发送第一条 (含中止触发) ---- */
   useEffect(() => {
-    if (!loading && queuedSends.length > 0) {
+    if (loading) return;
+    // 优先发送中止时暂存的消息
+    const abortMsg = pendingAbortSendRef.current;
+    if (abortMsg) {
+      pendingAbortSendRef.current = null;
+      handleSend(abortMsg);
+      return;
+    }
+    // 再检查普通队列
+    if (queuedSends.length > 0) {
       const next = queuedSends[0];
       setQueuedSends(q => q.slice(1));
       handleSend(next);
@@ -1469,8 +1665,13 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
       onDragLeave={() => setDragOver(false)}
       onDrop={e => { e.preventDefault(); setDragOver(false); }}
     >
-      {/* ===== 长任务快照: 顶部恢复提示条 ===== */}
+      {/* ===== 长任务快照: 顶部恢复提示条 (8秒自动隐藏) ===== */}
       {(activeTaskId || resumableTasks.length > 0) && (
+        <AutoHideTaskBar 
+          visible={true}
+          delay={8000}
+          onHidden={() => { /* 用户未操作则自动隐藏 */ }}
+        >
         <div style={{ padding: '8px 16px 0' }}>
           {activeTaskId && (
             <Alert
@@ -1500,10 +1701,15 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             <Alert
               type="warning"
               showIcon
+              closable
+              onClose={() => setActiveTaskId(null)}
               message={
                 <Space>
                   <span>发现 {resumableTasks.length} 个可恢复的长任务</span>
                   <Tag color="orange">跨会话继续</Tag>
+                  <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 8 }}>
+                    (8秒后自动收起)
+                  </span>
                 </Space>
               }
               description={
@@ -1518,10 +1724,8 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                       onClick={async () => {
                         setResumingId(t.taskId);
                         try {
-                          // 调 API 准备恢复, 成功后自动设 activeTaskId
                           const result = await prepareResume(t.taskId);
                           if (result) {
-                            // 在对话窗口显示一条消息告知用户已准备
                             appendMessage({
                               id: `resume-ready-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                               role: 'assistant',
@@ -1530,6 +1734,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                               status: 'done',
                               provider: 'system',
                             } as any);
+                            setActiveTaskId(null); // 选择后立即隐藏
                           } else {
                             appendMessage({
                               id: `resume-fail-${Date.now()}`,
@@ -1568,6 +1773,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             />
           )}
         </div>
+        </AutoHideTaskBar>
       )}
 
       {/* ===== Workspace + 摘要 (可折叠) ===== */}
@@ -1607,7 +1813,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
       >
         {/* 上轮会话摘要提示 (v3.1) - 新对话时显示, 让用户知道 AI 记得上轮 */}
         {messages.length === 0 && (
-          <LastSessionHint workspace={profile?.workspace || localStorage.getItem('agentai.workspace') || ''} />
+          <LastSessionHint workspace={useProfileStore.getState()?.profile?.workspace || localStorage.getItem('agentai.workspace') || ''} />
         )}
 
         {/* Welcome screen when empty */}
@@ -1739,6 +1945,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                   userAvatar={undefined}
                   onResend={() => handleSend(text, restoredAttachments.length > 0 ? restoredAttachments : undefined)}
                   onEdit={() => composerRef.current?.setDraft(text)}
+                  onDelete={() => deleteMessageAndResponse(msg.id)}
                   onBookmark={() => bookmarkMessage(msg.id, text)}
                 />
                 {emotion && (
@@ -1750,13 +1957,18 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             );
           }
           if (msg.role === 'assistant') {
+            // Phase 2: 实时显示 - 合并 durationMs 到 usage
+            const usageWithDuration = msg.usage ? {
+              ...msg.usage,
+              durationMs: msg.durationMs || msg.usage?.durationMs,
+            } : undefined;
             return (
               <div key={msg.id} ref={el => msgRefs.current[msg.id] = el}>
                 <AssistantMsg
                   segments={msg.segments}
                   pending={!!msg.streaming}
                   model={msg.provider}
-                  usage={msg.usage}
+                  usage={usageWithDuration}
                   status={msg.status}
                   messageId={msg.id}
                   onNavigate={handleNavigateToMsg}
@@ -1784,6 +1996,9 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           return null;
         })}
 
+        {/* 3D 可交互场景 (AI 调用 generate_3d_scene 生成) */}
+        {scene3D && <Scene3DViewer scene={scene3D} />}
+
         {/* Bottom padding */}
         <div style={{ height: 8 }} />
       </div>
@@ -1809,6 +2024,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
 
       {/* Empty state margin adjustment */}
       {messages.length === 0 && <div style={{ flex: 1 }} />}
+
 
       {/* Queue sends */}
       {queuedSends.length > 0 && (
@@ -1942,14 +2158,14 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
               <div style={{
                 width: `${tokenInfo.pct}%`, height: '100%', borderRadius: 2,
                 background: tokenInfo.critical
-                  ? 'linear-gradient(90deg, #ef4444, #dc2626)'
-                  : 'linear-gradient(90deg, #eab308, #f59e0b)',
+                  ? 'linear-gradient(90deg, var(--danger), var(--danger))'
+                  : 'linear-gradient(90deg, var(--warning), #f59e0b)',
                 transition: 'width 0.4s ease',
               }} />
             </div>
             <span style={{
               fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
-              color: tokenInfo.critical ? '#ef4444' : '#eab308',
+              color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)',
             }}>
               {tokenInfo.pct}%
             </span>
@@ -1981,7 +2197,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
               </button>
             )}
           </div>
-          <div style={{ fontSize: 9, color: tokenInfo.critical ? '#ef4444' : '#eab308', marginTop: 3, opacity: 0.8 }}>
+          <div style={{ fontSize: 9, color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)', marginTop: 3, opacity: 0.8 }}>
             {tokenInfo.critical
               ? `对话已接近上下文上限 (${formatTokens(tokenInfo.tokens)} tokens)，建议创建新对话`
               : `对话上下文 ${formatTokens(tokenInfo.tokens)} tokens`}
@@ -2008,7 +2224,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             <div style={{
               height: '100%',
               width: `${progress.percent}%`,
-              background: progress.percent >= 100 ? '#22c55e' : 'var(--accent)',
+              background: progress.percent >= 100 ? 'var(--success)' : 'var(--accent)',
               borderRadius: 3,
               transition: 'width 0.3s ease'
             }} />
@@ -2056,6 +2272,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           thinking={thinking}
           onThinkingChange={setThinking}
           optimizeDisabled={loading}
+          chatMode={chatMode}
         />
       </div>
 

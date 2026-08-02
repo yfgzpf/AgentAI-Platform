@@ -1,0 +1,18 @@
+{
+  "name": "outbound-engine",
+  "installedAt": 1783266967624,
+  "source": "marketplace",
+  "version": "1.0.1",
+  "skillId": "skill_2053082541772902400",
+  "examples_zh": [
+    "帮我优化这封冷启动邮件",
+    "根据 ICP 画像构建目标客户列表",
+    "分析竞品的外拓策略"
+  ],
+  "examples_en": [
+    "Optimize this cold outbound email",
+    "Build a prospect list from ICP definition",
+    "Analyze competitor outbound strategies"
+  ],
+  "iconSource": "letter:auto"
+}

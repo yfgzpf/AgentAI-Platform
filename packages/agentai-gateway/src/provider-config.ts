@@ -82,14 +82,7 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderProtocolConfig> = {
     supportsImages: true,    // LongCat-2.0 是多模态模型
     supportsStreamToolCalls: true,
   },
-  nvidia: {
-    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools', 'top_p', 'frequency_penalty', 'presence_penalty', 'stop', 'seed'],
-    extensionFields: ['tool_choice', 'parallel_tool_calls', 'response_format', 'stream_options'],
-    supportsTools: true,
-    supportsThinking: false,  // NVIDIA NIM 模型自带推理, 无需额外参数
-    supportsImages: true,     // 多模态模型 (Nemotron Omni, Cosmos) 支持图片输入
-    supportsStreamToolCalls: true,
-  },
+  // nvidia provider config 已移除 (2026-07-25)
 };
 
 /**

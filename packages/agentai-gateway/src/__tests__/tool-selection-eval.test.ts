@@ -684,7 +684,7 @@ describe('工具选对率评估 (真实 LLM 模式)', () => {
     {
       name: 'AGENTAI',
       apiKey: process.env.AGENTAI_API_KEY || process.env.AGNES_API_KEY,
-      baseUrl: process.env.AGENTAI_BASE_URL || process.env.AGNES_BASE_URL || 'https://apihub.agnes-ai.com/v1',
+      baseUrl: process.env.AGENTAI_BASE_URL || process.env.AGNES_BASE_URL || 'https://api.agnes-ai.cn/v1',
       model: process.env.AGENTAI_MODEL || 'agnes-2.0-flash',
     },
     {

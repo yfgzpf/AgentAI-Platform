@@ -1,6 +1,6 @@
 /**
  * 任务感知层
- * ALTES | 岐黄 - 望闻问切之"望"
+ * 岐枢 | PulseFlow - 望闻问切之"望"
  *
  * 职责：
  * 1. 分析用户真实意图（望其表）
@@ -314,7 +314,10 @@ function generateIntentSummary(
 /**
  * 测试任务感知
  */
-export async function testTaskPerception(): Promise<void> {
+/**
+ * 测试任务感知（私有函数）
+ */
+async function testTaskPerception(): Promise<void> {
   const testCases = [
     { input: '你好', expected: { taskType: 'general', complexity: 'ultraSimple' } },
     { input: '帮我写个排序函数', expected: { taskType: 'coding', complexity: 'simple' } },

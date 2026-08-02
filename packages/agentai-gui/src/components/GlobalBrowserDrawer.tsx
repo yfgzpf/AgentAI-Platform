@@ -104,13 +104,45 @@ export const GlobalBrowserDrawer: React.FC = () => {
     };
   }, []);
 
+  // ===== 监听 AI 返回结果中的 _show_browser 标记 =====
+  useEffect(() => {
+    /**
+     * 监听来自 Gateway 的浏览器自动显示请求
+     * Gateway 在 browser_* 工具返回结果中添加 _show_browser: true
+     * 前端检测到后自动打开浏览器面板
+     */
+    const onShowBrowser = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      console.log('[GlobalBrowserDrawer] AI 请求显示浏览器:', detail);
+      
+      // 自动打开抽屉
+      setOpen(true);
+      
+      // 如果有 URL，自动导航
+      if (detail.url) {
+        setInitialUrl(detail.url);
+        setTimeout(() => {
+          // 触发导航事件
+          window.dispatchEvent(new CustomEvent('pulseflow:browser:navigate', {
+            detail: { url: detail.url }
+          }));
+        }, 500);
+      }
+    };
+    
+    window.addEventListener('agentai:show-browser', onShowBrowser);
+    return () => {
+      window.removeEventListener('agentai:show-browser', onShowBrowser);
+    };
+  }, []);
+
   // 健康检查: gateway 连接
   const [gatewayOk, setGatewayOk] = useState<boolean>(true);
   useEffect(() => {
     let mounted = true;
     const check = async () => {
       try {
-        const res = await fetch(`${gatewayFallback()}/v1/health`, { method: 'GET' });
+        const res = await fetch(`${gatewayFallback.url}/v1/health`, { method: 'GET' });
         if (mounted) setGatewayOk(res.ok);
       } catch {
         if (mounted) setGatewayOk(false);

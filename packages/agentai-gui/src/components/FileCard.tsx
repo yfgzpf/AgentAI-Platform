@@ -7,8 +7,9 @@
  *   - 全部默认折叠，不占聊天篇幅
  *   - 点击 "打开" 才真正跳转编辑器
  */
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Tooltip, message as antdMsg } from 'antd';
+import { FileTextOutlined } from '@ant-design/icons';
 
 const LANG_META: Record<string, { icon: string; color: string }> = {
   ts: { icon: 'TS', color: '#3178C6' },
@@ -53,6 +54,8 @@ export interface FileCardProps {
   path: string;
   /** 文件内容 (用于预览; 过长会被截断) */
   content?: string;
+  /** 旧内容 (用于行级 diff 显示, edit 模式有效) */
+  oldContent?: string;
   /** 文件大小 (字节) */
   size?: number;
   /** 改动行数 (新增 +, 删除 -) */
@@ -83,7 +86,7 @@ const OP_META: Record<FileOp, { label: string; color: string; bg: string; icon: 
  *   - 默认全部折叠，保持对话干净
  */
 export const FileCard: React.FC<FileCardProps> = ({
-  op, path, content, size, diffStats, batchCount, ok, onOpenInEditor, onLocateInTree,
+  op, path, content, oldContent, size, diffStats, batchCount, ok, onOpenInEditor, onLocateInTree,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const { icon, color, lang } = getLangMeta(path);
@@ -95,6 +98,8 @@ export const FileCard: React.FC<FileCardProps> = ({
   // ═══ 通用 handler (定义在 return 前, 避免 read 模式提前 return 后找不到) ═══
   const handleOpen = (e?: React.MouseEvent) => {
     e?.stopPropagation();
+    // 始终触发全局事件，确保 Editor 能监听并打开文件
+    window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path } }));
     if (onOpenInEditor) {
       onOpenInEditor(path);
     } else {
@@ -147,9 +152,13 @@ export const FileCard: React.FC<FileCardProps> = ({
     }
   };
 
-  // ─── read 模式: 纯导航卡片 ───
+  // ─── read 模式: 纯导航卡片 + 查看内容按钮 ───
   // 只显示文件名 + 语言徽标 + 大小，无任何内容预览
   if (op === 'read') {
+    const [showContent, setShowContent] = useState(false);
+    const previewLines = content ? content.split('\n').slice(0, 10) : [];
+    const totalLines = content ? content.split('\n').length : 0;
+
     return (
       <div
         style={{
@@ -194,15 +203,90 @@ export const FileCard: React.FC<FileCardProps> = ({
             fontSize: 8, padding: '1px 5px', borderRadius: 3,
             background: opMeta.bg, color: opMeta.color, flexShrink: 0,
           }}>{opMeta.icon} 已读取</span>
+          
+          {/* 查看内容按钮 */}
+          {content && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowContent(!showContent); }}
+              style={{
+                fontSize: 9, color: 'var(--accent)', background: 'transparent',
+                border: 'none', cursor: 'pointer', padding: '0 4px', flexShrink: 0,
+              }}
+            >
+              {showContent ? '收起 ▲' : '查看内容 ▼'}
+            </button>
+          )}
         </div>
+        
+        {/* 展开的内容预览 */}
+        {showContent && content && (
+          <div style={{ borderTop: '1px solid var(--border)' }}>
+            <pre style={{
+              margin: 0, padding: '8px 12px',
+              fontSize: 10, lineHeight: 1.4,
+              fontFamily: "'Consolas', monospace",
+              color: 'var(--fg-2)',
+              background: 'var(--bg-2)',
+              maxHeight: 300,
+              overflowY: 'auto',
+              borderBottom: '1px solid var(--border)',
+            }}>
+              {previewLines.map((line, idx) => (
+                <div key={idx} style={{ display: 'flex' }}>
+                  <span style={{ 
+                    width: 24, 
+                    textAlign: 'right', 
+                    paddingRight: 8, 
+                    color: 'var(--muted-2)', 
+                    userSelect: 'none',
+                    opacity: 0.5,
+                    flexShrink: 0,
+                  }}>{idx + 1}</span>
+                  <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>{line}</span>
+                </div>
+              ))}
+              {totalLines > 10 && (
+                <span style={{ color: 'var(--muted-2)', display: 'block', marginTop: 8, fontStyle: 'italic' }}>
+                  ... 共 {totalLines} 行, 点击"打开"在编辑器查看完整内容
+                </span>
+              )}
+            </pre>
+            <div style={{
+              display: 'flex', gap: 3, padding: '4px 8px',
+              background: 'var(--panel)',
+            }}>
+              <ActionButton onClick={handleOpen} icon="📝" label="打开" />
+              <ActionButton onClick={handleLocate} icon="📂" label="定位" />
+              <ActionButton onClick={handleCopy} icon="📋" label="复制" />
+              <ActionButton onClick={handleDownload} icon="⬇" label="下载" />
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
-  // ─── write/edit/batch 模式: 折叠内容预览 ───
+  // ─── write/edit/batch 模式: 折叠内容预览 + 编辑高亮 ───
   const previewLines = content ? content.split('\n').slice(0, 6) : [];
   const totalLines = content ? content.split('\n').length : 0;
   const truncated = totalLines > 6;
+
+  // 计算编辑统计信息
+  const editStats = useMemo(() => {
+    if (!oldContent || !content) return null;
+    const oldLines = oldContent.split('\n');
+    const newLines = content.split('\n');
+    let added = 0;
+    let removed = 0;
+    
+    // 简单的行级diff统计
+    const oldSet = new Set(oldLines);
+    const newSet = new Set(newLines);
+    added = newLines.filter(line => !oldSet.has(line)).length;
+    removed = oldLines.filter(line => !newSet.has(line)).length;
+    
+    return { added, removed, total: oldLines.length };
+  }, [oldContent, content]);
 
   return (
     <div
@@ -296,25 +380,64 @@ export const FileCard: React.FC<FileCardProps> = ({
         </div>
       )}
 
-      {/* 展开时: 内容预览 + 操作按钮 */}
+      {/* 展开时: 内容预览 + 操作按钮 (edit 模式走行级 diff) */}
       {expanded && content && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
-          <pre style={{
-            margin: 0, padding: '8px 12px',
-            fontSize: 10, lineHeight: 1.4,
-            fontFamily: "'Consolas', monospace",
-            color: 'var(--fg-2)',
-            background: 'var(--bg-2)',
-            maxHeight: 180, overflowY: 'auto',
-            borderBottom: '1px solid var(--border)',
-          }}>
-            {previewLines.join('\n')}
-            {truncated && (
-              <span style={{ color: 'var(--muted-2)', display: 'block', marginTop: 3 }}>
-                ... 共 {totalLines} 行, 在编辑器查看完整内容
-              </span>
-            )}
-          </pre>
+          {oldContent != null && oldContent !== content ? (
+            /* 行级 diff 渲染 (edit 模式, 有旧内容) */
+            <DiffPreviewLines oldContent={oldContent} newContent={content} />
+          ) : (
+            /* 纯文本预览 (create 模式或 read) */
+            <pre style={{
+              margin: 0, padding: '8px 12px',
+              fontSize: 10, lineHeight: 1.4,
+              fontFamily: "'Consolas', monospace",
+              color: 'var(--fg-2)',
+              background: 'var(--bg-2)',
+              maxHeight: 300,
+              overflowY: 'auto',
+              borderBottom: '1px solid var(--border)',
+            }}>
+              {content.split('\n').map((line, idx) => (
+                <div key={idx} style={{ 
+                  display: 'flex',
+                  minHeight: '1.4em',
+                }}>
+                  <span style={{ 
+                    width: 24, 
+                    textAlign: 'right', 
+                    paddingRight: 8, 
+                    color: 'var(--muted-2)', 
+                    userSelect: 'none',
+                    opacity: 0.5,
+                    flexShrink: 0,
+                    borderRight: '1px solid var(--border)',
+                    marginRight: 8,
+                  }}>{idx + 1}</span>
+                  <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>
+                    {line || '\u00A0'}
+                  </span>
+                </div>
+              ))}
+            </pre>
+          )}
+          
+          {/* 编辑统计信息 */}
+          {editStats && (
+            <div style={{
+              padding: '4px 12px',
+              fontSize: 10,
+              color: 'var(--muted-2)',
+              display: 'flex',
+              gap: 12,
+              borderBottom: '1px solid var(--border)',
+            }}>
+              <span>原始: {editStats.total} 行</span>
+              <span style={{ color: 'var(--success)' }}>+{editStats.added} 新增</span>
+              <span style={{ color: 'var(--danger)' }}>-{editStats.removed} 删除</span>
+            </div>
+          )}
+          
           <div style={{
             display: 'flex', gap: 3, padding: '4px 8px',
             background: 'var(--panel)',
@@ -356,11 +479,11 @@ function ActionButton({ onClick, icon, label }: {
 
 /**
  * 工具 segments → FileCard 列表 (精简折叠版)
- * 
+ *
  * 设计原则:
  *   - 写入/修改文件优先显示
  *   - read_file 文件排在后面 (用户不需要看读取的内容)
- *   - 全部默认折叠, 保持对话干净
+ *   - 默认全部折叠, 保持对话干净 (参考 ZCode 整洁风格)
  */
 export const FilesFromToolSegment: React.FC<{
   segments: Array<{
@@ -371,6 +494,7 @@ export const FilesFromToolSegment: React.FC<{
   }>;
   onOpen?: (path: string) => void;
 }> = ({ segments, onOpen }) => {
+  const [collapsed, setCollapsed] = useState(true); // 默认折叠
   const writeCards: React.ReactNode[] = [];
   const readCards: React.ReactNode[] = [];
 
@@ -381,7 +505,7 @@ export const FilesFromToolSegment: React.FC<{
 
     // write_file / create_file
     if (n === 'write_file' || n === 'create_file') {
-      const path = args?.path || args?.filePath || args?.file || '';
+      const path = args?.path || args?.filePath || args?.file || args?.file_path || '';
       if (path) {
         const content = typeof args?.content === 'string' ? args.content : '';
         writeCards.push(
@@ -398,16 +522,32 @@ export const FilesFromToolSegment: React.FC<{
       }
     }
     // edit_file / patch_file
-    else if (n === 'edit_file' || n === 'patch_file' || n === 'str_replace') {
-      const path = args?.path || args?.filePath || args?.file || '';
+    else if (n === 'edit_file' || n === 'patch_file' || n === 'str_replace' || n === 'multi_edit') {
+      const path = args?.path || args?.filePath || args?.file || args?.file_path || '';
       if (path) {
+        // 从 result.data 提取 oldContent (后端 write_file/multi_edit 新增返回)
+        const resultData = result?.data || {};
+        const data = typeof resultData === 'string' ? safeJson(resultData) : resultData;
+        const oldContent = data?.oldContent || undefined;
+        const newContent = data?.newContent || (typeof result?.content === 'string' ? result.content : undefined);
+        // multi_edit: edits 数组情况下用第一项的 oldContent
+        const editFromData = data?.edits?.[0];
+        const resolvedOld = oldContent || editFromData?.oldContent || undefined;
+        const resolvedNew = newContent || editFromData?.newContent || undefined;
+        // 计算 diffStats
+        const oldLines = resolvedOld ? resolvedOld.split('\n').length : 0;
+        const newLines = resolvedNew ? resolvedNew.split('\n').length : 0;
+        const added = Math.max(0, newLines - oldLines);
+        const removed = Math.max(0, oldLines - newLines);
         writeCards.push(
           <FileCard
             key={`${path}-e`}
             op="edit"
             path={path}
-            content={typeof result?.content === 'string' ? result.content : undefined}
+            content={resolvedNew}
+            oldContent={resolvedOld}
             ok={seg.ok}
+            diffStats={{ added, removed }}
             onOpenInEditor={onOpen}
           />
         );
@@ -415,7 +555,7 @@ export const FilesFromToolSegment: React.FC<{
     }
     // read_file / view_file
     else if (n === 'read_file' || n === 'view_file' || n === 'cat_file') {
-      const path = args?.path || args?.filePath || args?.file || '';
+      const path = args?.path || args?.filePath || args?.file || args?.file_path || '';
       if (path) {
         readCards.push(
           <FileCard
@@ -433,11 +573,112 @@ export const FilesFromToolSegment: React.FC<{
   const allCards = [...writeCards, ...readCards];
   if (allCards.length === 0) return null;
 
-  return <div style={{ marginTop: 4 }}>{allCards}</div>;
+  // 统计信息
+  const writeCount = writeCards.length;
+  const readCount = readCards.length;
+  const summaryParts: string[] = [];
+  if (writeCount > 0) summaryParts.push(`${writeCount} 个文件变更`);
+  if (readCount > 0) summaryParts.push(`${readCount} 个文件读取`);
+  const summary = summaryParts.join(' · ');
+
+  // 折叠态: 只显示一行摘要
+  if (collapsed) {
+    return (
+      <div
+        onClick={() => setCollapsed(false)}
+        style={{
+          margin: '4px 0', padding: '6px 10px', borderRadius: 6,
+          background: 'var(--panel)', border: '1px dashed var(--border)',
+          cursor: 'pointer', userSelect: 'none',
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontSize: 'var(--tool-font-size, 11px)', color: 'var(--muted)',
+        }}
+      >
+        <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 11 }} />
+        <span>{summary}</span>
+        <span style={{ fontSize: 10, opacity: 0.5 }}>点击展开</span>
+      </div>
+    );
+  }
+
+  // 展开态: 显示所有文件卡片 + 收起按钮
+  return (
+    <div style={{ marginTop: 4 }}>
+      {/* 收起按钮 */}
+      <div
+        onClick={() => setCollapsed(true)}
+        style={{
+          fontSize: 11, color: 'var(--accent)', cursor: 'pointer',
+          padding: '4px 8px', userSelect: 'none', marginBottom: 2,
+        }}
+      >
+        ▲ 收起文件列表
+      </div>
+      {allCards}
+    </div>
+  );
 };
 
 function safeJson(s: string): any {
   try { return JSON.parse(s); } catch { return null; }
 }
+
+/**
+ * 行级 diff 渲染 (绿色=新增, 红色=删除, 灰色=上下文)
+ * 用于 edit 模式展开时替代纯文本预览
+ */
+const DiffPreviewLines: React.FC<{ oldContent: string; newContent: string }> = ({ oldContent, newContent }) => {
+  const oldLines = oldContent.split('\n');
+  const newLines = newContent.split('\n');
+  const maxLen = Math.max(oldLines.length, newLines.length);
+  const rows: React.ReactNode[] = [];
+
+  // 简易 LCS diff: 逐行比较
+  let li = 0, ni = 0;
+  while (li < oldLines.length || ni < newLines.length) {
+    const ol = li < oldLines.length ? oldLines[li] : null;
+    const nl = ni < newLines.length ? newLines[ni] : null;
+
+    if (ol === nl) {
+      rows.push(
+        <div key={`ctx-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 10, lineHeight: '18px', fontFamily: "'Consolas', monospace" }}>
+          <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 8, color: '#999', userSelect: 'none' }}>{li + 1}</span>
+          <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 8, color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
+          <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: 'var(--fg-2)' }}>{ol}</span>
+        </div>
+      );
+      li++; ni++;
+    } else {
+      // 有差异: 显示被删行
+      if (ol !== null) {
+        rows.push(
+          <div key={`del-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 10, lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(239,68,68,0.08)', borderLeft: '3px solid #ef4444' }}>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 8, color: '#999', userSelect: 'none' }}>{li + 1}</span>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 8, color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}></span>
+            <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: '#dc2626' }}>- {ol}</span>
+          </div>
+        );
+        li++;
+      }
+      // 显示新增行
+      if (nl !== null) {
+        rows.push(
+          <div key={`add-${ni}`} style={{ display: 'flex', minHeight: 18, fontSize: 10, lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(34,197,94,0.08)', borderLeft: '3px solid #22c55e' }}>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 8, color: '#999', userSelect: 'none' }}></span>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 8, color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
+            <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: '#16a34a' }}>+ {nl}</span>
+          </div>
+        );
+        ni++;
+      }
+    }
+  }
+
+  return (
+    <div style={{ maxHeight: 240, overflow: 'auto', background: 'var(--bg-2)', borderBottom: '1px solid var(--border)' }}>
+      {rows}
+    </div>
+  );
+};
 
 export default FileCard;

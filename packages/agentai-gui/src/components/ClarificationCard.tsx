@@ -84,7 +84,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
     <Card
       style={{
         margin: '12px 0',
-        border: '1px solid var(--primary)',
+        border: '1px solid var(--accent)',
         background: 'var(--panel)',
         borderRadius: 12,
       }}
@@ -92,7 +92,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
     >
       {/* 头部：歧义类型标签 */}
       <div style={{ marginBottom: 12 }}>
-        <QuestionCircleOutlined style={{ color: 'var(--primary)', marginRight: 8 }} />
+        <QuestionCircleOutlined style={{ color: 'var(--accent)', marginRight: 8 }} />
         <Text type="secondary">AI 需要澄清您的意图</Text>
         <div style={{ marginTop: 8 }}>
           {request.ambiguities.map((a, i) => (
@@ -114,7 +114,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
           background: 'var(--bg)',
           borderRadius: 8,
           marginBottom: 16,
-          borderLeft: '3px solid var(--primary)',
+          borderLeft: '3px solid var(--accent)',
         }}
       >
         <Text type="secondary" style={{ fontSize: 12 }}>您的输入：</Text>

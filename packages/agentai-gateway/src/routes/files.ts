@@ -96,13 +96,17 @@ function sanitizePath(input: string): string {
 }
 
 /**
- * 构建文件树
+ * 构建文件树 - 优化版本
+ * - 减少递归深度（2层）
+ * - 限制子目录数量（每层最多100个）
+ * - 异步处理避免阻塞
  */
-function buildTree(dir: string, prefix: string = '', depth: number = 5): any[] {
+function buildTree(dir: string, prefix: string = '', depth: number = 2): any[] {
   if (depth <= 0) return [];
   try {
     const items = fs.readdirSync(dir, { withFileTypes: true })
       .filter(it => !it.name.startsWith('.') && it.name !== 'node_modules' && it.name !== 'dist' && it.name !== 'out' && it.name !== '__pycache__')
+      .slice(0, 100) // 限制每层最多100个条目，防止超大目录
       .sort((a, b) => {
         if (a.isDirectory() && !b.isDirectory()) return -1;
         if (!a.isDirectory() && b.isDirectory()) return 1;
@@ -112,7 +116,7 @@ function buildTree(dir: string, prefix: string = '', depth: number = 5): any[] {
       const full = path.join(dir, it.name);
       const isDir = it.isDirectory();
       let children: any[] = [];
-      if (isDir) {
+      if (isDir && depth > 1) {
         children = buildTree(full, prefix + '/' + it.name, depth - 1);
       }
       let size = 0;
@@ -125,6 +129,7 @@ function buildTree(dir: string, prefix: string = '', depth: number = 5): any[] {
         type: isDir ? 'directory' : 'file',
         size,
         children: isDir ? children : undefined,
+        hasMore: isDir && depth <= 1, // 标记是否有更多子目录未加载
       };
     });
   } catch {
@@ -384,5 +389,71 @@ filesRouter.post('/v1/fs/reveal', (req, res) => {
     res.json({ ok: true, dir });
   } catch (e: any) {
     res.status(400).json({ error: String(e) });
+  }
+});
+
+/**
+ * GET /v1/project-docs/status
+ * 获取项目说明文件状态 (PROJECT_README.md, PROJECT_CONTEXT.md, PROJECT_STATE.md)
+ */
+filesRouter.get('/v1/project-docs/status', (req, res) => {
+  try {
+    const wm = WorkspaceManager.getInstance();
+    const agentaiDir = path.join(wm.projectDir, '.agentai');
+    
+    const checkFile = (name: string) => {
+      const filePath = path.join(agentaiDir, name);
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        return { exists: true, lastModified: stats.mtimeMs };
+      }
+      return { exists: false, lastModified: 0 };
+    };
+
+    res.json({
+      files: {
+        readme: checkFile('PROJECT_README.md'),
+        context: checkFile('PROJECT_CONTEXT.md'),
+        state: checkFile('PROJECT_STATE.md'),
+      }
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+/**
+ * GET /v1/project-docs/read
+ * 读取项目说明文件内容
+ * query: file=readme|context|state
+ */
+filesRouter.get('/v1/project-docs/read', (req, res) => {
+  try {
+    const wm = WorkspaceManager.getInstance();
+    const agentaiDir = path.join(wm.projectDir, '.agentai');
+    const fileId = req.query.file as string;
+    
+    const fileMap: Record<string, string> = {
+      readme: 'PROJECT_README.md',
+      context: 'PROJECT_CONTEXT.md',
+      state: 'PROJECT_STATE.md',
+    };
+
+    const fileName = fileMap[fileId];
+    if (!fileName) {
+      res.status(400).json({ error: 'Invalid file id' });
+      return;
+    }
+
+    const filePath = path.join(agentaiDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8');
+    res.json({ content });
+  } catch (e: any) {
+    res.status(500).json({ error: String(e) });
   }
 });

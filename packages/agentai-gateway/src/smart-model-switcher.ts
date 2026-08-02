@@ -235,7 +235,7 @@ export class SmartModelSwitcher {
     this.commercialApiConfigs.set('agentai', {
       provider: 'agentai',
       apiKeyEnvKey: 'AGENTAI_API_KEY',
-      endpoint: 'https://apihub.agnes-ai.com/v1',
+      endpoint: 'https://api.agnes-ai.cn/v1',
       model: 'agnes-2.0-flash',
       costPerRequest: 0,      // 免费
       rateLimit: 60,
@@ -293,8 +293,8 @@ export class SmartModelSwitcher {
    * - 免费模型串行执行 (不调子智能体)
    */
   private _selectCommercialProvider(taskComplexity: 'simple' | 'medium' | 'complex', excludeProvider?: string): string {
-    // 安全守护: H6 修复 — 免费池补全：sensenova/longcat/nvidia/dxnt 也支持免费额度
-    const freeProviders = ['agentai', 'zhipu', 'sensenova', 'longcat', 'nvidia', 'dxnt'];
+    // 安全守护: H6 修复 — 免费池补全：sensenova/longcat/dxnt 也支持免费额度 (nvidia 已移除)
+    const freeProviders = ['agentai', 'zhipu', 'sensenova', 'longcat', 'dxnt'];
     for (const fp of freeProviders) {
       if (fp === excludeProvider) continue;
       if (this._checkApiKey(fp)) {

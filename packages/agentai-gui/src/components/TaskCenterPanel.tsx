@@ -16,6 +16,8 @@ import {
   ClearOutlined, ThunderboltOutlined, FileTextOutlined, BulbOutlined,
   ClockCircleOutlined, FlagOutlined, ApiOutlined, ScheduleOutlined,
   NodeIndexOutlined, FileSearchOutlined, CheckOutlined, StopOutlined,
+  AppstoreOutlined, SendOutlined, VideoCameraOutlined, EditOutlined,
+  BarChartOutlined, CodeOutlined, FileMarkdownOutlined,
 } from '@ant-design/icons';
 import { useTaskResumeStore } from '../store/taskResumeStore';
 import {
@@ -23,6 +25,12 @@ import {
   type TaskMeta, type TaskSnapshot, type TaskStatus,
 } from '../services/tasksApi';
 import { io, Socket } from 'socket.io-client';
+
+/** Gateway HTTP base (matches __AGENTAI_GATEWAY__ pattern used for WebSocket) */
+const GW = (() => {
+  const gw = (typeof window !== 'undefined' ? (window as any).__AGENTAI_GATEWAY__ : '') || 'ws://127.0.0.1:18789';
+  return gw.replace(/^ws([s]?):\/\//, 'http$1://');
+})();
 
 export const TaskCenterPanel: React.FC = () => {
   const {
@@ -34,7 +42,7 @@ export const TaskCenterPanel: React.FC = () => {
   const [detailVisible, setDetailVisible] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [filterStatus, setFilterStatus] = useState<TaskStatus | 'all'>('all');
-  const [activeTab, setActiveTab] = useState('resumable');
+  const [activeTab, setActiveTab] = useState('presets');  // 默认显示预置工作流
 
   // 定时任务状态
   const [schedules, setSchedules] = useState<any[]>([]);
@@ -42,7 +50,7 @@ export const TaskCenterPanel: React.FC = () => {
   const loadSchedules = useCallback(async () => {
     setSchedulesLoading(true);
     try {
-      const r = await fetch('/v1/schedules');
+      const r = await fetch(`${GW}/v1/schedules`);
       if (r.ok) { const j = await r.json(); setSchedules(j.data || []); }
     } catch { /* silent */ }
     setSchedulesLoading(false);
@@ -54,8 +62,8 @@ export const TaskCenterPanel: React.FC = () => {
   const loadWorkflows = useCallback(async () => {
     try {
       const [tr, er] = await Promise.all([
-        fetch('/v1/workflows/templates'),
-        fetch('/v1/workflows/executions?limit=10'),
+        fetch(`${GW}/v1/workflows/templates`),
+        fetch(`${GW}/v1/workflows/executions?limit=10`),
       ]);
       if (tr.ok) { const j = await tr.json(); setWorkflowTemplates(j.templates || []); }
       if (er.ok) { const j = await er.json(); setWorkflowExecs(j.executions || []); }
@@ -67,8 +75,8 @@ export const TaskCenterPanel: React.FC = () => {
   const loadExecLogs = useCallback(async () => {
     try {
       const [wfRes, autoRes] = await Promise.all([
-        fetch('/v1/workflows/executions?limit=20'),
-        fetch('/v1/automations'),
+        fetch(`${GW}/v1/workflows/executions?limit=20`),
+        fetch(`${GW}/v1/automations`),
       ]);
       const logs: any[] = [];
       if (wfRes.ok) {
@@ -103,12 +111,45 @@ export const TaskCenterPanel: React.FC = () => {
     } catch { /* silent */ }
   }, []);
 
+  // 预置工作流状态
+  const [presetWorkflows, setPresetWorkflows] = useState<any[]>([]);
+  const [presetLoading, setPresetLoading] = useState(false);
+  const loadPresetWorkflows = useCallback(async () => {
+    setPresetLoading(true);
+    try {
+      const r = await fetch(`${GW}/api/preset-workflows`);
+      if (r.ok) {
+        const j = await r.json();
+        setPresetWorkflows(j.workflows || []);
+      }
+    } catch { /* silent */ }
+    setPresetLoading(false);
+  }, []);
+
+  // 触发工作流到对话窗口
+  const handleTriggerWorkflow = (workflow: any) => {
+    // 构建触发消息
+    const triggerMsg = `执行预置工作流: ${workflow.name}\n${workflow.description}`;
+    
+    // 通过自定义事件通知 ChatView
+    window.dispatchEvent(new CustomEvent('agentai:trigger-workflow', {
+      detail: {
+        workflow: workflow.name,
+        message: triggerMsg,
+        parameters: workflow.parameters,
+      }
+    }));
+    
+    message.success(`已发送「${workflow.name}」到对话窗口`);
+  };
+
   // Tab 切换时按需加载
   const onTabChange = (key: string) => {
     setActiveTab(key);
     if (key === 'schedules' && schedules.length === 0) loadSchedules();
     if (key === 'workflows' && workflowTemplates.length === 0) loadWorkflows();
     if (key === 'logs' && execLogs.length === 0) loadExecLogs();
+    if (key === 'presets' && presetWorkflows.length === 0) loadPresetWorkflows();
   };
 
   // 初始加载
@@ -367,6 +408,62 @@ export const TaskCenterPanel: React.FC = () => {
         </Row>
 
         <Tabs activeKey={activeTab} onChange={onTabChange}>
+          {/* ===== 预置工作流 Tab (默认显示) ===== */}
+          <Tabs.TabPane
+            tab={
+              <Space>
+                <AppstoreOutlined />
+                <span>预置工作流</span>
+                <Tag color="blue">{presetWorkflows.length}</Tag>
+              </Space>
+            }
+            key="presets"
+          >
+            <Spin spinning={presetLoading}>
+              <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                <Button icon={<ReloadOutlined />} size="small" onClick={loadPresetWorkflows}>刷新</Button>
+                {presetWorkflows.length === 0 ? (
+                  <Empty description="暂无预置工作流" />
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+                    {presetWorkflows.map((w: any) => (
+                      <Card
+                        key={w.name}
+                        size="small"
+                        hoverable
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => handleTriggerWorkflow(w)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                          <div style={{ fontSize: 32 }}>{w.icon}</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 600, marginBottom: 4 }}>{w.name}</div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>{w.description}</div>
+                            <Space size={4}>
+                              <Tag color="blue" style={{ fontSize: 11 }}>{w.category}</Tag>
+                              <Tag style={{ fontSize: 11 }}>约 {w.estimatedTime} 分钟</Tag>
+                            </Space>
+                          </div>
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<SendOutlined />}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleTriggerWorkflow(w);
+                            }}
+                          >
+                            使用
+                          </Button>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </Space>
+            </Spin>
+          </Tabs.TabPane>
+
           <Tabs.TabPane
             tab={
               <Space>

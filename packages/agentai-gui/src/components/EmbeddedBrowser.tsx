@@ -256,6 +256,8 @@ export const EmbeddedBrowser: React.FC<Props> = ({
   const wsRef = useRef<Socket | null>(null);
   const tabsRef = useRef(tabs);
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
+  const activeTabIdRef = useRef(activeTabId);
+  useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
 
   const activeTab = tabs.find(t => t.id === activeTabId);
 
@@ -778,6 +780,24 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
   };
 
   useEffect(() => { const onFS = () => setFullscreen(!!document.fullscreenElement); document.addEventListener('fullscreenchange', onFS); return () => document.removeEventListener('fullscreenchange', onFS); }, []);
+
+  // ═══ 监听 AI 调浏览器工具事件, 自动聚焦弹出 ═══
+  useEffect(() => {
+    const handleShowBrowser = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      console.log('[browser] AI 触发浏览器工具:', detail.name, detail.url);
+      // 自动展开浏览器面板 (如有 URL 则导航)
+      if (detail.url) {
+        setUrlInput(detail.url);
+        setTimeout(() => {
+          const tab = tabsRef.current.find((t: any) => t.id === activeTabIdRef.current);
+          if (tab) navigate(detail.url, tab.id);
+        }, 500);
+      }
+    };
+    window.addEventListener('agentai:show-browser', handleShowBrowser);
+    return () => window.removeEventListener('agentai:show-browser', handleShowBrowser);
+  }, []);
 
   // ===== 输入栏自动补全选项 =====
   const autoCompleteOptions = (() => {

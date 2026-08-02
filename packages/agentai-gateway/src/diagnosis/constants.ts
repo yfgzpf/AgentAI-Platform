@@ -1,6 +1,6 @@
 /**
  * 诊断优先常量定义
- * ALTES | 岐黄 - 望闻问切 → 因证施治 → 调方
+ * 岐枢 | PulseFlow - 望闻问切 → 因证施治 → 调方
  *
  * @module diagnosis/constants
  */

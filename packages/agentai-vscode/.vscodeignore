@@ -1,0 +1,25 @@
+# VSCode Extension — 打包忽略规则
+# https://code.visualstudio.com/api/references/extension-manifest
+
+.vscode/**
+.vscode-test/**
+src/**
+out/**/*.map
+**/*.ts
+**/*.ts.map
+node_modules/**
+.gitignore
+tsconfig.json
+**/.eslintrc.*
+**/.prettierrc*
+**/*.test.ts
+**/*.spec.ts
+**/test/**
+**/__tests__/**
+docs/**
+scripts/**
+.github/**
+Dockerfile*
+docker-compose*
+*.md
+!.README.md

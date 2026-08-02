@@ -1,5 +1,5 @@
 // 修复 Thread.tsx 中所有 ? 字符为正确的中文
-const fs = require('fs');
+import * as fs from 'fs';
 const path = 'F:\\agentai-platform\\packages\\agentai-gui\\src\\components\\Thread.tsx';
 let content = fs.readFileSync(path, 'utf8');
 

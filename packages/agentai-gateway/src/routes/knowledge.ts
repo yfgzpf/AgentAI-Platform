@@ -1,18 +1,17 @@
 /**
- * 行业知识库路由 (/v1/knowledge)
+ * 知识库路由 (/v1/knowledge)
  * ----------------------------------------------------
- * - POST /v1/knowledge/upload        上传文档 (text/plain)
- * - POST /v1/knowledge/upload-file   上传文件 (JSON text)
- * - POST /v1/knowledge/upload-raw   上传文件 (multipart, 支持 Excel/Word/PDF/DXF/图片)
- * - GET  /v1/knowledge/search        BM25 搜索
- * - GET  /v1/knowledge/list          列出文档
- * - DELETE /v1/knowledge/:id         删除文档
- * - GET  /v1/knowledge/stats         统计信息
+ * 包含：
+ * - 传统知识库功能（文档上传、搜索、管理）
+ * - 知识探索功能（缺口检测、GitHub 探索、知识蒸馏）
  */
+
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import * as path from 'path';
 import { getKnowledgeBase } from '../industry-knowledge-base.js';
+import { detectKnowledgeGaps, exploreGitHub, distillFromMultiple } from '../knowledge/index.js';
+import { readMemory } from '../memory.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -22,6 +21,8 @@ const upload = multer({
 export function createKnowledgeRouter(): Router {
   const router = Router();
   const kb = getKnowledgeBase();
+
+  // ==================== 传统知识库功能 ====================
 
   /**
    * POST /v1/knowledge/upload
@@ -223,5 +224,216 @@ export function createKnowledgeRouter(): Router {
     }
   });
 
+  // ==================== 知识探索功能 ====================
+
+  /**
+   * POST /v1/knowledge/detect-gaps
+   * 检测知识缺口
+   */
+  router.post('/detect-gaps', async (req: Request, res: Response) => {
+    try {
+      const { task, domain } = req.body;
+      
+      if (!task) {
+        return res.status(400).json({ error: 'Task is required' });
+      }
+      
+      const result = await detectKnowledgeGaps(task, domain);
+      
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      console.error('Gap detection failed:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  /**
+   * POST /v1/knowledge/explore
+   * 探索 GitHub 仓库
+   */
+  router.post('/explore', async (req: Request, res: Response) => {
+    try {
+      const { concept, maxResults = 5 } = req.body;
+      
+      if (!concept) {
+        return res.status(400).json({ error: 'Concept is required' });
+      }
+      
+      const result = await exploreGitHub([concept], maxResults);
+      
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      console.error('Exploration failed:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  /**
+   * POST /v1/knowledge/distill
+   * 从仓库蒸馏知识
+   */
+  router.post('/distill', async (req: Request, res: Response) => {
+    try {
+      const { repos, concept } = req.body;
+      
+      if (!repos || !concept) {
+        return res.status(400).json({ error: 'Repos and concept are required' });
+      }
+      
+      const result = await distillFromMultiple(repos, concept);
+      
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      console.error('Distillation failed:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  /**
+   * GET /v1/knowledge/explore-stats
+   * 获取探索统计信息
+   */
+  router.get('/explore-stats', async (_req: Request, res: Response) => {
+    try {
+      // 从记忆系统查询知识相关数据
+      const memories = await readMemory({
+        userId: 'knowledge_system',
+        limit: 100,
+      });
+      
+      const knowledgeMemories = memories.filter(m => 
+        m.content?.includes('"type":"learned_knowledge"')
+      );
+      
+      const explorationMemories = memories.filter(m =>
+        m.metadata?.tags?.includes('exploration')
+      );
+      
+      // 计算统计
+      const totalKnowledgeNodes = knowledgeMemories.length;
+      const totalExplorations = explorationMemories.length;
+      
+      // 提取置信度
+      const confidences = knowledgeMemories.map(m => {
+        try {
+          const data = JSON.parse(m.content);
+          return data.confidence || 0;
+        } catch {
+          return 0;
+        }
+      });
+      
+      const averageConfidence = confidences.length > 0
+        ? confidences.reduce((a, b) => a + b, 0) / confidences.length
+        : 0;
+      
+      // 构建活动时间线
+      const recentActivity = memories
+        .filter(m => m.ts)
+        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+        .slice(0, 20)
+        .map(m => {
+          let type: 'gap_detected' | 'exploration' | 'distillation' = 'gap_detected';
+          if (m.metadata?.tags?.includes('exploration')) type = 'exploration';
+          if (m.metadata?.tags?.includes('knowledge')) type = 'distillation';
+          
+          let concept = 'Unknown';
+          try {
+            const data = JSON.parse(m.content);
+            concept = data.concept || data.name || 'Unknown';
+          } catch {
+            concept = m.entityId || 'Unknown';
+          }
+          
+          return {
+            type,
+            concept,
+            timestamp: m.ts || Date.now(),
+          };
+        });
+      
+      res.json({
+        success: true,
+        data: {
+          totalExplorations,
+          totalReposExplored: totalExplorations * 3,  // 估算
+          totalKnowledgeNodes,
+          averageConfidence,
+          recentActivity,
+        },
+      });
+    } catch (error) {
+      console.error('Stats fetch failed:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  /**
+   * GET /v1/knowledge/nodes
+   * 获取知识节点列表
+   */
+  router.get('/nodes', async (_req: Request, res: Response) => {
+    try {
+      const memories = await readMemory({
+        userId: 'knowledge_system',
+        limit: 50,
+      });
+      
+      const nodes = memories
+        .filter(m => m.content?.includes('"type":"learned_knowledge"'))
+        .map(m => {
+          try {
+            const data = JSON.parse(m.content);
+            return {
+              id: m.entityId || 'unknown',
+              concept: data.concept,
+              domain: data.domain,
+              description: data.description,
+              confidence: data.confidence,
+              sources: data.sources || [],
+              createdAt: m.ts,
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      
+      res.json({
+        success: true,
+        data: nodes,
+      });
+    } catch (error) {
+      console.error('Nodes fetch failed:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
   return router;
 }
+
+export default createKnowledgeRouter;

@@ -4,7 +4,7 @@
  * 覆盖:
  *   - deny 优先级最高 (覆盖 allow)
  *   - prompt 优先级次之
- *   - 默认 deny (白名单模式)
+ *   - 默认 allow (v3.2: "只要不动操作系统权限全放行")
  *   - 大小限制
  *   - 错误兜底
  */
@@ -47,7 +47,7 @@ describe('check() priority', () => {
         expect(r.source).toBe('prompt');
     });
 
-    it('allow for whitelisted path', () => {
+    it('allow for workspace path', () => {
         const rules: SandboxRules = {
             allow: ['/workspace/**'],
             deny: [],
@@ -55,17 +55,17 @@ describe('check() priority', () => {
         };
         const r = check({ path: '/workspace/src/main.ts', op: 'read' }, rules);
         expect(r.verdict).toBe('allow');
-        expect(r.source).toBe('allow');
+        expect(r.source).toBe('default'); // v3.2: 默认放行，不依赖 allow 列表
     });
 
-    it('default deny for unmatched path', () => {
+    it('default allow for unmatched path (v3.2)', () => {
         const rules: SandboxRules = {
             allow: ['/workspace/**'],
             deny: [],
             prompt: [],
         };
-        const r = check({ path: '/etc/passwd', op: 'read' }, rules);
-        expect(r.verdict).toBe('deny');
+        const r = check({ path: '/some/other/path.txt', op: 'read' }, rules);
+        expect(r.verdict).toBe('allow'); // v3.2: 默认放行
         expect(r.source).toBe('default');
     });
 });

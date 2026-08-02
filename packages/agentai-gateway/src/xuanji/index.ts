@@ -42,11 +42,11 @@ export {
   type RiskLevel,
 } from '../diagnosis/diagnosis-engine.js';
 
-// 缺口分析
+// 缺口分析（纯规则，供单元测试/调试使用）
 export {
-  analyzeGaps,
-  type GapAnalysisReport,
+  analyzeGapsByRules as analyzeGaps,
 } from '../diagnosis/gap-analyzer.js';
+export type { InformationGap as GapAnalysisReport } from '../types/diagnosis.js';
 
 // ═══════════════════════════════════════════════════════════
 // 导出医案模块

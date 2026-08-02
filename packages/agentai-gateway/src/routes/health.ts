@@ -18,7 +18,19 @@ export function createHealthRouter(deps: HealthRouterDeps): Router {
   const r = Router();
   const { router, registry } = deps;
 
+  // 快速健康检查 - 用于前端状态检测（最小开销）
   r.get('/v1/health', (_req, res) => {
+    res.json({
+      ok: true,
+      uptime: process.uptime(),
+      timestamp: Date.now(),
+      version: '0.1.0-alpha.1',
+      cwd: process.cwd(),  // 工作目录（用于同步 workspace）
+    });
+  });
+
+  // 完整健康检查 - 包含详细统计信息
+  r.get('/v1/health/full', (_req, res) => {
     const providerStats = typeof (router as any).getProviderStats === 'function' ? (router as any).getProviderStats() : {};
     const evolutionSummary = getSummary();
     const sessionStats = getSessionManager().stats();

@@ -35,7 +35,6 @@ export const goCqHttpManager = {
     console.log(chalk.cyan(`🚀 启动 go-cqhttp: ${opts.binaryPath} -config ${opts.configPath}`));
     const child = spawn(opts.binaryPath, ['-config', opts.configPath], {
       stdio: 'inherit',
-      shell: true,
       windowsHide: true,
     });
 

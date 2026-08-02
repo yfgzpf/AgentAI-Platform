@@ -269,6 +269,20 @@ ${result.patterns.slice(0, 5).map((p, i) => `${i + 1}. ${p.title} (置信度: ${
       decision: report,
     });
 
+    // ═══ 蒸馏后自动安装匹配的自动化预设 ═══
+    try {
+      const { getAutomationEngine } = await import('./automation-engine.js');
+      const engine = getAutomationEngine(process.cwd());
+      if (engine) {
+        const installed = installAutomationsFromDistillation(engine);
+        if (installed.length > 0) {
+          console.log(`[distiller] 🌙 蒸馏→自动化: 安装了 ${installed.length} 个新任务 (${installed.join(', ')})`);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[distiller] 蒸馏→自动化安装失败:', e?.message);
+    }
+
     console.log('[distiller] Nightly consolidation complete.');
   } catch (err) {
     console.warn('[distiller] Nightly consolidation failed:', err);
@@ -276,9 +290,121 @@ ${result.patterns.slice(0, 5).map((p, i) => `${i + 1}. ${p.title} (置信度: ${
 }
 
 // 导出供其他模块使用
+/**
+ * 从蒸馏结果中自动匹配并安装自动化预设
+ * 蒸馏出的经验模式 → 匹配 AUTOMATION_PRESETS → 自动创建定时任务
+ */
+export function installAutomationsFromDistillation(automationEngine: any): string[] {
+  const installed: string[] = [];
+  try {
+    const results = readDistilledPatterns(50);const patterns = results.flatMap((r:any)=>r.patterns||[]);
+    if (patterns.length === 0 || !automationEngine) return installed;
+
+    // 蒸馏关键词 → 预设 ID 映射
+    const patternToPreset: Array<{ keywords: RegExp[]; presetId: string }> = [
+      { keywords: [/git.*push/i, /git.*commit/i, /git.*backup/i, /备份.*代码/i], presetId: 'daily-code-backup' },
+      { keywords: [/eslint/i, /lint/i, /代码.*质量/i, /检查.*代码/i], presetId: 'code-quality-check' },
+      { keywords: [/clean.*cache/i, /删除.*临时/i, /清理.*日志/i, /find.*delete/i], presetId: 'log-cleanup' },
+      { keywords: [/backup.*db/i, /备份.*数据库/i, /sqlite.*backup/i, /\.db/i], presetId: 'database-backup' },
+      { keywords: [/search.*web/i, /搜索.*信息/i, /行业.*动态/i, /news.*search/i], presetId: 'knowledge-sync' },
+      { keywords: [/report.*daily/i, /日报/i, /工作.*报告/i, /git.*log.*since/i], presetId: 'daily-report' },
+      { keywords: [/health.*check/i, /系统.*检查/i, /监控.*资源/i, /df.*h/i], presetId: 'system-health-check' },
+    ];
+
+    // 同步获取 AUTOMATION_PRESETS (通过 dynamic import)
+    let presets: any[] = [];
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const enginePath = path.resolve(__dirname, 'automation-engine.js');
+      if (fs.existsSync(enginePath)) {
+        const mod = require(enginePath);
+        presets = mod.AUTOMATION_PRESETS || [];
+      }
+    } catch { /* fallback */ }
+
+    // 遍历所有模式，检查是否匹配任何预设
+    for (const pattern of patterns) {
+      const text = `${pattern.title} ${pattern.rule}`;
+      for (const mapping of patternToPreset) {
+        if (installed.includes(mapping.presetId)) continue;
+        if (mapping.keywords.some(kw => kw.test(text))) {
+          const preset = presets.find((p: any) => p.id === mapping.presetId);
+          if (preset) {
+            automationEngine.createCronJob(preset.name, preset.defaultExpression, preset.defaultAction, preset.defaultParams);
+            installed.push(mapping.presetId);
+            console.log(`[distiller] 🎯 蒸馏 "${pattern.title}" → 安装预设: ${preset.name}`);
+          }
+        }
+      }
+    }
+
+    if (installed.length > 0) {
+      console.log(`[distiller] ✅ 蒸馏自动安装了 ${installed.length} 个自动化任务`);
+    }
+  } catch (e: any) {
+    console.warn('[distiller] installAutomationsFromDistillation failed:', e?.message);
+  }
+  return installed;
+}
+
+// 上次蒸馏时间戳
+let lastDistillationTime: number = 0;
+
+/**
+ * 获取上次蒸馏时间
+ */
+export function getLastDistillationTime(): number {
+  return lastDistillationTime;
+}
+
+/**
+ * 获取高频模式 (Top N)
+ */
+export function getTopPatterns(limit: number = 10): DistilledPattern[] {
+  try {
+    const results = readDistilledPatterns(10);
+    const allPatterns: DistilledPattern[] = [];
+    
+    for (const result of results) {
+      if (result.patterns) {
+        allPatterns.push(...result.patterns);
+      }
+    }
+    
+    // 按频率和置信度排序
+    return allPatterns
+      .sort((a, b) => (b.frequency * b.confidence) - (a.frequency * a.confidence))
+      .slice(0, limit);
+  } catch (e) {
+    console.warn('[distiller] getTopPatterns failed:', e);
+    return [];
+  }
+}
+
+// 包装runDistillation以记录时间
+const originalRunDistillation = runDistillation;
+export function runDistillationWithTimestamp(): DistillationResult {
+  const result = originalRunDistillation();
+  lastDistillationTime = Date.now();
+  return result;
+}
+
 export const modelDistiller = {
-  runDistillation,
+  runDistillation: runDistillationWithTimestamp,
   patternsToSystemPrompt,
   readDistilledPatterns,
   nightlyConsolidation,
+  installAutomationsFromDistillation,
+  getLastDistillationTime,
+  getTopPatterns,
 };
+
+// 导出单例获取函数
+let distillerInstance: typeof modelDistiller | null = null;
+export function getModelDistiller(): typeof modelDistiller {
+  if (!distillerInstance) {
+    distillerInstance = modelDistiller;
+  }
+  return distillerInstance;
+}

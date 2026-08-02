@@ -40,7 +40,7 @@ const PROVIDER_PALETTE: Record<string, { grad: string; ring: string; label: stri
   agentai: {
     grad: 'linear-gradient(135deg, #A78BFA 0%, #6366F1 50%, #4338CA 100%)',
     ring: 'rgba(99,102,241,0.85)',
-    label: 'Atlas',
+    label: 'PulseFlow',
     letter: 'A',
   },
   deepseek: {
@@ -70,7 +70,7 @@ const PROVIDER_PALETTE: Record<string, { grad: string; ring: string; label: stri
   default: {
     grad: 'linear-gradient(135deg, #A78BFA 0%, #6366F1 50%, #4338CA 100%)',
     ring: 'rgba(99,102,241,0.85)',
-    label: 'Atlas',
+    label: 'PulseFlow',
     letter: 'A',
   },
 };
@@ -107,7 +107,7 @@ export const Avatar: React.FC<AvatarProps> = ({
   const userPal = !isAI ? userPalette(name || 'U') : null;
 
   const tooltipText = isAI
-    ? `${aiPal!.label} · ${name || 'Atlas'}`
+    ? `${aiPal!.label} · ${name || 'PulseFlow'}`
     : name || '你';
 
   // 字号按尺寸缩放

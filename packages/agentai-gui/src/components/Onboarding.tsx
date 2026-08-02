@@ -5,18 +5,16 @@
  * v3: 下拉预设选项 + 优化图标
  */
 import React, { useState } from 'react';
-import { Modal, Input, Button, Space, Typography, Radio, Card, Tag, message, Select, Progress, AutoComplete } from 'antd';
+import { Modal, Input, Button, Space, Typography, Radio, Card, Tag, message, Progress, AutoComplete } from 'antd';
 import {
   UserOutlined, RightOutlined, LeftOutlined,
-  RocketOutlined, SmileOutlined, CodeOutlined, PictureOutlined,
-  MessageOutlined, ShopOutlined, KeyOutlined, CheckCircleOutlined,
-  ThunderboltOutlined, AppstoreOutlined, ExperimentOutlined,
-  GithubOutlined,
+  ShopOutlined, CheckCircleOutlined,
+  AppstoreOutlined, CodeOutlined, ExperimentOutlined,
 } from '@ant-design/icons';
-import { GATEWAY_HTTP } from '../services/config';
 import { useProfileStore } from '../store';
 import { useSessionStore } from '../store/sessionStore';
 import { INDUSTRY_TEMPLATES } from '../services/IndustryTemplates';
+import { GATEWAY_HTTP } from '../services/config';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -26,14 +24,9 @@ interface OnboardProps {
   onFinish?: (name: string) => void;
 }
 
-type Step = 'welcome' | 'name' | 'industry' | 'useCase' | 'questionnaire' | 'key' | 'done';
+type Step = 'welcome' | 'name' | 'industry' | 'useCase' | 'questionnaire' | 'done';
 
-const USE_CASES = [
-  { key: 'chat', label: '日常聊天', icon: <MessageOutlined />, gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', desc: '问问题, 写文案, 翻译' },
-  { key: 'image', label: '生图创作', icon: <PictureOutlined />, gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', desc: 'AI 画图, 封面, 头像' },
-  { key: 'code', label: '写代码', icon: <CodeOutlined />, gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', desc: '调试, 重构, 解释' },
-  { key: 'auto', label: '全自动', icon: <RocketOutlined />, gradient: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)', desc: 'Agent + 工具全开' },
-];
+// USE_CASES 已移除 (步骤已删除)
 
 const SUGGEST_NAMES = ['小明', 'Alex', 'Lisa', '张工', 'Sarah', '老王', '游客'];
 
@@ -88,9 +81,9 @@ const QUESTION_PRESETS: Record<string, string[][]> = {
   ],
 };
 
-const STEPS: Step[] = ['welcome', 'name', 'industry', 'useCase', 'questionnaire', 'key', 'done'];
+const STEPS: Step[] = ['welcome', 'name', 'industry', 'done'];
 const stepLabels: Record<Step, string> = {
-  welcome: '欢迎', name: '名字', industry: '行业', useCase: '用例', questionnaire: '问卷', key: '密钥', done: '完成',
+welcome: '欢迎', name: '名字', industry: '行业', useCase: '用途', questionnaire: '问卷', done: '完成',
 };
 
 const DEV_OPTIONS = {
@@ -106,13 +99,7 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
   const [step, setStep] = useState<Step>('welcome');
   const [name, setName] = useState('');
   const [industryId, setIndustryId] = useState('general');
-  const [useCase, setUseCase] = useState('chat');
-  const [devPrefs, setDevPrefs] = useState<Record<string, string[]>>({
-    languages: [], frontend: [], backend: [], packageManager: [], css: [],
-  });
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [apiKey, setApiKey] = useState('');
-  const [skipKey, setSkipKey] = useState(false);
+  // 密钥相关已移除 — 在设置页管理
 
   const industry = INDUSTRY_TEMPLATES.find(t => t.id === industryId);
   const currentIdx = STEPS.indexOf(step);
@@ -127,22 +114,13 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
       onboardedAt: Date.now(),
       language: 'zh' as const,
       industry: industryId,
-      useCase,
-      devPrefs: showDevPrefs ? devPrefs : undefined,
-      questionnaire: answers,
       industrySkills: industry?.requiredSkills || [],
     };
     setProfile(profileData);
     // 也存一份到 localStorage 方便后续读取
     localStorage.setItem('agentai.profile', JSON.stringify(profileData));
     // 存储问卷答案作为用户记忆
-    if (Object.keys(answers).length > 0) {
-      localStorage.setItem('agentai.memory.questionnaire', JSON.stringify({
-        industry: industryId,
-        answers,
-        ts: Date.now(),
-      }));
-    }
+
     // 存储行业技能需求
     if (industry?.requiredSkills.length) {
       localStorage.setItem('agentai.industry.skills', JSON.stringify({
@@ -159,9 +137,9 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
       body: JSON.stringify({
         name: name.trim(),
         industry: industryId,
-        useCase,
-        devPrefs: showDevPrefs ? devPrefs : undefined,
-        questionnaire: answers,
+//         useCase,
+//         devPrefs: showDevPrefs ? devPrefs : undefined,
+//         questionnaire: answers,
         industrySkills: industry?.requiredSkills || [],
         onboardedAt: Date.now(),
       }),
@@ -183,33 +161,21 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
     }
   };
 
-  const saveKey = async () => {
-    if (!apiKey.trim()) { setSkipKey(true); finish(); return; }
-    try {
-      const r = await fetch(GATEWAY_HTTP + '/v1/settings/keys', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: 'agentai', apiKey }),
-      });
-      if (r.ok) { message.success('密钥已保存'); finish(); } else { message.error('保存失败'); finish(); }
-    } catch { finish(); }
-  };
+  // 密钥保存已移除 — 在设置页管理
 
-  // 是否显示开发偏好（替代行业问卷）
-  const showDevPrefs = industryId === 'developer';
+// showDevPrefs 已移除 (问卷步骤已删除) — 以下变量为兼容性占位
+  const [useCase, setUseCase] = useState('');
+  const USE_CASES: any[] = [];
+  const showDevPrefs = false;
+  const [devPrefs, setDevPrefs] = useState<Record<string, string[]>>({ languages: [], frontend: [], backend: [], packageManager: [], css: [] });
+  const [answers, setAnswers] = useState<Record<string, string>>({});
 
   const nextStep = () => {
     const idx = STEPS.indexOf(step);
-    // general 行业: 跳过问卷
-    if (step === 'useCase' && industryId === 'general') {
-      setStep('key'); return;
-    }
     if (idx < STEPS.length - 1) setStep(STEPS[idx + 1]!);
   };
   const prevStep = () => {
     const idx = STEPS.indexOf(step);
-    if (step === 'key' && industryId === 'general') {
-      setStep('useCase'); return;
-    }
     if (idx > 0) setStep(STEPS[idx - 1]!);
   };
 
@@ -218,7 +184,7 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
       {/* Progress */}
       {step !== 'welcome' && step !== 'done' && (
         <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, color: 'var(--muted)' }}>{currentIdx}/{STEPS.length - 2}</span>
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>{currentIdx}/{STEPS.length - 1}</span>
           <Progress percent={pct} size="small" strokeColor="var(--accent)" trailColor="var(--border)" style={{ flex: 1, margin: 0 }} />
         </div>
       )}
@@ -234,8 +200,8 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
             overflow: 'hidden',
           }}>
             <img
-              src="/favicon-192.png"
-              alt="Atlas"
+              src="./favicon-192.png"
+              alt="PulseFlow"
               style={{ width: 64, height: 64 }}
             />
           </div>
@@ -339,13 +305,13 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
           </Radio.Group>
           <div style={{ marginTop: 24, display: 'flex', gap: 8, justifyContent: 'space-between' }}>
             <Button onClick={prevStep}>上一步</Button>
-            <Button type="primary" onClick={nextStep}>下一步</Button>
+            <Button type="primary" onClick={() => { finish(); }}>完成设置</Button>
           </div>
         </div>
       )}
 
       {/* UseCase — 系统风格图标 */}
-      {step === 'useCase' && (
+        {step === 'useCase' && (
         <div style={{ padding: 32 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
             <div style={{
@@ -473,7 +439,7 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
                           size="middle"
                           options={presets.map(p => ({ value: p }))}
                           placeholder="选择或输入答案..."
-                          value={answers[`q${i}`] || ''}
+//                           value={answers[`q${i}`] || ''}
                           onChange={(v: string) => setAnswers(prev => ({ ...prev, [`q${i}`]: v }))}
                           filterOption={(input, option) => (option?.value as string)?.toLowerCase().includes(input.toLowerCase())}
                           style={{ width: '100%' }}
@@ -481,7 +447,7 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
                       ) : (
                         <Input
                           placeholder="你的答案..."
-                          value={answers[`q${i}`] || ''}
+//                           value={answers[`q${i}`] || ''}
                           onChange={e => setAnswers(prev => ({ ...prev, [`q${i}`]: e.target.value }))}
                           size="middle"
                         />
@@ -495,42 +461,14 @@ export const Onboarding: React.FC<OnboardProps> = ({ open, onClose, onFinish }) 
           <div style={{ marginTop: 24, display: 'flex', gap: 8, justifyContent: 'space-between' }}>
             <Button onClick={prevStep}>上一步</Button>
             <Space>
-              <Button onClick={() => setStep('key')}>跳过</Button>
+              <Button onClick={() => setStep('done')}>跳过</Button>
               <Button type="primary" onClick={nextStep}>下一步</Button>
             </Space>
           </div>
         </div>
       )}
 
-      {/* Key */}
-      {step === 'key' && (
-        <div style={{ padding: 32 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: 10,
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <KeyOutlined style={{ fontSize: 18, color: 'var(--fg)' }} />
-            </div>
-            <Title level={3} style={{ margin: 0 }}>接入密钥 (可选)</Title>
-          </div>
-          <Paragraph style={{ color: 'var(--muted-2)' }}>
-            推荐 <a href="https://agnes-ai.com" target="_blank" style={{ color: 'var(--accent)' }}>Agnes AI</a> 免费 key (RPM 20 内永久免费)
-          </Paragraph>
-          <Input.Password size="large" placeholder="sk-... (留空跳过)" value={apiKey}
-            onChange={e => setApiKey(e.target.value)} />
-          <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 11 }}>AES-256-GCM 加密存本机</div>
-          <div style={{ marginTop: 24, display: 'flex', gap: 8, justifyContent: 'space-between' }}>
-            <Button onClick={prevStep}>上一步</Button>
-            <Space>
-              <Button onClick={() => { setSkipKey(true); finish(); }}>跳过</Button>
-              <Button type="primary" onClick={saveKey}>{apiKey.trim() ? '保存并完成' : '完成'}</Button>
-            </Space>
-          </div>
-        </div>
-      )}
+      {/* Key 步骤已移除 — 密钥在设置页管理，Onboarding 不再需要 */}
 
       {/* Done — 工作台就绪 */}
       {step === 'done' && (

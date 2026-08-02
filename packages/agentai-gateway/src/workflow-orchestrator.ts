@@ -24,14 +24,50 @@ import os from 'os';
 import fs from 'fs';
 
 export interface WorkflowStage {
-  /** 技能名称 */
-  skill: string;
+  /** 阶段 ID */
+  id: string;
+  /** 阶段类型 */
+  type: 'skill' | 'subworkflow' | 'condition' | 'loop' | 'parallel';
+  /** 技能名称 (type='skill' 时必填) */
+  skill?: string;
+  /** 子工作流名称 (type='subworkflow' 时必填) */
+  subworkflow?: string;
   /** 上游输出变量名 (可选, 不指定则使用上一个 stage 的输出) */
   input?: string;
   /** 本阶段输出变量名 */
   output: string;
   /** 可选: 参数模板 (支持变量引用) */
   params?: Record<string, any>;
+  /** 条件判断 (type='condition' 时必填) */
+  condition?: {
+    /** 条件表达式: 支持 {{var}} 变量引用和比较运算符 */
+    expression: string;
+    /** 条件为 true 时跳转到的 stage id */
+    trueTarget: string;
+    /** 条件为 false 时跳转到的 stage id */
+    falseTarget: string;
+  };
+  /** 循环配置 (type='loop' 时必填) */
+  loop?: {
+    /** 循环次数变量或固定值 */
+    count: string | number;
+    /** 最大循环次数 (防止死循环) */
+    maxIterations?: number;
+    /** 循环体 stage ids */
+    body: string[];
+  };
+  /** 并行配置 (type='parallel' 时必填) */
+  parallel?: {
+    /** 并行执行的 stage ids */
+    branches: string[];
+  };
+  /** 错误处理 */
+  onError?: 'continue' | 'break' | 'retry';
+  /** 重试配置 */
+  retry?: {
+    maxAttempts: number;
+    delayMs: number;
+  };
 }
 
 export interface WorkflowTemplate {
@@ -57,6 +93,18 @@ export interface WorkflowResult {
   }>;
   finalOutput: string;
   totalTimeMs: number;
+}
+
+/** 工作流执行上下文 */
+export interface WorkflowContext {
+  /** 父工作流上下文 */
+  parent?: WorkflowContext;
+  /** 变量作用域 */
+  variables: Map<string, any>;
+  /** 执行深度 (防止无限递归) */
+  depth: number;
+  /** 最大执行深度 */
+  maxDepth: number;
 }
 
 /**
@@ -100,87 +148,98 @@ export class WorkflowOrchestrator {
   }
 
   /**
-   * 执行工作流
-   * 串联执行所有 stage, 上一个 stage 的输出作为下一个的输入
+   * 执行工作流 (增强版: 支持循环/条件/子工作流/并行)
    */
-  async execute(workflow: WorkflowTemplate, userInput: string): Promise<WorkflowResult> {
+  async execute(workflow: WorkflowTemplate, userInput: string, context?: WorkflowContext): Promise<WorkflowResult> {
     const startTime = Date.now();
     const results = new Map<string, any>();
     const stageResults: WorkflowResult['stages'] = [];
+    const executedStages = new Set<string>(); // 防止循环死循环
 
-    console.log(`[workflow] executing: ${workflow.name}`);
+    // 构建 stage 映射
+    const stageMap = new Map(workflow.stages.map(s => [s.id, s]));
 
-    for (let i = 0; i < workflow.stages.length; i++) {
-      const stage = workflow.stages[i]!;
-      const stageNum = i + 1;
+    console.log(`[workflow] executing: ${workflow.name} (${workflow.stages.length} stages)`);
+
+    // 执行栈，支持跳转
+    const executionQueue: string[] = workflow.stages.map(s => s.id);
+    let currentIndex = 0;
+
+    while (currentIndex < executionQueue.length) {
+      const stageId = executionQueue[currentIndex];
+      const stage = stageMap.get(stageId);
+
+      if (!stage) {
+        console.error(`[workflow] stage not found: ${stageId}`);
+        break;
+      }
+
+      // 死循环检测
+      if (executedStages.has(stageId)) {
+        console.warn(`[workflow] potential infinite loop detected at ${stageId}, breaking`);
+        break;
+      }
+      executedStages.add(stageId);
 
       try {
-        // 1. 准备输入: 解析变量引用
-        let input = userInput;
-        if (stage.input) {
-          const prevResult = results.get(stage.input);
-          if (prevResult) {
-            input = typeof prevResult === 'string' ? prevResult : JSON.stringify(prevResult);
-          }
-        }
+        const result = await this.executeStage(stage, userInput, results, stageMap);
 
-        // 2. 构建参数: 合并用户输入 + 上游输出
-        const params: Record<string, any> = { input };
-        if (stage.params) {
-          for (const [key, value] of Object.entries(stage.params)) {
-            // 支持变量引用: {{output_var}}
-            if (typeof value === 'string' && value.includes('{{')) {
-              const resolved = value.replace(/\{\{(\w+)\}\}/g, (_, varName) => {
-                const varValue = results.get(varName);
-                return varValue ? (typeof varValue === 'string' ? varValue : JSON.stringify(varValue)) : '';
-              });
-              params[key] = resolved;
-            } else {
-              params[key] = value;
-            }
-          }
-        }
-
-        // 3. 执行技能
-        const skillResult = await this.skillExecutor(stage.skill, params);
-
-        // 4. 保存输出
-        results.set(stage.output, skillResult);
         stageResults.push({
-          skill: stage.skill,
-          success: skillResult.success,
-          output: String(skillResult.output || '').slice(0, 500), // 截断保存
+          skill: stage.skill || stage.type,
+          success: result.success,
+          output: String(result.output || '').slice(0, 500),
         });
 
-        console.log(`[workflow] stage ${stageNum}/${workflow.stages.length}: ${stage.skill} ✓`);
+        if (!result.success && stage.onError !== 'continue') {
+          console.error(`[workflow] stage ${stageId} failed: ${result.error}`);
+          return {
+            success: false,
+            stages: stageResults,
+            finalOutput: `工作流执行失败: ${stageId} 阶段出错 - ${result.error}`,
+            totalTimeMs: Date.now() - startTime,
+          };
+        }
+
+        // 处理跳转 (条件分支)
+        if (result.nextStage) {
+          const nextIndex = executionQueue.indexOf(result.nextStage);
+          if (nextIndex >= 0) {
+            currentIndex = nextIndex;
+            continue;
+          }
+        }
+
+        currentIndex++;
       } catch (e: any) {
         stageResults.push({
-          skill: stage.skill,
+          skill: stage.skill || stage.type,
           success: false,
           output: '',
           error: e.message,
         });
-        console.error(`[workflow] stage ${stageNum} failed: ${stage.skill} - ${e.message}`);
 
-        // 失败中断
-        return {
-          success: false,
-          stages: stageResults,
-          finalOutput: `工作流执行失败: ${stage.skill} 阶段出错 - ${e.message}`,
-          totalTimeMs: Date.now() - startTime,
-        };
+        if (stage.onError !== 'continue') {
+          return {
+            success: false,
+            stages: stageResults,
+            finalOutput: `工作流执行失败: ${stageId} 阶段出错 - ${e.message}`,
+            totalTimeMs: Date.now() - startTime,
+          };
+        }
+        currentIndex++;
       }
     }
 
-    // 5. 聚合结果
+    // 聚合结果
     let finalOutput = '';
     if (workflow.aggregator) {
       finalOutput = workflow.aggregator(results);
     } else {
-      // 默认: 取最后一个 stage 的输出
-      const lastStage = workflow.stages[workflow.stages.length - 1]!;
-      const lastResult = results.get(lastStage.output);
-      finalOutput = lastResult ? (typeof lastResult === 'string' ? lastResult : JSON.stringify(lastResult)) : '';
+      const lastStage = workflow.stages[workflow.stages.length - 1];
+      if (lastStage) {
+        const lastResult = results.get(lastStage.output);
+        finalOutput = lastResult ? (typeof lastResult === 'string' ? lastResult : JSON.stringify(lastResult)) : '';
+      }
     }
 
     console.log(`[workflow] completed: ${workflow.name} in ${Date.now() - startTime}ms`);
@@ -191,6 +250,273 @@ export class WorkflowOrchestrator {
       finalOutput: finalOutput.slice(0, 10000),
       totalTimeMs: Date.now() - startTime,
     };
+  }
+
+  /**
+   * 执行单个 stage
+   */
+  private async executeStage(
+    stage: WorkflowStage,
+    userInput: string,
+    results: Map<string, any>,
+    stageMap: Map<string, WorkflowStage>,
+  ): Promise<{ success: boolean; output?: any; error?: string; nextStage?: string }> {
+    switch (stage.type) {
+      case 'skill':
+        return this.executeSkillStage(stage, userInput, results);
+      case 'subworkflow':
+        return this.executeSubworkflowStage(stage, userInput, results);
+      case 'condition':
+        return this.executeConditionStage(stage, results);
+      case 'loop':
+        return this.executeLoopStage(stage, userInput, results, stageMap);
+      case 'parallel':
+        return this.executeParallelStage(stage, userInput, results, stageMap);
+      default:
+        return { success: false, error: `Unknown stage type: ${stage.type}` };
+    }
+  }
+
+  /**
+   * 执行技能 stage
+   */
+  private async executeSkillStage(
+    stage: WorkflowStage,
+    userInput: string,
+    results: Map<string, any>,
+  ): Promise<{ success: boolean; output?: any; error?: string }> {
+    if (!stage.skill) {
+      return { success: false, error: 'Skill name not specified' };
+    }
+
+    // 准备输入
+    let input = userInput;
+    if (stage.input) {
+      const prevResult = results.get(stage.input);
+      if (prevResult) {
+        input = typeof prevResult === 'string' ? prevResult : JSON.stringify(prevResult);
+      }
+    }
+
+    // 构建参数
+    const params = this.buildParams(stage, input, results);
+
+    // 重试逻辑
+    const maxAttempts = stage.retry?.maxAttempts || 1;
+    const delayMs = stage.retry?.delayMs || 0;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const skillResult = await this.skillExecutor(stage.skill, params);
+
+        if (skillResult.success) {
+          results.set(stage.output, skillResult);
+          console.log(`[workflow] skill stage ${stage.id}: ${stage.skill} ✓`);
+          return { success: true, output: skillResult };
+        }
+
+        if (attempt < maxAttempts) {
+          console.log(`[workflow] retry ${attempt}/${maxAttempts} for ${stage.skill}`);
+          if (delayMs > 0) await this.sleep(delayMs);
+        } else {
+          return { success: false, error: skillResult.output || 'Skill execution failed' };
+        }
+      } catch (e: any) {
+        if (attempt >= maxAttempts) {
+          return { success: false, error: e.message };
+        }
+      }
+    }
+
+    return { success: false, error: 'Max retries exceeded' };
+  }
+
+  /**
+   * 执行子工作流 stage
+   */
+  private async executeSubworkflowStage(
+    stage: WorkflowStage,
+    userInput: string,
+    results: Map<string, any>,
+  ): Promise<{ success: boolean; output?: any; error?: string }> {
+    if (!stage.subworkflow) {
+      return { success: false, error: 'Subworkflow name not specified' };
+    }
+
+    const subWorkflow = this.workflows.get(stage.subworkflow);
+    if (!subWorkflow) {
+      return { success: false, error: `Subworkflow not found: ${stage.subworkflow}` };
+    }
+
+    // 准备输入
+    let input = userInput;
+    if (stage.input) {
+      const prevResult = results.get(stage.input);
+      if (prevResult) {
+        input = typeof prevResult === 'string' ? prevResult : JSON.stringify(prevResult);
+      }
+    }
+
+    console.log(`[workflow] entering subworkflow: ${stage.subworkflow}`);
+    const subResult = await this.execute(subWorkflow, input);
+    console.log(`[workflow] subworkflow ${stage.subworkflow} completed: ${subResult.success ? '✓' : '✗'}`);
+
+    if (subResult.success) {
+      results.set(stage.output, subResult);
+      return { success: true, output: subResult };
+    } else {
+      return { success: false, error: subResult.finalOutput };
+    }
+  }
+
+  /**
+   * 执行条件 stage
+   */
+  private executeConditionStage(
+    stage: WorkflowStage,
+    results: Map<string, any>,
+  ): { success: boolean; nextStage?: string; error?: string } {
+    if (!stage.condition) {
+      return { success: false, error: 'Condition not specified' };
+    }
+
+    const { expression, trueTarget, falseTarget } = stage.condition;
+    const conditionResult = this.evaluateCondition(expression, results);
+
+    console.log(`[workflow] condition ${stage.id}: ${expression} = ${conditionResult}`);
+
+    return {
+      success: true,
+      nextStage: conditionResult ? trueTarget : falseTarget,
+    };
+  }
+
+  /**
+   * 执行循环 stage
+   */
+  private async executeLoopStage(
+    stage: WorkflowStage,
+    userInput: string,
+    results: Map<string, any>,
+    stageMap: Map<string, WorkflowStage>,
+  ): Promise<{ success: boolean; output?: any; error?: string }> {
+    if (!stage.loop) {
+      return { success: false, error: 'Loop config not specified' };
+    }
+
+    const { count, maxIterations = 10, body } = stage.loop;
+    const loopCount = typeof count === 'string' ? parseInt(results.get(count) || '1', 10) : count;
+    const iterations = Math.min(loopCount, maxIterations);
+
+    console.log(`[workflow] loop ${stage.id}: ${iterations} iterations`);
+
+    const loopResults: any[] = [];
+
+    for (let i = 0; i < iterations; i++) {
+      console.log(`[workflow] loop ${stage.id} iteration ${i + 1}/${iterations}`);
+
+      for (const bodyStageId of body) {
+        const bodyStage = stageMap.get(bodyStageId);
+        if (!bodyStage) continue;
+
+        const result = await this.executeStage(bodyStage, userInput, results, stageMap);
+        if (!result.success) {
+          return { success: false, error: `Loop body failed at ${bodyStageId}: ${result.error}` };
+        }
+        loopResults.push(result.output);
+      }
+    }
+
+    results.set(stage.output, loopResults);
+    return { success: true, output: loopResults };
+  }
+
+  /**
+   * 执行并行 stage
+   */
+  private async executeParallelStage(
+    stage: WorkflowStage,
+    userInput: string,
+    results: Map<string, any>,
+    stageMap: Map<string, WorkflowStage>,
+  ): Promise<{ success: boolean; output?: any; error?: string }> {
+    if (!stage.parallel) {
+      return { success: false, error: 'Parallel config not specified' };
+    }
+
+    const { branches } = stage.parallel;
+    console.log(`[workflow] parallel ${stage.id}: ${branches.length} branches`);
+
+    const branchPromises = branches.map(async (branchId) => {
+      const branchStage = stageMap.get(branchId);
+      if (!branchStage) return { success: false, error: `Branch not found: ${branchId}` };
+      return this.executeStage(branchStage, userInput, results, stageMap);
+    });
+
+    const branchResults = await Promise.all(branchPromises);
+    const allSuccess = branchResults.every(r => r.success);
+
+    if (allSuccess) {
+      results.set(stage.output, branchResults.map(r => r.output));
+      return { success: true, output: branchResults.map(r => r.output) };
+    } else {
+      const firstError = branchResults.find(r => !r.success);
+      return { success: false, error: firstError?.error || 'Parallel execution failed' };
+    }
+  }
+
+  /**
+   * 构建参数
+   */
+  private buildParams(stage: WorkflowStage, input: string, results: Map<string, any>): Record<string, any> {
+    const params: Record<string, any> = { input };
+
+    if (stage.params) {
+      for (const [key, value] of Object.entries(stage.params)) {
+        if (typeof value === 'string' && value.includes('{{')) {
+          params[key] = value.replace(/\{\{(\w+)\}\}/g, (_, varName) => {
+            const varValue = results.get(varName);
+            return varValue ? (typeof varValue === 'string' ? varValue : JSON.stringify(varValue)) : '';
+          });
+        } else {
+          params[key] = value;
+        }
+      }
+    }
+
+    return params;
+  }
+
+  /**
+   * 评估条件表达式
+   */
+  private evaluateCondition(expression: string, results: Map<string, any>): boolean {
+    // 解析 {{var}} 变量
+    const resolvedExpr = expression.replace(/\{\{(\w+)\}\}/g, (_, varName) => {
+      const varValue = results.get(varName);
+      return varValue !== undefined ? JSON.stringify(varValue) : 'null';
+    });
+
+    // 简单条件判断
+    try {
+      // 支持: ==, !=, >, <, >=, <=
+      if (resolvedExpr.includes('==')) {
+        const [left, right] = resolvedExpr.split('==').map(s => s.trim());
+        return left === right;
+      }
+      if (resolvedExpr.includes('!=')) {
+        const [left, right] = resolvedExpr.split('!=').map(s => s.trim());
+        return left !== right;
+      }
+      // 默认: 真值判断
+      return !!resolvedExpr && resolvedExpr !== 'null' && resolvedExpr !== 'false';
+    } catch {
+      return false;
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /** 列出所有工作流 */
@@ -213,10 +539,10 @@ export const BUILTIN_WORKFLOWS: WorkflowTemplate[] = [
     description: '数据分析报告: Excel 读取 → 统计分析 → Word 报告 → PPT 演示',
     triggers: ['数据分析', '分析报告', 'excel分析', '生成报告', '月度报告', '季度报告'],
     stages: [
-      { skill: 'read_excel', output: 'raw_data' },
-      { skill: 'analyze_data', input: 'raw_data', output: 'analysis' },
-      { skill: 'generate_word', input: 'analysis', output: 'word_report' },
-      { skill: 'generate_ppt', input: 'analysis', output: 'final_pptx' },
+      { id: 'read_excel', type: 'skill', skill: 'read_excel', output: 'raw_data' },
+      { id: 'analyze_data', type: 'skill', skill: 'analyze_data', input: 'raw_data', output: 'analysis' },
+      { id: 'generate_word', type: 'skill', skill: 'generate_word', input: 'analysis', output: 'word_report' },
+      { id: 'generate_ppt', type: 'skill', skill: 'generate_ppt', input: 'analysis', output: 'final_pptx' },
     ],
     aggregator: (results) => {
       const analysis = results.get('analysis');
@@ -238,10 +564,10 @@ export const BUILTIN_WORKFLOWS: WorkflowTemplate[] = [
     description: '深度研究: 网络搜索 → 信息聚合 → 交叉验证 → 研究报告',
     triggers: ['深度研究', '行业调研', '市场调研', '竞品分析', '调研报告'],
     stages: [
-      { skill: 'web_search', output: 'search_results' },
-      { skill: 'aggregate_info', input: 'search_results', output: 'aggregated' },
-      { skill: 'cross_validate', input: 'aggregated', output: 'validated' },
-      { skill: 'generate_report', input: 'validated', output: 'research_report' },
+      { id: 'web_search', type: 'skill', skill: 'web_search', output: 'search_results' },
+      { id: 'aggregate_info', type: 'skill', skill: 'aggregate_info', input: 'search_results', output: 'aggregated' },
+      { id: 'cross_validate', type: 'skill', skill: 'cross_validate', input: 'aggregated', output: 'validated' },
+      { id: 'generate_report', type: 'skill', skill: 'generate_report', input: 'validated', output: 'research_report' },
     ],
     aggregator: (results) => {
       const report = results.get('research_report');

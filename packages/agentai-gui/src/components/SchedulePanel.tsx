@@ -61,10 +61,10 @@ export const SchedulePanel: React.FC = () => {
   const fetchTasks = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${GATEWAY_HTTP}/v1/scheduler/tasks`);
+      const response = await fetch(`${GATEWAY_HTTP}/v1/schedules`);
       if (response.ok) {
         const data = await response.json();
-        setTasks(data.tasks || []);
+        setTasks(data.data || data.tasks || []);
       }
     } catch (error) {
       console.error('获取任务列表失败:', error);
@@ -110,16 +110,19 @@ export const SchedulePanel: React.FC = () => {
     setLoading(false);
   }, []);
 
-  // 获取执行历史
+  // 获取执行历史 (使用 stats 替代)
   const fetchExecutions = useCallback(async () => {
     try {
-      const response = await fetch(`${GATEWAY_HTTP}/v1/scheduler/executions?limit=20`);
+      const response = await fetch(`${GATEWAY_HTTP}/v1/schedules/stats`);
       if (response.ok) {
         const data = await response.json();
-        setExecutions(data.executions || []);
+        // stats 返回统计信息，暂无单条执行历史
+        if (data.data) {
+          setExecutions([]);
+        }
       }
     } catch (error) {
-      console.error('获取执行历史失败:', error);
+      console.error('获取执行统计失败:', error);
       setExecutions([]);
     }
   }, []);
@@ -139,8 +142,8 @@ export const SchedulePanel: React.FC = () => {
   const handleSave = async (values: any) => {
     try {
       const url = editingTask 
-        ? `${GATEWAY_HTTP}/v1/scheduler/tasks/${editingTask.id}`
-        : `${GATEWAY_HTTP}/v1/scheduler/tasks`;
+        ? `${GATEWAY_HTTP}/v1/schedules/${editingTask.id}`
+        : `${GATEWAY_HTTP}/v1/schedules`;
       
       const response = await fetch(url, {
         method: editingTask ? 'PUT' : 'POST',
@@ -163,7 +166,7 @@ export const SchedulePanel: React.FC = () => {
   // 删除任务
   const handleDelete = async (taskId: string) => {
     try {
-      const response = await fetch(`${GATEWAY_HTTP}/v1/scheduler/tasks/${taskId}`, {
+      const response = await fetch(`${GATEWAY_HTTP}/v1/schedules/${taskId}`, {
         method: 'DELETE',
       });
       if (response.ok) {
@@ -178,7 +181,8 @@ export const SchedulePanel: React.FC = () => {
   // 切换任务状态
   const handleToggle = async (task: ScheduledTask) => {
     try {
-      const response = await fetch(`${GATEWAY_HTTP}/v1/scheduler/tasks/${task.id}/toggle`, {
+      const action = task.enabled ? 'pause' : 'resume';
+      const response = await fetch(`${GATEWAY_HTTP}/v1/schedules/${task.id}/${action}`, {
         method: 'POST',
       });
       if (response.ok) {
@@ -193,7 +197,7 @@ export const SchedulePanel: React.FC = () => {
   // 立即执行任务
   const handleRunNow = async (task: ScheduledTask) => {
     try {
-      const response = await fetch(`${GATEWAY_HTTP}/v1/scheduler/tasks/${task.id}/run`, {
+      const response = await fetch(`${GATEWAY_HTTP}/v1/schedules/${task.id}/run`, {
         method: 'POST',
       });
       if (response.ok) {

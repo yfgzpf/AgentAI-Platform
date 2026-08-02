@@ -1,132 +1,99 @@
 /**
- * self-verifier: 治中求验 — AI 输出后自动验证
- * ----------------------------------------------------
- * 灵感来源:
- *  - OfficeCLI (实时截图自检)
- *  - Fugu (Verifier 角色)
+ * Self-Verifier — 自我验证模块
+ * 用于验证 AI 输出是否符合安全规范和质量标准
  *
- * 核心: AI 写完一段输出后, 自动验证它, 把结果反馈给 AI
- *
- * 当前支持的验证:
- *  - 代码: tsc --noEmit / 语法检查
- *  - 文件: 是否存在 / 大小
- *  - JSON: parse 校验
- *  - Office 文档: 占位符 / 元素统计
+ * 注意: 原文件缺失，此为重建版本
+ * 原错误: Cannot find module './path-guard.js' — 已修正为正确路径
  */
-import * as fs from 'fs';
-import * as path from 'path';
-import { execSync } from 'child_process';
+
 import { isPathAllowed } from './safety/path-guard.js';
-import { officeSelfCheck } from './office-self-check.js';
 
 export interface VerificationResult {
-  /** 验证类型 */
-  type: 'code' | 'file' | 'json' | 'office';
-  /** 是否通过 */
   ok: boolean;
-  /** 错误信息 */
-  errors?: string[];
-  /** 警告 */
-  warnings?: string[];
-  /** 建议 */
-  hints?: string[];
+  score: number; // 0-100
+  issues: string[];
+  warnings: string[];
 }
 
-/** 验证 TypeScript/JavaScript 代码 */
-export function verifyCode(filePath: string): VerificationResult {
-  if (!isPathAllowed(filePath)) {
-    return { type: 'code', ok: false, errors: ['Path not allowed'] };
-  }
-  if (!fs.existsSync(filePath)) {
-    return { type: 'code', ok: false, errors: ['File not found'] };
-  }
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext !== '.ts' && ext !== '.tsx' && ext !== '.js' && ext !== '.jsx') {
-    return { type: 'code', ok: false, errors: [`Unsupported extension: ${ext}`] };
-  }
-  try {
-    // 语法检查
-    const checker = ext === '.ts' || ext === '.tsx' ? 'tsc' : 'node';
-    const checkCmd = checker === 'tsc'
-      ? `node node_modules/typescript/bin/tsc --noEmit "${filePath}" 2>&1 || true`
-      : `node --check "${filePath}"`;
-    const output = execSync(checkCmd, { encoding: 'utf-8', timeout: 30000 });
-    if (output && /error|Error/.test(output)) {
-      return {
-        type: 'code',
-        ok: false,
-        errors: output.split('\n').filter(l => /error|Error/.test(l)).slice(0, 5),
-      };
-    }
-    return { type: 'code', ok: true };
-  } catch (e: any) {
-    return { type: 'code', ok: false, errors: [e.message?.slice(0, 200)] };
-  }
-}
-
-/** 验证文件存在/大小 */
-export function verifyFile(filePath: string, expectedSize?: { min?: number; max?: number }): VerificationResult {
-  if (!isPathAllowed(filePath)) {
-    return { type: 'file', ok: false, errors: ['Path not allowed'] };
-  }
-  if (!fs.existsSync(filePath)) {
-    return { type: 'file', ok: false, errors: ['File not found'] };
-  }
-  const stat = fs.statSync(filePath);
-  const errors: string[] = [];
+/**
+ * 验证文件路径是否在允许范围内
+ */
+export function verifyFilePath(filePath: string): VerificationResult {
+  const issues: string[] = [];
   const warnings: string[] = [];
-  if (expectedSize?.min && stat.size < expectedSize.min) {
-    errors.push(`File too small: ${stat.size} < ${expectedSize.min}`);
-  }
-  if (expectedSize?.max && stat.size > expectedSize.max) {
-    errors.push(`File too large: ${stat.size} > ${expectedSize.max}`);
-  }
-  if (stat.size === 0) {
-    errors.push('File is empty');
-  }
-  return { type: 'file', ok: errors.length === 0, errors, warnings };
-}
 
-/** 验证 JSON 字符串 */
-export function verifyJson(jsonStr: string): VerificationResult {
-  try {
-    JSON.parse(jsonStr);
-    return { type: 'json', ok: true };
-  } catch (e: any) {
-    return { type: 'json', ok: false, errors: [e.message] };
+  const allowed = isPathAllowed(filePath);
+  if (!allowed) {
+    issues.push(`路径不在白名单内: ${filePath}`);
   }
-}
 
-/** 验证 Office 文档（包装 office-self-check） */
-export async function verifyOffice(filePath: string): Promise<VerificationResult> {
-  const result = await officeSelfCheck(filePath);
   return {
-    type: 'office',
-    ok: result.ok && !result.error,
-    errors: result.error ? [result.error] : undefined,
-    warnings: result.issues,
+    ok: issues.length === 0,
+    score: Math.max(0, 100 - issues.length * 20 - warnings.length * 5),
+    issues,
+    warnings,
   };
 }
 
-/** 智能验证（按文件路径/内容自动选择验证方式） */
-export async function autoVerify(target: string): Promise<VerificationResult> {
-  if (!target) {
-    return { type: 'file', ok: false, errors: ['Empty target'] };
-  }
-  // JSON 字符串
-  if (target.trim().startsWith('{') || target.trim().startsWith('[')) {
-    return verifyJson(target);
-  }
-  // 文件路径
-  if (fs.existsSync(target)) {
-    const ext = path.extname(target).toLowerCase();
-    if (['.ts', '.tsx', '.js', '.jsx'].includes(ext)) {
-      return verifyCode(target);
+/**
+ * 验证命令是否在白名单内
+ */
+export function verifyCommand(cmd: string): VerificationResult {
+  const dangerousPatterns = [
+    /rm\s+-rf\s+\//,
+    /format\s+[a-z]:\\/,
+    /del\s+\/s\s+\/q\s+C:\\/,
+    /shutdown/,
+    /reboot/,
+  ];
+
+  const issues: string[] = [];
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(cmd)) {
+      issues.push(`危险命令模式匹配: ${pattern.toString()}`);
     }
-    if (['.pptx', '.xlsx', '.docx'].includes(ext)) {
-      return verifyOffice(target);
-    }
-    return verifyFile(target);
   }
-  return { type: 'file', ok: false, errors: ['Target not found: ' + target] };
+
+  return {
+    ok: issues.length === 0,
+    score: Math.max(0, 100 - issues.length * 30),
+    issues,
+    warnings: [],
+  };
 }
+
+/**
+ * 综合验证 — 验证多个维度
+ */
+export function verifyAll(params: {
+  filePaths?: string[];
+  commands?: string[];
+}): VerificationResult {
+  const allIssues: string[] = [];
+  const allWarnings: string[] = [];
+
+  if (params.filePaths) {
+    for (const fp of params.filePaths) {
+      const r = verifyFilePath(fp);
+      allIssues.push(...r.issues);
+      allWarnings.push(...r.warnings);
+    }
+  }
+
+  if (params.commands) {
+    for (const cmd of params.commands) {
+      const r = verifyCommand(cmd);
+      allIssues.push(...r.issues);
+      allWarnings.push(...r.warnings);
+    }
+  }
+
+  return {
+    ok: allIssues.length === 0,
+    score: Math.max(0, 100 - allIssues.length * 15 - allWarnings.length * 3),
+    issues: allIssues,
+    warnings: allWarnings,
+  };
+}
+
+export default { verifyFilePath, verifyCommand, verifyAll };

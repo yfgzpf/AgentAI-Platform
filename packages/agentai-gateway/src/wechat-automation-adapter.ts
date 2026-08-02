@@ -65,9 +65,9 @@ export class WeChatAutomationAdapter extends EventEmitter {
     super();
     this.config = {
       wechatPath: 'C:\\Program Files (x86)\\Tencent\\WeChat\\WeChat.exe',
-      dataPath: path.join(process.cwd(), '.agentai', 'wechat-data'),
       industry: 'decoration',
       ...config,
+      dataPath: config.dataPath || path.join(process.cwd(), '.agentai', 'wechat-data'),
     };
 
     // 确保数据目录存在

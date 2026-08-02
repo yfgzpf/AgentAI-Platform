@@ -1,0 +1,18 @@
+{
+  "name": "LibTV AI 创作",
+  "installedAt": 1783266560072,
+  "source": "marketplace",
+  "version": "1.0.0",
+  "skillId": "skill_2053082270621442048",
+  "examples_zh": [
+    "用 LibTV 生成一张赛博朋克风格的咖啡新品海报图，包含霓虹灯和产品特写",
+    "把这张产品静态图转成 8 秒短视频，镜头从包装正面推进到品牌 Logo",
+    "为短剧预告生成一段文生视频：雨夜街头、主角回头、电影感冷色调"
+  ],
+  "examples_en": [
+    "Use LibTV to generate a cyberpunk coffee product poster with neon lighting and a close-up product shot",
+    "Turn this static product image into an 8-second video that pushes from the package front to the brand logo",
+    "Create a text-to-video short drama teaser with a rainy street, the protagonist turning back, and a cinematic cool tone"
+  ],
+  "iconSource": "letter:auto"
+}

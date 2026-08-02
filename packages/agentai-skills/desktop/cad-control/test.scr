@@ -1,0 +1,5 @@
+LINE 0,0 100,100
+CIRCLE 50,50 25
+TEXT 50,50 5 0 Test Room
+SAVEAS
+test.dwg

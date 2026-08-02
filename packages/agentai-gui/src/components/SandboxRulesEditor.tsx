@@ -1,5 +1,5 @@
 /**
- * Sandbox 规则编辑器
+ * Sandbox 规则编辑器 v3.2
  *
  * 用法:
  *   <SandboxRulesEditor />
@@ -10,14 +10,16 @@
  *   - maxFileSize / maxTotalSize (字节)
  *   - 一键恢复默认
  *   - 试检查 (输入路径 + op → 调 /v1/sandbox/check 显示 verdict)
+ *   - 路径预置: 自动识别盘符 + 常用目录, 点击加入 allow 列表
  */
 
 import React, { useEffect, useState } from 'react';
-import { Card, Input, Button, Space, Tag, Alert, message, InputNumber, Select, Divider, Tooltip, Switch } from 'antd';
-import { SecurityScanOutlined, SafetyOutlined, ReloadOutlined, ExperimentOutlined, CheckCircleOutlined, StopOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { Card, Input, Button, Space, Tag, Alert, message, InputNumber, Select, Divider, Tooltip, Switch, Typography } from 'antd';
+import { SecurityScanOutlined, SafetyOutlined, ReloadOutlined, ExperimentOutlined, CheckCircleOutlined, StopOutlined, QuestionCircleOutlined, PlusOutlined, HddOutlined, FolderOutlined, HomeOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 
 const { TextArea } = Input;
+const { Text } = Typography;
 
 interface SandboxRules {
   allow: string[];
@@ -39,6 +41,26 @@ interface SandboxStatus {
   mtime: number;
   lastReload: number;
 }
+
+interface PathPreset {
+  path: string;
+  label: string;
+  category: 'drive' | 'user' | 'workspace' | 'common';
+}
+
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  drive: <HddOutlined />,
+  user: <FolderOutlined />,
+  workspace: <HomeOutlined />,
+  common: <FolderOutlined />,
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  drive: 'blue',
+  user: 'green',
+  workspace: 'purple',
+  common: 'cyan',
+};
 
 const httpUrl = () => GATEWAY_HTTP;
 
@@ -69,6 +91,22 @@ export const SandboxRulesEditor: React.FC = () => {
 
   const [sandboxUnavailable, setSandboxUnavailable] = useState(false);
 
+  // 路径预置
+  const [presets, setPresets] = useState<PathPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+
+  const loadPresets = async () => {
+    setPresetsLoading(true);
+    try {
+      const r = await fetch(httpUrl() + '/v1/sandbox/presets');
+      if (r.ok) {
+        const data = await r.json();
+        setPresets(data.presets || []);
+      }
+    } catch { /* presets optional */ }
+    setPresetsLoading(false);
+  };
+
   const load = async () => {
     try {
       const r = await fetch(httpUrl() + '/v1/sandbox/rules');
@@ -89,7 +127,7 @@ export const SandboxRulesEditor: React.FC = () => {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadPresets(); }, []);
 
   const save = async () => {
     setSaving(true);
@@ -117,6 +155,17 @@ export const SandboxRulesEditor: React.FC = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  /** 点击预设路径: 加入 allow 列表 (去重) */
+  const addPresetToAllow = (presetPath: string) => {
+    const current = allow.split('\n').map(s => s.trim()).filter(Boolean);
+    if (current.includes(presetPath)) {
+      message.info('该路径已在 allow 列表中');
+      return;
+    }
+    setAllow([...current, presetPath].join('\n'));
+    message.success(`已添加: ${presetPath}`);
   };
 
   const runProbe = async () => {
@@ -198,6 +247,43 @@ export const SandboxRulesEditor: React.FC = () => {
           />
 
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            {/* 路径预置面板 — 自动识别盘符 + 常用目录 */}
+            {presets.length > 0 && (
+              <div>
+                <label>
+                  <PlusOutlined /> 路径预置 (点击加入 Allow 列表)
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    系统自动识别, v3.2 默认全放行已无需手动配置allow
+                  </Text>
+                </label>
+                <div style={{ marginTop: 4 }}>
+                  {(['drive', 'user', 'workspace', 'common'] as const).map(cat => {
+                    const items = presets.filter(p => p.category === cat);
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={cat} style={{ marginBottom: 4 }}>
+                        <Text type="secondary" style={{ fontSize: 11, marginRight: 8 }}>
+                          {cat === 'drive' ? '盘符' : cat === 'user' ? '用户目录' : cat === 'workspace' ? '项目' : '常用'}:
+                        </Text>
+                        {items.map(p => (
+                          <Tooltip key={p.path} title={`添加 ${p.path} 到 Allow 列表`}>
+                            <Tag
+                              icon={CATEGORY_ICONS[p.category]}
+                              color={CATEGORY_COLORS[p.category]}
+                              style={{ cursor: 'pointer', marginBottom: 4 }}
+                              onClick={() => addPresetToAllow(p.path)}
+                            >
+                              {p.label}
+                            </Tag>
+                          </Tooltip>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div>
               <label>✅ Allow (白名单, 一行一个 glob, 支持 *, **, ?, {`{a,b}`})</label>
               <TextArea

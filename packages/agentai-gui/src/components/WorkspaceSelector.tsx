@@ -13,12 +13,22 @@ interface FsEntry {
 
 export const WorkspaceSelector: React.FC = () => {
   const { profile, setProfile } = useProfileStore();
-  const workspace = profile?.workspace || '';
+  // 从 profile 或 localStorage 获取工作目录
+  const workspace = profile?.workspace || localStorage.getItem('agentai.workspace') || '';
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(workspace);
   const [loading, setLoading] = useState(false);
   const [aiWorkDir, setAiWorkDir] = useState('');
   const inputRef = useRef<any>(null);
+
+  // 监听工作区变更事件，同步更新显示
+  useEffect(() => {
+    const handleWorkspaceChange = (e: CustomEvent<{ workspace: string }>) => {
+      setValue(e.detail.workspace);
+    };
+    window.addEventListener('agentai:workspace-changed', handleWorkspaceChange as EventListener);
+    return () => window.removeEventListener('agentai:workspace-changed', handleWorkspaceChange as EventListener);
+  }, []);
 
   // 文件夹浏览器状态
   const [browserOpen, setBrowserOpen] = useState(false);
@@ -44,6 +54,10 @@ export const WorkspaceSelector: React.FC = () => {
   const applyWorkspace = (path: string) => {
     const trimmed = path.trim();
     if (!trimmed) return;
+    
+    // 保存到 localStorage（供 Git 服务和其他组件使用）
+    localStorage.setItem('agentai.workspace', trimmed);
+    
     setProfile({
       ...profile,
       name: profile?.name || 'User',
@@ -52,6 +66,10 @@ export const WorkspaceSelector: React.FC = () => {
       workspace: trimmed,
     });
     setEditing(false);
+    
+    // 触发工作区变更事件，通知其他组件刷新
+    window.dispatchEvent(new CustomEvent('agentai:workspace-changed', { detail: { workspace: trimmed } }));
+    
     // 同步通知 Gateway 更新工作目录
     fetch(`${gatewayUrl()}/v1/workspace`, {
       method: 'POST',

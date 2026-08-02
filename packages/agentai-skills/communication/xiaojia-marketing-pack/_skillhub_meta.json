@@ -1,0 +1,20 @@
+{
+  "name": "小加同学",
+  "installedAt": 1783266559987,
+  "source": "marketplace",
+  "version": "1.0.0",
+  "skillId": "skill_2060316799974969344",
+  "examples_zh": [
+    "帮我做一组新店开业的小红书内容方向",
+    "查一下今天有什么节日热点",
+    "帮我生成一张大字报封面"
+  ],
+  "examples_en": [
+    "Help me brainstorm Xiaohongshu content ideas for a new store opening",
+    "What are today's holiday hotspots?",
+    "Generate a poster screenshot for my note cover"
+  ],
+  "iconSource": "https://openplatform-cdn.codebuddy.cn/public/operation-platform/skill-icons/skill_2060316799974969344/c2e55cd3ad9e96b7.png",
+  "iconLocalPath": "C:\\Users\\Administrator\\.workbuddy\\skills\\skill_2060316799974969344\\_icon.png",
+  "iconDownloadedFrom": "https://openplatform-cdn.codebuddy.cn/public/operation-platform/skill-icons/skill_2060316799974969344/c2e55cd3ad9e96b7.png"
+}

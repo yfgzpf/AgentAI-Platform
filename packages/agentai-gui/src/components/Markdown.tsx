@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import { Skeleton, Typography } from 'antd';
+import { CopyOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
@@ -13,6 +14,110 @@ interface Props {
 }
 
 // ===== 共享 Markdown 组件配置 (避免重复) =====
+
+// ===== 可折叠代码块 (ZCode 风格: 大代码默认折叠) =====
+
+const CollapsibleCodeBlock: React.FC<{
+  className?: string;
+  children: React.ReactNode;
+  language?: string;
+}> = ({ className, children, language }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  
+  // 提取代码文本
+  const codeText = typeof children === 'string' ? children : String(children || '');
+  const lineCount = codeText.split('\n').length;
+  // 超过 8 行的代码块默认折叠
+  const shouldCollapse = lineCount > 8;
+  const isCollapsed = shouldCollapse && !expanded;
+
+  // 语言标签
+  const langLabel = (className?.replace('language-', '') || language || 'code').toUpperCase();
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(codeText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <div style={{
+      margin: '8px 0',
+      borderRadius: 6,
+      border: '1px solid var(--border)',
+      background: '#1a1a2e',
+      overflow: 'hidden',
+    }}>
+      {/* 代码头栏 */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '4px 10px',
+        background: 'rgba(0,0,0,0.3)',
+        borderBottom: isCollapsed ? 'none' : '1px solid var(--border)',
+        fontSize: 10,
+      }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--muted-2)' }}>
+          <span style={{
+            background: 'var(--accent)',
+            color: '#fff',
+            padding: '1px 6px',
+            borderRadius: 3,
+            fontSize: 9,
+            fontWeight: 600,
+          }}>{langLabel}</span>
+          {shouldCollapse && (
+            <span style={{ fontSize: 9 }}>{lineCount} 行</span>
+          )}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span
+            onClick={handleCopy}
+            style={{ cursor: 'pointer', color: copied ? 'var(--success)' : 'var(--muted-2)', fontSize: 9 }}
+          >
+            {copied ? '✓ 已复制' : <><CopyOutlined style={{ marginRight: 3 }} />复制</>}
+          </span>
+          {shouldCollapse && (
+            <span
+              onClick={() => setExpanded(!expanded)}
+              style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 9 }}
+            >
+              {isCollapsed ? <><DownOutlined /> 展开</> : <><UpOutlined /> 折叠</>}
+            </span>
+          )}
+        </span>
+      </div>
+
+      {/* 代码内容 */}
+      <pre style={{
+        margin: 0,
+        padding: isCollapsed ? '8px 12px' : '12px',
+        overflow: isCollapsed ? 'hidden' : 'auto',
+        maxHeight: isCollapsed ? 120 : 600,
+        background: '#1a1a2e',
+        color: '#d4d4d4',
+        fontSize: 11.5,
+        lineHeight: 1.5,
+        fontFamily: 'Consolas, "Courier New", monospace',
+      }}>
+        {children}
+      </pre>
+
+      {/* 折叠时的渐变遮罩 */}
+      {isCollapsed && (
+        <div style={{
+          position: 'absolute',
+          bottom: 28,
+          left: 0, right: 0,
+          height: 40,
+          background: 'linear-gradient(transparent, #1a1a2e)',
+          pointerEvents: 'none',
+        }} />
+      )}
+    </div>
+  );
+};
 
 const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components'] = {
   a: (props) => {
@@ -69,14 +174,17 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
     }
     return <a target="_blank" rel="noopener noreferrer" {...props} />;
   },
-  pre: ({ children }) => (
-    <pre style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, margin: '8px 0', overflow: 'auto' }}>
-      {children}
-    </pre>
-  ),
+  pre: ({ children }) => {
+    // 检查是否是代码块 (有 code 子元素且有语言类名)
+    const child = React.Children.toArray(children)[0] as any;
+    if (child?.props?.className?.includes('language-') || child?.props?.className === undefined) {
+      return <CollapsibleCodeBlock className={child?.props?.className}>{child?.props?.children}</CollapsibleCodeBlock>;
+    }
+    return <pre style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, margin: '8px 0', overflow: 'auto' }}>{children}</pre>;
+  },
   code: ({ className, children, ...props }: any) => {
     if (className?.includes('language-')) {
-      return <pre style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, margin: '8px 0', overflow: 'auto' }}>{children}</pre>;
+      return <CollapsibleCodeBlock className={className} language={className.replace('language-', '')}>{children}</CollapsibleCodeBlock>;
     }
     return <code className={className} style={{ background: '#2a2a2a', color: '#ce9178', padding: '2px 4px', borderRadius: 3 }} {...props}>{children}</code>;
   },
@@ -240,6 +348,19 @@ const SvgDiagram: React.FC<{ svg: string }> = ({ svg }) => {
 };
 
 /**
+ * 清理工具调用标记，防止显示在对话中
+ */
+function cleanToolCalls(text: string): string {
+  // 移除 <tool_call>...</tool_call> 标记及其内容
+  return text
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+    .replace(/<tool_call\s+[^>]*>[\s\S]*?<\/tool_call>/g, '')
+    .replace(/<arg_key>[^<]*<\/arg_key>/g, '')
+    .replace(/<arg_value>[^<]*<\/arg_value>/g, '')
+    .trim();
+}
+
+/**
  * Markdown — Markdown 渲染组件，支持内嵌 SVG 图表
  */
 export const Markdown: React.FC<Props> = ({ content, streaming }) => {
@@ -247,7 +368,9 @@ export const Markdown: React.FC<Props> = ({ content, streaming }) => {
     return <Skeleton active paragraph={{ rows: 6 }} />;
   }
 
-  const text = streaming ? content + '▍' : content;
+  // 清理工具调用标记
+  const cleanedContent = cleanToolCalls(content);
+  const text = streaming ? cleanedContent + '▍' : cleanedContent;
 
   // 检测 SVG 代码块并分段渲染
   const parts = splitSvgBlocks(text);

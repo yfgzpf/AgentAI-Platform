@@ -1,0 +1,18 @@
+{
+  "name": "yt-competitive-analysis",
+  "installedAt": 1783266552871,
+  "source": "marketplace",
+  "version": "1.0.1",
+  "skillId": "skill_2053083751602102272",
+  "examples_zh": [
+    "分析这几个 YouTube 频道的爆款视频",
+    "找出竞品频道的标题包装规律",
+    "哪些视频的播放量是平均值的两倍以上"
+  ],
+  "examples_en": [
+    "Analyze outlier videos from these YouTube channels",
+    "Find packaging patterns from competitor channels",
+    "Which videos got 2x+ average views"
+  ],
+  "iconSource": "letter:auto"
+}

@@ -15,7 +15,7 @@ import {
   CheckCircleOutlined, WarningOutlined, DashboardOutlined, BulbOutlined,
   HistoryOutlined, ApiOutlined, PauseCircleOutlined,
 } from '@ant-design/icons';
-import { apiGet } from '../services/api';
+import { apiGet, apiPost } from '../services/api';
 
 const { Text, Title } = Typography;
 
@@ -110,7 +110,7 @@ export function GovernorPanel() {
 
   const handleFlush = async () => {
     try {
-      await apiGet('/governor/flush');
+      await apiPost('/governor/flush', {});
       fetchReport();
     } catch (e) {
       console.error('[governor] flush failed:', e);

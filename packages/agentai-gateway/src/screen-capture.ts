@@ -83,8 +83,8 @@ Write-Output "OK: $($bounds.Width)x$($bounds.Height)"
         ok: true,
         mode: 'desktop',
         filePath: savePath,
-        width: match ? parseInt(match[1]) : undefined,
-        height: match ? parseInt(match[2]) : undefined,
+        width: match ? parseInt(match[1]) : 0,
+        height: match ? parseInt(match[2]) : 0,
       };
     }
     if (platform === 'darwin') {
@@ -139,8 +139,8 @@ Write-Output "OK: \${width}x\${height}"
       ok: true,
       mode: 'window',
       filePath: savePath,
-      width: match ? parseInt(match[1]) : undefined,
-      height: match ? parseInt(match[2]) : undefined,
+      width: match ? parseInt(match[1]) : 0,
+      height: match ? parseInt(match[2]) : 0,
     };
   } catch (e: any) {
     return { ok: false, mode: 'window', error: e.message };

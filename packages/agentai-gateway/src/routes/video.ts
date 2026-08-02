@@ -69,7 +69,7 @@ export function createVideoRouter() {
       if (frame_rate) body.frame_rate = frame_rate;
       if (image) body.image = image;
       if (end_frame) body.end_frame = end_frame;
-      const resp = await fetch('https://apihub.agnes-ai.com/v1/videos', {
+      const resp = await fetch('https://apihub.agnes-ai.cn/v1/videos', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -100,12 +100,20 @@ export function createVideoRouter() {
       const zhipuKey = process.env['ZHIPU_API_KEY'];
       if (zhipuKey) {
         try {
-          const resp = await fetch(`https://open.bigmodel.cn/api/paas/v4/videos/${taskId}`, {
+          const resp = await fetch(`https://open.bigmodel.cn/api/paas/v4/videos/generations/${taskId}`, {
             headers: { Authorization: `Bearer ${zhipuKey}` },
           });
           if (resp.ok) {
-            const data = await resp.json();
-            return res.json({ raw: JSON.stringify(data) });
+            const data: any = await resp.json();
+            const status = data.task_status?.[0] || data.task_status || data.status;
+            const videoUrl = data.video_result?.[0]?.url || data.video_result?.url || data.url;
+            const coverUrl = data.video_result?.[0]?.cover_image_url;
+            return res.json({
+              status,
+              videoUrl,
+              coverUrl,
+              raw: JSON.stringify(data),
+            });
           }
         } catch {}
       }
@@ -113,11 +121,11 @@ export function createVideoRouter() {
       // 降级 Agnes
       const apiKey = process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY'];
       if (!apiKey) return res.status(400).json({ error: 'No API Key' });
-      const resp = await fetch(`https://apihub.agnes-ai.com/v1/videos/${taskId}`, {
+      const resp = await fetch(`https://apihub.agnes-ai.cn/v1/videos/${taskId}`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (!resp.ok) return res.status(resp.status).json({ error: `HTTP ${resp.status}` });
-      const data = await resp.json();
+      const data: any = await resp.json();
       return res.json({ raw: JSON.stringify(data) });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });

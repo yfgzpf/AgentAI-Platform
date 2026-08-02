@@ -3,9 +3,17 @@
  * 用于 React.lazy 代码分割时的加载占位
  * 跟随主题变量, 无硬编码颜色
  */
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 export const PageSkeleton: React.FC = () => {
+  const [showTimeout, setShowTimeout] = useState(false);
+  
+  // 5秒后显示超时提示，避免无限加载
+  useEffect(() => {
+    const timer = setTimeout(() => setShowTimeout(true), 5000);
+    return () => clearTimeout(timer);
+  }, []);
+  
   const shimmerStyle: React.CSSProperties = {
     background: 'var(--card-hover)',
     borderRadius: 'var(--radius, 8px)',
@@ -14,6 +22,20 @@ export const PageSkeleton: React.FC = () => {
 
   return (
     <div style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* 超时提示 */}
+      {showTimeout && (
+        <div style={{ 
+          padding: 12, 
+          background: 'var(--warning-soft)', 
+          borderRadius: 'var(--radius, 8px)',
+          color: 'var(--warning)',
+          fontSize: 14,
+          marginBottom: 8
+        }}>
+          页面加载较慢，请检查网络连接或刷新页面重试
+        </div>
+      )}
+      
       {/* 标题行 */}
       <div style={{ ...shimmerStyle, width: 200, height: 24 }} />
       {/* 工具栏 */}

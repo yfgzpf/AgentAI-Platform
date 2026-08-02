@@ -1,9 +1,9 @@
 {
   "name": "agentai-vscode",
-  "displayName": "AgentAI Platform",
-  "description": "AgentAI Platform VSCode 扩展 - 接入智能体 Gateway (Tauri 桌面 + Node 后端)",
+  "displayName": "PulseFlow",
+  "description": "PulseFlow — 让智能体理解系统的生命状态 (VSCode 集成)",
   "version": "0.1.0-alpha.1",
-  "publisher": "agentai-local",
+  "publisher": "pulseflow-local",
   "engines": { "vscode": "^1.105.0" },
   "categories": ["AI", "Chat", "Other"],
   "activationEvents": ["onStartupFinished"],
@@ -12,40 +12,221 @@
     "commands": [
       {
         "command": "agentai.openChat",
-        "title": "AgentAI: 打开对话 (Webview)",
-        "category": "AgentAI",
+        "title": "PulseFlow: 打开对话 (Webview)",
+        "category": "pulseflow",
         "icon": "$(comment-discussion)"
       },
       {
+        "command": "agentai.openExplorer",
+        "title": "PulseFlow: 浏览当前项目",
+        "category": "pulseflow",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "agentai.reconnect",
+        "title": "PulseFlow: 重新连接 Gateway",
+        "category": "pulseflow",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "agentai.switchFramework",
-        "title": "AgentAI: 切换智能体框架 (OpenClaw/Hermes)",
+        "title": "PulseFlow: 切换智能体框架 (OpenClaw/Hermes)",
         "category": "AgentAI"
       },
       {
         "command": "agentai.switchModel",
-        "title": "AgentAI: 切换 LLM 模型 (agentai/deepseek/openai)",
+        "title": "PulseFlow: 切换 LLM 模型 (agentai/deepseek/openai/cline/zhipu)",
         "category": "AgentAI"
       },
       {
         "command": "agentai.attachActiveFile",
-        "title": "AgentAI: 把当前文件读进对话",
+        "title": "PulseFlow: 把当前文件读进对话",
         "category": "AgentAI"
       },
       {
         "command": "agentai.explainSelection",
-        "title": "AgentAI: 解释选中代码",
+        "title": "PulseFlow: 解释选中代码",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.fixSelection",
+        "title": "PulseFlow: 修复选中代码",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.reviewProject",
+        "title": "PulseFlow: 审查整个项目",
         "category": "AgentAI"
       },
       {
         "command": "agentai.editSelection",
-        "title": "AgentAI: AI 编辑选中代码",
+        "title": "PulseFlow: AI 编辑选中代码",
         "category": "AgentAI"
       },
       {
         "command": "agentai.insertFromPrompt",
-        "title": "AgentAI: AI 生成代码插入",
+        "title": "PulseFlow: AI 生成代码插入",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.runInTerminal",
+        "title": "PulseFlow: 在终端跑选中命令",
+        "category": "pulseflow",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "agentai.refactorSelection",
+        "title": "PulseFlow: 重构选中代码",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.optimizeSelection",
+        "title": "PulseFlow: 优化选中代码性能",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.testSelection",
+        "title": "PulseFlow: 为选中代码生成测试",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.docSelection",
+        "title": "PulseFlow: 为选中代码生成文档",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.translateSelection",
+        "title": "PulseFlow: 翻译选中代码/注释为英文",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.typesSelection",
+        "title": "PulseFlow: 补充 TypeScript 类型",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.openSession",
+        "title": "PulseFlow: 打开历史会话",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.openTask",
+        "title": "PulseFlow: 打开任务详情",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.toolCategory",
+        "title": "PulseFlow: 打开工具类别",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.recallMemory",
+        "title": "PulseFlow: 查看记忆详情",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.refreshSidebar",
+        "title": "PulseFlow: 刷新侧栏",
+        "category": "pulseflow",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentai.openComposer",
+        "title": "PulseFlow: 打开 Multi-File Composer",
+        "category": "pulseflow",
+        "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "agentai.codelens.explain",
+        "title": "PulseFlow: 解释此函数",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.codelens.test",
+        "title": "PulseFlow: 为此函数生成测试",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.codelens.refactor",
+        "title": "PulseFlow: 重构此函数",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.codelens.doc",
+        "title": "PulseFlow: 为此函数生成文档",
+        "category": "AgentAI"
+      },
+      {
+        "command": "agentai.triggerCompletion",
+        "title": "PulseFlow: 触发 AI 代码补全",
         "category": "AgentAI"
       }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentai-explorer",
+          "title": "AgentAI",
+          "icon": "$(hubot)"
+        }
+      ]
+    },
+    "views": {
+      "agentai-explorer": [
+        {
+          "id": "agentai.projectView",
+          "name": "项目",
+          "visibility": "visible"
+        },
+        {
+          "id": "agentai.sessionsView",
+          "name": "会话",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "agentai.tasksView",
+          "name": "任务",
+          "visibility": "visible"
+        },
+        {
+          "id": "agentai.toolsView",
+          "name": "工具 (146)",
+          "visibility": "visible"
+        },
+        {
+          "id": "agentai.memoryView",
+          "name": "记忆",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        { "command": "agentai.explainSelection", "when": "editorHasSelection" },
+        { "command": "agentai.fixSelection", "when": "editorHasSelection" },
+        { "command": "agentai.editSelection", "when": "editorHasSelection" },
+        { "command": "agentai.refactorSelection", "when": "editorHasSelection" },
+        { "command": "agentai.optimizeSelection", "when": "editorHasSelection" },
+        { "command": "agentai.testSelection", "when": "editorHasSelection" },
+        { "command": "agentai.docSelection", "when": "editorHasSelection" },
+        { "command": "agentai.translateSelection", "when": "editorHasSelection" },
+        { "command": "agentai.typesSelection", "when": "editorHasSelection" },
+        { "command": "agentai.insertFromPrompt" }
+      ],
+      "view/title": [
+        { "command": "agentai.refreshSidebar", "when": "view =~ /^agentai\\./" }
+      ],
+      "explorer/context": [
+        { "command": "agentai.attachActiveFile" },
+        { "command": "agentai.openExplorer" }
+      ]
+    },
+    "keybindings": [
+      { "command": "agentai.openChat", "key": "ctrl+shift+a", "mac": "cmd+shift+a" },
+      { "command": "agentai.explainSelection", "key": "ctrl+shift+e", "mac": "cmd+shift+e" },
+      { "command": "agentai.fixSelection", "key": "ctrl+shift+r", "mac": "cmd+shift+r" },
+      { "command": "agentai.openComposer", "key": "ctrl+shift+m", "mac": "cmd+shift+m" },
+      { "command": "agentai.triggerCompletion", "key": "ctrl+shift+space", "mac": "cmd+shift+space" }
     ],
     "configuration": {
       "title": "AgentAI Platform",
@@ -63,9 +244,9 @@
         },
         "agentai.model": {
           "type": "string",
-          "enum": ["agentai", "deepseek", "openai"],
+          "enum": ["agentai", "deepseek", "openai", "cline", "zhipu"],
           "default": "agentai",
-          "description": "默认 LLM 模型 (agentai 主, deepseek/openai 备)"
+          "description": "默认 LLM 模型 (agentai 主, deepseek/openai/cline/zhipu 备)"
         }
       }
     }

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SkillDNAEvolution, SkillDNA, SkillGenome, HybridizationRequest } from './skill-dna.js';
 

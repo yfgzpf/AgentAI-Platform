@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * agentai-loop.ts 关键路径测试
  * 

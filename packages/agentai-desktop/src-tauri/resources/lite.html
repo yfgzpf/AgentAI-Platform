@@ -375,10 +375,31 @@
 
 (function () {
     'use strict';
-    const vscode = acquireVsCodeApi();
+    // Tauri-compatible: guard acquireVsCodeApi (only exists in VS Code webview)
+    const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
     const PROVIDER = (window.PROVIDER || 'agentai').toLowerCase();
     let msgId = 0;
     let streaming = null; // 当前流式消息 ID
+
+    /** Tauri IPC bridge: when running in Tauri window (not VS Code) */
+    function tauriPostMessage(data) {
+        try {
+            if (window.__TAURI__) {
+                // Tauri 2.x: use invoke with a Rust command
+                const { invoke } = window.__TAURI__;
+                if (invoke) return invoke('tauri_post_message', { message: JSON.stringify(data) });
+            }
+        } catch (e) { /* Tauri IPC unavailable, silently ignore */ }
+    }
+
+    /** Unified postMessage: works in both VS Code and Tauri */
+    function postMessage(msg) {
+        if (vscode) {
+            vscode.postMessage(msg);
+        } else {
+            tauriPostMessage(msg);
+        }
+    }
 
     // === Provider 配色 (与 GUI Avatar.tsx 对齐) ===
     const PALETTE = {
@@ -401,7 +422,7 @@
                 if (ft) {
                     const show = ft.style.display === 'none';
                     ft.style.display = show ? 'block' : 'none';
-                    if (show) vscode.postMessage({ type: 'listFiles', dir: '.' });
+                    if (show) postMessage({ type: 'listFiles', dir: '.' });
                 }
             }
         });
@@ -414,7 +435,7 @@
         if (!text || !text.trim()) return;
         if (inEl) inEl.value = '';
         addUserMsg(text);
-        vscode.postMessage({ type: 'chat', text });
+        postMessage({ type: 'chat', text });
         setStatus('pending', '🤔 思考中...');
         if (sendBtn) sendBtn.disabled = true;
     }
@@ -547,10 +568,10 @@
             const icon = f.type === 'directory' ? '📁' : '📄';
             entry.innerHTML = '<span class="file-icon">' + icon + '</span>' + escapeHtml(f.name);
             entry.onclick = () => {
-                if (f.type === 'directory') {
-                    vscode.postMessage({ type: 'listFiles', dir: dir + '/' + f.name });
-                } else {
-                    vscode.postMessage({ type: 'openFile', path: dir + '/' + f.name });
+                    if (f.type === 'directory') {
+                        postMessage({ type: 'listFiles', dir: dir + '/' + f.name });
+                    } else {
+                        postMessage({ type: 'openFile', path: dir + '/' + f.name });
                 }
             };
             ft.appendChild(entry);

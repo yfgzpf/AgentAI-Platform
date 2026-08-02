@@ -309,7 +309,7 @@ export const MusicPlayer: React.FC<{
       name: '演示旋律 (Demo)',
       url,
       duration: durationSec,
-      artist: 'Atlas',
+      artist: 'PulseFlow',
     };
     setPlaylist(prev => [demo, ...prev]);
     setTimeout(() => loadTrack(0), 100);

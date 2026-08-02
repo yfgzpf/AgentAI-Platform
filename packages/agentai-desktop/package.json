@@ -1,7 +1,7 @@
 {
   "name": "@agentai/desktop",
   "version": "0.1.0-alpha.1",
-  "description": "AgentAI Desktop — Tauri 2.0 (Rust) 极小桌面壳 (5-10MB)",
+  "description": "PulseFlow Desktop — Tauri 2.0 (Rust) 极小桌面壳 (5-10MB)",
   "type": "module",
   "private": true,
   "scripts": {

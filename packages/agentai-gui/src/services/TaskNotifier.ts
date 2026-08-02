@@ -80,7 +80,7 @@ class TaskNotifierImpl {
 
     try {
       new Notification(title || '✅ 任务完成', {
-        body: body || 'AI 已完成任务, 回到 x-agent 查看结果',
+        body: body || 'AI 已完成任务, 回到岐枢查看结果',
         icon: '/favicon.svg',
         tag: 'agentai-task-done',
       });

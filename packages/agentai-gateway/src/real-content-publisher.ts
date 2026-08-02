@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * RealContentPublisher - 真实内容发布系统
  * 
