@@ -1042,6 +1042,7 @@ export const ActivityTimeline: React.FC<{
                     }}><CaretRightOutlined style={{fontSize:9}} /></span>
                   </div>
                   {/* 写入中实时预览: write_file/create_file/edit_file 等工具执行时展示文件内容 */}
+                  {/* 2026-08-03: 工具完成后自动折叠, 不占据窗口 */}
                   {isRunning && /^write_file|create_file|edit_file|multi_edit|str_replace$/i.test(s.name) && (() => {
                     const w = parseWriteArgs(typeof s.args === 'string' ? s.args : JSON.stringify(s.args));
                     return w ? <WriteInProgressCard key={`write-preview-${i}`} {...w} /> : null;

@@ -3757,7 +3757,9 @@ if (this._capabilityTier !== 'autonomous') {
     // 问候/自我介绍不触发总结 (否则死循环: 你好→总结→你好→总结)
     const isGreetingFinal = /^(你好|嗨|hi|hello|嘿|哈喽|我是|我在|有什么|随时)/i.test(lastText.trim())
       || /智能助手|AgentAI|帮你搞|帮你处理|我在的|我在呢|没有掉线/i.test(lastText);
-    if (hasPriorToolCalls && !alreadySummarized && lastText.length < 100 && this.iteration < this.opts.maxIterations - 1 && !isGreetingFinal) {
+    // 2026-08-03: 原来 lastText.length < 100 太严格，写文件后回复通常 >100 字，改为 <500 字符
+    // 同时允许更长回复也能触发总结，避免 AI 写完后不总结
+    if (hasPriorToolCalls && !alreadySummarized && lastText.length < 500 && this.iteration < this.opts.maxIterations - 1 && !isGreetingFinal) {
       try {
         const summaryPrompt = '[SYSTEM] 任务已执行完毕。请用 2-3 句话简要总结你完成了什么工作、修改了哪些文件、关键结果是什么。';
         const summaryReq: ChatRequest = {
