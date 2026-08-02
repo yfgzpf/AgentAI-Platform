@@ -11,6 +11,7 @@
  */
 import React, { useState, useEffect, useMemo, useCallback, Suspense, lazy } from 'react';
 import { ConfigProvider, App as AntApp, theme, Tooltip, Dropdown, Tag, Modal, Button } from 'antd';
+import zhCN from 'antd/locale/zh_CN';
 import {
   MessageOutlined, EditOutlined, PictureOutlined, VideoCameraOutlined,
   CodeOutlined, AppstoreOutlined, RobotOutlined, MessageOutlined as QQIcon,
@@ -20,12 +21,17 @@ import {
   LeftOutlined, RightOutlined, SunOutlined, MoonOutlined, BookOutlined,
   WechatOutlined, ClockCircleOutlined, BellOutlined, MedicineBoxOutlined,
   DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined, SyncOutlined,
-  GlobalOutlined,
+  GlobalOutlined, MinusOutlined, BorderOutlined, CloseOutlined, MobileOutlined,
+  HomeOutlined,
 } from '@ant-design/icons';
-/* P0-4: 代码分割 — 12 个页面组件延迟加载, 首屏只加载 chat */
-const ChatView = lazy(() => import('./components/ChatView').then(m => ({ default: m.ChatView })));
+/* P0-4: 代码分割 — 首屏组件同步加载，其他页面延迟加载 */
+// 首屏核心组件 - 同步导入避免骨架屏等待
+import { ChatView } from './components/ChatView';
+
+// 其他页面组件 - 懒加载
 const WritePage = lazy(() => import('./components/WritePage').then(m => ({ default: m.WritePage })));
 const ImageGen = lazy(() => import('./components/ImageGen').then(m => ({ default: m.ImageGen })));
+const ImageStudio = lazy(() => import('./components/ImageStudio').then(m => ({ default: m.ImageStudio })));
 const VideoGen = lazy(() => import('./components/VideoGen').then(m => ({ default: m.VideoGen })));
 const Model3DGen = lazy(() => import('./components/Model3DGen').then(m => ({ default: m.Model3DGen })));
 const Editor = lazy(() => import('./components/Editor').then(m => ({ default: m.Editor })));
@@ -45,10 +51,15 @@ const TaskCenterPanel = lazy(() => import('./components/TaskCenterPanel').then(m
 const EvolutionPanel = lazy(() => import('./components/EvolutionPanel').then(m => ({ default: m.EvolutionPanel })));
 const SandboxRulesEditor = lazy(() => import('./components/SandboxRulesEditor').then(m => ({ default: m.SandboxRulesEditor })));
 const KnowledgeGraphPanel = lazy(() => import('./components/knowledge/KnowledgeGraphPanel').then(m => ({ default: m.default })));
+const MonitoringPanel = lazy(() => import('./components/MonitoringPanel').then(m => ({ default: m.default })));
+const KnowledgeDashboard = lazy(() => import('./components/KnowledgeDashboard').then(m => ({ default: m.KnowledgeDashboard })));
 import { RightPanel } from './components/RightPanel';
-import { SessionSidebar } from './components/SessionSidebar';
+import { PulseFlowSidebar } from './components/PulseFlowSidebar';
 import { GuideModal } from './components/GuideModal';
 import { StatusBar } from './components/StatusBar';
+import { GitStatusBar } from './components/GitStatusBar';
+import { SimpleGitPanel } from './components/SimpleGitPanel';  // 使用简化版 Git 面板
+import { TerminalPanel, terminalTaskManager, TerminalTask } from './components/TerminalPanel';  // 终端任务面板
 import { Onboarding } from './components/Onboarding';
 import { SetupWizard } from './components/SetupWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -57,6 +68,7 @@ import { useProfileStore, UserProfile } from './store';
 import { useSessionStore } from './store/sessionStore';
 import { useModeStore, MODE_CONFIG, MODE_ORDER } from './store/modeStore';
 import { useFontSizeStore, FONT_SIZE_MAP, type FontSize } from './store';
+import { useModelStore } from './store/modelStore';
 import { ModelSelector } from './components/ModelSelector';
 import { gatewayFallback } from './services/GatewayFallback';
 import FloatingSuggestionToast from './components/FloatingSuggestionToast';
@@ -72,8 +84,51 @@ if (typeof window !== 'undefined') {
   (window as any).openGlobalBrowser = openGlobalBrowser;
 }
 
+/* ════════════════ 对话改图切换按钮 ════════════════ */
+const ChatModeToggle: React.FC = () => {
+  const { chatMode, setChatMode, models, activeModelId, setActive } = useModelStore();
+  
+  // 切换按钮始终显示: 用户可随时切换回普通对话模式 (即使当前模型不支持图片)
+  const isImageMode = chatMode === 'image_edit';
+  
+  const handleToggle = () => {
+    const newMode = isImageMode ? 'chat' : 'image_edit';
+    setChatMode(newMode);
+    
+    // 切换到图片模式时，自动选择支持图片的模型
+    if (newMode === 'image_edit') {
+      const imageModels = models.filter(m => 
+        m.capabilities?.includes('image') || 
+        m.capabilities?.includes('multimodal') ||
+        ['zhipu', 'doubao-chat', 'qwen-chat', 'longcat-2.0'].includes(m.id)
+      );
+      if (imageModels.length > 0 && !imageModels.find(m => m.id === activeModelId)) {
+        setActive(imageModels[0].id);
+      }
+    }
+  };
+  
+  return (
+    <Tooltip title={isImageMode ? '切换回普通对话' : '切换到对话改图模式'}>
+      <span
+        onClick={handleToggle}
+        style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 30, height: 30, borderRadius: 6, cursor: 'pointer',
+          color: isImageMode ? 'var(--accent)' : 'var(--muted-2)',
+          background: isImageMode ? 'var(--accent-soft)' : 'transparent',
+          transition: 'all 0.15s ease', marginRight: 8,
+          fontSize: 16,
+        }}
+      >
+        🎨
+      </span>
+    </Tooltip>
+  );
+};
+
 /* ════════════════ PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'sandbox' | 'knowledge-graph';
+type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'pascal' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'sandbox' | 'knowledge-graph' | 'external-connections' | 'monitoring' | 'knowledge-explore';
 
 interface PageMeta {
   key: PageKey;
@@ -90,14 +145,18 @@ interface PageMeta {
 
 const GovernorPanel = lazy(() => import('./components/GovernorPanel').then(m => ({ default: m.GovernorPanel })));
 const StatsPanel = lazy(() => import('./components/StatsPanel').then(m => ({ default: m.StatsPanel })));
+const ExternalConnectionsPanel = lazy(() => import('./components/ExternalConnectionsPanel').then(m => ({ default: m.ExternalConnectionsPanel })));
+const PascalEditor = lazy(() => import('./components/PascalEditor').then(m => ({ default: m.PascalEditor })));
 
 const PAGES: PageMeta[] = [
   { key: 'chat',     label: '对话',     icon: <MessageOutlined />,    comp: ChatView,      group: 'core',   desc: '智能对话 · 多模型 · 工具调用' },
   { key: 'editor',   label: '编辑器',   icon: <CodeOutlined />,       comp: Editor,        group: 'core',   desc: '代码编辑 · 改写 · 文件管理' },
   { key: 'xuanji',   label: '医案',     icon: <MedicineBoxOutlined />, comp: XuanjiPanel,   group: 'core',   desc: '四诊合参 · 辨证论治 · 经验积累', badge: 'NEW' },
-  { key: 'image',    label: '生图',     icon: <PictureOutlined />,    comp: ImageGen,      group: 'media',  desc: '文生图 · 多风格 · 多尺寸' },
+  { key: 'external-connections', label: '外部连接', icon: <MobileOutlined />, comp: ExternalConnectionsPanel, group: 'system', desc: 'Android 设备 · SketchUp · 公众号自动化', badge: 'NEW' },
+  { key: 'image',    label: '生图',     icon: <PictureOutlined />,    comp: ImageStudio,   group: 'media',  desc: 'AI 图像工作室 · 5种创作模式' },
   { key: 'video',    label: '生视频',   icon: <VideoCameraOutlined />,comp: VideoGen,      group: 'media',  desc: '文生视频 · 图生视频 · 首尾帧' },
   { key: '3d',       label: '3D建模',   icon: <AppstoreOutlined />,   comp: Model3DGen,    group: 'media',  desc: '文/图生3D · 混元 · 豆包' },
+  { key: 'pascal',   label: '建筑编辑', icon: <HomeOutlined />,       comp: PascalEditor,  group: 'media',  desc: 'AI 驱动 3D 建筑模型 · 墙体/门窗/屋顶', badge: 'NEW' },
   { key: 'write',    label: '写作',     icon: <EditOutlined />,       comp: WritePage,     group: 'media',  desc: '长文写作 · 模板 · 一键导出' },
   { key: 'skills',   label: '技能库',   icon: <AppstoreOutlined />,   comp: SkillLibrary,  group: 'system', desc: '25+ 技能 · 7 分类' },
   { key: 'cleaner',  label: '智能清理', icon: <ThunderboltOutlined />,comp: CleanerPanel,  group: 'system', desc: '扫描 / 分类 / 安全清理' },
@@ -115,6 +174,8 @@ const PAGES: PageMeta[] = [
   { key: 'evolution', label: '自进化',  icon: <ExperimentOutlined />, comp: EvolutionPanel,  group: 'system', desc: '跨会话规则自修改 · 技能自动创建 · 行为优化', badge: 'NEW' },
   { key: 'sandbox',   label: '沙箱规则', icon: <PartitionOutlined />, comp: SandboxRulesEditor, group: 'system', desc: '可视化编辑沙箱规则的 deny/prompt/allow' },
   { key: 'knowledge-graph', label: '知识图谱', icon: <BulbOutlined />, comp: KnowledgeGraphPanel, group: 'system', desc: '知识关系可视化 · 实体链接 · 概念网络' },
+  { key: 'monitoring', label: '监控面板', icon: <DashboardOutlined />, comp: MonitoringPanel, group: 'system', desc: '进化系统 · 审批策略 · 反馈闭环 实时监控', badge: 'NEW' },
+  { key: 'knowledge-explore', label: '知识探索', icon: <ExperimentOutlined />, comp: KnowledgeDashboard, group: 'system', desc: 'AI 自主学习 · GitHub 探索 · 知识蒸馏', badge: 'NEW' },
   { key: 'settings', label: '设置',     icon: <SettingOutlined />,    comp: Settings,      group: 'system', desc: '密钥 · 框架 · 模型 · 主题' },
 ];
 
@@ -185,7 +246,33 @@ export const App: React.FC = () => {
   const [wechatModalVisible, setWechatModalVisible] = useState(false);
   const [setupWizardVisible, setSetupWizardVisible] = useState(false);
   const [splashVisible, setSplashVisible] = useState(true);
+  const [gitPanelVisible, setGitPanelVisible] = useState(false);
+  const [terminalPanelVisible, setTerminalPanelVisible] = useState(false);
+  const [terminalTasks, setTerminalTasks] = useState<TerminalTask[]>([]);
   const { fontSize, setFontSize } = useFontSizeStore();
+
+  // Tauri 环境检测 (用于显示窗口控制按钮)
+  const isTauriEnv = !!(window as any).__TAURI_INTERNALS__ || window.location.protocol === 'tauri:';
+
+  /** 窗口控制操作 (最小化/最大化/关闭) */
+  const handleWindowAction = useCallback(async (action: 'minimize' | 'toggle-maximize' | 'close') => {
+    if (!isTauriEnv) return;
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const win = getCurrentWindow();
+      switch (action) {
+        case 'minimize': await win.minimize(); break;
+        case 'toggle-maximize':
+          await win.isMaximized().then(async (maxed) => {
+            maxed ? await win.unmaximize() : await win.maximize();
+          });
+          break;
+        case 'close': await win.close(); break;
+      }
+    } catch (e) {
+      console.warn('[App] Window action failed:', e);
+    }
+  }, [isTauriEnv]);
 
   /* ✨ 全局建议 SSE 连接 + 未读计数 */
   useSuggestionSSE();
@@ -197,6 +284,12 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (page === 'suggestions') markSuggestionsRead();
   }, [page, markSuggestionsRead]);
+
+  /* --- 监听终端任务变化 --- */
+  useEffect(() => {
+    const unsubscribe = terminalTaskManager.onChange(setTerminalTasks);
+    return () => unsubscribe();
+  }, []);
 
   /* --- 主题 + 字体大小应用 --- */
   useEffect(() => {
@@ -235,7 +328,7 @@ export const App: React.FC = () => {
           }
         }
         
-        // 加载所有模型密钥状态
+        // 加载所有模型密钥状态 + 动态模型列表
         const providers = ['agentai', 'deepseek', 'openai', 'zhipu', 'yi', 'baichuan', 'minimax', 'anthropic'];
         for (const provider of providers) {
           try {
@@ -252,6 +345,15 @@ export const App: React.FC = () => {
           } catch (e) {
             console.warn(`[keys] failed to load ${provider}:`, e);
           }
+        }
+        
+        // 加载动态模型列表
+        try {
+          const { useModelStore } = await import('./store/modelStore');
+          await useModelStore.getState().loadDynamicModels();
+          console.log('[models] dynamic models loaded from backend');
+        } catch (e) {
+          console.warn('[models] failed to load dynamic models:', e);
         }
       } catch {}
     })();
@@ -270,6 +372,38 @@ export const App: React.FC = () => {
     };
     window.addEventListener('agentai:navigate', handler);
     return () => window.removeEventListener('agentai:navigate', handler);
+  }, []);
+
+  /* --- 监听打开使用指南事件 (左侧栏底部入口触发) --- */
+  useEffect(() => {
+    const handler = () => setGuideVisible(true);
+    window.addEventListener('agentai:show-guide', handler);
+    return () => window.removeEventListener('agentai:show-guide', handler);
+  }, []);
+
+  /* --- 监听 Tauri 托盘菜单导航事件 --- */
+  useEffect(() => {
+    const isTauri = !!(window as any).__TAURI_INTERNALS__ || window.location.protocol === 'tauri:';
+    if (!isTauri) return;
+    
+    let unlisten: (() => void) | null = null;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen<string>('navigate', (event) => {
+          const target = event.payload as PageKey;
+          if (target && PAGES.some(p => p.key === target)) {
+            setPage(target);
+          }
+        });
+      } catch (e) {
+        console.warn('[App] Failed to setup Tauri navigate listener:', e);
+      }
+    })();
+    
+    return () => {
+      if (unlisten) unlisten();
+    };
   }, []);
 
   /* --- 启动时决定是否弹 Onboarding ---
@@ -296,25 +430,42 @@ export const App: React.FC = () => {
   /* --- 首次启动环境检测 (仅 Tauri 桌面端打包后生效) --- */
   useEffect(() => {
     // 开发环境 (Vite dev server) 不检测, 避免开发时误弹
-    const isTauri = !!(window as any).__TAURI_INTERNALS__ || window.location.protocol === 'tauri:' || location.port === '1420';
+    const isTauri = !!(window as any).__TAURI_INTERNALS__ || window.location.protocol === 'tauri:' || window.location.port === '1420';
     if (!isTauri) return;
     if (localStorage.getItem('agentai.setupChecked')) return;
-    const timer = setTimeout(() => {
-      // 尝试连接 gateway, 如果连不上说明可能缺 Node.js
-      fetch('/v1/system/check-dep?cmd=node')
-        .then(r => r.json())
-        .then((data) => {
-          if (data.installed) {
-            localStorage.setItem('agentai.setupChecked', '1');
-          } else {
-            setSetupWizardVisible(true);
+    const timer = setTimeout(async () => {
+      // ⚠️ 关键修复: 必须用 GATEWAY_HTTP 绝对路径, 不能用相对路径!
+      // 相对路径 /v1/... 在 Tauri 打包后 → tauri://localhost/v1/... → 404 (因为 Gateway 还没启动)
+      // 等待 GatewayFallback 先尝试自启 Gateway (quickStartGateway 在 gatewayFallback.start() 中调用)
+      const { GATEWAY_HTTP } = await import('./services/config');
+      const healthUrl = `${GATEWAY_HTTP}/v1/health`;
+      
+      // 先给 Gateway 自启留足时间 (Rust 端 setup 延迟 1s + Node 启动 ~2s + Gateway listen ~3s)
+      let nodeOk = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const resp = await fetch(`${GATEWAY_HTTP}/v1/system/check-dep?cmd=node`, { 
+            signal: AbortSignal.timeout(5000) 
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.installed) {
+              nodeOk = true;
+              localStorage.setItem('agentai.setupChecked', '1');
+              break;
+            }
           }
-        })
-        .catch(() => {
-          // gateway 没启动, 弹出环境检测向导
-          setSetupWizardVisible(true);
-        });
-    }, 3000);
+        } catch {
+          // Gateway 可能还在启动中, 等待后重试
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      }
+      
+      if (!nodeOk) {
+        // 3 次重试都失败: 要么没装 Node,要么 Gateway 启动失败
+        setSetupWizardVisible(true);
+      }
+    }, 5000); // 延迟到 5s, 给 Rust auto-start 足够时间
     return () => clearTimeout(timer);
   }, []);
 
@@ -439,15 +590,17 @@ export const App: React.FC = () => {
     >
       <AntApp>
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)' }}>
-        {/* ═══ 1. TitleBar ═══ */}
+        {/* ═══ 1. TitleBar (ZCode 风格: 紧凑 36px) ═══ */}
         <div className="app-titlebar">
-          {/* 品牌 */}
-          <div className="app-brand">
-            <img src="/favicon-32.png" alt="PulseFlow"
-              style={{ width: 36, height: 36, borderRadius: 8, marginRight: 8 }} />
-            <div className="app-brand-text">
-              <span className="app-brand-name">PulseFlow</span>
-            </div>
+          {/* 品牌 (精简: 小图标 + 文字) */}
+          <div className="app-brand" style={{ gap: 4 }}>
+            <img src="./favicon-32.png" alt="岐枢"
+              style={{ width: 20, height: 20, borderRadius: 4 }} />
+            <span className="app-brand-name" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontWeight: 600, color: 'var(--fg)' }}>岐枢</span>
+              <span style={{ opacity: 0.6, fontSize: 10 }}>|</span>
+              <span style={{ opacity: 0.8 }}>PulseFlow</span>
+            </span>
           </div>
 
           {/* 主导航 Tab (分组: core 直接显示, media/system 下拉) */}
@@ -473,7 +626,7 @@ export const App: React.FC = () => {
                 onClick={() => (window as any).openGlobalBrowser?.()}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
-                <GlobalOutlined style={{ color: '#CD7A3A' }} />
+                <GlobalOutlined style={{ color: 'var(--accent)' }} />
                 <span>浏览器</span>
               </span>
             </Tooltip>
@@ -543,6 +696,9 @@ export const App: React.FC = () => {
           <div style={{ marginRight: 8 }}>
             <ModelSelector mode="minimal" />
           </div>
+
+          {/* 对话改图切换按钮 */}
+          <ChatModeToggle />
 
           {/* 显示设置 (主题 + 字体) */}
           <Tooltip title="主题 & 字体大小">
@@ -685,22 +841,54 @@ export const App: React.FC = () => {
               {profile?.name || '游客'}
             </span>
           </div>
+
+          {/* Tauri 窗口控制按钮 (仅桌面端显示) */}
+          {isTauriEnv && (
+            <div style={{ display: 'flex', marginLeft: 'auto', gap: 0 }}>
+              <Tooltip title="最小化">
+                <span
+                  onClick={() => handleWindowAction('minimize')}
+                  className="window-control-btn"
+                  data-action="minimize"
+                >
+                  <MinusOutlined style={{ fontSize: 11 }} />
+                </span>
+              </Tooltip>
+              <Tooltip title="最大化">
+                <span
+                  onClick={() => handleWindowAction('toggle-maximize')}
+                  className="window-control-btn"
+                  data-action="maximize"
+                >
+                  <BorderOutlined style={{ fontSize: 11 }} />
+                </span>
+              </Tooltip>
+              <Tooltip title="关闭">
+                <span
+                  onClick={() => handleWindowAction('close')}
+                  className="window-control-btn window-control-close"
+                  data-action="close"
+                >
+                  <CloseOutlined style={{ fontSize: 11 }} />
+                </span>
+              </Tooltip>
+            </div>
+          )}
         </div>
 
-        {/* ═══ 2. 面包屑 (当前页 + 描述) ═══ */}
-        <div className="app-breadcrumb">
-          <span className="app-breadcrumb-sep">●</span>
-          <span className="app-breadcrumb-current">{currentPage.label}</span>
-          <span style={{ color: 'var(--muted-2)' }}>·</span>
-          <span style={{ color: 'var(--muted)' }}>{currentPage.desc}</span>
-        </div>
-
-        {/* ═══ 3. 主区: 三栏 ═══ */}
+        {/* ═══ 2. 主区: 三栏 (ZCode 风格: 无面包屑，节省空间) ═══ */}
         <div className="app-main fade-in" key={page /* 切页时重启动画 */}>
-          {/* Left: 会话侧栏 (仅 chat) */}
+          {/* Left: 全能侧栏 (PulseFlowSidebar — Sessions / Files / Tasks) */}
           {showSessionSidebar && (
             <div style={{ width: 260, borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', flexShrink: 0 }}>
-              <SessionSidebar onGuideClick={() => setGuideVisible(true)} />
+              <PulseFlowSidebar
+                width={260}
+                onFileOpen={(path: string) => {
+                  // Open file in editor mode
+                  setPage('editor');
+                  window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path } }));
+                }}
+              />
             </div>
           )}
 
@@ -708,7 +896,7 @@ export const App: React.FC = () => {
           <div className="app-content">
             <ErrorBoundary key={page} onRetry={() => setPage(page)}>
               <Suspense fallback={<PageSkeleton />}>
-                <currentPage.comp />
+                {currentPage?.comp ? <currentPage.comp /> : <PageSkeleton />}
               </Suspense>
             </ErrorBoundary>
           </div>
@@ -724,7 +912,19 @@ export const App: React.FC = () => {
         {/* ═══ 4. StatusBar ═══ */}
         <div className="app-statusbar">
           <StatusBar />
+          <GitStatusBar onClick={() => setGitPanelVisible(true)} />
         </div>
+
+        {/* ═══ Git Panel ═══ */}
+        <SimpleGitPanel visible={gitPanelVisible} onClose={() => setGitPanelVisible(false)} />
+
+        {/* ═══ Terminal Panel ═══ */}
+        <TerminalPanel 
+          visible={terminalPanelVisible} 
+          onClose={() => setTerminalPanelVisible(false)}
+          tasks={terminalTasks}
+          onClearTasks={() => terminalTaskManager.clearTasks()}
+        />
       </div>
 
       {/* ═══ 5. 使用指南 Modal ═══ */}
@@ -766,7 +966,7 @@ export const App: React.FC = () => {
           扫描二维码添加微信，获取技术支持
         </p>
         <img
-          src="/weixin.jpg"
+          src="./weixin.jpg"
           alt="开发者微信二维码"
           style={{
             width: 200,

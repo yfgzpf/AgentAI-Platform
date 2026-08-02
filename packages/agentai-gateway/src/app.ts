@@ -6,6 +6,7 @@ import express from 'express';
 import cors from 'cors';
 import * as path from 'path';
 import * as fs from 'fs';
+import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { Server as IOServer } from 'socket.io';
 
@@ -22,7 +23,7 @@ import { MemoryManager } from './memory-manager.js';
 import { MCP_HOSTS } from './mcp/config.js';
 
 // ===== CORS 配置 =====
-const CORS_ORIGINS = (process.env.AGENTAI_CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5176,http://127.0.0.1:5176,http://localhost:1420,http://127.0.0.1:1420,http://127.0.0.1,http://localhost,tauri://localhost').split(',').map(o => o.trim());
+const CORS_ORIGINS = (process.env.AGENTAI_CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5176,http://127.0.0.1:5176,http://localhost:1420,http://127.0.0.1:1420,http://localhost:4173,http://127.0.0.1:4173,http://localhost:4174,http://127.0.0.1:4174,http://127.0.0.1,http://localhost,tauri://localhost,http://tauri.localhost,https://tauri.localhost').split(',').map(o => o.trim());
 import { filesRouter } from './routes/files.js';
 import { createQQRouter } from './routes/qq.js';
 import { createChannelRouter } from './routes/channel.js';
@@ -56,6 +57,14 @@ import { createSkillsRouter } from './routes/skills.js';
 import { startSkillWatcher } from './skills/watcher.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
 import { getSessionManager } from './session-manager.js';
+import { createModelsRouter } from './routes/models.js';
+import { createAutomationRouter } from './routes/automation.js';
+import gitRouter from './routes/git-simple.js';  // 使用简化版 Git 路由
+import { createConnectorsRouter } from './routes/connectors.js';
+import { createPresetWorkflowsRouter } from './routes/preset-workflows.js';
+import { createQihuangRouter } from './routes/qihuang.js';
+import { createRemoteRouter } from './routes/remote.js';
+import { createPascalRouter } from './routes/pascal.js';
 
 export interface AppDeps {
   /** 共享依赖 (router / sessions / 等) */
@@ -64,16 +73,16 @@ export interface AppDeps {
   io?: IOServer;
 }
 
-export function createApp(deps: AppDeps) {
+export async function createApp(deps: AppDeps) {
   const app = express();
 
   // ===== 中间件 =====
-  app.use(cors({
-    origin: (origin, callback) => {
-      // 允许: 无 origin (同源/curl) / 白名单 / 任意 localhost 变体
-      if (!origin || CORS_ORIGINS.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || origin === 'tauri://localhost') {
-        callback(null, origin || CORS_ORIGINS[0]);
-      } else {
+app.use(cors({
+  origin: (origin, callback) => {
+    // 允许: 无 origin (同源/curl) / 白名单 / 任意 localhost 变体 / tauri localhost
+    if (!origin || CORS_ORIGINS.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || /^https?:\/\/tauri\.localhost(:\d+)?$/.test(origin) || origin === 'tauri://localhost') {
+      callback(null, origin || CORS_ORIGINS[0]);
+    } else {
         console.warn(`[cors] rejected origin: ${origin}`);
         callback(new Error('Not allowed by CORS'));
       }
@@ -85,7 +94,15 @@ export function createApp(deps: AppDeps) {
   app.use(authMiddleware);
 
   // ===== 静态资源 =====
-  app.use('/media', express.static(path.resolve(process.cwd(), '../../packages/agentai-skills/out')));
+  // 修复: 区分 dev / prod 环境的 /media 路径
+  //   dev:  cwd 是 monorepo 根 → packages/agentai-skills/out
+  //   prod: cwd 是 gateway-dist-v2/ → 使用 AGENTAI_HOME 下的 media 目录
+  const mediaRoot = process.env.AGENTAI_DESKTOP === '1'
+    ? path.join(process.env.AGENTAI_HOME || process.cwd(), 'skills-media')
+    : path.resolve(process.cwd(), '../../packages/agentai-skills/out');
+  app.use('/media', express.static(mediaRoot, { fallthrough: true }));
+  console.log(`[static] /media → ${mediaRoot}`);
+
 
   // ===== 路由模块化 =====
   // 沙箱路由: index.ts 在 createApp 之前已 initGlobalSandbox(), 此处 getGlobalSandbox() 可用
@@ -280,6 +297,16 @@ app.get('/v1/notifications/config', async (_req, res) => {
   }
 });
 
+// ===== 监控面板 API (2026-07-31 新增) =====
+app.use('/api/monitoring', async (req, res, next) => {
+  try {
+    const { default: monitoringRouter } = await import('./routes/monitoring.js');
+    monitoringRouter(req, res, next);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ===== 定时任务调度 API =====
 // 安全守护: H7 修复 — 旧 inline 路由已被 createTaskSchedulerRouter() 完全遮蔽
 // 旧 inline 版本无 /stats /pause /resume，前端调用会 404
@@ -409,11 +436,18 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
   app.use(createSettingsRouter({ router: deps.router }));
   app.use(createCleanerRouter());
   app.use('/v1/commercial-models', commercialModelsRouter);
+  app.use('/v1/models', createModelsRouter(deps.router));
+  app.use(createAutomationRouter(process.cwd()));  // 自动化引擎 API
   app.use('/v1/knowledge', createKnowledgeRouter());
   app.use(musicProxyRouter);
   app.use('/v1/suggestions', suggestionsRouter);
   app.use(createXuanjiRouter());  // PulseFlow Xuanji 核心认知框架
   app.use('/v1/tasks', createTasksRouter());  // 长任务快照与恢复 API
+app.use('/v1/git', gitRouter);  // Git 版本控制 API (状态/diff/提交/推送)
+app.use('/v1/qihuang', createQihuangRouter(deps.router));  // 岐枢四诊系统 API
+app.use('/v1/remote', createRemoteRouter());  // 远程开发环境 API
+app.use('/api/gateway/pascal', createPascalRouter());  // Pascal Editor 3D 建筑编辑器 API
+app.use('/api/external-connections', (await import('./routes/external-connections.js')).default);  // 外部连接管理 API (Android/SketchUp/微信)
 
   // ===== IDE 状态感知 =====
   app.post('/v1/ide-state', (req, res) => {
@@ -512,6 +546,31 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
       res.json({ ok: true, ...flags });
     } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
   });
+
+  // ===== 外部连接器管理 API (Android/公众号/SketchUp) =====
+  app.use('/api/connectors', createConnectorsRouter());
+
+  // ===== 预置工作流 API (漫剧/公众号/数据分析等) =====
+  app.use('/api/preset-workflows', createPresetWorkflowsRouter());
+
+  // ===== 生产环境: 提供前端静态资源服务 =====
+  // 当 GUI 构建产物存在时, 由 Gateway 统一托管前端, 避免跨域问题
+  const appDirname = path.dirname(fileURLToPath(import.meta.url));
+  const guiDist = path.resolve(appDirname, '../../agentai-gui/dist');
+  if (fs.existsSync(guiDist)) {
+    app.use(express.static(guiDist, { maxAge: 0, etag: true }));
+    console.log(`[static] ✅ 前端静态资源已挂载: ${guiDist}`);
+    // SPA 回退: 所有非 API 路径返回 index.html (支持前端路由)
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/v1/') || req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) {
+        return next();
+      }
+      res.sendFile(path.join(guiDist, 'index.html'));
+    });
+  } else {
+    console.log(`[static] ⚠️ 前端构建产物不存在: ${guiDist}`);
+    console.log(`[static] 请先执行 "pnpm --filter @agentai/gui build" 构建前端`);
+  }
 
   // ===== 全局错误处理中间件 (防止未捕获异常导致进程崩溃) =====
   app.use((err: any, req: any, res: any, _next: any) => {

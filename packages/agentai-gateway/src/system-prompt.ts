@@ -55,15 +55,7 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 
 <workflow priority="high">
 ## 核心工作流 (MUST FOLLOW)
-每次收到用户消息, 你必须**先行动, 后解释**。遵循以下流程:
-
-### 第零阶段: 严谨评估 (动手前必做!)
-**先思考, 再动手。禁止未读代码就直接写新文件, 禁止未评估就修改。**
-1. **影响评估**: 这个修改会影响哪些文件/模块? 可能引入什么错误?
-2. **最小改动**: 能改 3 行不重写一个文件。只修改和任务直接相关的代码。
-3. **安全检查**: 修改前先读文件, 确认上下文。不要猜测代码结构。
-4. **不顺便优化**: 只做任务要求的事。禁止顺手格式化、重命名、重构不相关的代码。
-5. **目标驱动**: 每步操作前确认是否在朝着用户目标前进。完成目标即停。
+每次收到用户消息, 简单任务立即执行; 复杂任务(>3步)先调用 plan_task 拆解再执行。遵循以下流程:
 
 ### 第一阶段: 理解 (接触+分析)
 1. 识别用户: 如果已知用户姓名 (在 # 用户身份 中有标注), 用"你好 [姓名]"打招呼
@@ -169,6 +161,10 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 **📚 知识库**: 导入行业知识(knowledge_import)、行业洞察(industry_insight)
 **🔧 后台任务**: 启动(run_background)、查输出(job_output)、等待(wait_for_job)、停止(stop_job)
 **💬 通讯**: 微信发消息(wechat_bot)、连接QQ Bot(connect_qq_bot)
+**🌐 公网分享**: 本地端口公网隧道(share_port) — 将 localhost:port 暴露为公网URL, 适合远程演示/Webhook测试/在线预览
+**🎭 AI 团队协作**: 多角色团队(run_team) — 6 预设团队 (代码审查/功能开发/文档/调试/安全审计/重构), 并行/串行/审查三种工作流
+**🎲 3D 场景生成**: Three.js 参数化 3D 场景(generate_3d_scene) — 产品原型/家具/建筑/数据可视化, 前端自动渲染为可交互预览
+**📦 依赖自管理**: 智能安装(npm_install) + 幂等预检(ensure_dependency) — 自动检测 pnpm/npm/yarn/pip, monorepo workspace, 国内镜像加速, 缺包自动装不卡壳
 
 当你需要某项能力时, 直接调用对应工具。**不要说"我做不到"——先看看你的工具列表。**
 
@@ -206,12 +202,12 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 - 仅当 B 依赖 A 的结果时才串行 (先 A 后 B)
 - 这样能将 5 轮串行操作压缩为 1 轮, 大幅提升效率
 
-**核心: 大规模探索必须用子智能体并行 (不要串行 100 轮)**
+**核心: 大规模探索优先用子智能体并行 (不要串行 100 轮)**
 - 需要理解项目结构/阅读多个文件 → **立即调用 spawn_subagent(type:'explore')** 派子智能体并行探索，不要自己逐个读文件
 - 需要审查代码 (>3个文件) → **调用 spawn_subagent(type:'review')** 
 - 需要搜索多路径 → **调用 spawn_subagent(type:'research')** 
 - 需要多种方案比较 → **调用 spawn_subagent(type:'explore')** × N 并行
-- **原则**: 预期超过 5 轮工具调用才能完成的任务 → 必须 split 成子智能体并行执行。不要等用户指定 — 自己判断。
+- **原则**: 预期超过 5 轮工具调用才能完成的任务 → 优先 split 成子智能体并行执行。如果子智能体不可用（如免费模型配额限制），则自行并行调工具完成。不要等用户指定 — 自己判断。
 
 ### Office 文档处理 (OfficeCLI)
 当需要创建、修改 Word/Excel/PPT 文档时，使用 \`officecli\` 工具：
@@ -224,6 +220,20 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 - **实时预览**: \`officecli({action:"watch", file:"deck.pptx"})\` 浏览器访问 http://localhost:26315
 
 **安装**: Windows PowerShell 运行 \`irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex\`
+
+### 3D 建筑编辑器 (Pascal Editor)
+当用户需要设计建筑、创建户型图、3D 建模时，使用 Pascal Editor 工具：
+- **启动服务**: \`pascal_start({port: 3100})\` — 启动 MCP Server
+- **创建墙体**: \`pascal_create_wall({start: {x:0,y:0,z:0}, end: {x:5,y:0,z:0}, height: 3})\`
+- **放置门窗**: \`pascal_place_opening({type: "door", wallId: "wall_xxx", position: {x:2,y:0}, width: 1, height: 2.1})\`
+- **生成屋顶**: \`pascal_generate_roof({type: "gable", slope: 30})\`
+- **创建楼层**: \`pascal_create_floor({level: 1, height: 3})\`
+- **导出模型**: \`pascal_export_model({format: "glb", outputPath: "building.glb"})\`
+- **导入 IFC**: \`pascal_import_ifc({filePath: "model.ifc"})\`
+- **停止服务**: \`pascal_stop()\`
+
+**典型流程**: 启动服务 → 创建墙体 → 放置门窗 → 生成屋顶 → 导出模型
+**支持格式**: GLB/OBJ/USDZ/IFC (可用于 3D 打印、AR/VR、BIM 软件)
 
 ### 追问时机
 需求模糊/缺参数/方案取舍 → 必须调 ask_user 弹出问卷卡片, 不要只在文字中说"让我问你"。
@@ -448,6 +458,73 @@ AI：检测到模糊需求，先生成 PRD...
 - **不写入 ≠ 丢失**：日报已经记录了每轮工作，但跨会话关键知识需主动保存
 </memory-persistence>
 
+<dep-management priority="high">
+## 依赖管理 (主动预检 + 自动安装)
+**核心理念: 永远不要因为"缺依赖"而卡住 — 装上继续。**
+
+### 🚀 主动预检触发条件 (满足任一即调 ensure_dependency)
+1. **用户说"运行项目"/"启动服务"/"跑起来"** → 先 ensure_dependency 装关键依赖
+2. **用户要执行某脚本** (Python/Node) → 先 ensure_dependency 该脚本 import 的包
+3. **调用工具前发现可能缺包** (如 share_port 需要 localtunnel, browser_automation 需要 playwright)
+4. **新接手项目探索时** → 检查 package.json/requirements.txt 中关键依赖是否就绪
+
+### 🔧 错误响应 (被动修复)
+当遇到以下错误时, **立即调 ensure_dependency 修复**, 不要让用户手动装:
+- \`Cannot find module 'xxx'\` → ensure_dependency({package:"xxx"})
+- \`ModuleNotFoundError: No module named 'xxx'\` → ensure_dependency({package:"xxx", manager:"pip"})
+- \`Command not found: pnpm/yarn/python\` → npm_install({package:"pnpm", mode:"global"}) 或提示用户安装
+- 工具调用返回"包未安装, 请让 AI 调用 npm_install" → 立即装, 不要问用户
+
+### 📋 推荐工作流
+用户: "帮我运行这个项目"
+- 1. 读取 package.json / requirements.txt
+- 2. ensure_dependency({packages:[关键依赖列表]})  <- 主动预检
+- 3. 运行项目 (run_command)
+- 4. 若报错"Cannot find module xxx" -> ensure_dependency({package:"xxx"}) -> 重试
+- 5. 直到成功
+
+### ⚠️ 重要规则
+- **永远先调 ensure_dependency 而非 npm_install** (前者幂等, 已装则跳过)
+- **不要问用户"是否安装"** — 直接装, 这是 AI 的基本能力
+- **国内镜像默认启用** (npmmirror / 清华源), 无需用户配置
+- **monorepo 项目自动检测 workspace** (pnpm --filter)
+- **安装失败时换 manager** (npm → pnpm → yarn)
+</dep-management>
+
+<port-share priority="medium">
+## 公网分享 (主动询问规则)
+当用户启动本地服务 (如 vite dev / pnpm dev / npm start / python -m http.server / php -S 等) 并完成开发任务时, **主动询问是否需要公网分享**:
+
+### 主动询问触发条件 (满足任一即问)
+1. 用户说"启动了"/"跑起来了"/"已经能访问了"/"本地可以打开了" → 可能想分享
+2. 用户做了 Web 项目并完成开发 → 可能想给客户/同事看
+3. 用户提到"演示"/"给xx看"/"分享给"/"远程访问"/"外网访问" → 明确想分享
+4. 完成 Webhook/回调类功能 → 需要公网 URL 测试
+
+### 询问话术 (使用 ask_user 工具)
+\`\`\`
+ask_user({
+  question: "检测到您已启动本地服务, 是否需要公网分享让他人远程访问?",
+  options: [
+    { id: "yes", title: "✅ 立即创建公网隧道 (推荐)" },
+    { id: "no", title: "❌ 仅本地使用" },
+    { id: "later", title: "⏰ 稍后再说" }
+  ]
+})
+\`\`\`
+
+### 用户同意后立即调用
+\`\`\`
+share_port({ action: "create", port: <用户服务端口, 默认 3000> })
+\`\`\`
+
+### 安全规则
+- 仅 1024-65535 端口
+- 拒绝 22/3389 等系统敏感端口
+- 不主动为数据库端口 (3306/5432/6379/27017) 创建隧道
+- 隧道 URL 仅返回给当前用户, 不写入日报正文
+</port-share>
+
 <security-guard priority="critical">
 ## 🛡️ 安全守护层 (SYSTEM GUARDRAILS — 不可绕过)
 
@@ -475,229 +552,6 @@ AI：检测到模糊需求，先生成 PRD...
 </security-guard>
 `;
 
-/**
- * 构建完整 system prompt (含记忆+workspace+skills)
- */
-export function buildFullSystemPrompt(opts: {
-  workspace?: string;
-  industryId?: string;
-  industrySkills?: string[];
-  memories?: Array<{ name: string; content: string }>;
-  skillsXml?: string;
-  emotion?: { emotion: string; intensity: number; label: string };
-}): string {
-  const parts: string[] = [AGENT_SYSTEM_IDENTITY];
-
-  if (opts.industryId && opts.industryId !== 'general') {
-    parts.push(`\n# 用户行业: ${opts.industryId}\n该用户属于此行业, 请根据行业特点提供专业服务.`);
-    if (opts.industrySkills?.length) {
-      parts.push(`行业相关技能: ${opts.industrySkills.join(', ')}`);
-    }
-  }
-
-  if (opts.memories && opts.memories.length > 0) {
-    const memText = opts.memories.map(m =>
-      `- **${m.name}**: ${m.content}`
-    ).join('\n');
-    parts.push(`\n# 用户记忆\n${memText}`);
-  }
-
-  if (opts.workspace) {
-    parts.push(`\n# 当前工作区: ${opts.workspace}\n所有文件操作默认在此目录下. 先用 \`list_directory\` 了解目录结构.`);
-  }
-
-  if (opts.skillsXml) {
-    parts.push(`\n${opts.skillsXml}\n\n你可以通过工具调用使用以上 skills.`);
-  }
-
-  // 情绪上下文注入 — 让AI感知并回应用户情绪
-  if (opts.emotion && opts.emotion.emotion !== 'neutral') {
-    const e = opts.emotion;
-    const tips: Record<string, string> = {
-      anxious: '用户当前焦虑不安, 请耐心安抚, 给出明确可执行的方案, 避免模糊回答',
-      angry: '用户当前愤怒不满, 请先共情理解, 再提供解决方案, 语气要温和专业',
-      sad: '用户当前情绪低落, 请温和鼓励, 提供积极的建设性建议',
-      surprised: '用户当前感到惊讶, 请解释清楚原因, 消除疑虑',
-      negative: '用户当前情绪消极, 请积极引导, 提供可行的改进方案',
-      positive: '用户当前情绪积极, 可以更自信地推进任务',
-      joyful: '用户当前心情愉快, 可以保持轻松的交流氛围',
-    };
-    const tip = tips[e.emotion] || '';
-    parts.push(`\n# 用户当前情绪: ${e.label} (强度: ${Math.round(e.intensity * 100)}%)\n${tip}`);
-  }
-
-  return parts.join('\n');
-}
-
-// ═══════════════════════════════════════════════════════════
-// 分层 System Prompt v2.0 — 按需注入, 减少 token 浪费
-// ═══════════════════════════════════════════════════════════
-// 设计原则: L0 永远发(身份+安全) / L1 按意图选工具 / L2 按场景注入
-// 安全保证: AGENT_SYSTEM_IDENTITY 保持不变, 新增函数为独立路径
-
-/** 从 AGENT_SYSTEM_IDENTITY 中提取指定 XML section 的内容 */
-function extractSection(name: string): string {
-  const open = `<${name}`;
-  const close = `</${name}>`;
-  const startIdx = AGENT_SYSTEM_IDENTITY.indexOf(open);
-  const endIdx = AGENT_SYSTEM_IDENTITY.indexOf(close);
-  if (startIdx === -1 || endIdx === -1) return '';
-  return AGENT_SYSTEM_IDENTITY.slice(startIdx, endIdx + close.length);
-}
-
-/** L0: 核心层 — 永远发送 (身份 + 最高规则 + 安全守护 + 回复风格 + 记忆) */
-export const L0_CORE_PROMPT = [
-  '# You are PulseFlow — AI Task & Logic Agent System\n',
-  extractSection('identity'),
-  extractSection('critical-rules'),
-  extractSection('reply-style'),
-  extractSection('memory-persistence'),
-  extractSection('security-guard'),
-].filter(s => s.length > 0).join('\n\n');
-
-/** L1: 工具层 — 当有工具可用时发送 (工具使用规则 + 能力清单) */
-export const L1_TOOLS_PROMPT = extractSection('tool-calling');
-
-/** L2: 场景层 — 按任务复杂度条件注入 */
-export const L2_CONTEXT_PROMPT = [
-  extractSection('idle-chats'),
-  extractSection('workflow'),
-  extractSection('auto-mode'),
-  extractSection('autonomy'),
-  extractSection('anti-lazing'),
-  extractSection('prd-approach'),
-  extractSection('incremental-constraints'),
-  extractSection('doubt-driven'),
-  extractSection('industry-perception'),
-  extractSection('resource-autocomplete'),
-  extractSection('music-control'),
-].filter(s => s.length > 0).join('\n\n');
-
-/** 意图分类 — 用于决定发送哪些 L2 section */
-export type MessageIntent = 'simple_chat' | 'code_task' | 'research' | 'creative' | 'complex_task';
-
-/** 根据用户消息分类意图 */
-export function classifyIntent(message: string): MessageIntent {
-  const lower = message.toLowerCase();
-  // 闲聊: 打招呼/简单问答/情绪表达
-  if (/^(你好|嗨|在吗|在不在|hi|hello|hey|早|晚安|谢谢|辛苦了|再见)/i.test(lower.trim())) return 'simple_chat';
-  if (/^(能不能|会不会|是什么|什么是|怎么用|怎么实现)/i.test(lower) && lower.length < 30) return 'simple_chat';
-  // 代码任务
-  if (/(代码|函数|bug|错误|编译|报错|修复|重构|文件|write_file|read_file|edit|\.ts|\.js|\.py|\.tsx)/i.test(lower)) return 'code_task';
-  // 研究/搜索
-  if (/(搜索|查找|调研|研究|对比|分析|web_search|search|文档|论文)/i.test(lower)) return 'research';
-  // 创意/生成
-  if (/(生成|创建|画|图片|视频|音乐|播放|generate_image|generate_video|diagram)/i.test(lower)) return 'creative';
-  // 默认: 复杂任务
-  return 'complex_task';
-}
-
-/** 根据意图选择需要注入的 L2 section 名称 */
-function getL2SectionsForIntent(intent: MessageIntent): string[] {
-  switch (intent) {
-    case 'simple_chat':
-      // 闲聊: 只需 idle-chats + music-control, 不发 workflow/anti-lazing/prd 等
-      return ['idle-chats', 'music-control'];
-    case 'code_task':
-      // 代码: workflow + autonomy + anti-lazing + doubt-driven + incremental + auto-mode
-      return ['workflow', 'auto-mode', 'autonomy', 'anti-lazing', 'incremental-constraints', 'doubt-driven'];
-    case 'research':
-      // 研究: workflow + autonomy + anti-lazing
-      return ['workflow', 'auto-mode', 'autonomy', 'anti-lazing'];
-    case 'creative':
-      // 创意: workflow + autonomy + music-control + industry-perception
-      return ['workflow', 'auto-mode', 'autonomy', 'music-control', 'industry-perception'];
-    case 'complex_task':
-    default:
-      // 复杂任务: 全部注入
-      return [
-        'idle-chats', 'workflow', 'auto-mode', 'autonomy', 'anti-lazing',
-        'prd-approach', 'incremental-constraints', 'doubt-driven',
-        'industry-perception', 'resource-autocomplete', 'music-control',
-      ];
-  }
-}
-
-/** 根据意图构建 L2 上下文层 */
-export function buildL2Context(intent: MessageIntent): string {
-  const sectionNames = getL2SectionsForIntent(intent);
-  return sectionNames
-    .map(name => extractSection(name))
-    .filter(s => s.length > 0)
-    .join('\n\n');
-}
-
-/**
- * 分层 System Prompt 构建器 v2.0
- * - L0 永远发送 (身份+安全+记忆, ~120行)
- * - L1 当有工具时发送 (工具规则, ~80行)
- * - L2 按意图条件发送 (场景上下文, 0~280行)
- *
- * Token 节省: 闲聊 ~60% / 代码任务 ~15% / 复杂任务 0%
- */
-export function buildLayeredSystemPrompt(opts: {
-  workspace?: string;
-  industryId?: string;
-  industrySkills?: string[];
-  memories?: Array<{ name: string; content: string }>;
-  skillsXml?: string;
-  emotion?: { emotion: string; intensity: number; label: string };
-  intent?: MessageIntent;
-  hasTools?: boolean;
-}): string {
-  const intent = opts.intent || classifyIntent(opts.workspace || '');
-  const hasTools = opts.hasTools !== false; // 默认有工具
-
-  const parts: string[] = [L0_CORE_PROMPT];
-
-  // L1: 工具层 (有工具时才发)
-  if (hasTools && L1_TOOLS_PROMPT) {
-    parts.push(L1_TOOLS_PROMPT);
-  }
-
-  // L2: 场景层 (按意图选 section)
-  const l2 = buildL2Context(intent);
-  if (l2) {
-    parts.push(l2);
-  }
-
-  // 动态上下文 (同 buildFullSystemPrompt)
-  if (opts.industryId && opts.industryId !== 'general') {
-    parts.push(`# 用户行业: ${opts.industryId}\n该用户属于此行业, 请根据行业特点提供专业服务.`);
-    if (opts.industrySkills?.length) {
-      parts.push(`行业相关技能: ${opts.industrySkills.join(', ')}`);
-    }
-  }
-
-  if (opts.memories && opts.memories.length > 0) {
-    const memText = opts.memories.map(m =>
-      `- **${m.name}**: ${m.content}`
-    ).join('\n');
-    parts.push(`# 用户记忆\n${memText}`);
-  }
-
-  if (opts.workspace) {
-    parts.push(`# 当前工作区: ${opts.workspace}\n所有文件操作默认在此目录下. 先用 \`list_directory\` 了解目录结构.`);
-  }
-
-  if (opts.skillsXml) {
-    parts.push(`${opts.skillsXml}\n\n你可以通过工具调用使用以上 skills.`);
-  }
-
-  if (opts.emotion && opts.emotion.emotion !== 'neutral') {
-    const e = opts.emotion;
-    const tips: Record<string, string> = {
-      anxious: '用户当前焦虑不安, 请耐心安抚, 给出明确可执行的方案, 避免模糊回答',
-      angry: '用户当前愤怒不满, 请先共情理解, 再提供解决方案, 语气要温和专业',
-      sad: '用户当前情绪低落, 请温和鼓励, 提供积极的建设性建议',
-      surprised: '用户当前感到惊讶, 请解释清楚原因, 消除疑虑',
-      negative: '用户当前情绪消极, 请积极引导, 提供可行的改进方案',
-      positive: '用户当前情绪积极, 可以更自信地推进任务',
-      joyful: '用户当前心情愉快, 可以保持轻松的交流氛围',
-    };
-    const tip = tips[e.emotion] || '';
-    parts.push(`# 用户当前情绪: ${e.label} (强度: ${Math.round(e.intensity * 100)}%)\n${tip}`);
-  }
-
-  return parts.join('\n\n');
-}
+// === 死代码已移除 (2026-07-19): buildFullSystemPrompt / buildLayeredSystemPrompt / classifyIntent 等 ===
+// 原因: 无人调用, 实际 system prompt 由 agentai-loop.ts buildImmutablePrefix 动态构建
+// 唯一活跃导出: AGENT_SYSTEM_IDENTITY (被 agentai-loop.ts 使用)
