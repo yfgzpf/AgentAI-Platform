@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # ── AgentAI Gateway (核心服务) ───────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentai-gateway
+    ports:
+      - "${PORT:-18789}:18789"
+    env_file:
+      - .env
+    volumes:
+      - agentai-data:/app/data          # SQLite数据库 + 进化记忆
+      - agentai-memory:/app/.agentai/memory  # 记忆系统
+      - agentai-logs:/app/logs          # 日志
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=/app/data/agentai.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - agentai-net
+
+  # ── Redis (可选缓存) ─────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: agentai-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - agentai-net
+    profiles:
+      - redis  # 默认不启动: docker compose --profile redis up
+
+  # ── ChromaDB (可选向量数据库) ─────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: agentai-chromadb
+    ports:
+      - "${VECTOR_DB_PORT:-8000}:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    restart: unless-stopped
+    networks:
+      - agentai-net
+    profiles:
+      - vector  # 默认不启动: docker compose --profile vector up
+
+volumes:
+  agentai-data:
+    driver: local
+  agentai-memory:
+    driver: local
+  agentai-logs:
+    driver: local
+  redis-data:
+    driver: local
+  chroma-data:
+    driver: local
+
+networks:
+  agentai-net:
+    driver: bridge

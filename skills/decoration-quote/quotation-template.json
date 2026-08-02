@@ -1,0 +1,125 @@
+{
+  "_comment": "装修报价表样式定义 - AI生成Excel报价单的结构规范",
+  "_version": "2.0",
+  "_update": "2026-06-14",
+  "_style": "築廷装饰空间报价法 - 森林海2#203案例模板",
+
+  "excel_structure": {
+    "sheets": ["封面", "报价明细", "项目汇总"],
+    "password_protected": false,
+    "formulas_enabled": true
+  },
+
+  "sheet_cover": {
+    "title": "装修报价表",
+    "fields": [
+      { "row": 1, "label": "装修公司", "value": "{company_name}" },
+      { "row": 2, "label": "项目名称", "value": "{project_name}" },
+      { "row": 3, "label": "客户姓名", "value": "{customer_name}" },
+      { "row": 4, "label": "联系电话", "value": "{customer_phone}" },
+      { "row": 5, "label": "项目地址", "value": "{address}" },
+      { "row": 6, "label": "装修面积", "value": "{total_area} m²" },
+      { "row": 7, "label": "装修档次", "value": "{quality_level}" },
+      { "row": 8, "label": "报价日期", "value": "{date}" },
+      { "row": 10, "label": "备注", "value": "本报价依据施工图纸及客户要求编制，最终以实际施工量为准" }
+    ]
+  },
+
+  "sheet_detail": {
+    "columns": {
+      "A": { "header": "序号", "width": 6, "format": "number" },
+      "B": { "header": "空间", "width": 12, "format": "text", "bg_by_space": true },
+      "C": { "header": "项目类别", "width": 10, "format": "text" },
+      "D": { "header": "项目名称", "width": 22, "format": "text" },
+      "E": { "header": "规格/品牌", "width": 20, "format": "text" },
+      "F": { "header": "工艺说明", "width": 30, "format": "text_wrap" },
+      "G": { "header": "单位", "width": 6, "format": "text" },
+      "H": { "header": "数量", "width": 10, "format": "number_2", "editable": true },
+      "I": { "header": "单价(元)", "width": 10, "format": "currency", "editable": true },
+      "J": { "header": "小计(元)", "width": 12, "format": "currency", "formula": "=H{row}*I{row}" }
+    },
+    "space_colors": {
+      "客餐厅": "D9E2F3",
+      "主卧": "E2EFDA",
+      "次卧": "FFF2CC",
+      "次卧2": "FCE4D6",
+      "厨房": "D9D9D9",
+      "主卫": "DAEEF3",
+      "次卫": "DAEEF3",
+      "阳台": "E4DFEC",
+      "玄关过道": "F2F2F2",
+      "水电工程": "F8CBAD",
+      "拆除工程": "FF9999",
+      "砌墙工程": "BDD7EE",
+      "防水工程": "C5E0B4",
+      "瓦工工程": "D9D9D9",
+      "木工工程": "FFF2CC",
+      "油漆工程": "E2EFDA",
+      "门窗工程": "D9E2F3",
+      "安装工程": "FCE4D6",
+      "其他项目": "F2F2F2"
+    }
+  },
+
+  "sheet_summary": {
+    "fields": [
+      { "row": 1, "label": "费用汇总", "style": "title" },
+      { "row": 3, "label": "一、工程直接费", "formula": "=SUMIF(报价明细!D:D,\"*小计\",报价明细!J:J)" },
+      { "row": 4, "label": "二、管理费", "formula": "=工程直接费*管理费率/100", "note": "管理费={management_rate}%" },
+      { "row": 5, "label": "三、税金", "value": 0, "note": "家装免增值税" },
+      { "row": 6, "label": "四、合同总金额", "formula": "=工程直接费+管理费+税金", "style": "bold_total" },
+      { "row": 8, "label": "五、单价", "formula": "=合同总金额/总面积", "note": "元/m²" },
+      { "row": 10, "label": "工程直接费(大写)", "formula": "=RMB(工程直接费)" }
+    ]
+  },
+
+  "item_ordering": {
+    "sequence": ["水电工程", "拆除工程", "砌墙工程", "防水工程", "瓦工工程", "木工工程", "油漆工程", "门窗工程", "安装工程", "其他项目"],
+    "space_detail_sequence": ["客餐厅", "主卧", "次卧", "次卧2", "厨房", "主卫", "次卫", "阳台", "玄关过道"],
+    "rule": "大项按流程排序，空间内按地面→墙面→顶面→柜体→门窗→其他"
+  },
+
+  "item_templates": {
+    "地面": [
+      { "name": "地砖铺贴", "spec": "750×1500mm佛山抛釉砖", "process": "1.瓷砖胶薄贴法\n2.留缝2mm\n3.美缝处理", "unit": "m²", "note": "含损耗5%" },
+      { "name": "地面找平", "spec": "水泥砂浆自流平", "process": "1.界面剂处理\n2.水泥砂浆找平\n3.养护", "unit": "m²", "note": "" },
+      { "name": "美缝施工", "spec": "聚脲美缝剂", "process": "1.清缝(深度≥3mm)\n2.吸尘清理\n3.打美缝剂\n4.压缝球压平\n5.24h后清理余料", "unit": "米", "note": "按瓷砖规格×面积计算" }
+    ],
+    "墙面": [
+      { "name": "墙面基层处理", "spec": "石膏找平+腻子3遍", "process": "1.界面剂封闭\n2.石膏找平\n3.腻子批刮3遍\n4.打磨平整", "unit": "m²" },
+      { "name": "墙面乳胶漆", "spec": "多乐士/立邦五合一", "process": "1.底漆1遍\n2.面漆2遍\n3.成品保护", "unit": "m²" },
+      { "name": "墙砖铺贴", "spec": "300×600mm墙砖", "process": "1.墙面拉毛\n2.瓷砖胶薄贴\n3.勾缝处理", "unit": "m²" },
+      { "name": "踢脚线安装", "spec": "铝合金/瓷砖踢脚线", "process": "1.弹线定位\n2.切割下料\n3.粘贴/打钉固定", "unit": "米" }
+    ],
+    "顶面": [
+      { "name": "石膏板吊顶", "spec": "轻钢龙骨+9.5mm石膏板", "process": "1.弹线定位\n2.安装吊杆+主龙骨\n3.安装副龙骨\n4.石膏板安装\n5.接缝处理", "unit": "m²" },
+      { "name": "铝扣板吊顶", "spec": "300×300mm铝扣板", "process": "1.安装边角线\n2.安装主副龙骨\n3.安装扣板\n4.安装灯具开口", "unit": "m²" },
+      { "name": "顶面乳胶漆", "spec": "同墙面乳胶漆", "process": "1.基层处理\n2.底漆\n3.面漆", "unit": "m²" }
+    ],
+    "柜体": [
+      { "name": "定制衣柜", "spec": "兔宝宝/千年舟E0级", "process": "1.精准量尺\n2.设计图纸确认\n3.工厂定制加工\n4.现场安装\n5.五金调试", "unit": "m²", "note": "投影面积" },
+      { "name": "橱柜地柜", "spec": "石英石台面+多层板柜体", "process": "1.精准量尺\n2.水电位确认\n3.柜体安装\n4.台面安装\n5.五金调试", "unit": "米" },
+      { "name": "鞋柜", "spec": "E0级板材", "process": "1.量尺设计\n2.工厂定制\n3.现场安装", "unit": "m²", "note": "深度350mm" }
+    ],
+    "门窗": [
+      { "name": "碳晶门", "spec": "实木复合碳晶门", "process": "1.门洞修整\n2.安装门套\n3.安装门扇\n4.安装五金\n5.调试", "unit": "樘" },
+      { "name": "长虹玻璃门", "spec": "铝合金+长虹玻璃", "process": "1.门洞修整\n2.安装门框\n3.安装门扇\n4.调试", "unit": "樘" },
+      { "name": "断桥铝封窗", "spec": "1.4mm型材+5+12A+5中空", "process": "1.量尺\n2.工厂定制\n3.安装窗框\n4.安装窗扇\n5.打胶密封", "unit": "m²" }
+    ],
+    "防水": [
+      { "name": "JS防水涂料", "spec": "双组份JS聚合物", "process": "1.基层清理\n2.管根/阴阳角处理\n3.第一遍涂刷\n4.第二遍涂刷\n5.闭水试验24h", "unit": "m²" }
+    ]
+  },
+
+  "excel_styling": {
+    "font_header": { "name": "微软雅黑", "size": 11, "bold": true, "color": "FFFFFF" },
+    "font_body": { "name": "微软雅黑", "size": 10 },
+    "font_title": { "name": "微软雅黑", "size": 18, "bold": true },
+    "font_total": { "name": "微软雅黑", "size": 12, "bold": true, "color": "C00000" },
+    "border": "thin",
+    "alignment": { "horizontal": "center", "vertical": "center", "wrap_text": true },
+    "header_fill": "4472C4",
+    "row_height": 28,
+    "header_row_height": 32
+  }
+}

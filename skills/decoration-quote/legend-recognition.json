@@ -1,0 +1,317 @@
+{
+  "_comment": "施工图图例识别描述文件 - AI理解CAD图纸的标准参照表",
+  "_version": "1.0",
+  "_update": "2026-06-14",
+  
+  "legend_categories": {
+    "墙体": {
+      "承重墙": {
+        "visual": "实心双线，内填斜线(////)或点状(···)",
+        "markers": ["填充图案", "双线", "粗线"],
+        "property": "不可拆除，结构柱/剪力墙",
+        "label_in_drawing": "结构墙、剪力墙、承重墙"
+      },
+      "非承重墙": {
+        "visual": "空心双线，内部无填充",
+        "markers": ["双线", "空心", "细线"],
+        "property": "可拆除，隔墙/间墙",
+        "label_in_drawing": "隔墙、间墙、轻质墙"
+      },
+      "玻璃隔断": {
+        "visual": "单细线或双细线，中间标注'玻璃'",
+        "markers": ["单线", "细线", "玻璃"],
+        "property": "透光隔断，不可承重",
+        "label_in_drawing": "玻璃、玻璃隔断"
+      },
+      "新建墙体": {
+        "visual": "虚线轮廓+填充斜线，标注'新建'",
+        "markers": ["虚线", "新建", "填充"],
+        "property": "后砌墙体",
+        "label_in_drawing": "新建墙体、砌墙、后砌"
+      },
+      "拆除墙体": {
+        "visual": "虚线轮廓+叉号(×)，标注'拆除'",
+        "markers": ["虚线", "×", "拆除"],
+        "property": "需拆除的墙体",
+        "label_in_drawing": "拆除、拆墙、打拆"
+      }
+    },
+    "门窗": {
+      "平开门": {
+        "visual": "弧线(门扇展开轨迹)+直线(门板)，弧线方向=开门方向",
+        "markers": ["弧线", "直线", "门扇"],
+        "property": "单扇/双扇平开门",
+        "label_in_drawing": "M、门、M0921(宽900高2100)"
+      },
+      "推拉门": {
+        "visual": "长方形框+中间平行线，双向箭头",
+        "markers": ["长方形", "平行线", "箭头"],
+        "property": "左右推拉",
+        "label_in_drawing": "TLM、推拉门、移门"
+      },
+      "普通窗": {
+        "visual": "墙中3条平行细线",
+        "markers": ["3线条", "平行线", "墙内"],
+        "property": "固定窗/平开窗",
+        "label_in_drawing": "C、窗、C1215(宽1200高1500)"
+      },
+      "飘窗": {
+        "visual": "墙中外凸4条线，超出墙面轮廓",
+        "markers": ["4线条", "外凸", "突出"],
+        "property": "外挑窗台，不计建筑面积",
+        "label_in_drawing": "TC、飘窗、凸窗"
+      },
+      "防火门": {
+        "visual": "门图例+小三角或方块标记",
+        "markers": ["三角", "方块", "FM"],
+        "property": "防火门，常闭",
+        "label_in_drawing": "FM、防火门、FM甲/FM乙"
+      },
+      "子母门": {
+        "visual": "一大一小两个门扇，弧线大小不同",
+        "markers": ["大小门", "双扇", "不对称"],
+        "property": "子母门，大门扇常用+小门扇备用",
+        "label_in_drawing": "ZM、子母门"
+      },
+      "入户门": {
+        "visual": "门图例+外侧粗线，标注尺寸如'1050×2320'",
+        "markers": ["粗线", "1050", "入户"],
+        "property": "防盗门/入户门",
+        "label_in_drawing": "入户门、防盗门、M10523"
+      }
+    },
+    "标注": {
+      "轴线编号": {
+        "visual": "圆圈(○)+数字或字母，如①、A",
+        "markers": ["圆圈", "数字", "字母"],
+        "property": "定位轴线，横向用数字，纵向用字母",
+        "label_in_drawing": "1轴、A轴"
+      },
+      "标高": {
+        "visual": "倒三角(▽)+数字，如▽+2.800",
+        "markers": ["倒三角", "+数字", "▽"],
+        "property": "相对标高，单位米",
+        "label_in_drawing": "±0.000、+2.800、H="
+      },
+      "立面索引": {
+        "visual": "菱形(◇)或圆+箭头+数字",
+        "markers": ["菱形", "箭头", "数字"],
+        "property": "指向立面图编号",
+        "label_in_drawing": "A、B、C、D立面"
+      },
+      "尺寸标注": {
+        "visual": "水平/垂直短线+数字，如←3000→",
+        "markers": ["数字", "短线", "箭头"],
+        "property": "尺寸标注，单位mm",
+        "label_in_drawing": "数字如3000、4500"
+      },
+      "房间名称": {
+        "visual": "矩形框内文字或自由文字",
+        "markers": ["文字", "框", "房间名"],
+        "property": "房间功能标识",
+        "label_in_drawing": "客厅、主卧、厨房、卫生间"
+      },
+      "面积标注": {
+        "visual": "数字+m²/㎡，通常在房间中央",
+        "markers": ["m²", "㎡", "数字"],
+        "property": "房间面积",
+        "label_in_drawing": "12.67m²、44.71㎡"
+      }
+    },
+    "家具设备": {
+      "餐桌": {
+        "visual": "矩形(□)+对角线交叉(×)，4-6把椅子小矩形环绕",
+        "markers": ["矩形", "对角线", "椅子"],
+        "property": "餐桌+餐椅",
+        "label_in_drawing": "餐桌、餐桌椅"
+      },
+      "沙发": {
+        "visual": "L形或一字形矩形，带靠背虚线",
+        "markers": ["L形", "矩形", "虚线"],
+        "property": "沙发",
+        "label_in_drawing": "沙发、L型沙发"
+      },
+      "双人床": {
+        "visual": "大矩形(▭)+内小矩形(枕头)+被单线",
+        "markers": ["大矩形", "枕头", "被单"],
+        "property": "1500×2000或1800×2000mm",
+        "label_in_drawing": "床、1.5m床、1.8m床"
+      },
+      "马桶": {
+        "visual": "椭圆形(◯)或矩形+水箱方块",
+        "markers": ["椭圆", "水箱", "矩形"],
+        "property": "坐便器",
+        "label_in_drawing": "马桶、坐便器"
+      },
+      "洗手台": {
+        "visual": "圆形(◯)+大圆形(台面)，或矩形+半圆",
+        "markers": ["双圆", "矩形", "台面"],
+        "property": "洗手盆/洗脸盆",
+        "label_in_drawing": "洗手台、洗脸盆、台盆"
+      },
+      "燃气灶": {
+        "visual": "矩形(▭)+内方格或圆圈(炉头)",
+        "markers": ["矩形", "方格", "圆圈"],
+        "property": "燃气灶/电磁炉",
+        "label_in_drawing": "燃气灶、灶具"
+      },
+      "浴缸": {
+        "visual": "矩形(▭)+内波浪线",
+        "markers": ["矩形", "波浪", "大"],
+        "property": "浴缸",
+        "label_in_drawing": "浴缸"
+      },
+      "衣柜": {
+        "visual": "矩形框+内部"X"标记(挂衣杆)，标注尺寸如'1845×600'",
+        "markers": ["矩形", "X", "挂衣杆"],
+        "property": "定制衣柜，深度600mm，高度2400mm标准",
+        "label_in_drawing": "衣柜、挂衣区、书柜、收纳柜"
+      },
+      "鞋柜": {
+        "visual": "窄矩形(宽350mm)+标注'鞋柜'",
+        "markers": ["窄矩形", "350", "鞋柜"],
+        "property": "玄关鞋柜，深度350mm",
+        "label_in_drawing": "鞋柜"
+      },
+      "冰箱": {
+        "visual": "矩形(▭)+斜杠(/)或十字",
+        "markers": ["矩形", "斜杠"],
+        "property": "冰箱/冰柜",
+        "label_in_drawing": "冰箱"
+      },
+      "洗衣机": {
+        "visual": "矩形(▭)+内圆圈(滚筒)",
+        "markers": ["矩形", "圆圈"],
+        "property": "洗衣机",
+        "label_in_drawing": "洗衣机"
+      }
+    },
+    "水电": {
+      "插座": {
+        "visual": "半圆+竖线，或实心圆●+标记",
+        "markers": ["半圆", "实心圆"],
+        "property": "电源插座",
+        "label_in_drawing": "插座、五孔、三孔"
+      },
+      "开关": {
+        "visual": "小圆圈○+短线，或空心斜线",
+        "markers": ["小圆圈", "短线"],
+        "property": "照明开关",
+        "label_in_drawing": "开关、单控、双控"
+      },
+      "吸顶灯": {
+        "visual": "圆圈(○)+十字(✚)或交叉线",
+        "markers": ["圆圈", "十字", "交叉"],
+        "property": "吸顶灯/主灯",
+        "label_in_drawing": "灯、吸顶灯、主灯"
+      },
+      "筒灯": {
+        "visual": "小圆圈(○)+十字，或填黑小圆",
+        "markers": ["小圆圈", "填黑"],
+        "property": "筒灯/射灯",
+        "label_in_drawing": "筒灯、射灯"
+      },
+      "排水管": {
+        "visual": "虚线(-----)标注'排水'",
+        "markers": ["虚线", "排水"],
+        "property": "排水管(PVC)",
+        "label_in_drawing": "排水、WL、FL"
+      },
+      "给水管": {
+        "visual": "实线(——)+圆圈●节点标注'给水'",
+        "markers": ["实线", "圆圈", "给水"],
+        "property": "给水管(PPR)",
+        "label_in_drawing": "给水、JL、RL"
+      },
+      "热水管": {
+        "visual": "实线(——)+标记'热水'或红色",
+        "markers": ["实线", "热水", "红色"],
+        "property": "热水管(PPR)",
+        "label_in_drawing": "热水、RL"
+      }
+    },
+    "材质填充": {
+      "砖砌体": {
+        "visual": "平行斜线////(45°单向斜线)",
+        "markers": ["斜线", "45°", "平行"],
+        "property": "砖砌体/砌块墙",
+        "label_in_drawing": "砖墙、砌块"
+      },
+      "钢筋混凝土": {
+        "visual": "交叉网格(×)(45°双向斜线)+三角形小点",
+        "markers": ["交叉", "网格", "三角点"],
+        "property": "钢筋混凝土结构",
+        "label_in_drawing": "RC、钢筋混凝土、砼"
+      },
+      "找平层": {
+        "visual": "点状填充(···)或细砂状",
+        "markers": ["点状", "细砂"],
+        "property": "水泥砂浆找平层",
+        "label_in_drawing": "找平层、水泥砂浆"
+      },
+      "木地板": {
+        "visual": "垂直+水平交叉线(类似工字铺)",
+        "markers": ["垂直", "水平", "交叉"],
+        "property": "实木地板/复合地板",
+        "label_in_drawing": "木地板、复合地板"
+      },
+      "瓷砖": {
+        "visual": "密方格(正方形+对角线)或标注规格",
+        "markers": ["方格", "对角线", "规格"],
+        "property": "瓷砖铺贴区域",
+        "label_in_drawing": "瓷砖、750*1500、800*800"
+      },
+      "防水层": {
+        "visual": "斜线阴影+文字标注'防水'",
+        "markers": ["阴影", "防水"],
+        "property": "防水涂膜层",
+        "label_in_drawing": "防水、JS防水"
+      },
+      "吊顶": {
+        "visual": "虚线框或虚线填充+标高标注",
+        "markers": ["虚线", "吊顶", "标高"],
+        "property": "石膏板/铝扣板吊顶区域",
+        "label_in_drawing": "吊顶、石膏板吊顶、铝扣板"
+      }
+    }
+  },
+
+  "legend_recognition_rules": {
+    "priority": "中文标注优先，其次图形匹配",
+    "fallback": "图例不明时触发追问表单，列出候选图例",
+    "dimension_unit": "mm(毫米)，面积标注为m²",
+    "door_code_pattern": "M+宽度+高度，如M0921=900×2100mm",
+    "window_code_pattern": "C+宽度+高度，如C1215=1200×1500mm",
+    "scale_pattern": "1:N格式，如1:45、1:100"
+  },
+
+  "room_keywords": {
+    "客厅": ["客厅", "起居室", "living", "客餐厅"],
+    "餐厅": ["餐厅", "dining", "用餐区"],
+    "主卧": ["主卧", "主卧室", "master", "主人房"],
+    "次卧": ["次卧", "次卧室", "卧室", "客卧", "guest"],
+    "儿童房": ["儿童房", "小孩房", "子女房", "child"],
+    "书房": ["书房", "study", "工作室", "办公"],
+    "厨房": ["厨房", "kitchen"],
+    "主卫": ["主卫", "主卫生间", "主人房卫生间"],
+    "次卫": ["次卫", "公卫", "公共卫生间", "客卫"],
+    "阳台": ["阳台", "露台", "balcony", "生活阳台", "景观阳台"],
+    "玄关": ["玄关", "门厅", "入户", "entrance"],
+    "过道": ["过道", "走廊", "走道", "hallway"],
+    "衣帽间": ["衣帽间", "步入式衣柜", "衣柜间", "cloakroom"],
+    "储物间": ["储物间", "储藏室", "杂物间"]
+  },
+
+  "unclear_legend_prompt": {
+    "trigger": "AI识别到图例但无法确定具体含义时",
+    "action": "生成追问表单，列出候选图例+原图截图位置",
+    "form_fields": [
+      { "name": "legend_location", "label": "图例位置(图纸页码+坐标)", "type": "text" },
+      { "name": "legend_appearance", "label": "图例外观描述(形状/线条/填充)", "type": "textarea" },
+      { "name": "possible_meanings", "label": "可能的含义(候选列表)", "type": "select_multiple", "options_from": "legend_categories" },
+      { "name": "user_confirm", "label": "确认或修改含义", "type": "text", "voice_input": true },
+      { "name": "dimensions_nearby", "label": "附近是否有尺寸标注? 数字是多少?", "type": "text", "voice_input": true }
+    ],
+    "voice_support": "所有text/textarea字段支持语音输入(Web Speech API)"
+  }
+}
