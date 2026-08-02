@@ -3320,22 +3320,28 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             }
           }
 
-          // ═══ v3.2 只读不写检测: 连续 5 次只调用读取类工具 → 强制要求执行 ═══
-          // 解决 "AI 无限读文件但不执行修改" 的死循环
-          if (toolMsgs.length >= 5) {
-            const recent5 = toolMsgs.slice(-5).map((m: any) => m.name || '');
+          // ═══ v3.3 只读不写检测: 连续 8 次只调用读取类工具 + 未访问新文件 → 温和提醒 ═══
+          // 2026-08-03 修复: 原 5 次门槛太低, 长任务正常探索阶段需要大量读文件
+          // 原硬停逻辑 (_hardStopNext) 导致长任务被强制中断, 已移除
+          if (toolMsgs.length >= 8) {
+            const recent8 = toolMsgs.slice(-8).map((m: any) => m.name || '');
             const readOnlyTools = ['read_file', 'list_directory', 'directory_tree', 'search_content', 'search_codebase', 'glob', 'recall_memory', 'web_search', 'web_fetch', 'get_symbols'];
             const writeTools = ['write_file', 'multi_edit', 'create_file', 'delete_file', 'run_code', 'edit_file', 'create_directory', 'move_file', 'copy_file'];
-            const readCount = recent5.filter((t: string) => readOnlyTools.includes(t)).length;
-            const writeCount = recent5.filter((t: string) => writeTools.includes(t)).length;
-            if (readCount >= 5 && writeCount === 0) {
+            const readCount = recent8.filter((t: string) => readOnlyTools.includes(t)).length;
+            const writeCount = recent8.filter((t: string) => writeTools.includes(t)).length;
+            // 统计访问的文件数 (区分"探索新文件"和"重复读同一文件")
+            const accessedFiles = new Set<string>();
+            for (const m of toolMsgs.slice(-8)) {
+              const fp = (m as any).args?.file_path || (m as any).args?.path || (m as any).args?.filePath;
+              if (fp && typeof fp === 'string') accessedFiles.add(fp);
+            }
+            // 触发条件: 8次全是读 + 访问文件数 <= 2 (重复读同一文件)
+            if (readCount >= 8 && writeCount === 0 && accessedFiles.size <= 2) {
               this.directives.add('read_only_loop',
-                '[SYSTEM] ⚠️ 检测到连续 5 次只读不写! 信息已足够, 必须立即调用 write_file/multi_edit 执行修改, 或明确回答"无法执行并说明原因"。不要继续读取文件。',
-                'high');
-              // 迭代较深时直接硬停, 避免再读一轮
-              if (this.iteration > 8) {
-                this._hardStopNext = true;
-              }
+                '[SYSTEM] 提示: 已连续调用 8 次读取类工具且仅访问 1-2 个文件。' +
+                '如信息已收集完毕, 请考虑执行修改; 如仍在探索, 可继续读取。',
+                'medium');
+              // 不再硬停, 让 AI 自行判断
             }
           }
 
