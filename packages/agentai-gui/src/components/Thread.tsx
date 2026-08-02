@@ -8,9 +8,9 @@
  *   - UserMsg:         用户消息 (右对齐渐变气泡)
  *   - TurnDivider:     轮次分隔符 (时间线风格)
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Tooltip, Tag } from 'antd';
-import { EditOutlined, FileTextOutlined, CaretRightOutlined, SettingOutlined, SearchOutlined, PictureOutlined, VideoCameraOutlined, MessageOutlined, OrderedListOutlined, ToolOutlined } from '@ant-design/icons';
+import { EditOutlined, FileTextOutlined, CaretRightOutlined, SettingOutlined, SearchOutlined, PictureOutlined, VideoCameraOutlined, MessageOutlined, OrderedListOutlined, ToolOutlined, LoadingOutlined } from '@ant-design/icons';
 import { Markdown } from './Markdown';
 import { StatusIndicator } from './StatusIndicator';
 import type { MessageStatus, ChatSegment } from '../store/chatStore';
@@ -288,6 +288,75 @@ export const ReasoningCard: React.FC<{ text: string; streaming?: boolean }> = ({
           {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:9}} /></span>}
         </div>
       )}
+    </div>
+  );
+};
+
+/* ======================== 写入中预览卡片 ======================== */
+
+/** 解析 write_file/create_file 工具的 args，提取 file_path 和 content 预览 */
+function parseWriteArgs(args: string | undefined): { filePath: string; contentPreview: string; lineCount: number } | null {
+  if (!args) return null;
+  let parsed: any;
+  try { parsed = typeof args === 'string' ? JSON.parse(args) : args; } catch { return null; }
+  if (!parsed) return null;
+  const filePath = parsed.file_path || parsed.filePath || parsed.path || parsed.file || '';
+  const content = parsed.content || '';
+  if (!filePath) return null;
+  const lines = content.split('\n');
+  return { filePath, contentPreview: lines.slice(0, 8).join('\n'), lineCount: lines.length };
+}
+
+const WriteInProgressCard: React.FC<{
+  filePath: string;
+  contentPreview: string;
+  lineCount: number;
+}> = ({ filePath, contentPreview, lineCount }) => {
+  const [chars, setChars] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    timerRef.current = setInterval(() => setChars(c => Math.min(c + 1, contentPreview.length)), 30);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [contentPreview]);
+  return (
+    <div style={{
+      margin: '4px 0 8px 16px',
+      borderRadius: 6,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      overflow: 'hidden',
+    }}>
+      {/* Header: 文件名 + 写入中动画 */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '4px 10px',
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--accent-soft)',
+      }}>
+        <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)', flex: 1,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {filePath}
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 3 }}>
+          <LoadingOutlined style={{ fontSize: 10 }} />
+          写入中… {lineCount} 行
+        </span>
+      </div>
+      {/* Content preview with typewriter effect */}
+      <pre style={{
+        margin: 0, padding: '6px 10px',
+        fontSize: 10, fontFamily: 'monospace', lineHeight: 1.5,
+        color: 'var(--fg-2)', overflowX: 'auto',
+        maxHeight: 120, overflowY: 'auto',
+        whiteSpace: 'pre',
+      }}>
+        {contentPreview.slice(0, chars)}
+        <span style={{
+          animation: 'blink 1s infinite',
+          color: 'var(--accent)',
+        }}>{chars < contentPreview.length ? '▌' : ''}</span>
+      </pre>
     </div>
   );
 };
@@ -972,6 +1041,11 @@ export const ActivityTimeline: React.FC<{
                       transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
                     }}><CaretRightOutlined style={{fontSize:9}} /></span>
                   </div>
+                  {/* 写入中实时预览: write_file/create_file/edit_file 等工具执行时展示文件内容 */}
+                  {isRunning && /^write_file|create_file|edit_file|multi_edit|str_replace$/i.test(s.name) && (() => {
+                    const w = parseWriteArgs(typeof s.args === 'string' ? s.args : JSON.stringify(s.args));
+                    return w ? <WriteInProgressCard key={`write-preview-${i}`} {...w} /> : null;
+                  })()}
                   {/* 展开详情: 复用现有 ShellCard / ToolCard */}
                   {isExpanded && (
                     <div style={{ padding: '2px 6px 4px' }}>
