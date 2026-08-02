@@ -56,6 +56,8 @@ interface TrustedPattern {
   toolName: string;
   pathPattern: string;  // glob-like, e.g. "packages/agentai-gui/**" or "*"
   trustedAt: number;
+  /** 预编译的正则 (loadTrustedPatterns 时一次性生成, 避免每次调用 new RegExp) */
+  compiledRegex?: RegExp;
 }
 
 let trustedPatternsCache: TrustedPattern[] | null = null;
@@ -88,14 +90,10 @@ function isTrustedCommand(toolName: string, filePath: string): boolean {
     if (p.pathPattern === '*') return true;
     // ReDoS 防护: 拒绝过长或连续通配符的模式
     if (p.pathPattern.length > 200) return false;
-    if (/\*{4,}/.test(p.pathPattern)) return false; // 4+ 连续 * 可能导致指数回溯
-    // 简单 glob 匹配: ** 匹配任意路径段, * 匹配非/字符
-    try {
-      const regex = new RegExp('^' + p.pathPattern.replace(/\./g, '\\.').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*') + '$');
-      return regex.test(filePath);
-    } catch {
-      return false; // 无效正则 → 不匹配
-    }
+    if (/\*{4,}/.test(p.pathPattern)) return false;
+    // ✅ 使用预编译的正则, 不再每次 new RegExp
+    const re = p.compiledRegex;
+    return re ? re.test(filePath) : false;
   });
 }
 
@@ -409,6 +407,20 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   /** 最后提及的文件 (用于解析"这个文件"等指代) */
   private _lastMentionedFile: string | null = null;
 
+  /** onDelta 节流器: 50ms 内合并多次 delta, 避免海量事件堆积 */
+  private _deltaBuf = '';
+  private _deltaTimer: NodeJS.Timeout | null = null;
+  private static readonly DELTA_THROTTLE_MS = 50;
+
+  /** 并发子 Agent 计数器: 最多 2 个并行, 超出排队拒绝 */
+  private _subAgentCount = 0;
+  private static readonly MAX_SUBAGENTS = 2;
+
+  /** formatToolResult 文件 stat 缓存: path → { size, mtimeMs, lines }  TTL=5min, 最多 200 条 */
+  private _fileMetaCache = new Map<string, { size: number; lines: number; ts: number }>();
+  private static readonly FILE_META_TTL_MS = 5 * 60 * 1000;
+  private static readonly FILE_META_MAX = 200;
+
 
   /** 智能模型切换: 连续触发熔断时自动换商用 API */
   private trippedCount = 0;
@@ -620,6 +632,36 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       appendOnlyLog: [],
       volatileScratch: '',
     };
+  }
+
+  /**
+   * 创建节流版 onDelta 回调: 50ms 内累积 delta, 合并后一次 emit
+   * 避免 LLM 流式返回数千 token 时产生海量事件
+   */
+  private _createThrottledOnDelta(): (delta: string) => void {
+    return (delta: string) => {
+      this._deltaBuf += delta;
+      if (!this._deltaTimer) {
+        this._deltaTimer = setTimeout(() => {
+          const buf = this._deltaBuf;
+          this._deltaBuf = '';
+          this._deltaTimer = null;
+          if (buf) this.emit('llm:delta', { delta: buf });
+        }, AgentAILoop.DELTA_THROTTLE_MS);
+      }
+    };
+  }
+
+  /** 清理节流定时器 (loop 结束时调用) */
+  private _flushDeltaBuffer() {
+    if (this._deltaTimer) {
+      clearTimeout(this._deltaTimer);
+      this._deltaTimer = null;
+    }
+    if (this._deltaBuf) {
+      this.emit('llm:delta', { delta: this._deltaBuf });
+      this._deltaBuf = '';
+    }
   }
 
   private async ensureContext() {
@@ -2004,6 +2046,33 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       this.iteration++;
       this.emit('loop:iteration', { n: this.iteration });
 
+      // ═══ Token 预警 (2026-08-03 新增) ═══
+      // 在每轮开始检查上下文压力, 避免长任务跑到 token 用尽才停止
+      try {
+        const { contextPressure, buildWarningPrompt } = await import('./token-early-warning.js');
+        const { estimateMessagesTokens } = await import('./token-utils.js');
+        const allMessages = [
+          ...(this.context?.immutablePrefix || []),
+          ...(this.context?.appendOnlyLog || []),
+        ];
+        const used = allMessages.length > 0 ? await estimateMessagesTokens(allMessages) : 0;
+        const max = 128000; // 默认上下文上限, 实际可从模型元数据获取
+        const pressure = contextPressure({ used, max, messageCount: allMessages.length, toolCallCount: 0 });
+        if (pressure.level === 'critical' || pressure.level === 'overflow') {
+          // 紧急: 注入指令让 AI 立即总结
+          this.directives.add('token_pressure',
+            `[SYSTEM] 上下文压力 ${(pressure.pressure * 100).toFixed(0)}% (${pressure.label}). ${pressure.advice}. 必须立即生成本轮总结, 列出已完成工作和待办项, 不要再调用工具。`,
+            'high');
+          this.emit('token:pressure', { pressure: pressure.pressure, level: pressure.level });
+        } else if (pressure.level === 'warning') {
+          // 警告: 提醒 AI 注意
+          this.directives.add('token_pressure', buildWarningPrompt(pressure), 'medium');
+          this.emit('token:pressure', { pressure: pressure.pressure, level: pressure.level });
+        }
+      } catch (e: any) {
+        // 预警失败不影响主循环
+      }
+
       // ═══ v3.1 死循环硬停执行: 上轮检测到死循环, 注入 SYSTEM 后立即退出 ═══
       if (this._hardStopNext) {
         logger.info(`🛑 硬停触发: 在 iteration ${this.iteration} 退出循环 (避免 AI 死循环)`);
@@ -2052,6 +2121,67 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           });
           logger.info(`[working-memory] injected summary at iteration ${this.iteration}`);
         } catch { /* working memory optional */ }
+      }
+
+      // ═══ 主动记忆更新 (2026-08-03 新增) ═══
+      // 每 5 轮自动检查: 是否有值得持久化的发现/决策/教训
+      if (this.iteration > 0 && this.iteration % 5 === 0) {
+        try {
+          const { rememberBatch } = await import('./self-memory-updater.js');
+          const candidates: any[] = [];
+
+          // 1. 提取已完成的工具调用 (可能包含 bug 修复)
+          const toolMessages = this.context.appendOnlyLog
+            .filter(m => m.role === 'tool' && (m as any).name);
+          const fixTools = toolMessages.filter(m => {
+            const content = String((m as any).content || '');
+            return /修复|fixed|resolve|error|bug/i.test(content);
+          });
+          for (const t of fixTools.slice(-3)) {
+            const content = String((t as any).content || '').slice(0, 200);
+            candidates.push({
+              category: 'bug_fix',
+              title: `修复: ${(t as any).name}`,
+              entityId: `bug:${(t as any).name}:${content.slice(0, 30)}`,
+              importance: 4,
+              tags: ['auto-captured', 'bug-fix'],
+              sourceTool: (t as any).name,
+              content: `工具 ${(t as any).name} 修复内容: ${content}`,
+            });
+          }
+
+          // 2. 提取用户关键指令 (可能包含偏好)
+          const userMsgs = this.context.appendOnlyLog
+            .filter(m => m.role === 'user' && typeof m.content === 'string')
+            .map(m => (m as any).content as string)
+            .filter(c => c.length > 20 && c.length < 200);
+          for (const u of userMsgs.slice(-2)) {
+            // 简单启发: 包含 "不要/必须/总是/永远" 等强指令词
+            if (/不要|必须|总是|永远|禁止|务必|一定要/.test(u)) {
+              candidates.push({
+                category: 'user_preference',
+                title: `偏好: ${u.slice(0, 40)}`,
+                entityId: `pref:${u.slice(0, 30)}`,
+                importance: 4,
+                tags: ['auto-captured', 'preference'],
+                content: `用户指令: ${u}`,
+              });
+            }
+          }
+
+          // 3. 批量写入
+          if (candidates.length > 0) {
+            const workspace = this.opts.workspace || process.cwd();
+            const result = await rememberBatch(workspace, candidates);
+            if (result.written > 0) {
+              logger.info(`[self-memory] 自动写入 ${result.written} 条记忆 (跳过 ${result.skipped})`);
+              this.emit('memory:auto-captured', { written: result.written, skipped: result.skipped });
+            }
+          }
+        } catch (e: any) {
+          // 主动记忆失败不影响主循环
+          logger.warn?.(`[self-memory] failed: ${e.message}`);
+        }
       }
 
       // 智能超时: 有工具活动时重置, 只在长时间无活动或绝对上限时退出
@@ -2283,9 +2413,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         stream: true,
         modelConfig: this.opts.modelConfig,
         abortSignal: this.opts.abortSignal, // 用户中断信号传给 router → fetch
-        onDelta: (delta: string) => {
-          this.emit('llm:delta', { delta });
-        },
+        onDelta: this._createThrottledOnDelta(),
         onThinking: (delta: string) => {
           // 推理内容直接通过专用回调发送, 不再污染 onDelta
           this.emit('llm:thinking', { text: delta });
@@ -2624,7 +2752,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         const seen = new Set<string>();
         const deduped: typeof res.toolCalls = [];
         for (const tc of res.toolCalls) {
-          const key = `${tc.name}:${JSON.stringify(tc.args)}`;
+          const key = `${tc.name}:${JSON.stringify(tc.args).slice(0, 500)}`;
           if (seen.has(key)) {
             console.log(`[tool-repair] suppressed duplicate: ${tc.name}`);
             continue;
@@ -2664,8 +2792,15 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
               this.emit('subagent:error', { id: `deferred-${Date.now()}`, error: 'Free model does not support subagent parallelism' });
             } else {
               // 商业模型: 以本体为主, 子智能体也用同一商业模型
+              // ✅ P0: 并发限制 — 超过 MAX_SUBAGENTS 时排队等待, 防止无限扩张
+              if (this._subAgentCount >= AgentAILoop.MAX_SUBAGENTS) {
+                console.warn(`[subagent] 并发上限 ${AgentAILoop.MAX_SUBAGENTS}, 拒绝 spawn (当前 ${this._subAgentCount}/${AgentAILoop.MAX_SUBAGENTS})`);
+                this.emit('subagent:rejected', { reason: 'concurrency_limit', count: this._subAgentCount, max: AgentAILoop.MAX_SUBAGENTS });
+                continue; // 跳过此 spawn, 主循环继续
+              }
               const subId = `${tc.args?.type || 'sub'}-${Date.now()}`;
               this.emit('subagent:start', { id: subId, type: tc.args?.type, task: tc.args?.task }); // 前端可见
+              this._subAgentCount++;
               (async () => {
                 try {
                   const subLoop = new AgentAILoop(this.router, this.registry, [], {
@@ -2688,6 +2823,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
                     role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
                     content: `[子Agent 失败]: ${e.message}`,
                   });
+                } finally {
+                  this._subAgentCount--;
                 }
               })();
             }
@@ -3583,7 +3720,7 @@ if (this._capabilityTier !== 'autonomous') {
             userId: this.opts.userId,
             workspace: this.opts.workspace,
             stream: true,
-            onDelta: (delta: string) => { this.emit('llm:delta', { delta }); },
+            onDelta: this._createThrottledOnDelta(),
           };
           const deferredRes = await this.router.chat(deferredReq);
           if (deferredRes?.content) {
@@ -3629,7 +3766,7 @@ if (this._capabilityTier !== 'autonomous') {
           userId: this.opts.userId,
           workspace: this.opts.workspace,
           stream: true,
-          onDelta: (delta: string) => { this.emit('llm:delta', { delta }); },
+          onDelta: this._createThrottledOnDelta(),
         };
         const summaryRes = await this.router.chat(summaryReq);
         if (summaryRes?.content) {
@@ -3701,7 +3838,7 @@ if (this._capabilityTier !== 'autonomous') {
             userId: this.opts.userId,
             workspace: this.opts.workspace,
             stream: true,
-            onDelta: (delta: string) => { this.emit('llm:delta', { delta }); },
+            onDelta: this._createThrottledOnDelta(),
           };
           const reflectRes = await this.router.chat(reflectReq);
           if (reflectRes?.content) {
@@ -4031,6 +4168,46 @@ if (this._capabilityTier !== 'autonomous') {
       } catch { /* session summary save optional */ }
     }
 
+    // ═══ 2026-08-03 新增: WorldModel 因果知识图谱知识提取 ═══
+    // 仅当有实质性工具调用时触发 (≥1个迭代)，避免闲聊污染图谱
+    if (this.iteration > 0 && this.opts.workspace) {
+      import('./world-model.js').then(async ({ getWorldModel }) => {
+        try {
+          // 从对话日志构造"虚拟任务"给 WorldModel
+          const toolEntries = this.context.appendOnlyLog
+            .filter(m => m.role === 'tool')
+            .slice(0, 30);
+          if (toolEntries.length === 0) return;
+
+          const userGoalTxt = (typeof userMessage === 'string' ? userMessage : '').slice(0, 500);
+          const summaryTxt = (typeof lastResponse.content === 'string' ? lastResponse.content : '').slice(0, 500);
+
+          const fakeTask = {
+            id: this.context.sessionId || `task-${Date.now()}`,
+            description: userGoalTxt,
+            steps: toolEntries.map((m, i) => ({
+              id: `step-${i}`,
+              action: (m as any).name || 'tool',
+              result: typeof m.content === 'string' ? m.content.slice(0, 300) : JSON.stringify(m.content).slice(0, 300),
+              status: 'completed' as const,
+              duration: 1000,
+            })),
+            outcome: 'success',
+            totalDuration: Date.now() - startedAt,
+          };
+
+          const wm = getWorldModel(this.router, this.opts.workspace);
+          const result = await wm.extractKnowledge(fakeTask as any);
+          if ((result.entities?.length || 0) + (result.relations?.length || 0) + (result.rules?.length || 0) > 0) {
+            console.log(`[world-model] ✅ 知识提取: ${result.entities?.length || 0}实体 / ${result.relations?.length || 0}关系 / ${result.rules?.length || 0}规则`);
+            this.emit('worldmodel:extracted', result);
+          }
+        } catch (e: any) {
+          console.warn('[world-model] extract failed:', e?.message || e);
+        }
+      }).catch(() => { /* world-model extraction optional */ });
+    }
+
     // ═══ 任务自监督: 停止计时器 + 发射最终状态 ═══
     supervisor.stopTimer();
     const finalState = supervisor.getState();
@@ -4040,6 +4217,9 @@ if (this._capabilityTier !== 'autonomous') {
       health: finalState.health,
     });
     console.log(`[supervisor] ✅ 任务完成 — ${finalState.timer.formatted} | ${finalState.fileChanges.formatted} (${finalState.fileChanges.files} files)`);
+
+    //  flush 未发出的 delta 缓冲 (流结束前的最后一批 token)
+    this._flushDeltaBuffer();
 
     return {
       ...lastResponse,
@@ -4605,7 +4785,6 @@ if (this._capabilityTier !== 'autonomous') {
     if (toolName === 'write_file') {
       // 检查文件是否存在（如果不存在，是创建新文件，安全）
       try {
-        const fs = require('fs');
         if (!fs.existsSync(filePath)) {
           console.log(`[智能决策] 创建新文件，自动批准: ${filePath}`);
           return true;

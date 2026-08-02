@@ -292,34 +292,77 @@ export class SmartModelSwitcher {
    * - 两个都熔断时才切商业模型
    * - 免费模型串行执行 (不调子智能体)
    */
+  /**
+   * 选择商用provider
+   * 优先级 2026-08-03 修复：
+   *   - 异厂优先：Agnes 2.5 失败 → 禁止再切同厂 2.0（因为还是同一套 API，同厂失败率接近 100%）
+   *   - 正确顺序（用户反馈）：免费异厂智谱 → deepseek-flash → superapi → 其他商用
+   *   - 自动排除当前 provider 所属的**整个供应商组**
+   */
   private _selectCommercialProvider(taskComplexity: 'simple' | 'medium' | 'complex', excludeProvider?: string): string {
-    // 安全守护: H6 修复 — 免费池补全：sensenova/longcat/dxnt 也支持免费额度 (nvidia 已移除)
-    const freeProviders = ['agentai', 'zhipu', 'sensenova', 'longcat', 'dxnt'];
-    for (const fp of freeProviders) {
-      if (fp === excludeProvider) continue;
-      if (this._checkApiKey(fp)) {
-        return fp;
+    // ✅ 供应商分组：同厂所有 alias 合并为一组，失败时整组跳过
+    //   - group_agnes : agnes/agentai   (用户反馈: Agnes2.5不行切到2.0还是跑不通)
+    //   - group_zhipu : zhipu
+    //   - group_sensenova: sensenova
+    //   - group_longcat: longcat
+    //   - group_dxnt : dxnt
+    //   - group_superapi: superapi
+    //   - group_deepseek: deepseek
+    //   - group_openai: openai
+    //   - group_qwen / moonshot / anthropic / ... : 其他商用
+    const VENDOR_GROUPS: Array<{ id: string; members: string[]; tier: 'free' | 'commercial' }> = [
+      { id: 'agnes',     members: ['agnes', 'agentai'],             tier: 'free' },
+      { id: 'zhipu',     members: ['zhipu'],                         tier: 'free' },
+      { id: 'sensenova', members: ['sensenova'],                     tier: 'free' },
+      { id: 'longcat',   members: ['longcat'],                       tier: 'free' },
+      { id: 'dxnt',      members: ['dxnt'],                          tier: 'free' },
+      // 商用池（用户指定: 智谱不行时切 deepseek-flash / superapi）
+      { id: 'deepseek',  members: ['deepseek'],                      tier: 'commercial' },
+      { id: 'superapi',  members: ['superapi'],                      tier: 'commercial' },
+      { id: 'qwen',      members: ['qwen'],                          tier: 'commercial' },
+      { id: 'moonshot',  members: ['moonshot'],                      tier: 'commercial' },
+      { id: 'doubao',    members: ['doubao'],                        tier: 'commercial' },
+      { id: 'minimax',   members: ['minimax'],                       tier: 'commercial' },
+      { id: 'anthropic', members: ['anthropic'],                     tier: 'commercial' },
+      { id: 'openai',    members: ['openai'],                        tier: 'commercial' },
+    ];
+    // 找到需要排除的组
+    const excludedGroup = VENDOR_GROUPS.find(g => excludeProvider && g.members.includes(excludeProvider));
+    const shouldSkipGroup = (g: { id: string; members: string[] }) =>
+      excludedGroup?.id === g.id;
+
+    // 第一优先：免费异厂（智谱免费 → deepseek flash 这里当作 free-tier-commercial）
+    const FREE_PREFERRED_GROUP_ORDER = ['zhipu', 'sensenova', 'longcat', 'dxnt'];
+    for (const gid of FREE_PREFERRED_GROUP_ORDER) {
+      const g = VENDOR_GROUPS.find(x => x.id === gid);
+      if (!g || shouldSkipGroup(g)) continue;
+      for (const fp of g.members) {
+        if (this._checkApiKey(fp)) return fp;
       }
     }
 
-    // 两个免费模型都不可用 → 尝试商业模型
-    const commercialOrder = ['superapi', 'deepseek', 'openai'];
-    for (const provider of commercialOrder) {
-      if (provider === excludeProvider) continue;
-      if (this._checkApiKey(provider)) {
-        return provider;
+    // 第二优先：商用异厂 (顺序：deepseek-flash → superapi → 其他商用 → 最后 openai 成本最高)
+    const COMMERCIAL_ORDER = ['deepseek', 'superapi', 'qwen', 'moonshot', 'doubao', 'minimax', 'anthropic', 'openai'];
+    for (const gid of COMMERCIAL_ORDER) {
+      const g = VENDOR_GROUPS.find(x => x.id === gid);
+      if (!g || shouldSkipGroup(g)) continue;
+      for (const cp of g.members) {
+        if (this._checkApiKey(cp)) return cp;
       }
     }
 
-    // 全部无密钥 → 返回另一个免费模型 (至少可以等冷却)
-    for (const fp of freeProviders) {
-      if (fp !== excludeProvider) return fp;
+    // 全部无密钥 → 返回另一个异厂免费组 (至少可以等冷却)
+    for (const g of VENDOR_GROUPS.filter(g => g.tier === 'free')) {
+      if (shouldSkipGroup(g)) continue;
+      return g.members[0];
     }
     // 最终回退
-    for (const provider of commercialOrder) {
-      if (provider !== excludeProvider) return provider;
+    for (const gid of COMMERCIAL_ORDER) {
+      const g = VENDOR_GROUPS.find(x => x.id === gid);
+      if (!g || shouldSkipGroup(g)) continue;
+      return g.members[0];
     }
-    return 'agentai';
+    return 'zhipu';
   }
 
   /**

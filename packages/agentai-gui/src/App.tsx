@@ -10,7 +10,8 @@
  * 主题: 5 套 (dark/light/porcelain/midnight/ember)
  */
 import React, { useState, useEffect, useMemo, useCallback, Suspense, lazy } from 'react';
-import { ConfigProvider, App as AntApp, theme, Tooltip, Dropdown, Tag, Modal, Button } from 'antd';
+import { ConfigProvider, App as AntApp, theme, Tooltip, Dropdown, Tag, Modal, Button, Alert, Checkbox } from 'antd';
+import { StyleProvider } from '@ant-design/cssinjs';
 import zhCN from 'antd/locale/zh_CN';
 import {
   MessageOutlined, EditOutlined, PictureOutlined, VideoCameraOutlined,
@@ -20,7 +21,7 @@ import {
   MenuFoldOutlined, MenuUnfoldOutlined, InfoCircleOutlined, BulbOutlined,
   LeftOutlined, RightOutlined, SunOutlined, MoonOutlined, BookOutlined,
   WechatOutlined, ClockCircleOutlined, BellOutlined, MedicineBoxOutlined,
-  DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined, SyncOutlined,
+  DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined, SyncOutlined, DownloadOutlined,
   GlobalOutlined, MinusOutlined, BorderOutlined, CloseOutlined, MobileOutlined,
   HomeOutlined,
 } from '@ant-design/icons';
@@ -50,7 +51,8 @@ const AutomationPanel = lazy(() => import('./components/AutomationPanel').then(m
 const TaskCenterPanel = lazy(() => import('./components/TaskCenterPanel').then(m => ({ default: m.TaskCenterPanel })));
 const EvolutionPanel = lazy(() => import('./components/EvolutionPanel').then(m => ({ default: m.EvolutionPanel })));
 const SandboxRulesEditor = lazy(() => import('./components/SandboxRulesEditor').then(m => ({ default: m.SandboxRulesEditor })));
-const KnowledgeGraphPanel = lazy(() => import('./components/knowledge/KnowledgeGraphPanel').then(m => ({ default: m.default })));
+import { KnowledgeGraphPanelChunk, preloadLazyChunks } from './lazyChunks';
+const KnowledgeGraphPanel = KnowledgeGraphPanelChunk;
 const MonitoringPanel = lazy(() => import('./components/MonitoringPanel').then(m => ({ default: m.default })));
 const KnowledgeDashboard = lazy(() => import('./components/KnowledgeDashboard').then(m => ({ default: m.KnowledgeDashboard })));
 import { RightPanel } from './components/RightPanel';
@@ -78,6 +80,7 @@ import { Splash } from './components/Splash';
 import { ReuseIdentityPrompt } from './components/ReuseIdentityPrompt';
 import { GlobalBrowserDrawer, openGlobalBrowser } from './components/GlobalBrowserDrawer';
 import { useIdeState } from './hooks/useIdeState';
+import { useUpdaterStore, mountUpdaterEventBus } from './store/updaterStore';
 
 // 暴露到 window, 顶部导航按钮可调用
 if (typeof window !== 'undefined') {
@@ -254,6 +257,55 @@ export const App: React.FC = () => {
   // Tauri 环境检测 (用于显示窗口控制按钮)
   const isTauriEnv = !!(window as any).__TAURI_INTERNALS__ || window.location.protocol === 'tauri:';
 
+  /** 真正执行关闭 (不拦截) */
+  const doCloseWindow = useCallback(async () => {
+    if (!isTauriEnv) return;
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const win = getCurrentWindow();
+      await win.close();
+    } catch (e) {
+      console.warn('[App] close window failed:', e);
+    }
+  }, [isTauriEnv]);
+
+  /** 点 [关闭并安装重启] */
+  const handleCloseAndInstall = useCallback(async () => {
+    setInstallingOnClose(true);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      useUpdaterStore.getState().setStage('installing');
+      // Rust: updater_take_and_install → 清 pending + download_and_install → 进程退出重启
+      await invoke('updater_take_and_install');
+      // 正常安装后 Tauri 会自动重启进程；如果没重启 (返回了)，走 fallback：关闭窗口
+      await doCloseWindow();
+    } catch (e: any) {
+      console.warn('[App] 关闭并安装失败，fallback 到仅关闭:', e);
+      // 失败时不要卡住：调 discard 清内存状态，再关窗口
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('updater_discard');
+      } catch {}
+      useUpdaterStore.getState().setError(String(e?.message || e));
+      await doCloseWindow();
+    } finally {
+      setInstallingOnClose(false);
+      setShowUpdateCloseModal(false);
+    }
+  }, [doCloseWindow]);
+
+  /** 点 [仅关闭不安装] */
+  const handleCloseOnly = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      // 仅清 Rust 内存里的 pending 标记；下次启动重新 check 不会重复下载（Tauri 自己有缓存）
+      await invoke('updater_discard');
+    } catch {}
+    useUpdaterStore.getState().clearPending();
+    setShowUpdateCloseModal(false);
+    await doCloseWindow();
+  }, [doCloseWindow]);
+
   /** 窗口控制操作 (最小化/最大化/关闭) */
   const handleWindowAction = useCallback(async (action: 'minimize' | 'toggle-maximize' | 'close') => {
     if (!isTauriEnv) return;
@@ -267,16 +319,37 @@ export const App: React.FC = () => {
             maxed ? await win.unmaximize() : await win.maximize();
           });
           break;
-        case 'close': await win.close(); break;
+        case 'close': {
+          const st = useUpdaterStore.getState();
+          // 有已下载更新 → 弹确认 Modal（Trae 风格：关闭时询问）
+          if (st.stage === 'ready' && st.pending?.downloaded) {
+            if (st.autoInstallOnClose) {
+              // 用户勾选了「关闭时自动安装」→ 跳过弹窗直接装
+              await handleCloseAndInstall();
+            } else {
+              setShowUpdateCloseModal(true);
+            }
+          } else {
+            await doCloseWindow();
+          }
+          break;
+        }
       }
     } catch (e) {
       console.warn('[App] Window action failed:', e);
     }
-  }, [isTauriEnv]);
+  }, [isTauriEnv, doCloseWindow, handleCloseAndInstall]);
 
   /* ✨ 全局建议 SSE 连接 + 未读计数 */
   useSuggestionSSE();
   useIdeState();  // 编辑器上下文感知: 推送当前文件/光标到 Gateway
+  /* 🔄 更新进度事件总线：启动时拉 Rust pending + 监听 updater://progress */
+  useEffect(() => mountUpdaterEventBus(), []);
+  const updaterStage = useUpdaterStore(s => s.stage);
+  const updaterPending = useUpdaterStore(s => s.pending);
+  const autoInstallOnClose = useUpdaterStore(s => s.autoInstallOnClose);
+  const [showUpdateCloseModal, setShowUpdateCloseModal] = useState(false);
+  const [installingOnClose, setInstallingOnClose] = useState(false);
   const unreadSuggestionCount = useSuggestionStore(s => s.unreadCount);
   const markSuggestionsRead = useSuggestionStore(s => s.markAllRead);
 
@@ -308,6 +381,12 @@ export const App: React.FC = () => {
   /* --- 启动网关健康检测 + 同步工作目录 + 加载模型密钥 --- */
   useEffect(() => {
     gatewayFallback.start();
+    /**
+     * 构建vs开发一致性修复 (P1):
+     * 首次启动空闲时预加载常用懒加载 chunk,
+     * 消除生产构建下首次切页时"chunk加载瞬慢→骨架屏多停留→框框感"
+     */
+    preloadLazyChunks();
 
     // 从网关同步工作目录和模型密钥
     (async () => {
@@ -380,6 +459,53 @@ export const App: React.FC = () => {
     window.addEventListener('agentai:show-guide', handler);
     return () => window.removeEventListener('agentai:show-guide', handler);
   }, []);
+
+  /* --- 监听切换到指定会话事件 (自动化任务详情页触发) --- */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ sessionId: string; source?: string }>;
+      const { sessionId } = ce.detail;
+      if (sessionId) {
+        // 切换到 chat 页面
+        setPage('chat');
+        // 激活对应会话
+        const { setActive, sessions, createSession } = useSessionStore.getState();
+        const existingSession = sessions.find(s => s.id === sessionId);
+        if (existingSession) {
+          setActive(sessionId);
+        } else {
+          // 如果会话不存在（如自动化创建的会话），创建一个新会话并加载
+          const newId = createSession('自动化任务对话');
+          // 尝试从后端加载该会话的消息
+          loadSessionFromGateway(sessionId, newId);
+        }
+      }
+    };
+    window.addEventListener('agentai:switch-session', handler);
+    return () => window.removeEventListener('agentai:switch-session', handler);
+  }, []);
+
+  // 从 gateway 加载会话消息
+  const loadSessionFromGateway = async (gatewaySessionId: string, localSessionId: string) => {
+    try {
+      const GATEWAY_HTTP = (window as any).__GATEWAY_HTTP__
+        || `http://${window.location.hostname}:18789`;
+      const resp = await fetch(`${GATEWAY_HTTP}/api/sessions/${gatewaySessionId}/messages`);
+      const data = await resp.json();
+      if (data.success && data.messages) {
+        const { addMessage } = useSessionStore.getState();
+        data.messages.forEach((msg: any) => {
+          addMessage(localSessionId, {
+            role: msg.role,
+            content: msg.content,
+            ts: msg.timestamp || Date.now(),
+          });
+        });
+      }
+    } catch (e) {
+      console.error('加载会话消息失败:', e);
+    }
+  };
 
   /* --- 监听 Tauri 托盘菜单导航事件 --- */
   useEffect(() => {
@@ -581,14 +707,27 @@ export const App: React.FC = () => {
   const accentColor = themeStyle === 'midnight' ? '#8b6bff' : themeStyle === 'ember' ? '#ff6b3d' : '#CD7A3A';
 
   /* ════════════════ 渲染 ════════════════ */
+  /*
+   * ╔═══════════════════════════════════════════════════════════════╗
+   * ║ 构建vs开发一致性修复 (P0):                                   ║
+   * ║ - StyleProvider + hashPriority="high"                        ║
+   * ║   强制 antd 组件样式使用 :where(...) 高优先级选择器,        ║
+   * ║   防止打包后 CSS 合并顺序变化导致样式被覆盖 → 出现框框按键  ║
+   * ║ - layer = false: 关闭 antd v5 @layer 特性(部分打包器不兼容)║
+   * ╚═══════════════════════════════════════════════════════════════╝
+   */
   return (
-    <ConfigProvider
-      theme={{
-        algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
-        token: { colorPrimary: accentColor, borderRadius: 8 },
-      }}
-    >
-      <AntApp>
+    <StyleProvider hashPriority="high" layer={false}>
+      <ConfigProvider
+        locale={zhCN}
+        theme={{
+          algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+          token: { colorPrimary: accentColor, borderRadius: 8 },
+          cssVar: { key: 'agentai-antd', prefix: 'agentai' },
+          hashed: false,
+        }}
+      >
+        <AntApp>
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)' }}>
         {/* ═══ 1. TitleBar (ZCode 风格: 紧凑 36px) ═══ */}
         <div className="app-titlebar">
@@ -844,7 +983,68 @@ export const App: React.FC = () => {
 
           {/* Tauri 窗口控制按钮 (仅桌面端显示) */}
           {isTauriEnv && (
-            <div style={{ display: 'flex', marginLeft: 'auto', gap: 0 }}>
+            <div style={{ display: 'flex', marginLeft: 'auto', alignItems: 'center', gap: 0 }}>
+              {/* ── 🔄 更新徽章: 下载中/已就绪 显示 (Trae 风格) ── */}
+              {['checking', 'downloading', 'ready'].includes(updaterStage) && (
+                <Tooltip
+                  title={
+                    updaterStage === 'checking' ? '正在检查更新…' :
+                    updaterStage === 'downloading' ? (
+                      <span>
+                        新版本 v{updaterPending?.version ?? ''} 下载中
+                        {typeof updaterPending?.progress === 'number'
+                          ? ` ${updaterPending.progress}%` : ''}
+                        <br />
+                        <span style={{ color: 'var(--muted)' }}>下载完成后关闭时自动安装</span>
+                      </span>
+                    ) :
+                    updaterStage === 'ready' ? (
+                      <span>
+                        ✅ v{updaterPending?.version ?? ''} 已就绪
+                        <br />
+                        <span style={{ color: 'var(--muted)' }}>
+                          点 × 关闭 → 弹确认安装重启
+                        </span>
+                      </span>
+                    ) : ''
+                  }
+                >
+                  <span
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      height: 22, padding: '0 8px', marginRight: 6,
+                      border: '1px solid var(--border)', borderRadius: 11,
+                      background: updaterStage === 'ready'
+                        ? 'color-mix(in srgb, var(--accent) 12%, transparent)'
+                        : 'var(--panel)',
+                      color: updaterStage === 'ready' ? 'var(--accent)' : 'var(--muted)',
+                      fontSize: 11, lineHeight: 1, cursor: 'default',
+                      userSelect: 'none',
+                    }}
+                    onClick={() => {
+                      // ready 状态点击徽章直接弹关闭确认 (等同于点 ×)
+                      if (updaterStage === 'ready') setShowUpdateCloseModal(true);
+                    }}
+                  >
+                    <SyncOutlined spin={updaterStage === 'checking' || updaterStage === 'downloading'} />
+                    {updaterStage === 'checking' && '检查更新'}
+                    {updaterStage === 'downloading' && (
+                      <>
+                        下载
+                        {typeof updaterPending?.progress === 'number'
+                          ? `${updaterPending.progress}%` : '…'}
+                      </>
+                    )}
+                    {updaterStage === 'ready' && (
+                      <>
+                        <DownloadOutlined style={{ marginLeft: 0 }} />
+                        v{updaterPending?.version ?? ''} 就绪
+                      </>
+                    )}
+                  </span>
+                </Tooltip>
+              )}
+
               <Tooltip title="最小化">
                 <span
                   onClick={() => handleWindowAction('minimize')}
@@ -957,7 +1157,7 @@ export const App: React.FC = () => {
         }}
       >
         <div style={{ marginBottom: 16 }}>
-          <WechatOutlined style={{ fontSize: 32, color: '#07C160' }} />
+          <WechatOutlined style={{ fontSize: 32, color: 'var(--wechat)' }} />
         </div>
         <h3 style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 600, color: 'var(--fg)' }}>
           联系开发者
@@ -1001,8 +1201,98 @@ export const App: React.FC = () => {
       {/* 全局浏览器侧栏 — 任何页面可用, AI 自动化核心能力 */}
       <GlobalBrowserDrawer />
 
-      </AntApp>
-    </ConfigProvider>
+      {/* ═══ 🔄 关闭时自动安装 Modal (Trae 风格) ═══ */}
+      <Modal
+        open={showUpdateCloseModal}
+        onCancel={() => setShowUpdateCloseModal(false)}
+        title={
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <DownloadOutlined style={{ color: 'var(--accent)' }} />
+            新版本已下载完成
+          </span>
+        }
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button onClick={() => setShowUpdateCloseModal(false)}>
+              取消
+            </Button>
+            <Button onClick={handleCloseOnly}>
+              仅关闭，下次启动安装
+            </Button>
+            <Button
+              type="primary"
+              loading={installingOnClose}
+              icon={<DownloadOutlined />}
+              onClick={handleCloseAndInstall}
+            >
+              关闭并自动安装重启
+            </Button>
+          </div>
+        }
+        width={520}
+        maskClosable={false}
+        destroyOnClose
+      >
+        <div style={{ padding: '4px 0 8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+            <div style={{
+              fontSize: 36, lineHeight: 1,
+              color: 'var(--accent)',
+              padding: '10px 14px',
+              borderRadius: 14,
+              background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+            }}>
+              <DownloadOutlined />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{
+                fontSize: 16, fontWeight: 600, marginBottom: 4,
+                color: 'var(--fg)',
+              }}>
+                PulseFlow {updaterPending?.version ?? '新版本'} ·{' '}
+                <span style={{ color: 'var(--muted)', fontWeight: 500 }}>
+                  {updaterPending?.date || ''}
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--muted-2)' }}>
+                安装包 {updaterPending?.bytes ? `${Math.max(1, Math.round(updaterPending.bytes / 1048576))} MB` : ''}
+                 · 安装后自动重启
+              </div>
+            </div>
+          </div>
+
+          <Alert
+            type="info"
+            showIcon
+            icon={<InfoCircleOutlined />}
+            message="和 Trae 一样：关闭应用时自动安装"
+            description="点击 [关闭并自动安装重启]，安装完成后应用会自动重新启动，无需手动重新打开。如果你想下次启动再装，选择 [仅关闭，下次启动安装]。"
+            style={{ borderRadius: 10, marginBottom: 14 }}
+          />
+
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 12px',
+            border: '1px dashed var(--border)',
+            borderRadius: 10,
+            fontSize: 13,
+            color: 'var(--fg)',
+            background: 'color-mix(in srgb, var(--panel) 50%, transparent)',
+          }}>
+            <Checkbox
+              checked={autoInstallOnClose}
+              onChange={(e) =>
+                useUpdaterStore.getState().setAutoInstallOnClose(Boolean(e.target?.checked))}
+            >
+              以后关闭时自动安装（不再询问）
+            </Checkbox>
+          </div>
+        </div>
+      </Modal>
+
+        </AntApp>
+      </ConfigProvider>
+    </StyleProvider>
   );
 };
 

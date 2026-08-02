@@ -6,7 +6,8 @@
  * 1. 追踪每个任务的token消耗
  * 2. 记录各阶段成本明细
  * 3. 生成成本摘要
- * 4. 触发成本告警
+ * 4. ✅ 只触发成本"告警 + 提示 AI 提前总结"，**绝不中止任务** (P0 修复 2026-08-03)
+ *    用户反馈: "这个token超出预算仅是提示AI如果超出可以提前总结并不是系统中止任务呀！这个逻辑是有误的"
  */
 
 import { EventEmitter } from 'events';
@@ -109,11 +110,14 @@ export class CostTracker extends EventEmitter {
     const check = isWithinBudget(task.breakdown.get(phase)!.tokens, phaseBudget);
     
     if (!check.ok) {
+      // ✅ P0 修复 2026-08-03: severity=critical→warning, 加 note
+      //   只记录 + 后续建议 AI 总结，**绝不系统中止任务**
+      //   see: 用户反馈 "这个 token 超出预算仅是提示 AI 如果超出可以提前总结并不是系统中止任务呀！这个逻辑是有误的"
       this.emit('alert', {
         id: `alert-${Date.now()}`,
         type: 'phase_exceeded',
-        severity: 'critical',
-        message: `阶段 ${phase} 超出预算 | 当前: ${task.breakdown.get(phase)!.tokens}, 预算: ${phaseBudget}`,
+        severity: 'warning',
+        message: `阶段 ${phase} 超出预算（建议 AI 本轮结束后生成结构化总结，继续执行不要中止）| 当前: ${task.breakdown.get(phase)!.tokens}, 预算: ${phaseBudget}`,
         currentValue: task.breakdown.get(phase)!.tokens,
         threshold: phaseBudget,
         taskId,
@@ -151,11 +155,12 @@ export class CostTracker extends EventEmitter {
     // 检查总预算
     const totalCheck = isWithinBudget(task.totalTokens, this.budget.taskTotalLimit);
     if (!totalCheck.ok) {
+      // ✅ P0 修复 2026-08-03: task_exceeded 也只是 warning + 建议总结，不中止
       this.emit('alert', {
         id: `alert-${Date.now()}`,
         type: 'task_exceeded',
-        severity: 'critical',
-        message: `任务总成本超出预算 | 当前: ${task.totalTokens}, 预算: ${this.budget.taskTotalLimit}`,
+        severity: 'warning',
+        message: `任务总成本超出预算（建议 AI 提前生成最终总结并收尾；系统不会中止当前任务）| 当前: ${task.totalTokens}, 预算: ${this.budget.taskTotalLimit}`,
         currentValue: task.totalTokens,
         threshold: this.budget.taskTotalLimit,
         taskId,
@@ -203,8 +208,9 @@ export class CostTracker extends EventEmitter {
       this.emit('alert', {
         id: `alert-${Date.now()}`,
         type: 'daily_exceeded',
-        severity: 'critical',
-        message: `日预算超出 | 当前: ${this.dailyStats.totalTokens}, 预算: ${this.budget.dailyLimit}`,
+        severity: 'warning',
+        // ✅ P0 修复 2026-08-03: 只是提示不中止
+        message: `日预算超出（建议提示用户今日 token 使用较多；系统仍继续执行任务，不中止）| 当前: ${this.dailyStats.totalTokens}, 预算: ${this.budget.dailyLimit}`,
         currentValue: this.dailyStats.totalTokens,
         threshold: this.budget.dailyLimit,
         timestamp: Date.now(),

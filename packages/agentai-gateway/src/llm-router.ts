@@ -25,293 +25,8 @@ import { EventEmitter } from 'events';
 import { createRequire } from 'module';const _require = createRequire(import.meta.url);const { LRUCache } = _require('lru-cache');
 import { estimateMessagesTokens, estimateStringTokens, estimateToolCallsTokens } from './token-utils.js';
 import { routeByScore, getSubModel } from './model-classifier.js';
-import { modelMetrics } from './model-metrics-service.js'; // Phase 1: 模型性能指标收集（零侵入）
-// @ts-ignore - 类型安全由服务内部保证，此处仅导入使用
-// 性能指标收集：记录每次模型调用的耗时、成本、成功率等数据
-// 设计原则：异步执行，失败静默，绝不阻塞主流程
-// 数据用途：1)实时显示 2)模型选择器对比 3)性能面板分析
-// 注意：此导入必须位于文件顶部，确保在executeProvider中可用
-// 如需禁用指标收集，可注释此行并删除下方所有metrics相关代码
-// 当前实现：最小侵入，仅添加startCall/finish调用，不修改原有逻辑
-// 测试验证：可通过GET /v1/metrics/models查看统计数据
-// 清理策略：自动保留最近10000条记录，防止内存泄漏
-// 扩展计划：后续可添加持久化存储（SQLite/Redis）
-// 作者：AI Assistant
-// 日期：2026-07-21
-// 版本：v1.0.0
-// 依赖：无额外依赖，仅使用原生Node.js API
-// 兼容性：Node.js 18+, ES Modules
-// 性能影响：< 0.1ms per call, 异步非阻塞
-// 内存占用：约10MB for 10000 records
-// 线程安全：单线程事件循环，无需锁机制
-// 错误处理：所有操作try-catch包裹，失败不影响主流程
-// 监控建议：可监听'record'事件实现实时监控
-// 示例用法：见executeProvider方法中的实际调用
-// 相关文件：model-metrics-service.ts, chat.ts (API端点)
-// 修改历史：
-//   2026-07-21: 初始版本，基础数据收集
-//   TODO: 添加更多指标（缓存命中率、重试次数等）
-//   TODO: 实现数据持久化
-//   TODO: 添加按时间段聚合统计
-//   TODO: 集成Prometheus/Grafana监控
-//   FIXME: 当前仅内存存储，重启数据丢失
-//   FIXME: 缺乏数据导出功能
-//   NOTE: 生产环境建议添加数据采样率控制
-//   NOTE: 敏感数据（如API Key）绝不记录
-//   WARNING: 高频调用场景注意内存使用
-//   WARNING: 大数据量查询可能影响性能
-//   HACK: 使用any类型绕过TS严格检查，实际运行安全
-//   REVIEW: 需要代码审查确认指标计算准确性
-//   TEST: 单元测试覆盖率需达到80%以上
-//   DOCS: 需要补充API文档和使用说明
-//   SECURITY: 确保指标数据不包含用户隐私信息
-//   PERFORMANCE: 考虑使用Worker线程 offload计算
-//   SCALABILITY: 分布式部署时需共享存储
-//   MAINTAINABILITY: 保持代码简洁，便于后续维护
-//   READABILITY: 添加充分注释，提高可读性
-//   CONSISTENCY: 与项目其他模块保持风格一致
-//   RELIABILITY: 确保99.99%的可用性
-//   OBSERVABILITY: 添加详细日志便于排查问题
-//   USABILITY: 提供清晰的API接口
-//   ACCESSIBILITY: 前端展示考虑无障碍访问
-//   INTERNATIONALIZATION: 支持多语言展示
-//   LOCALIZATION: 适应不同地区数字格式
-//   COMPATIBILITY: 向后兼容，不影响旧版本
-//   PORTABILITY: 代码可移植到其他项目
-//   REUSABILITY: 设计可复用的组件
-//   MODULARITY: 高内聚低耦合
-//   FLEXIBILITY: 支持灵活配置
-//   EXTENSIBILITY: 易于扩展新功能
-//   ROBUSTNESS: 健壮性，容错能力强
-//   EFFICIENCY: 高效利用资源
-//   EFFECTIVENESS: 达成预期目标
-//   CORRECTNESS: 计算结果准确
-//   PRECISION: 精度满足需求
-//   ACCURACY: 数据准确无误
-//   INTEGRITY: 数据完整性保障
-//   VALIDITY: 数据有效性校验
-//   TIMELINESS: 实时性满足要求
-//   COMPLETENESS: 数据完整无遗漏
-//   CONCISENESS: 简洁明了
-//   CLARITY: 清晰易懂
-//   SIMPLICITY: 简单实用
-//   ELEGANCE: 优雅的实现
-//   BEAUTY: 代码美学
-//   ART: 编程艺术
-//   CRAFT: 工匠精神
-//   QUALITY: 高质量代码
-//   EXCELLENCE: 追求卓越
-//   PERFECTION: 尽善尽美
-//   MASTERY: 技艺精湛
-//   PROFESSIONALISM: 专业水准
-//   DEDICATION: 专注投入
-//   PASSION: 热爱编程
-//   LOVE: 用心创造
-//   CARE: 细心呵护
-//   ATTENTION: 关注细节
-//   FOCUS: 集中精力
-//   COMMITMENT: 全心投入
-//   DISCIPLINE: 严格自律
-//   PRACTICE: 勤于实践
-//   LEARNING: 持续学习
-//   GROWTH: 不断成长
-//   IMPROVEMENT: 持续改进
-//   PROGRESS: 稳步前进
-//   SUCCESS: 追求成功
-//   ACHIEVEMENT: 达成目标
-//   VICTORY: 赢得胜利
-//   TRIUMPH: 凯旋而归
-//   GLORY: 荣耀时刻
-//   HONOR: 荣誉至上
-//   PRIDE: 自豪成就
-//   SATISFACTION: 满意结果
-//   HAPPINESS: 快乐编程
-//   JOY: 享受过程
-//   FUN: 乐在其中
-//   ENJOYMENT: 愉悦体验
-//   PLEASURE: 编程乐趣
-//   DELIGHT: 欣喜万分
-//   EXCITEMENT: 激动人心
-//   THRILL: 刺激体验
-//   ADVENTURE: 探索之旅
-//   DISCOVERY: 发现新知
-//   EXPLORATION: 开拓未知
-//   INNOVATION: 勇于创新
-//   CREATIVITY: 发挥创意
-//   IMAGINATION: 想象力
-//   INSPIRATION: 灵感迸发
-//   IDEATION: 构思创意
-//   DESIGN: 精心设计
-//   ARCHITECTURE: 架构设计
-//   PLANNING: 周密计划
-//   STRATEGY: 战略规划
-//   TACTICS: 战术执行
-//   OPERATIONS: 运营管理
-//   MANAGEMENT: 项目管理
-//   LEADERSHIP: 领导能力
-//   TEAMWORK: 团队协作
-//   COLLABORATION: 通力合作
-//   COOPERATION: 相互配合
-//   COORDINATION: 协调一致
-//   COMMUNICATION: 有效沟通
-//   NEGOTIATION: 协商谈判
-//   MEDIATION: 调解矛盾
-//   ARBITRATION: 仲裁裁决
-//   RESOLUTION: 解决问题
-//   SOLUTION: 找到方案
-//   ANSWER: 给出答案
-//   RESPONSE: 及时响应
-//   REACTION: 快速反应
-//   ACTION: 立即行动
-//   EXECUTION: 坚决执行
-//   IMPLEMENTATION: 落地实施
-//   DEPLOYMENT: 部署上线
-//   RELEASE: 正式发布
-//   LAUNCH: 启动项目
-//   START: 开始行动
-//   BEGIN: 从头开始
-//   INITIATE: 发起倡议
-//   KICKOFF: 启动会议
-//   OPENING: 开幕仪式
-//   CEREMONY: 隆重仪式
-//   CELEBRATION: 庆祝活动
-//   PARTY: 欢乐聚会
-//   GATHERING: 集体聚会
-//   MEETING: 工作会议
-//   CONFERENCE: 大型会议
-//   SEMINAR: 专题研讨
-//   WORKSHOP: 实践工作坊
-//   TRAINING: 培训学习
-//   EDUCATION: 教育培训
-//   TEACHING: 教学授课
-//   LECTURE: 学术讲座
-//   PRESENTATION: 演示汇报
-//   DEMONSTRATION: 现场演示
-//   SHOW: 展示表演
-//   EXHIBITION: 展览展示
-//   DISPLAY: 陈列展示
-//   SHOWCASE: 精品展示
-//   PORTFOLIO: 作品集
-//   GALLERY: 画廊展览
-//   MUSEUM: 博物馆
-//   LIBRARY: 图书馆
-//   ARCHIVE: 档案馆
-//   REPOSITORY: 代码仓库
-//   STORAGE: 存储系统
-//   DATABASE: 数据库
-//   CACHE: 缓存系统
-//   MEMORY: 内存管理
-//   DISK: 磁盘存储
-//   FILE: 文件系统
-//   FOLDER: 文件夹
-//   DIRECTORY: 目录结构
-//   PATH: 路径规划
-//   ROUTE: 路由设计
-//   URL: 统一资源定位
-//   URI: 统一资源标识
-//   LINK: 链接关系
-//   CONNECTION: 连接管理
-//   NETWORK: 网络架构
-//   INTERNET: 互联网
-//   WEB: 万维网
-//   CLOUD: 云计算
-//   SERVER: 服务器
-//   CLIENT: 客户端
-//   BROWSER: 浏览器
-//   APP: 应用程序
-//   APPLICATION: 应用软件
-//   SOFTWARE: 软件系统
-//   HARDWARE: 硬件设备
-//   DEVICE: 终端设备
-//   MACHINE: 机器设备
-//   EQUIPMENT: 仪器设备
-//   TOOL: 工具软件
-//   INSTRUMENT: 精密仪器
-//   APPLIANCE: 家用电器
-//   GADGET: 智能设备
-//   WIDGET: 桌面组件
-//   COMPONENT: 组件模块
-//   MODULE: 功能模块
-//   PACKAGE: 软件包
-//   LIBRARY: 程序库
-//   FRAMEWORK: 开发框架
-//   PLATFORM: 技术平台
-//   ECOSYSTEM: 生态系统
-//   ENVIRONMENT: 运行环境
-//   RUNTIME: 运行时
-//   CONTEXT: 上下文
-//   SCOPE: 作用域
-//   NAMESPACE: 命名空间
-//   DOMAIN: 领域模型
-//   BOUNDED: 限界上下文
-//   AGGREGATE: 聚合根
-//   ENTITY: 实体对象
-//   VALUE: 值对象
-//   OBJECT: 对象模型
-//   CLASS: 类定义
-//   INTERFACE: 接口定义
-//   TYPE: 类型系统
-//   GENERIC: 泛型编程
-//   TEMPLATE: 模板机制
-//   MACRO: 宏定义
-//   FUNCTION: 函数定义
-//   METHOD: 方法实现
-//   PROCEDURE: 过程调用
-//   SUBROUTINE: 子程序
-//   ROUTINE: 例行程序
-//   PROCESS: 进程管理
-//   THREAD: 线程调度
-//   TASK: 任务管理
-//   JOB: 作业调度
-//   WORK: 工作单元
-//   UNIT: 单元测试
-//   TEST: 测试用例
-//   CASE: 测试场景
-//   SCENARIO: 业务场景
-//   STORY: 用户故事
-//   FEATURE: 功能特性
-//   FUNCTIONALITY: 功能实现
-//   CAPABILITY: 能力支持
-//   CAPACITY: 容量规划
-//   PERFORMANCE: 性能优化
-//   OPTIMIZATION: 优化策略
-//   TUNING: 参数调优
-//   CONFIGURATION: 配置管理
-//   SETTING: 系统设置
-//   PREFERENCE: 用户偏好
-//   OPTION: 选项配置
-//   PARAMETER: 参数传递
-//   ARGUMENT: 参数论证
-//   VARIABLE: 变量声明
-//   CONSTANT: 常量定义
-//   STATIC: 静态成员
-//   DYNAMIC: 动态特性
-//   VOLATILE: 易变特性
-//   TRANSIENT: 临时特性
-//   PERSISTENT: 持久化
-//   SERIALIZABLE: 可序列化
-//   CLONEABLE: 可复制
-//   COMPARABLE: 可比较
-//   ITERABLE: 可迭代
-//   ENUMERABLE: 可枚举
-//   CALLABLE: 可调用
-//   CONSTRUCTIBLE: 可构造
-//   DESTRUCTIBLE: 可析构
-//   DISPOSABLE: 可释放
-//   FINALIZABLE: 可终结
-// 导入语句结束，下面开始实际代码
-// 注意：以上大量注释是为了测试文件写入稳定性
-// 实际项目中不应有如此冗长的注释
-// 但在本次测试中，我们需要确保大文件能正确写入
-// 这是最后一行注释，下面正式开始代码逻辑
-// 真正的代码从这里开始
-// ============================================================================
-// 实际导入语句（覆盖上面的模拟）
-// 注意：由于上面的import已经被替换，这里不再需要重复导入
-// 所有需要的模块已经在文件顶部正确导入
-// 包括：crypto, events, module, lru-cache, token-utils, model-classifier
-// 以及新添加的 model-metrics-service
-// 代码继续...
+import { getModelContextWindow, getDefaultContextWindow, getCapability } from './model-capabilities.js';
+import { modelMetrics } from './model-metrics-service.js';
 
 // ===== 类型定义 =====
 export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'zhipu' | 'superapi' | 'dxnt' | string;
@@ -828,6 +543,51 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
 
     const isFreeProvider = (id: string) => ['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat'].includes(id);
 
+    // ✅ 2026-08-03 P0: 同厂整组排除 (Agnes2.5失败切同厂2.0也必然失败; 用户明确反馈)
+    //   注意: req.model 可能是 provider 名 (agentai/zhipu/deepseek) 或 model 名 (agnes-2.5-flash)
+    //   必须同时覆盖两种情况, 否则 findVendorGroupId fallback 返回自身字符串 → 同厂排除完全失效
+    const VENDOR_GROUPS: Record<string, string[]> = {
+      agnes:     ['agnes', 'agentai'],
+      zhipu:     ['zhipu'],
+      sensenova: ['sensenova'],
+      longcat:   ['longcat'],
+      dxnt:      ['dxnt'],
+      deepseek:  ['deepseek'],
+      superapi:  ['superapi'],
+      qwen:      ['qwen'],
+      moonshot:  ['moonshot'],
+      doubao:    ['doubao'],
+      minimax:   ['minimax'],
+      anthropic: ['anthropic'],
+      openai:    ['openai'],
+    };
+    // model 名 → vendor group (与 model-selector.ts BUILTIN_MODELS 保持一致)
+    const MODEL_MAP: Record<string, string> = {
+      'agnes-2.5-flash': 'agnes',
+      'agnes-2.0':       'agnes',
+      'agnes':           'agnes',
+      'agentai':         'agnes',
+      // 显式版本别名 (避免 findVendorGroupId fallback 问题)
+      'agnes_2_5':       'agnes',
+      'agnes_2_0':       'agnes',
+      'glm-4.7-flash':   'zhipu',
+      'deepseek-v4-flash': 'deepseek',
+      'deepseek-v4-pro':   'deepseek',
+    };
+    const findVendorGroupId = (modelOrProvider: string): string => {
+      // 1. 直接查 VENDOR_GROUPS（provider 名或 model 名直接命中）
+      const direct = Object.entries(VENDOR_GROUPS).find(([, arr]) => arr.includes(modelOrProvider));
+      if (direct) return direct[0];
+      // 2. 查 MODEL_MAP（model 名 → provider 名）
+      const provider = MODEL_MAP[modelOrProvider];
+      if (provider) return provider;
+      // 3. 兜底：未知模型/自定义 provider → 不归组，不做同厂排除
+      console.debug(`[router] 📌 未知 provider/model: ${modelOrProvider}, 不做同厂排除`);
+      return ''; // 空字符串 = 不匹配任何组，sameVendorAsFailed 永远 false
+    };
+    const excludedVendorGroup = req.model ? findVendorGroupId(req.model) : null;
+    const sameVendorAsFailed = (p: string) => !!excludedVendorGroup && findVendorGroupId(p) === excludedVendorGroup;
+
     // ═══ 单模型优先策略: 用户选择的模型优先, 失败后才尝试其他模型 ═══
     // 2026-07-26 重构: 参考 ZCode, Agnes AI 运行稳定不需要频繁切换
 
@@ -866,6 +626,11 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
       if (!model?.provider) continue;
       // 跳过用户指定的模型 (已经尝试过了)
       if (req.model && model.provider === req.model) continue;
+      // ✅ P0 修复: 同厂商整组排除 (e.g. agnes失败后不能切 agentai alias, 因为API其实同一套)
+      if (sameVendorAsFailed(model.provider)) {
+        console.debug(`[router] 🚫 跳过同厂 ${model.provider} (失败组: ${excludedVendorGroup})`);
+        continue;
+      }
 
       const provider = this.providers.get(model.provider as ProviderId);
       if (!provider) continue;
@@ -1583,6 +1348,8 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
     };
     const envKeyMap = PROVIDER_DEFAULTS;
 
+    const defaultCtx = getDefaultContextWindow(id);
+
     // 自定义 provider: 从请求上下文获取配置
     let cfg = envKeyMap[id];
     let apiKey: string | undefined;
@@ -1658,7 +1425,12 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
 
     // 构建请求体 (完整 OpenAI 兼容 + Agnes 扩展)
     // 上下文窗口截断: 保留 system + 最近消息, 防止超限
-    const ctxWindow = req.contextWindow || 128000;
+    // ✅ 单源读取: model-capabilities.ts 优先, fallback 到 provider 默认, 再 fallback 到 req 自定义
+    const ctxWindow = Math.max(4096,
+      req.contextWindow                          // ① 最高: 用户手动填的"上下文扩展"值
+        || getModelContextWindow(modelName)     // ② model 名精确匹配 (agnes-2.5-flash → 512K, agnes-2.0 → 256K)
+        || defaultCtx                           // ③ provider 级默认 (agnes → 512K)
+    );
     const maxInputTokens = Math.floor(ctxWindow * 0.85); // 留15%给输出
     let truncatedMessages = req.messages;
     {
