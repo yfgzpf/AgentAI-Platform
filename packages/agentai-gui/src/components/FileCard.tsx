@@ -100,17 +100,17 @@ export const FileCard: React.FC<FileCardProps> = ({
     e?.stopPropagation();
     // 始终触发全局事件，确保 Editor 能监听并打开文件
     window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path } }));
+    
+    // 切换到编辑器视图
+    try {
+      // 使用全局事件通知 App 切换到 editor 页面
+      window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
+    } catch {}
+    
     if (onOpenInEditor) {
       onOpenInEditor(path);
-    } else {
-      try {
-        const store = (window as any).__agentai_app_store__;
-        store?.getState?.()?.setView?.('editor');
-        antdMsg.info(`已切换到编辑器: ${filename}`);
-      } catch {
-        antdMsg.info(`打开文件: ${path}`);
-      }
     }
+    antdMsg.info(`正在打开: ${filename}`);
   };
 
   const handleCopy = (e: React.MouseEvent) => {
@@ -122,12 +122,21 @@ export const FileCard: React.FC<FileCardProps> = ({
   };
 
   const handleLocate = (e: React.MouseEvent) => {
-    e.stopPropagation();
+    e?.stopPropagation();
+    // 触发全局事件，让 PulseFlowSidebar 定位到文件
+    window.dispatchEvent(new CustomEvent('agentai:locate-file', { detail: { path } }));
+    
     if (onLocateInTree) {
       onLocateInTree(path);
     } else {
-      const store = (window as any).__agentai_app_store__;
-      store?.getState?.()?.setView?.('editor');
+      // 尝试切换到编辑器页面并定位
+      try {
+        window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
+        // 延迟触发定位，等待 Editor 加载完成
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('agentai:locate-file', { detail: { path } }));
+        }, 300);
+      } catch {}
       antdMsg.info(`定位到: ${path}`);
     }
   };
@@ -446,6 +455,16 @@ export const FileCard: React.FC<FileCardProps> = ({
             <ActionButton onClick={handleLocate} icon="📂" label="定位" />
             <ActionButton onClick={handleCopy} icon="📋" label="复制" />
             <ActionButton onClick={handleDownload} icon="⬇" label="下载" />
+            {path.toLowerCase().endsWith('.html') || path.toLowerCase().endsWith('.htm') ? (
+              <ActionButton 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.dispatchEvent(new CustomEvent('agentai:preview-html', { detail: { path } }));
+                }} 
+                icon="🌐" 
+                label="预览" 
+              />
+            ) : null}
           </div>
         </div>
       )}

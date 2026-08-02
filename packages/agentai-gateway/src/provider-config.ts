@@ -82,6 +82,33 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderProtocolConfig> = {
     supportsImages: true,    // LongCat-2.0 是多模态模型
     supportsStreamToolCalls: true,
   },
+  // 智谱 GLM
+  zhipu: {
+    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools'],
+    extensionFields: ['thinking', 'tool_choice', 'response_format'],
+    supportsTools: true,
+    supportsThinking: true,  // GLM-4.5 支持思考模式
+    supportsImages: true,    // GLM-4V 系列支持图像
+    supportsStreamToolCalls: true,
+  },
+  // SuperAPI (聚合代理, 兼容 OpenAI 协议)
+  superapi: {
+    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools'],
+    extensionFields: ['tool_choice', 'parallel_tool_calls', 'response_format'],
+    supportsTools: true,
+    supportsThinking: false,
+    supportsImages: true,
+    supportsStreamToolCalls: true,
+  },
+  // DXNT (聚合代理, 兼容 OpenAI 协议)
+  dxnt: {
+    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools'],
+    extensionFields: ['tool_choice', 'parallel_tool_calls', 'response_format'],
+    supportsTools: true,
+    supportsThinking: false,
+    supportsImages: true,
+    supportsStreamToolCalls: true,
+  },
   // nvidia provider config 已移除 (2026-07-25)
 };
 

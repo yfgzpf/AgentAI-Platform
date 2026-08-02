@@ -100,9 +100,9 @@ export const AIInjectContextPanel: React.FC = () => {
   };
 
   const docFiles = [
-    { id: 'readme', name: 'PROJECT_README.md', desc: '项目架构说明', color: '#1890ff' },
-    { id: 'context', name: 'PROJECT_CONTEXT.md', desc: '当前任务上下文', color: '#52c41a' },
-    { id: 'state', name: 'PROJECT_STATE.md', desc: '实时项目状态', color: '#fa8c16' },
+    { id: 'readme', name: 'PROJECT_README.md', desc: '项目架构说明', color: 'var(--accent)' },
+    { id: 'context', name: 'PROJECT_CONTEXT.md', desc: '当前任务上下文', color: 'var(--success)' },
+    { id: 'state', name: 'PROJECT_STATE.md', desc: '实时项目状态', color: 'var(--warning)' },
   ];
 
   const rules = [
@@ -236,8 +236,8 @@ export const AIInjectContextPanel: React.FC = () => {
                 <List.Item.Meta
                   avatar={
                     exists 
-                      ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 12 }} />
-                      : <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 12 }} />
+                      ? <CheckCircleOutlined style={{ color: 'var(--success)', fontSize: 12 }} />
+                      : <CloseCircleOutlined style={{ color: 'var(--danger)', fontSize: 12 }} />
                   }
                   title={
                     <span style={{ fontSize: 11, color: exists ? 'var(--fg)' : 'var(--muted)' }}>
@@ -284,7 +284,7 @@ export const AIInjectContextPanel: React.FC = () => {
                     <Button
                       type="text"
                       size="small"
-                      icon={<DeleteOutlined style={{ fontSize: 12, color: '#ff4d4f' }} />}
+                      icon={<DeleteOutlined style={{ fontSize: 12, color: 'var(--danger)' }} />}
                       onClick={() => removeInjectedFile(item.path)}
                       style={{ padding: '0 4px', height: 20 }}
                     />

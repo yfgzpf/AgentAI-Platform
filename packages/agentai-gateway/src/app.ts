@@ -200,6 +200,184 @@ app.get('/v1/system/check-dep', (req, res) => {
   }
 });
 
+/**
+ * ══════════════════════════════════════════════════════════
+ * POST /v1/system/auto-install — 首次启动自动安装 (P0 修复)
+ * ══════════════════════════════════════════════════════════
+ * 安装即开即用所需的缺失依赖:
+ *   dep 白名单:
+ *     - node:           不支持自动安装 (返回下载链接)
+ *     - python:         不支持自动安装 (返回下载链接)
+ *     - git:            不支持自动安装 (返回下载链接)
+ *     - webview2:       不支持自动安装 (返回下载链接)
+ *     - gateway-deps:   执行 npm install --production --legacy-peer-deps (gateway-dist-v2 内)
+ *     - playwright:     执行 npx playwright install chromium
+ *     - skills-check:   不安装, 仅检查 skills 目录, 返回 OK/MISSING
+ *
+ * 安全:
+ *   - dep 严格白名单
+ *   - 所有命令在 Gateway 工作区内执行 (cwd: 白名单目录)
+ *   - 最长 10 分钟超时 (Playwright chromium 下载 ~3GB 需要时间)
+ */
+app.post('/v1/system/auto-install', async (req, res) => {
+  const { dep } = req.body || {};
+  const ALLOWED_DEPS = new Set([
+    'gateway-deps', 'playwright', 'skills-check',
+    'node', 'python', 'git', 'webview2',
+  ]);
+  if (!dep || !ALLOWED_DEPS.has(dep)) {
+    return res.status(400).json({ ok: false, error: `dep 必须在白名单中: ${Array.from(ALLOWED_DEPS).join(', ')}` });
+  }
+
+  // --- 信息性检测: 仅返回下载链接 ---
+  const INFO_DEPS: Record<string, { name: string; url: string; cmd: string }> = {
+    node:     { name: 'Node.js v22 LTS', url: 'https://nodejs.org/dist/v22.16.0/node-v22.16.0-x64.msi', cmd: 'node --version' },
+    python:   { name: 'Python 3.13',   url: 'https://www.python.org/ftp/python/3.13.3/python-3.13.3-amd64.exe', cmd: 'python --version' },
+    git:      { name: 'Git for Windows', url: 'https://github.com/git-for-windows/git/releases/latest', cmd: 'git --version' },
+    webview2: { name: 'Microsoft WebView2', url: 'https://go.microsoft.com/fwlink/p/?LinkId=2124703', cmd: 'reg query "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" /v pv' },
+  };
+  if (INFO_DEPS[dep]) {
+    const info = INFO_DEPS[dep];
+    let installed = false;
+    let version: string | undefined;
+    try {
+      const output = execSync(`${info.cmd} 2>&1`, { encoding: 'utf8', timeout: 5000 }).trim();
+      installed = true;
+      const m = output.match(/(\d+\.\d+\.?\d*)/);
+      version = m ? m[1] : output.slice(0, 40);
+    } catch {}
+    return res.json({
+      ok: true,
+      dep,
+      installed,
+      version,
+      autoInstall: false,
+      manualInstall: { name: info.name, url: info.url },
+    });
+  }
+
+  // --- skills 目录检查 ---
+  if (dep === 'skills-check') {
+    // P0 分发修复: 打包后 monorepo 不存在, skills 从 Tauri resources 同级取
+    //   Tauri resources 布局:
+    //     resources/gateway-dist-v2/   <- cwd
+    //     resources/agentai-skills/    <- 这里
+    //   所以从 process.cwd()/../agentai-skills 开始找
+    const candidates: string[] = [];
+    if (process.env.AGENTAI_SKILLS_DIR) candidates.push(process.env.AGENTAI_SKILLS_DIR);
+    candidates.push(path.resolve(process.cwd(), '..', 'agentai-skills'));
+    candidates.push(path.resolve(process.cwd(), 'agentai-skills'));
+    if (process.env.AGENTAI_HOME) {
+      candidates.push(path.resolve(process.env.AGENTAI_HOME, '..', 'agentai-skills'));
+      candidates.push(path.resolve(process.env.AGENTAI_HOME, 'agentai-skills'));
+    }
+    // 开发期 fallback
+    candidates.push(path.resolve(process.cwd(), '..', '..', 'agentai-skills'));
+    candidates.push(path.resolve(process.cwd(), 'packages', 'agentai-skills'));
+
+    let skillsDir = '';
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)
+            && fs.existsSync(path.join(p, 'scripts'))
+            && fs.existsSync(path.join(p, 'README.md'))) {
+          skillsDir = p;
+          break;
+        }
+      } catch {}
+    }
+
+    const exists = !!skillsDir;
+    return res.json({
+      ok: true,
+      dep,
+      installed: exists,
+      autoInstall: false,
+      path: skillsDir || candidates[1],
+      candidates,
+      note: exists
+        ? `SKILLS 目录存在: ${skillsDir}`
+        : 'SKILLS 目录缺失: 打包时请确认 tauri.conf.json resources 包含 "../../agentai-skills" 映射',
+    });
+  }
+
+  // --- gateway-deps: 在 gateway 工作区执行 npm install ---
+  if (dep === 'gateway-deps') {
+    const cwd = process.cwd();
+    const pkgJson = path.join(cwd, 'package.json');
+    if (!fs.existsSync(pkgJson)) {
+      return res.status(412).json({
+        ok: false,
+        error: 'gateway-deps 无法自动安装: package.json 未找到',
+        note: '请确保 Tauri resources 中打入了 gateway-dist-v2/package.json',
+      });
+    }
+    // node_modules 已存在且有 express -> 跳过
+    if (fs.existsSync(path.join(cwd, 'node_modules', 'express', 'package.json'))) {
+      return res.json({ ok: true, dep, installed: true, autoInstall: true, skipped: 'already_installed' });
+    }
+    try {
+      res.setHeader('Content-Type', 'application/json');
+      res.flushHeaders?.();
+      res.write(JSON.stringify({ ok: true, dep, status: 'installing', autoInstall: true }) + '\n');
+      execSync(
+        'npm install --production --ignore-scripts --no-optional --legacy-peer-deps',
+        { cwd, stdio: 'inherit', timeout: 10 * 60 * 1000 }
+      );
+      return res.end(JSON.stringify({ ok: true, dep, installed: true, autoInstall: true }));
+    } catch (e: any) {
+      return res.status(500).json({
+        ok: false,
+        dep,
+        autoInstall: true,
+        error: e?.message || 'npm install 失败',
+      });
+    }
+  }
+
+  // --- playwright: npx playwright install chromium ---
+  if (dep === 'playwright') {
+    // 先检查是否已存在
+    const pwDir = path.resolve(process.env.LOCALAPPDATA || process.env.HOME || '', 'ms-playwright');
+    try {
+      const check = execSync('npx playwright install chromium --dry-run 2>&1 || echo DRY_RUN_OK',
+        { encoding: 'utf8', timeout: 10000 }
+      );
+      if (check.includes('already installed') || check.includes('DRY_RUN_OK')) {
+        try {
+          const entries = fs.existsSync(pwDir) ? fs.readdirSync(pwDir) : [];
+          const hasChromium = entries.some(e => e.startsWith('chromium'));
+          if (hasChromium) {
+            return res.json({ ok: true, dep, installed: true, autoInstall: true, skipped: 'already_installed' });
+          }
+        } catch {}
+      }
+    } catch {}
+    try {
+      execSync('npx playwright install chromium', {
+        cwd: process.cwd(),
+        stdio: 'inherit',
+        timeout: 10 * 60 * 1000,
+      });
+      return res.json({ ok: true, dep, installed: true, autoInstall: true });
+    } catch (e: any) {
+      return res.status(500).json({
+        ok: false,
+        dep,
+        autoInstall: true,
+        error: e?.message || 'playwright install 失败',
+        manualInstall: {
+          name: 'Playwright Chromium',
+          url: 'https://playwright.dev/docs/browsers',
+          cmd: 'npx playwright install chromium',
+        },
+      });
+    }
+  }
+
+  res.status(500).json({ ok: false, error: 'unreachable' });
+});
+
 // ===== Evolution API — 让用户看到 AI 学到了什么 =====
 app.get('/v1/evolution/list', async (req, res) => {
   try {

@@ -4,6 +4,38 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 
+/**
+ * 生成常见 Python 安装路径候选（优先用户级 → 系统级 → 版本降序）
+ *  ⚠️ 不要硬编码只列 C:\PythonXXX, 80% 的用户是用 py launcher 或
+ *  %LOCALAPPDATA%\Programs\Python\Python3XX 安装的 (默认选项), 原列表会漏掉他们。
+ */
+function buildPythonCandidates(): string[] {
+  const list: string[] = [];
+  const versions = ['314', '313', '312', '311', '310'];
+  const localAppData = process.env.LOCALAPPDATA || `${process.env.USERPROFILE || '~'}/AppData/Local`;
+  const programFiles = process.env.PROGRAMFILES || 'C:/Program Files';
+  const programFilesX86 = process.env['PROGRAMFILES(X86)'] || 'C:/Program Files (x86)';
+
+  // ① 用户级安装（Python 官网默认安装路径, 绝大多数用户使用这个）
+  for (const v of versions) list.push(`${localAppData}/Programs/Python/Python${v}/python.exe`);
+
+  // ② C 盘根（老的 AllUsers 安装方式, 少数开发者）
+  for (const v of versions) list.push(`C:/Python${v}/python.exe`);
+
+  // ③ Program Files 级 (通过 MSI 安装时自定义)
+  for (const v of versions.slice(0, 3)) {
+    list.push(`${programFiles}/Python${v}/python.exe`);
+    list.push(`${programFilesX86}/Python${v}/python.exe`);
+  }
+
+  // ④ Windows Store 版
+  if (process.env.LOCALAPPDATA) {
+    list.push(`${process.env.LOCALAPPDATA}/Microsoft/WindowsApps/python.exe`);
+    list.push(`${process.env.LOCALAPPDATA}/Microsoft/WindowsApps/python3.exe`);
+  }
+  return list;
+}
+
 function findPython(): string {
   // 1. 优先使用内置 Python Embeddable (打包后放在 resources/python/)
   const possibleBundled = [
@@ -19,17 +51,8 @@ function findPython(): string {
       }
     } catch {}
   }
-  // 2. 常见安装路径 (Windows)
-  const commonPaths = [
-    'C:/Python314/python.exe',
-    'C:/Python313/python.exe',
-    'C:/Python312/python.exe',
-    'C:/Python311/python.exe',
-    'C:/Program Files/Python313/python.exe',
-    'C:/Program Files/Python312/python.exe',
-    'C:/Program Files/Python311/python.exe',
-  ];
-  for (const p of commonPaths) {
+  // 2. 常见安装路径 (用户级 → 系统级 → 版本降序)
+  for (const p of buildPythonCandidates()) {
     try {
       if (fs.existsSync(p)) return `"${p}"`;
     } catch {}
@@ -50,11 +73,64 @@ function findPython(): string {
 }
 
 const PYTHON = findPython();
-// SKILLS_BASE = monorepo_root/packages/agentai-skills
-// dist/ → packages/agentai-gateway → packages → ../../ → monorepo root
-const _distDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:\/)/, '$1'));
-const _monorepoRoot = path.resolve(_distDir, '..', '..', '..');
-const SKILLS_BASE = path.resolve(_monorepoRoot, 'packages', 'agentai-skills');
+
+/**
+ * 计算 SKILLS_BASE（AgentAI SKILLS 技能集根目录）
+ * ╔══════════════════════════════════════════════════════════════╗
+ * ║ P0 分发修复: 打包后 monorepo 结构不存在, 不能靠 ../../.. 反推║
+ * ╠══════════════════════════════════════════════════════════════╣
+ * ║ 优先级:                                                       ║
+ * ║   1. AGENTAI_SKILLS_DIR 环境变量 (手动覆盖)                  ║
+ * ║   2. process.cwd()/../agentai-skills  (Tauri:                ║
+ * ║      cwd=gateway-dist-v2, skills 被打到 resources/相邻目录)  ║
+ * ║   3. AGENTAI_HOME (Rust lib.rs env: %APPDATA%/PulseFlow)    ║
+ * ║   4. 开发期 fallback: monorepo反推 + 项目路径 + workspace    ║
+ * ╚══════════════════════════════════════════════════════════════╝
+ */
+function resolveSkillsBase(): string {
+  // 1. 手动覆盖
+  if (process.env.AGENTAI_SKILLS_DIR && fs.existsSync(process.env.AGENTAI_SKILLS_DIR)) {
+    return process.env.AGENTAI_SKILLS_DIR;
+  }
+
+  // 2. 打包后 (Tauri resources) 典型布局:
+  //    resources/
+  //      gateway-dist-v2/   <- process.cwd() (gateway 启动目录)
+  //      agentai-skills/    <- 这里
+  const candidates = [
+    path.resolve(process.cwd(), '..', 'agentai-skills'),       // Tauri standard
+    path.resolve(process.cwd(), 'agentai-skills'),             // 直接放 cwd
+  ];
+
+  // 3. AGENTAI_HOME (%APPDATA%/PulseFlow/gateway -> siblings)
+  if (process.env.AGENTAI_HOME) {
+    candidates.push(path.resolve(process.env.AGENTAI_HOME, '..', 'agentai-skills'));
+    candidates.push(path.resolve(process.env.AGENTAI_HOME, 'agentai-skills'));
+  }
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)
+          && fs.existsSync(path.join(p, 'README.md'))
+          && fs.existsSync(path.join(p, 'scripts'))) {
+        return p;
+      }
+    } catch {}
+  }
+
+  // 4. 开发期: dist/反推 monorepo 根 → packages/agentai-skills
+  try {
+    const distDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:\/)/, '$1'));
+    const monorepoRoot = path.resolve(distDir, '..', '..', '..');
+    const devPath = path.resolve(monorepoRoot, 'packages', 'agentai-skills');
+    if (fs.existsSync(devPath)) return devPath;
+  } catch {}
+
+  // 5. workspace 配置 (主循环会注入): 最后兜底返回相对路径, 由上层校验
+  return path.resolve(process.cwd(), '..', 'agentai-skills');
+}
+
+const SKILLS_BASE = resolveSkillsBase();
 // 桥接器: 统一处理 --args-file / CLI flag 翻译, 老式 main.py 无需修改
 const BRIDGE_PY = path.join(SKILLS_BASE, '_lib', '_bridge.py');
 

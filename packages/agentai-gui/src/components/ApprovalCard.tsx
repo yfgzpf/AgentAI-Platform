@@ -161,7 +161,7 @@ export const ApprovalCard: React.FC<Props> = ({ proposal, onApprove, onReject })
           </Tooltip>
         </Checkbox>
         {trustChecked && proposal.filePath && (
-          <div style={{ fontSize: 10, color: '#666', marginTop: 2, marginLeft: 22 }}>
+          <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 2, marginLeft: 22 }}>
             白名单: {proposal.toolName} → {pathToPattern(proposal.filePath)}
           </div>
         )}

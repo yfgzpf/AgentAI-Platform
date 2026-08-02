@@ -72,11 +72,11 @@ export const EvolutionPanel: React.FC = () => {
   }
 
   const typeMeta: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-    success: { icon: <CheckCircleOutlined />, color: '#10B981', label: '成功经验' },
-    failure: { icon: <WarningOutlined />, color: '#EF4444', label: '失败教训' },
-    preference: { icon: <BulbOutlined />, color: '#F59E0B', label: '用户偏好' },
-    meta_instruction: { icon: <ExperimentOutlined />, color: '#8B5CF6', label: '教练建议' },
-    tool_stats: { icon: <ExperimentOutlined />, color: '#3B82F6', label: '工具统计' },
+    success: { icon: <CheckCircleOutlined />, color: 'var(--success)', label: '成功经验' },
+    failure: { icon: <WarningOutlined />, color: 'var(--danger)', label: '失败教训' },
+    preference: { icon: <BulbOutlined />, color: 'var(--warning)', label: '用户偏好' },
+    meta_instruction: { icon: <ExperimentOutlined />, color: 'var(--violet)', label: '教练建议' },
+    tool_stats: { icon: <ExperimentOutlined />, color: 'var(--accent)', label: '工具统计' },
   };
 
   return (
@@ -91,11 +91,11 @@ export const EvolutionPanel: React.FC = () => {
             <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>总记忆条数</div>
           </div>
           <div style={{ padding: 8, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#10B981' }}>{(summary.successRate * 100).toFixed(0)}%</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--success)' }}>{(summary.successRate * 100).toFixed(0)}%</div>
             <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>成功率</div>
           </div>
           <div style={{ padding: 8, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#F59E0B' }}>{summary.failureCount}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--warning)' }}>{summary.failureCount}</div>
             <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>失败次数</div>
           </div>
         </div>
@@ -127,7 +127,7 @@ export const EvolutionPanel: React.FC = () => {
                 background: 'var(--panel)', border: '1px solid var(--border)',
                 fontSize: 11, color: 'var(--fg-2)',
               }}>
-                <ExperimentOutlined style={{ color: '#8B5CF6', marginTop: 2, flexShrink: 0 }} />
+                <ExperimentOutlined style={{ color: 'var(--violet)', marginTop: 2, flexShrink: 0 }} />
                 <span style={{ flex: 1 }}>{rule}</span>
                 <Tooltip title="删除此规则">
                   <DeleteOutlined

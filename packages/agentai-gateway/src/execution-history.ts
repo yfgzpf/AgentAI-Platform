@@ -29,6 +29,7 @@ export interface ExecutionRecord {
   durationMs?: number;
   retryCount: number;
   triggeredBy: 'cron' | 'manual' | 'retry';
+  sessionId?: string; // AI 任务创建的会话 ID
 }
 
 export interface ExecutionStats {
@@ -110,7 +111,8 @@ export class ExecutionHistory {
     executionId: string,
     status: ExecutionRecord['status'],
     output?: string,
-    error?: string
+    error?: string,
+    sessionId?: string
   ): void {
     const record = this.records.find(r => r.id === executionId);
     if (!record) {
@@ -127,6 +129,9 @@ export class ExecutionHistory {
     }
     if (error) {
       record.error = error.slice(0, 5000); // 限制长度
+    }
+    if (sessionId) {
+      record.sessionId = sessionId;
     }
 
     this.dirty = true;

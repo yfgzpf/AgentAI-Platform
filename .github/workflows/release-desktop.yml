@@ -1,35 +1,82 @@
 name: Release Desktop
 
+# ═══════════════════════════════════════════════════════════
+#  Git → 自动打包 + 应用内自更新签名 (P0)
+#  触发条件: push tag v*  (git tag v0.1.0 && git push --tags)
+# ═══════════════════════════════════════════════════════════
+# 新增: Tauri Updater Signature + latest.json 生成
+#   - 每个安装包生成 .sig 签名 (Tauri build 自动, 需要 TAURI_PRIVATE_KEY)
+#   - 4 平台 4 个签名 → 合并生成 latest.json (plugins.updater.endpoints 读取)
+#   - latest.json 上传到 Release Assets (/releases/latest/download/latest.json)
+#
+# GitHub Secrets (一次性设置):
+#   TAURI_SIGNING_PRIVATE_KEY  : RSA/P-256 PEM私钥 (pnpm tauri signer generate 生成)
+#   TAURI_SIGNING_PUBLIC_KEY   : 公钥 (填到 tauri.conf.json plugins.updater.pubkey)
+#   TAURI_KEY_PASSWORD         : 私钥密码 (可选, 若生成时设置了)
+# ═══════════════════════════════════════════════════════════
+
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   create-release:
     runs-on: ubuntu-latest
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
+      tag_name: ${{ steps.get_tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Extract tag name
+        id: get_tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
       - name: Generate Changelog
         id: changelog
         run: |
-          # 从 git log 生成 changelog
-          git log $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD --oneline > release-notes.txt
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          git log "$PREV_TAG..HEAD" --pretty=format:'- %h %s (%an)' --abbrev-commit > release-notes.md || true
           echo "CHANGELOG<<EOF" >> $GITHUB_ENV
-          cat release-notes.txt >> $GITHUB_ENV
+          cat release-notes.md >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-      - name: Create Release
+
+      - name: Create Draft Release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
-          name: AgentAI Platform ${{ github.ref_name }}
-          body: ${{ env.CHANGELOG }}
-          draft: false
+          name: PulseFlow ${{ steps.get_tag.outputs.tag }}
+          body: |
+            # PulseFlow ${{ steps.get_tag.outputs.tag }}
+
+            ## 🚀 安装包下载
+
+            | 平台 | 下载 |
+            |------|------|
+            | Windows x64 (建议 Win10 21H2+) | `PulseFlow-${{ steps.get_tag.outputs.tag }}-x86_64-setup.exe` |
+            | macOS x64 (Intel) | `PulseFlow-${{ steps.get_tag.outputs.tag }}-x86_64.dmg` |
+            | macOS arm64 (Apple Silicon) | `PulseFlow-${{ steps.get_tag.outputs.tag }}-aarch64.dmg` |
+            | Linux x64 (AppImage) | `PulseFlow-${{ steps.get_tag.outputs.tag }}-x86_64.AppImage` |
+
+            ## 🔄 应用内自动更新 (Updater)
+            已安装 PulseFlow 的用户, 打开后会在 **设置 → 检查更新** 或 系统通知栏自动检测新版本。
+            Updater 签名清单: `latest.json`
+
+            ## 📋 变更日志
+            ${{ env.CHANGELOG }}
+
+            ## ✅ 首次启动
+            双击安装 → 一路下一步 → 首次启动自动弹 **环境自检 7 项**:
+            - 系统缺失 Node.js / Python / Git → 引导下载
+            - Gateway 依赖 / Playwright Chromium → **一键自动安装**
+          draft: true
           prerelease: false
+          generate_release_notes: true
 
   build:
     needs: create-release
@@ -39,16 +86,28 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            ext: msi
-            asset_name: AgentAI-Platform-${{ github.ref_name }}-x64.msi
-          - os: macos-latest
+            ext: exe
+            bundle_dir: nsis
+            asset_name: PulseFlow-${{ needs.create-release.outputs.tag_name }}-x64-setup.exe
+            tauri_triple: windows-x86_64
+          - os: macos-13
             target: x86_64-apple-darwin
             ext: dmg
-            asset_name: AgentAI-Platform-${{ github.ref_name }}-x64.dmg
+            bundle_dir: dmg
+            asset_name: PulseFlow-${{ needs.create-release.outputs.tag_name }}-x64.dmg
+            tauri_triple: darwin-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            ext: dmg
+            bundle_dir: dmg
+            asset_name: PulseFlow-${{ needs.create-release.outputs.tag_name }}-aarch64.dmg
+            tauri_triple: darwin-aarch64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             ext: AppImage
-            asset_name: AgentAI-Platform-${{ github.ref_name }}-x64.AppImage
+            bundle_dir: appimage
+            asset_name: PulseFlow-${{ needs.create-release.outputs.tag_name }}-x64.AppImage
+            tauri_triple: linux-x86_64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -67,8 +126,7 @@ jobs:
 
       - name: Get pnpm store directory
         shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
       - name: Cache pnpm store
         uses: actions/cache@v4
@@ -87,24 +145,21 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             packages/agentai-desktop/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install gtk+3 || true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -114,14 +169,148 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build Tauri Desktop
-        run: pnpm --filter @agentai/desktop tauri build
-        env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+      - name: Build Gateway dist
+        run: pnpm --filter @agentai/gateway build
 
-      - name: Upload Release Asset
+      - name: Build GUI dist
+        run: pnpm --filter @agentai/gui build
+
+      - name: Build Tauri Desktop + Updater Signature
+        uses: tauri-apps/tauri-action@v0
+        id: tauri_build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        with:
+          projectPath: packages/agentai-desktop
+          args: --target ${{ matrix.target }}
+          includeDebug: false
+          includeRelease: true
+
+      # 收集 updater manifest 片段 (signature + 文件大小 + URL)
+      - name: Collect updater per-platform manifest
+        id: collect_manifest
+        shell: bash
+        run: |
+          TAG="${{ needs.create-release.outputs.tag_name }}"
+          REPO="${GITHUB_REPOSITORY}"
+          PKG_DIR="packages/agentai-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle_dir }}"
+          mkdir -p _updater_out
+
+          # 1. 找 .sig 文件 (Tauri build 自动生成)
+          SIG_FILE=$(find "$PKG_DIR" -maxdepth 2 -type f -name "*.sig" 2>/dev/null | head -n 1 || echo "")
+          # 2. 找安装包文件
+          BIN_FILE=$(find "$PKG_DIR" -maxdepth 2 -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" \) 2>/dev/null | head -n 1 || echo "")
+
+          if [[ -z "$BIN_FILE" ]]; then
+            echo "⚠️ ${{ matrix.target }} 未找到安装包, 跳过 updater"
+            exit 0
+          fi
+
+          BASENAME=$(basename "$BIN_FILE")
+          SIZE=$(stat -c%s "$BIN_FILE" 2>/dev/null || stat -f%z "$BIN_FILE" 2>/dev/null || echo 0)
+          SIG=""
+          if [[ -n "$SIG_FILE" && -f "$SIG_FILE" ]]; then
+            SIG=$(cat "$SIG_FILE" | tr -d '\n')
+          fi
+          URL="https://github.com/${REPO}/releases/download/${TAG}/${BASENAME}"
+
+          # 输出 per-platform json 片段, 后面 merge-latest step 合成 latest.json
+          cat > "_updater_out/${{ matrix.tauri_triple }}.json" <<EOF
+          {
+            "triple": "${{ matrix.tauri_triple }}",
+            "platform": "${{ matrix.target }}",
+            "name": "${BASENAME}",
+            "url": "${URL}",
+            "signature": "${SIG}",
+            "bytes": $SIZE
+          }
+          EOF
+
+          echo "→ ${{ matrix.tauri_triple }}: $BASENAME ($SIZE bytes)"
+
+      - name: Upload per-platform updater artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ matrix.tauri_triple }}
+          path: _updater_out
+          retention-days: 7
+
+  merge-and-publish-latest:
+    runs-on: ubuntu-latest
+    needs: [build, create-release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all updater platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: _updater_all
+          pattern: updater-*
+
+      - name: Build unified latest.json + public_key.json
+        id: merge
+        run: |
+          TAG="${{ needs.create-release.outputs.tag_name }}"
+          REPO="${GITHUB_REPOSITORY}"
+          ls -R _updater_all 2>/dev/null || echo "(no updater artifacts)"
+
+          # 从所有 triple 文件合并 platforms 数组
+          NODE_CODE=$(cat <<'JS'
+          const fs = require('fs');
+          const path = require('path');
+          const files = [];
+          function walk(dir){
+            fs.readdirSync(dir, {withFileTypes:true}).forEach(e=>{
+              const p = path.join(dir, e.name);
+              if (e.isDirectory()) walk(p); else if (p.endsWith('.json')) files.push(p);
+            });
+          }
+          walk('_updater_all');
+          const plats = [];
+          for (const f of files) {
+            try { plats.push(JSON.parse(fs.readFileSync(f,'utf8'))); } catch(e){}
+          }
+          const pubkey = process.env.TAURI_PUBKEY || '';
+          const out = {
+            version: process.env.TAG,
+            notes: `PulseFlow ${process.env.TAG} release notes: https://github.com/${process.env.REPO}/releases/tag/${process.env.TAG}`,
+            pub_date: new Date().toISOString(),
+            platforms: plats.reduce((acc, p) => {
+              if (!p.triple) return acc;
+              acc[p.triple] = {
+                signature: p.signature || '',
+                url: p.url || '',
+                bytes: p.bytes || 0,
+              };
+              return acc;
+            }, {})
+          };
+          if (pubkey) out.public_key = pubkey;
+          fs.mkdirSync('_release_out', { recursive: true });
+          fs.writeFileSync('_release_out/latest.json', JSON.stringify(out, null, 2));
+          fs.writeFileSync('_release_out/public_key.json', JSON.stringify({
+            repo: process.env.REPO,
+            version: process.env.TAG,
+            tauri_updater_public_key: pubkey || 'UNCONFIGURED — 请把 GitHub Secrets TAURI_SIGNING_PUBLIC_KEY 加入, 或填入 tauri.conf.json plugins.updater.pubkey',
+            generated_at: new Date().toISOString(),
+          }, null, 2));
+          JS
+          )
+          TAG="$TAG" REPO="$REPO" TAURI_PUBKEY="${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}" node -e "$NODE_CODE"
+
+          echo "--- latest.json ---"
+          cat _release_out/latest.json || true
+          echo ""
+          echo "--- public_key.json ---"
+          cat _release_out/public_key.json || true
+
+      - name: Upload Release Assets (installers + latest.json + public_key.json)
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
           files: |
-            packages/agentai-desktop/src-tauri/target/release/**/AgentAI*.${{ matrix.ext }}
+            _release_out/latest.json
+            _release_out/public_key.json
+          fail_on_unmatched_files: false

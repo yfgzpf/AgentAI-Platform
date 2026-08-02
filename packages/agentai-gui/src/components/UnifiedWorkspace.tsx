@@ -139,6 +139,25 @@ export const UnifiedWorkspace: React.FC = () => {
     } catch { /* ignore */ }
   }, []);
 
+  // ===== 监听 HTML 预览事件 =====
+  useEffect(() => {
+    const handlePreviewHtml = (e: CustomEvent<{ path: string }>) => {
+      const { path } = e.detail;
+      const store = useWorkspaceStore.getState();
+      // 切换到预览模式并设置当前文件
+      store.setMode('preview');
+      store.setCurrentFile({
+        path,
+        name: path.split(/[\\/]/).pop() || path,
+        type: 'file',
+        ext: '.html',
+      });
+    };
+    
+    window.addEventListener('agentai:preview-html', handlePreviewHtml as EventListener);
+    return () => window.removeEventListener('agentai:preview-html', handlePreviewHtml as EventListener);
+  }, []);
+
   return (
     <ErrorBoundary
       key={`workspace-error-${errorKey}`}

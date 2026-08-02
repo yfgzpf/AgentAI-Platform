@@ -4,9 +4,14 @@
  * 用户可上传行业文档（txt/md），AI 在回答时自动检索。
  * 使用 BM25 搜索引擎（本地，无需外部 API）。
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { Card, Button, Upload, List, Tag, Typography, Input, Empty, Popconfirm, Space, message as antMsg, Progress, Alert, Tabs } from 'antd';
-const KnowledgeGraphPanel = React.lazy(() => import('./knowledge/KnowledgeGraphPanel'));
+/**
+ * 构建vs开发一致性修复 (P1):
+ * - 从共享的 lazyChunks 单例导入, 避免 App.tsx 和此处各包一层 React.lazy
+ * - 生产构建下共享同一 Promise wrapper, 消除 "同一组件加载两次→样式抖动"
+ */
+import { KnowledgeGraphPanelChunk } from '../lazyChunks';
 import { UploadOutlined, DeleteOutlined, SearchOutlined, FileTextOutlined, InboxOutlined, BookOutlined, ReloadOutlined, FileExcelOutlined, FileWordOutlined, FilePdfOutlined } from '@ant-design/icons';
 import { gatewayFallback } from '../services/GatewayFallback';
 
@@ -352,9 +357,9 @@ export const KnowledgeBasePanel: React.FC = () => {
 
       {/* 记忆图谱 */}
       <Card title="记忆图谱" style={{ marginTop: 16 }}>
-        <React.Suspense fallback={<div style={{ padding: 20, color: 'var(--muted)' }}>加载中...</div>}>
-          <KnowledgeGraphPanel />
-        </React.Suspense>
+        <Suspense fallback={<div style={{ padding: 20, color: 'var(--muted)', fontSize: 12 }}>记忆图谱加载中…</div>}>
+          <KnowledgeGraphPanelChunk />
+        </Suspense>
       </Card>
     </div>
   );

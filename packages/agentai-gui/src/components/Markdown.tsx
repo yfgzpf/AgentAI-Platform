@@ -138,9 +138,8 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
             if (filePath) {
               window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: filePath } }));
               try {
-                const store = (window as any).__agentai_app_store__;
-                if (store?.getState?.().setView) store.getState().setView('editor');
-              } catch { /* optional */ }
+                window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
+              } catch {}
             }
           }}
           style={{
@@ -349,14 +348,27 @@ const SvgDiagram: React.FC<{ svg: string }> = ({ svg }) => {
 
 /**
  * 清理工具调用标记，防止显示在对话中
+ * 支持多种格式：
+ * 1. <tool_call>...</tool_call>
+ * 2. <tool_call> <function=name> <parameter=key> value </parameter> </function> </tool_call>
+ * 3. <function=name> ... </function>
+ * 4. <parameter=key> value </parameter>
  */
 function cleanToolCalls(text: string): string {
-  // 移除 <tool_call>...</tool_call> 标记及其内容
+  // 移除各种工具调用格式
   return text
+    // 标准 XML 格式 <tool_call>...</tool_call>
     .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
     .replace(/<tool_call\s+[^>]*>[\s\S]*?<\/tool_call>/g, '')
+    // 函数调用格式 <function=name> ... </function>
+    .replace(/<function=[^>]+>[\s\S]*?<\/function>/g, '')
+    // 参数格式 <parameter=key> value </parameter>
+    .replace(/<parameter=[^>]+>[\s\S]*?<\/parameter>/g, '')
+    // 旧格式兼容
     .replace(/<arg_key>[^<]*<\/arg_key>/g, '')
     .replace(/<arg_value>[^<]*<\/arg_value>/g, '')
+    // 清理多余的空行（保留最多两行）
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 

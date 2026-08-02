@@ -1,12 +1,21 @@
 /**
  * WorldModel - 世界模型因果知识图谱
- * 
+ * ==========================================
+ * 2026-08-03 修复: 此前文件存在但从未被集成 (名实不符)
+ *   - 添加持久化 (JSONL, 与 memory.ts 一致)
+ *   - 构造函数自动从文件加载历史知识
+ *   - 每次 extractKnowledge 后原子追加到磁盘
+ *   - 生产代码在 agentai-loop.ts 中按需调用
+ *
  * 创新理念：跨任务沉淀结构化知识(实体+关系+因果)
  * 所有后续任务可查询推理
  * 从单任务上下文 → 跨任务共享经验库
  */
 
 import { EventEmitter } from 'events';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import * as crypto from 'crypto';
 import { AgentAIRouter } from './llm-router.js';
 
 // ═══════════════════════════════════════════════════════════
@@ -84,10 +93,111 @@ export class WorldModel extends EventEmitter {
   private causalRules: Map<string, CausalRule> = new Map();
   private experiences: Map<string, Experience> = new Map();
   private llmRouter: AgentAIRouter;
+  private storeDir: string;
 
-  constructor(llmRouter: AgentAIRouter) {
+  constructor(llmRouter: AgentAIRouter, workspace?: string) {
     super();
     this.llmRouter = llmRouter;
+    this.storeDir = workspace
+      ? path.join(workspace, '.agentai', 'world-model')
+      : path.join(process.cwd(), '.agentai', 'world-model');
+    // 异步加载历史知识, 不阻塞构造
+    this.loadFromStorage().catch(() => {});
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 持久化 (JSONL 原子写入)
+  // ══════════════════════════════════════════════════════
+
+  private getStorePath(type: 'entities' | 'relations' | 'rules' | 'experiences'): string {
+    return path.join(this.storeDir, `${type}.jsonl`);
+  }
+
+  private async loadFromStorage(): Promise<void> {
+    try {
+      await fs.mkdir(this.storeDir, { recursive: true });
+
+      // 加载实体
+      try {
+        const entRaw = await fs.readFile(this.getStorePath('entities'), 'utf-8');
+        for (const line of entRaw.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const e = JSON.parse(line) as Entity;
+            this.entities.set(e.id, e);
+          } catch { /* 跳过坏行 */ }
+        }
+      } catch { /* 文件不存在正常 */ }
+
+      // 加载关系
+      try {
+        const relRaw = await fs.readFile(this.getStorePath('relations'), 'utf-8');
+        for (const line of relRaw.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const r = JSON.parse(line) as Relation;
+            this.relations.set(r.id, r);
+          } catch { /* 跳过坏行 */ }
+        }
+      } catch { /* 文件不存在正常 */ }
+
+      // 加载因果规则
+      try {
+        const ruleRaw = await fs.readFile(this.getStorePath('rules'), 'utf-8');
+        for (const line of ruleRaw.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const cr = JSON.parse(line) as CausalRule;
+            this.causalRules.set(cr.id, cr);
+          } catch { /* 跳过坏行 */ }
+        }
+      } catch { /* 文件不存在正常 */ }
+
+      // 加载经验
+      try {
+        const expRaw = await fs.readFile(this.getStorePath('experiences'), 'utf-8');
+        for (const line of expRaw.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const exp = JSON.parse(line) as Experience;
+            this.experiences.set(exp.id, exp);
+          } catch { /* 跳过坏行 */ }
+        }
+      } catch { /* 文件不存在正常 */ }
+    } catch {
+      // 静默失败
+    }
+  }
+
+  private async atomicAppend(filePath: string, line: string): Promise<void> {
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.appendFile(filePath, line + '\n', 'utf-8');
+    } catch {
+      try {
+        // 回退: 临时文件 + rename
+        const tmp = `${filePath}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+        const existing = await fs.readFile(filePath, 'utf-8').catch(() => '');
+        await fs.writeFile(tmp, existing + line + '\n', 'utf-8');
+        await fs.rename(tmp, filePath);
+      } catch { /* 最终失败静默 */ }
+    }
+  }
+
+  private async persistEntity(e: Entity): Promise<void> {
+    await this.atomicAppend(this.getStorePath('entities'), JSON.stringify(e));
+  }
+
+  private async persistRelation(r: Relation): Promise<void> {
+    await this.atomicAppend(this.getStorePath('relations'), JSON.stringify(r));
+  }
+
+  private async persistRule(cr: CausalRule): Promise<void> {
+    await this.atomicAppend(this.getStorePath('rules'), JSON.stringify(cr));
+  }
+
+  private async persistExperience(exp: Experience): Promise<void> {
+    await this.atomicAppend(this.getStorePath('experiences'), JSON.stringify(exp));
   }
 
   /**
@@ -210,6 +320,16 @@ ${task.steps.map((s, i) => `${i + 1}. ${s.action} → ${s.result}`).join('\n')}
       this.experiences.set(experience.id, experience);
 
       this.emit('knowledge:extracted', { task: task.id, entities, relations, rules });
+
+      // 异步持久化, 不阻塞返回
+      (async () => {
+        try {
+          for (const e of entities) await this.persistEntity(e);
+          for (const r of relations) await this.persistRelation(r);
+          for (const cr of rules) await this.persistRule(cr);
+          if (experience) await this.persistExperience(experience);
+        } catch { /* 静默失败 */ }
+      })();
 
       return { entities, relations, rules };
     } catch (error) {
@@ -448,12 +568,45 @@ ${task.steps.map((s, i) => `${i + 1}. ${s.action} → ${s.result}`).join('\n')}
   }
 
   private queryCausal(query: string): CausalRule[] {
-    // 简单关键词匹配
-    const keywords = query.toLowerCase().split(/\s+/);
-    
+    // 关键词匹配: 支持中文按字符 n-gram + 空白分隔英文
+    const q = query.toLowerCase().trim();
+    if (!q) return [];
+
+    // 候选拆分: 英文按空格分词 + 中文/日文等非ASCII字提取 2-gram
+    const tokens: string[] = [];
+
+    // 1. 英文/数字空白分词
+    const spaceTokens = q.split(/\s+/).filter(t => t.length > 0);
+    for (const tok of spaceTokens) {
+      if (/^[\x00-\x7F]+$/.test(tok) && tok.length > 0) {
+        tokens.push(tok); // ASCII 词
+      } else {
+        // 非ASCII (中文等): 2-gram 滑动窗口
+        for (let i = 0; i < tok.length - 1; i++) {
+          tokens.push(tok.slice(i, i + 2));
+        }
+        // 单字符兜底 (1-gram)
+        if (tok.length === 1) tokens.push(tok);
+      }
+    }
+
+    // 2. 去除长度<2 的纯ASCII短词 (噪音)
+    const keywords = tokens.filter(t => t.length >= 2 || /[\u4e00-\u9fa5]/.test(t));
+    if (keywords.length === 0) {
+      // 退化: 用原字符串包含做回退
+      return Array.from(this.causalRules.values()).filter(rule => {
+        const ruleText = `${rule.cause} ${rule.effect}`.toLowerCase();
+        return ruleText.includes(q) || q.includes(rule.cause.toLowerCase()) || q.includes(rule.effect.toLowerCase());
+      });
+    }
+
     return Array.from(this.causalRules.values()).filter(rule => {
       const ruleText = `${rule.cause} ${rule.effect}`.toLowerCase();
-      return keywords.some(kw => ruleText.includes(kw));
+      // OR: 任一关键词命中
+      return keywords.some(kw => ruleText.includes(kw))
+        // 额外: 因果任一包含在 query 中 (中文字面)
+        || q.includes(rule.cause.toLowerCase())
+        || q.includes(rule.effect.toLowerCase());
     });
   }
 
@@ -517,12 +670,13 @@ ${task.steps.map((s, i) => `${i + 1}. ${s.action} → ${s.result}`).join('\n')}
   }
 }
 
-// 单例导出
-let worldModelInstance: WorldModel | null = null;
+// 单例导出 (每个 workspace 独立实例)
+const worldModelInstances = new Map<string, WorldModel>();
 
-export function getWorldModel(llmRouter: AgentAIRouter): WorldModel {
-  if (!worldModelInstance) {
-    worldModelInstance = new WorldModel(llmRouter);
+export function getWorldModel(llmRouter: AgentAIRouter, workspace?: string): WorldModel {
+  const key = workspace || '__default__';
+  if (!worldModelInstances.has(key)) {
+    worldModelInstances.set(key, new WorldModel(llmRouter, workspace));
   }
-  return worldModelInstance;
+  return worldModelInstances.get(key)!;
 }

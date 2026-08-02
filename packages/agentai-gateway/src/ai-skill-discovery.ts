@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * AI Skill Discovery - AI技能自动发现系统
  * 
@@ -63,6 +62,7 @@ export class AISkillDiscovery extends EventEmitter {
       return this.processDiscoveryResult(cached, taskDescription);
     }
 
+
     // 2. 提取关键词
     const keywords = this.extractKeywords(taskDescription);
     console.log('[AISkillDiscovery] 提取关键词:', keywords);
@@ -101,16 +101,16 @@ export class AISkillDiscovery extends EventEmitter {
   /**
    * 处理发现结果
    */
-  private processDiscoveryResult(
+  private async processDiscoveryResult(
     skills: SkillMarketSkill[],
     taskDescription: string
-  ): {
+  ): Promise<{
     found: boolean;
     skill?: SkillMarketSkill;
     alreadyInstalled: boolean;
     autoInstalled: boolean;
     alternatives?: SkillMarketSkill[];
-  } {
+  }> {
     if (skills.length === 0) {
       return { found: false, alreadyInstalled: false, autoInstalled: false };
     }
@@ -122,7 +122,7 @@ export class AISkillDiscovery extends EventEmitter {
     let autoInstalled = false;
     if (!alreadyInstalled) {
       try {
-        const installResult = this.client.installSkill(bestMatch.id);
+        const installResult = await this.client.installSkill(bestMatch.id);
         autoInstalled = installResult.success;
         if (autoInstalled) {
           this.installedSkills.add(bestMatch.id);
@@ -240,9 +240,9 @@ export class AISkillDiscovery extends EventEmitter {
   private deduplicateAndSort(skills: SkillMarketSkill[]): SkillMarketSkill[] {
     // 去重
     const unique = Array.from(new Map(skills.map(s => [s.id, s])).values());
-    
-    // 按评分排序
-    return unique.sort((a, b) => (b.stars || 0) - (a.stars || 0));
+
+    // 按评分排序 (rating 0-5 制)
+    return unique.sort((a, b) => (b.rating || 0) - (a.rating || 0));
   }
 
   /**

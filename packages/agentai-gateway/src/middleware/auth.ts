@@ -68,6 +68,7 @@ export function setFileLoadDisabled(disabled: boolean): void {
 const WHITELIST_PATHS = new Set([
   '/health',
   '/v1/system/check-dep',
+  '/v1/system/auto-install',
 ]);
 
 function isWhitelisted(req: Request): boolean {

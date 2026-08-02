@@ -23,7 +23,7 @@ export interface FileNode {
 }
 
 /** 可预览的文件类型分类 */
-export type PreviewType = 'image' | 'pdf' | 'video' | 'audio' | 'text' | 'markdown' | 'none';
+export type PreviewType = 'image' | 'pdf' | 'video' | 'audio' | 'text' | 'markdown' | 'html' | 'none';
 
 /** 工作区上下文（用于自动模式推断） */
 export interface WorkspaceContext {
@@ -91,6 +91,7 @@ const PDF_EXTS = new Set(['.pdf']);
 const VIDEO_EXTS = new Set(['.mp4', '.webm', '.ogg', '.mov', '.avi', '.mkv', '.flv']);
 const AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a']);
 const MARKDOWN_EXTS = new Set(['.md', '.markdown']);
+const HTML_EXTS = new Set(['.html', '.htm']);
 
 export function getPreviewType(file: FileNode): PreviewType {
   const ext = file.ext || extractExt(file.path);
@@ -99,6 +100,7 @@ export function getPreviewType(file: FileNode): PreviewType {
   if (VIDEO_EXTS.has(ext)) return 'video';
   if (AUDIO_EXTS.has(ext)) return 'audio';
   if (MARKDOWN_EXTS.has(ext)) return 'markdown';
+  if (HTML_EXTS.has(ext)) return 'html';
   if (ext) return 'text'; // 有扩展名的其他文件当文本处理
   return 'none';
 }
@@ -107,6 +109,12 @@ export function getPreviewType(file: FileNode): PreviewType {
 export function isPreviewable(file: FileNode): boolean {
   const type = getPreviewType(file);
   return type !== 'none' && type !== 'text';
+}
+
+/** 文件是否可在浏览器中打开（HTML 等） */
+export function isBrowserOpenable(file: FileNode): boolean {
+  const ext = file.ext || extractExt(file.path);
+  return HTML_EXTS.has(ext);
 }
 
 /** 从路径提取扩展名 */

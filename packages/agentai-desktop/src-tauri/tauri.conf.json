@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ws: http://127.0.0.1:18789; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob: https: asset: http://asset.localhost; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' ws: ipc: http://127.0.0.1:18789 http://ipc.localhost https://apihub.agnes-ai.com https://api.deepseek.com https://mp.weixin.qq.com https://runware.ai https://volcengine.com https: https://api.weixin.qq.com; worker-src 'self' blob:; frame-src 'self' https:"
+      "csp": "default-src 'self' ws: http://127.0.0.1:18789; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob: https: asset: http://asset.localhost; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' ws: ipc: http://127.0.0.1:18789 http://ipc.localhost https://apihub.agnes-ai.com https://api.deepseek.com https://mp.weixin.qq.com https://runware.ai https://volcengine.com https: https://api.weixin.qq.com https://github.com https://objects.githubusercontent.com https://api.github.com; worker-src 'self' blob:; frame-src 'self' https:"
     },
     "trayIcon": {
       "id": "main-tray",
@@ -38,9 +38,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "resources": {
       "resources/gateway-dist-v2": "gateway-dist-v2",
+      "resources/lite.html": "lite.html",
+      "scripts/install-deps.bat": "scripts/install-deps.bat",
+      "../../agentai-skills": "agentai-skills",
       "../../agentai-vscode/agentai-vscode-0.1.0-alpha.1.vsix": "agentai-vscode.vsix"
     },
     "icon": [
@@ -57,9 +62,7 @@
     "copyright": "© 2026 PulseFlow Team",
     "homepage": "https://github.com/pulseflow/platform",
     "windows": {
-      "nsis": {
-        "installMode": "perMachine"
-      }
+      "nsis": {}
     },
     "linux": {
       "deb": {
@@ -69,6 +72,17 @@
     "macOS": {
       "frameworks": [],
       "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/PulseFlowAI/pulseflow-platform/releases/latest/download/latest.json",
+        "https://gitee.com/api/v5/repos/PulseFlowAI/pulseflow-platform/releases/latest"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIwMTBDODFFNzk4QjdGQjUKUldTMWY0dDVIc2dRc05DRzdJVEhpbzhjWWgzR2RiZStKdFQ5eUFNY2dvZ3c0SkFIZ25ZWklqc1AK"
     }
   }
 }

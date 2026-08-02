@@ -217,7 +217,7 @@ export const CleanerPanel: React.FC = () => {
               <Col span={6}><Statistic
                 title="24h 告警"
                 value={s.alertsLast24h}
-                valueStyle={{ color: s.alertsLast24h > 0 ? '#cf1322' : undefined }}
+                valueStyle={{ color: s.alertsLast24h > 0 ? 'var(--danger)' : undefined }}
               /></Col>
             </Row>
 
@@ -257,7 +257,7 @@ export const CleanerPanel: React.FC = () => {
               </Button>
             </Popconfirm>
             <Tooltip title="每次扫描会自动调用 /v1/cleaner/scan">
-              <span style={{ color: 'rgba(255,255,255,0.45)' }}>执行范围: 仅 safe 规则自动处理,risky 需下方确认</span>
+              <span style={{ color: 'var(--muted)' }}>执行范围: 仅 safe 规则自动处理,risky 需下方确认</span>
             </Tooltip>
           </Space>
           {lastScan && (

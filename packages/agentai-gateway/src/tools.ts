@@ -471,6 +471,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'create_tool', description: '创建自定义工具。当发现经常需要某个操作但没有现成工具时使用。工具以脚本形式存储在 .agentai/custom-tools/ 目录下。', parameters: { type: 'object', properties: { name: { type: 'string', description: '工具名称 (小写+下划线)' }, description: { type: 'string' }, script: { type: 'string', description: 'Node.js 脚本内容。必须导出 async function run(args): Promise<string>' }, parameters: { type: 'object', description: '参数定义 (JSON Schema)' } }, required: ['name','description','script'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除项目记忆', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'remember_this', description: '【AI 主动结构化记忆 / 长期知识沉淀】\n主动将关键发现/决策/教训/项目事实写入项目记忆, 跨会话复用。比 remember 更结构化, 支持分类、重要性、去重。\n\n⚠️ 关键区别:\n- remember = 简单键值记忆 (key-value)\n- remember_this = 结构化记忆 (5 类分类 + 重要性 1-5 + entityId 去重)\n- evolve_prompt = 永久行为规则\n\n🔑 5 类记忆分类:\n- bug_fix: Bug 修复 (症状→根因→方案)\n- decision: 关键决策 (选择+理由)\n- pattern: 代码/架构模式\n- user_preference: 用户偏好\n- project_fact: 项目事实\n\n💡 触发场景:\n- 修复一个 bug → remember_this(category:bug_fix)\n- 做出技术选型 → remember_this(category:decision)\n- 发现项目规律 → remember_this(category:pattern)\n- 用户表达偏好 → remember_this(category:user_preference)\n- 确认项目约束 → remember_this(category:project_fact)\n\n📝 示例:\n- remember_this({category:"bug_fix", title:"PowerShell不支持&&", content:"...", entityId:"bug:ps:&&", importance:4})\n- remember_this({category:"decision", title:"使用BM25而非向量检索", content:"...", entityId:"decision:bm25", importance:5})', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['bug_fix','decision','pattern','user_preference','project_fact'], description: '记忆分类' }, title: { type: 'string', description: '简短标题 (展示用)' }, content: { type: 'string', description: '核心内容 (详细描述)' }, entityId: { type: 'string', description: '实体ID (用于去重, 如 "bug:llm-router:comments")' }, importance: { type: 'number', minimum: 1, maximum: 5, description: '重要性 1-5 (5=必须记住, <3 不写入)' }, tags: { type: 'array', items: { type: 'string' }, description: '标签 (可选)' } }, required: ['category','title','content','entityId','importance'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'session_manage', description: '【AI 自主管理对话会话】\n查看、删除、归档对话历史。AI 可以自主管理会话生命周期，避免记忆过载或清理无关历史。\n\n🔑 触发场景:\n- 用户说"删除某天的对话"/"清理旧会话"/"忘记上次"\n- AI 判断某些会话已无关，需要清理\n- 会话过多导致性能下降\n\n🛠️ 5 种 action:\n- list = 列出所有会话 (返回 session_id, 创建时间, 最后活跃, 消息数)\n- delete = 删除指定 session (完全删除，不可恢复)\n- archive = 归档 session (从活跃列表移除，但保留数据)\n- summary = 获取指定 session 的摘要\n- cleanup_old = 清理 N 天前的所有会话\n\n💡 示例:\n- session_manage({action:"list"}) — 查看所有会话\n- session_manage({action:"delete", session_id:"xxx"}) — 删除某会话\n- session_manage({action:"cleanup_old", older_than_days:7}) — 清理 7 天前的会话', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['list','delete','archive','summary','cleanup_old'], description: '操作类型' }, session_id: { type: 'string', description: 'delete/archive/summary 时需要' }, older_than_days: { type: 'number', description: 'cleanup_old 时指定天数' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'spawn_subagent', description: '创建子智能体执行独立任务。适用场景：(1)需要并行处理多个独立子任务 (2)需要深度探索代码库而不影响主对话 (3)需要独立搜索调研。子智能体有独立上下文，结果自动汇总回主对话。长任务建议先 plan_task 分解，再对独立子任务各 spawn 一个子智能体。', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['explore','research','review','security-review','battle','architect','frontend','backend','tester','tech-writer','performance'], description: 'explore=代码探索, research=搜索调研, review=代码审查, security-review=安全审查, battle=多Agent竞争, architect=架构师, frontend=前端工程师, backend=后端工程师, tester=测试工程师, tech-writer=技术写作, performance=性能专家' }, task: { type: 'string', description: '子智能体要完成的具体任务描述' }, numAgents: { type: 'number', description: 'Number of competing agents (battle mode only, default 3)' } }, required: ['type','task'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'run_team', description: '【AI 团队协作】启动预设 AI 团队执行复杂任务。团队由多个角色 Agent 组成, 支持并行/串行/审查三种工作流, 结果自动综合。\n\n可用团队:\n- code-review: 代码审查团队 (架构师+安全专家+性能专家, 并行)\n- feature-dev: 功能开发团队 (架构师+前端+后端+测试, 串行)\n- docs: 文档团队 (技术写作+校对, 串行)\n- debug: 调试团队 (探索+审查+安全, 并行)\n- security-audit: 安全审计团队 (漏洞扫描+架构安全+代码探索, 并行)\n- refactor: 重构团队 (架构师+前端+后端+测试, 串行)\n\n适用场景: 需要多角色协作的复杂任务, 如全面代码审查、全栈功能开发、系统性重构等。\n不适用: 简单单步任务用 spawn_subagent, 独立调研用 spawn_subagent(research)。', parameters: { type: 'object', properties: { teamId: { type: 'string', enum: ['code-review','feature-dev','docs','debug','security-audit','refactor'], description: '团队 ID' }, task: { type: 'string', description: '团队要完成的任务描述' } }, required: ['teamId','task'] }, parallelSafe: false, riskLevel: 'medium' },
@@ -1818,6 +1819,13 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       if (verifyErrors) {
         msg += `\n⚠️ 编译错误 (请立即修复):\n${verifyErrors}`;
       }
+      
+      // HTML 文件自动预览提示
+      const isHtmlFile = args.file_path.toLowerCase().endsWith('.html') || args.file_path.toLowerCase().endsWith('.htm');
+      if (isHtmlFile) {
+        msg += `\n\n🌐 HTML 文件已生成，可在浏览器中打开预览:\n📄 file://${resolved}`;
+      }
+      
       return { success: true, output: msg, data: { oldContent: oldContentForDiff, newContent: args.content } };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
@@ -1905,6 +1913,29 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
         metadata: { type: args.type, description: args.description, priority: args.priority }
       });
       return { success: true, output: `✅ 记忆已保存: [${args.type || 'fact'}] ${args.name}\n内容: ${content.slice(0, 100)}${content.length > 100 ? '...' : ''}` };
+    } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+  remember_this: async (args) => {
+    try {
+      const { rememberThis } = await import('./self-memory-updater.js');
+      const ws = wm().projectDir;
+      const result = await rememberThis(ws, {
+        category: args.category,
+        title: args.title,
+        content: args.content,
+        entityId: args.entityId,
+        importance: args.importance,
+        tags: args.tags,
+        sourceTool: 'remember_this',
+      });
+      if (result.written) {
+        const stats = await import('./self-memory-updater.js').then(m => m.getSessionStats());
+        return {
+          success: true,
+          output: `✅ 已写入 [${args.category}] ${args.title}\n重要性: ${args.importance}/5\n本次会话已写入: ${stats.written}/${stats.written + stats.remaining} 条`,
+        };
+      }
+      return { success: false, output: `⚠️ 未写入: ${result.reason}` };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
   plan_task: async (args) => {
@@ -3726,8 +3757,48 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
         return { success: false, output: 'LLM router 不可用, 无法生成工作流模板' };
       }
 
-      const genPrompt = `你是工作流设计专家。根据用户需求生成一个 JSON 格式的工作流模板。
+      // 加载行业 Few-shot 参考 (2026-08-03 从 decoration-workflows 集成)
+      let industryFewShot = '';
+      if (industry === 'decoration') {
+        industryFewShot = `
+【装修行业参考示例: 快速报价模板】
+变量: total_area, room_layout, style, quality_level, customer_name
+步骤DAG:
+  step1 (parse_requirement, no deps) → 解析客户描述 → 提取面积/户型/风格
+  step2 (generate_quotation, dependsOn:[step1]) → AI 生成报价表 → markdown表格
+  step3 (generate_45_degree_view, dependsOn:[step2]) → 户型SVG俯视
+  step4 (notification, dependsOn:[step2,step3]) → SSE推送结果
 
+【装修行业参考示例: CAD全流程模板】
+变量: cad_file_path*, customer_name*, customer_phone, material_grade
+步骤DAG:
+  parse_cad → match_materials → generate_quote → notify_customer (线性串)
+
+【电商行业参考示例: 竞品监控】
+变量: product_url*, product_name, target_price, rpa_script_id
+步骤DAG:
+  replay_scrape (rpa, deps:[])
+    → extract_price (extract, deps:[replay_scrape])
+    → compare_history (transform, deps:[extract_price])
+    → check_threshold (condition: "{{compare_price}} < {{target_price}}", deps:[compare_history])
+    → alert_notification (notification, deps:[check_threshold])
+`;
+      } else if (industry === 'ecommerce') {
+        industryFewShot = `
+【电商行业参考示例: 竞品降价告警】
+DAG 结构: 抓取 → 提取 → 对比历史 → 条件判断 → 告警
+rpa_script_id 可留空, 留空时用 http 抓页面 + extract 提取。
+`;
+      } else if (industry === 'monitoring') {
+        industryFewShot = `
+【监控运维参考示例: 站点健康检查】
+DAG 结构: 每5分钟轮询 http → status_code提取 → transform(阈值判断) → condition失败 → notification告警 → delay(重试)
+配置 retryCount=3, timeout=10000 保证自愈。
+`;
+      }
+
+      const genPrompt = `你是工作流设计专家。根据用户需求生成一个 JSON 格式的工作流模板。
+${industryFewShot}
 需求: ${description}
 行业: ${industry}
 ${name ? `模板名称: ${name}` : ''}

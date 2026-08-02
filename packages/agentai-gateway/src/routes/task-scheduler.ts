@@ -251,5 +251,33 @@ export function createTaskSchedulerRouter(): Router {
     }
   });
 
+  /**
+   * GET /v1/schedules/:id/history - 获取任务执行历史
+   */
+  r.get('/v1/schedules/:id/history', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        return res.status(400).json({ success: false, error: 'Missing schedule ID' });
+      }
+      
+      const { executionHistory } = await import('../execution-history.js');
+      const history = executionHistory.query({ 
+        scheduleId: id, 
+        limit: parseInt(req.query.limit as string) || 20 
+      });
+      
+      res.json({
+        success: true,
+        data: history,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: err.message,
+      });
+    }
+  });
+
   return r;
 }

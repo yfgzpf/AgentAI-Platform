@@ -1,6 +1,6 @@
 {
   "name": "@agentai/gateway",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "description": "AgentAI Gateway - 智能体网关（融合 OpenClaw/Hermes/Reasonix 自创）",
   "type": "module",
   "main": "dist/index.js",

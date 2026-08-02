@@ -49,12 +49,9 @@ export const GeneratedFilesPanel: React.FC = () => {
     window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: filePath } }));
     // 切换到编辑器视图
     try {
-      const store = (window as any).__agentai_app_store__;
-      if (store?.getState?.().setView) {
-        store.getState().setView('editor');
-      }
-    } catch { /* optional */ }
-    antdMsg.info(`打开: ${filePath.split(/[\\/]/).pop()}`);
+      window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
+    } catch {}
+    antdMsg.info(`正在打开: ${filePath.split(/[\\/]/).pop()}`);
   };
 
   const handleReveal = async (filePath: string) => {

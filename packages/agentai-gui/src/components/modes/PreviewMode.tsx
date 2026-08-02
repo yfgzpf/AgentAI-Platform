@@ -297,6 +297,82 @@ const MarkdownPreview: React.FC<{ content: string; filePath: string }> = React.m
   );
 });
 
+/** HTML 预览器（使用 iframe 渲染） */
+const HtmlPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileName }) => {
+  const htmlUrl = useMemo(() => {
+    if (src.startsWith('/') || /^[A-Z]:/.test(src)) {
+      return `/api/file-proxy?path=${encodeURIComponent(src)}`;
+    }
+    return src;
+  }, [src]);
+
+  const handleOpenInNewTab = () => {
+    window.open(htmlUrl, '_blank');
+  };
+
+  return (
+    <div className="preview-html" style={{
+      display: 'flex',
+      flexDirection: 'column',
+      width: '100%',
+      height: '100%',
+      overflow: 'hidden',
+    }}>
+      {/* 工具栏 */}
+      <div className="preview-toolbar" style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        padding: '8px 16px',
+        background: 'rgba(30,30,35,0.95)',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary,#aaa)' }}>
+          🌐 HTML 预览
+        </span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button size="small" onClick={handleOpenInNewTab}>
+            在新标签页打开
+          </Button>
+          <Button 
+            type="primary" 
+            size="small" 
+            icon={<DownloadOutlined />}
+            onClick={() => {
+              const a = document.createElement('a');
+              a.href = htmlUrl;
+              a.download = fileName;
+              a.click();
+            }}
+          >
+            下载
+          </Button>
+        </div>
+      </div>
+
+      {/* HTML 内容区 */}
+      <div className="preview-html-container" style={{
+        flex: 1,
+        overflow: 'auto',
+        background: '#fff',
+      }}>
+        <iframe
+          src={htmlUrl}
+          title={fileName}
+          style={{
+            width: '100%',
+            height: '100%',
+            border: 'none',
+          }}
+          sandbox="allow-scripts allow-same-origin allow-popups"
+        />
+      </div>
+    </div>
+  );
+};
+
 /** 纯文本预览器（只读） */
 const TextPreview: React.FC<{ content: string; filePath: string }> = ({ content, filePath }) => (
   <pre className="preview-text" style={{
@@ -414,6 +490,8 @@ export const PreviewMode: React.FC = () => {
       return <AudioPreview src={fileSrc} fileName={currentFile.name} />;
     case 'markdown':
       return <MarkdownPreview content={content} filePath={fileSrc} />;
+    case 'html':
+      return <HtmlPreview src={fileSrc} fileName={currentFile.name} />;
     case 'text':
     default:
       return <TextPreview content={content} filePath={fileSrc} />;

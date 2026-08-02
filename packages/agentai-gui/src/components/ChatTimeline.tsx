@@ -152,9 +152,9 @@ export const ChatTimeline: React.FC<{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 9, fontWeight: 700, flexShrink: 0, marginTop: 1,
                   background: isUser
-                    ? 'linear-gradient(135deg, #6366F1, #4F46E5)'
+                    ? 'linear-gradient(135deg, var(--violet), color-mix(in srgb, var(--violet) 70%, #000))'
                     : 'var(--accent-soft)',
-                  color: isUser ? '#fff' : 'var(--accent)',
+                  color: isUser ? 'var(--fg)' : 'var(--accent)',
                 }}>
                   {isUser ? 'U' : 'A'}
                 </span>

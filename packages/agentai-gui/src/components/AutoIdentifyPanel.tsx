@@ -82,7 +82,7 @@ export const AutoIdentifyPanel: React.FC = () => {
             }} onClick={() => setSelectedIdx(i)}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <Tag style={{ fontSize: 8, borderRadius: 2, lineHeight: '14px', height: 16, margin: 0 }}>{el.tag}</Tag>
-                {el.id && <span style={{ fontSize: 9, color: '#6366f1', fontFamily: 'monospace' }}>#{el.id}</span>}
+                {el.id && <span style={{ fontSize: 9, color: 'var(--violet)', fontFamily: 'monospace' }}>#{el.id}</span>}
                 <span style={{ fontSize: 9, color: 'var(--fg-2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {el.text || el.type || el.selector}
                 </span>

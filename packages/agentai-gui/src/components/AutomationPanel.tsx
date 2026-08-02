@@ -49,6 +49,22 @@ interface Schedule {
   createdAt: number;
 }
 
+interface ExecutionRecord {
+  id: string;
+  scheduleId: string;
+  scheduleName: string;
+  scheduleType: string;
+  status: 'running' | 'success' | 'failed' | 'timeout';
+  output?: string;
+  error?: string;
+  startedAt: number;
+  completedAt?: number;
+  durationMs?: number;
+  retryCount: number;
+  triggeredBy: 'cron' | 'manual' | 'retry';
+  sessionId?: string;
+}
+
 interface ScheduleStats {
   total: number;
   active: number;
@@ -84,6 +100,8 @@ export const AutomationPanel: React.FC = () => {
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [executionHistory, setExecutionHistory] = useState<ExecutionRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [form] = Form.useForm();
 
   // 加载任务列表
@@ -240,10 +258,37 @@ export const AutomationPanel: React.FC = () => {
       if (data.success) {
         setSelectedSchedule(data.data);
         setDetailModalVisible(true);
+        // 加载执行历史
+        loadExecutionHistory(id);
       }
     } catch (error) {
       message.error('加载详情失败');
     }
+  };
+
+  // 加载执行历史
+  const loadExecutionHistory = async (scheduleId: string) => {
+    setHistoryLoading(true);
+    try {
+      const response = await fetch(`${baseUrl()}/v1/schedules/${scheduleId}/history`);
+      const data = await response.json();
+      if (data.success) {
+        setExecutionHistory(data.data || []);
+      }
+    } catch (error) {
+      console.error('加载执行历史失败:', error);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  // 查看会话
+  const viewSession = (sessionId: string) => {
+    // 发送事件通知 App 切换到对应会话
+    window.dispatchEvent(new CustomEvent('agentai:switch-session', { 
+      detail: { sessionId, source: 'automation' } 
+    }));
+    setDetailModalVisible(false);
   };
 
   // 创建任务
@@ -278,7 +323,7 @@ export const AutomationPanel: React.FC = () => {
       render: (text: string, record: Schedule) => (
         <div>
           <div style={{ fontWeight: 500 }}>{text}</div>
-          <div style={{ fontSize: 12, color: '#888' }}>{record.description}</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>{record.description}</div>
         </div>
       ),
     },
@@ -334,7 +379,7 @@ export const AutomationPanel: React.FC = () => {
       key: 'lastRunAt',
       width: 150,
       render: (time: string, record: Schedule) => {
-        if (!time) return <span style={{ color: '#888' }}>从未</span>;
+        if (!time) return <span style={{ color: 'var(--muted)' }}>从未</span>;
         const date = new Date(time);
         const isSuccess = record.lastResult?.success;
         return (
@@ -412,7 +457,7 @@ export const AutomationPanel: React.FC = () => {
           <ThunderboltOutlined />
           自动化任务管理
         </h2>
-        <p style={{ margin: '8px 0 0', color: '#666' }}>
+        <p style={{ margin: '8px 0 0', color: 'var(--muted-2)' }}>
           管理和监控所有定时任务，查看执行统计和成功率
         </p>
       </div>
@@ -434,7 +479,7 @@ export const AutomationPanel: React.FC = () => {
               <Statistic
                 title="运行中"
                 value={stats.active}
-                valueStyle={{ color: '#52c41a' }}
+                valueStyle={{ color: 'var(--success)' }}
               />
             </Card>
           </Col>
@@ -443,7 +488,7 @@ export const AutomationPanel: React.FC = () => {
               <Statistic
                 title="已暂停"
                 value={stats.paused}
-                valueStyle={{ color: '#faad14' }}
+                valueStyle={{ color: 'var(--warning)' }}
               />
             </Card>
           </Col>
@@ -463,8 +508,8 @@ export const AutomationPanel: React.FC = () => {
                 value={stats.successRate}
                 prefix={<CheckCircleOutlined />}
                 valueStyle={{ 
-                  color: parseFloat(stats.successRate) > 80 ? '#52c41a' : 
-                         parseFloat(stats.successRate) > 50 ? '#faad14' : '#f5222d'
+                  color: parseFloat(stats.successRate) > 80 ? 'var(--success)' : 
+                         parseFloat(stats.successRate) > 50 ? 'var(--warning)' : 'var(--danger)'
                 }}
               />
             </Card>
@@ -538,8 +583,8 @@ export const AutomationPanel: React.FC = () => {
               <Col span={12}>
                 <Card size="small" title="执行统计">
                   <p><strong>总执行:</strong> {selectedSchedule.runCount}</p>
-                  <p><strong>成功:</strong> <span style={{ color: '#52c41a' }}>{selectedSchedule.successCount}</span></p>
-                  <p><strong>失败:</strong> <span style={{ color: '#f5222d' }}>{selectedSchedule.failCount}</span></p>
+                  <p><strong>成功:</strong> <span style={{ color: 'var(--success)' }}>{selectedSchedule.successCount}</span></p>
+                  <p><strong>失败:</strong> <span style={{ color: 'var(--danger)' }}>{selectedSchedule.failCount}</span></p>
                   <p><strong>成功率:</strong> {selectedSchedule.successRate}</p>
                 </Card>
               </Col>
@@ -551,7 +596,7 @@ export const AutomationPanel: React.FC = () => {
                 <p><strong>耗时:</strong> {selectedSchedule.lastResult.durationMs}ms</p>
                 <p><strong>尝试次数:</strong> {selectedSchedule.lastResult.attempts || 1}</p>
                 {selectedSchedule.lastResult.error && (
-                  <p><strong>错误:</strong> <span style={{ color: '#f5222d' }}>{selectedSchedule.lastResult.error}</span></p>
+                  <p><strong>错误:</strong> <span style={{ color: 'var(--danger)' }}>{selectedSchedule.lastResult.error}</span></p>
                 )}
               </Card>
             )}
@@ -560,6 +605,71 @@ export const AutomationPanel: React.FC = () => {
               <p><strong>最大重试:</strong> {selectedSchedule.maxRetries}</p>
               <p><strong>失败通知:</strong> {selectedSchedule.notifyOnFailure ? '开启' : '关闭'}</p>
               <p><strong>成功通知:</strong> {selectedSchedule.notifyOnSuccess ? '开启' : '关闭'}</p>
+            </Card>
+            
+            {/* 执行历史 */}
+            <Card 
+              size="small" 
+              title="执行历史" 
+              style={{ marginTop: 16 }}
+              loading={historyLoading}
+            >
+              {executionHistory.length === 0 ? (
+                <p style={{ color: 'var(--muted)', textAlign: 'center' }}>暂无执行记录</p>
+              ) : (
+                <div style={{ maxHeight: 300, overflow: 'auto' }}>
+                  {executionHistory.map((record) => (
+                    <div 
+                      key={record.id} 
+                      style={{ 
+                        padding: '8px 0', 
+                        borderBottom: '1px solid var(--border)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <Tag color={
+                            record.status === 'success' ? 'success' : 
+                            record.status === 'failed' ? 'error' : 
+                            record.status === 'timeout' ? 'warning' : 'processing'
+                          }>
+                            {record.status === 'success' ? '成功' : 
+                             record.status === 'failed' ? '失败' : 
+                             record.status === 'timeout' ? '超时' : '运行中'}
+                          </Tag>
+                          <span style={{ fontSize: 12, color: 'var(--muted-2)' }}>
+                            {new Date(record.startedAt).toLocaleString('zh-CN')}
+                          </span>
+                          {record.triggeredBy === 'manual' && <Tag style={{ fontSize: 10 }}>手动</Tag>}
+                        </div>
+                        {record.durationMs && (
+                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                            耗时: {record.durationMs}ms
+                            {record.retryCount > 0 && ` (重试${record.retryCount}次)`}
+                          </div>
+                        )}
+                        {record.error && (
+                          <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>
+                            {record.error.slice(0, 100)}
+                          </div>
+                        )}
+                      </div>
+                      {record.sessionId && (
+                        <Button 
+                          size="small" 
+                          type="link"
+                          onClick={() => viewSession(record.sessionId!)}
+                        >
+                          查看对话
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
           </div>
         )}

@@ -28,7 +28,7 @@ interface Props {
 export const EmotionIndicator: React.FC<Props> = ({
   emotion, intensity, emoji, label, compact,
 }) => {
-  const color = EMOTION_COLORS[emotion] || '#9ca3af';
+  const color = EMOTION_COLORS[emotion] || 'var(--muted-2)';
   const barWidth = `${Math.round(intensity * 100)}%`;
 
   return (

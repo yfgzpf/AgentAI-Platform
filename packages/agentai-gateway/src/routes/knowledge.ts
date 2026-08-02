@@ -9,6 +9,7 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import * as path from 'path';
+import * as fs from 'fs/promises';
 import { getKnowledgeBase } from '../industry-knowledge-base.js';
 import { detectKnowledgeGaps, exploreGitHub, distillFromMultiple } from '../knowledge/index.js';
 import { readMemory } from '../memory.js';
@@ -429,6 +430,111 @@ export function createKnowledgeRouter(): Router {
       res.status(500).json({
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  /**
+   * GET /v1/knowledge/graph
+   * 获取世界模型因果知识图谱数据
+   * 2026-08-03 新增: 为前端 KnowledgeGraphPanel 提供真实数据
+   *
+   * Query:
+   *   - workspace: 工作区路径 (可选)
+   *   - entityType: 按实体类型过滤 (可选)
+   *   - limit: 返回条目限制 (默认 100)
+   */
+  router.get('/graph', async (req: Request, res: Response) => {
+    try {
+      const workspace = (req.query.workspace as string) || '';
+      const entityType = (req.query.entityType as string) || undefined;
+      const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+
+      // 从磁盘直接读取 world-model JSONL (无需 LLM Router 实例)
+      const storeDir = workspace
+        ? path.join(workspace, '.agentai', 'world-model')
+        : path.join(process.cwd(), '.agentai', 'world-model');
+
+      const readJSONL = async (name: string): Promise<any[]> => {
+        const items: any[] = [];
+        try {
+          const raw = await fs.readFile(path.join(storeDir, `${name}.jsonl`), 'utf-8');
+          for (const line of raw.split('\n')) {
+            if (!line.trim()) continue;
+            try { items.push(JSON.parse(line)); }
+            catch { /* 跳过坏行 */ }
+          }
+        } catch { /* 文件不存在正常 */ }
+        return items;
+      };
+
+      let entities = await readJSONL('entities');
+      const relations = await readJSONL('relations');
+      const rules = await readJSONL('rules');
+
+      // 按实体类型过滤
+      if (entityType) {
+        entities = entities.filter((e: any) => e.type === entityType);
+      }
+
+      // 去重 (按 id, 取最新)
+      const entMap = new Map<string, any>();
+      for (const e of entities) {
+        const prev = entMap.get(e.id);
+        if (!prev || e.updatedAt > prev.updatedAt) {
+          entMap.set(e.id, e);
+        }
+      }
+      entities = [...entMap.values()].slice(0, limit);
+
+      // 构造前端需要的节点/边格式
+      const nodes = entities.map((e: any) => ({
+        id: e.id,
+        label: e.name,
+        type: e.type,
+        category: e.type,
+        size: Math.max(8, Math.min(24, (e.confidence || 0.5) * 24)),
+        confidence: e.confidence,
+        properties: e.properties || {},
+        createdAt: e.createdAt,
+      }));
+
+      const nodeIds = new Set(entities.map((e: any) => e.id));
+      const edges = relations
+        .filter((r: any) => nodeIds.has(r.sourceId) && nodeIds.has(r.targetId))
+        .map((r: any) => ({
+          id: r.id,
+          source: r.sourceId,
+          target: r.targetId,
+          type: r.type,
+          label: r.type,
+          strength: r.strength,
+          confidence: r.confidence,
+        }));
+
+      const stats = {
+        entityCount: entities.length,
+        relationCount: relations.length,
+        ruleCount: rules.length,
+        entityTypes: {} as Record<string, number>,
+        relationTypes: {} as Record<string, number>,
+      };
+      for (const e of entities) {
+        stats.entityTypes[e.type] = (stats.entityTypes[e.type] || 0) + 1;
+      }
+      for (const r of relations) {
+        stats.relationTypes[r.type] = (stats.relationTypes[r.type] || 0) + 1;
+      }
+
+      res.json({
+        success: true,
+        data: { nodes, edges, rules, stats },
+      });
+    } catch (error: any) {
+      res.json({
+        success: false,
+        data: { nodes: [], edges: [], rules: [], stats: {} },
+        error: error?.message,
       });
     }
   });

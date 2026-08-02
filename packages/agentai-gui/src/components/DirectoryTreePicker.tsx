@@ -151,7 +151,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
       onCancel={onClose}
       title={
         <Space size={8}>
-          <FolderOpenOutlined style={{ color: '#CD7A3A' }} />
+          <FolderOpenOutlined style={{ color: 'var(--accent)' }} />
           <span>选择工作目录</span>
         </Space>
       }
@@ -195,7 +195,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
             </Text>
             <span style={{
               fontSize: 9, color: 'var(--muted-2)', flexShrink: 0,
-              padding: '0 6px', background: 'rgba(16,185,129,0.1)', borderRadius: 4,
+              padding: '0 6px', background: 'var(--success-soft)', borderRadius: 4,
             }}>
               {entries.length} 个子目录
             </span>
@@ -214,7 +214,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
           <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4 }}>加载中...</div>
         </div>
       ) : error ? (
-        <div style={{ padding: 12, textAlign: 'center', color: '#ef4444', fontSize: 11 }}>
+        <div style={{ padding: 12, textAlign: 'center', color: 'var(--danger)', fontSize: 11 }}>
           {error}
           <Button size="small" onClick={loadDrives} style={{ marginLeft: 8 }}>重试</Button>
         </div>
@@ -237,12 +237,12 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                     padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
                     fontSize: 11,
                     color: selected ? 'var(--accent)' : 'var(--fg-2)',
-                    background: selected ? 'rgba(205,122,58,0.08)' : 'transparent',
+                    background: selected ? 'var(--accent-soft)' : 'transparent',
                   }}
                   onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--panel)'; }}
                   onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
                 >
-                  <FolderOutlined style={{ color: '#f59e0b', fontSize: 13, flexShrink: 0 }} />
+                  <FolderOutlined style={{ color: 'var(--warning)', fontSize: 13, flexShrink: 0 }} />
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {entry.name}
                   </span>
@@ -257,8 +257,8 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
           {currentDir && (
             <div style={{
               marginTop: 8, padding: '4px 8px',
-              background: 'rgba(16,185,129,0.06)', borderRadius: 4,
-              border: '1px dashed rgba(16,185,129,0.2)',
+              background: 'var(--success-soft)', borderRadius: 4,
+              border: '1px dashed var(--success)',
               fontSize: 10, color: 'var(--muted)',
             }}>
               ✅ 当前目录: <Text code style={{ fontSize: 10 }}>{currentDir}</Text>
@@ -290,7 +290,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--panel)'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                   >
-                    <FolderOpenOutlined style={{ color: '#CD7A3A', fontSize: 12 }} />
+                    <FolderOpenOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
                     <span style={{ flex: 1 }}>{dir}</span>
                     <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>▶</span>
                   </div>
@@ -317,7 +317,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                   onMouseEnter={e => { e.currentTarget.style.background = 'var(--panel)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                 >
-                  <HddOutlined style={{ color: '#6366f1', fontSize: 12 }} />
+                  <HddOutlined style={{ color: 'var(--violet)', fontSize: 12 }} />
                   <span>{drive}</span>
                   <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>▶</span>
                 </div>

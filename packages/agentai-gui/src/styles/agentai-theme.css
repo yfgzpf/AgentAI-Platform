@@ -34,6 +34,10 @@
   --violet: #8b5cf6;
   --violet-soft: rgba(139, 92, 246, 0.16);
 
+  /* 品牌特定色 (2026-08-03 新增, 消除 #07C160 等硬编码) */
+  --wechat: #07C160;
+  --wechat-soft: rgba(7, 193, 96, 0.16);
+
   --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.35);
   --shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 24px 60px -16px rgba(0, 0, 0, 0.65);
@@ -102,6 +106,8 @@
     --danger-soft: oklch(66% 0.18 25 / 0.16);
     --violet: oklch(72% 0.14 295);
     --violet-soft: oklch(72% 0.14 295 / 0.16);
+    --wechat: oklch(72% 0.18 145);
+    --wechat-soft: oklch(72% 0.18 145 / 0.16);
     --shadow-sm: 0 1px 0 oklch(0% 0 0 / 0.35);
     --shadow-md: 0 8px 24px -8px oklch(0% 0 0 / 0.5);
     --shadow-lg: 0 24px 60px -16px oklch(0% 0 0 / 0.65);
@@ -150,8 +156,10 @@
   --danger-soft: rgba(220, 38, 38, 0.1);
   --violet: #7c3aed;
   --violet-soft: rgba(124, 58, 237, 0.10);
+  --wechat: #059669;
+  --wechat-soft: rgba(5, 150, 105, 0.10);
 
-  --shadow-sm: 0 1px 0 rgba(40, 30, 20, 0.05);
+  --editor-bg: 0 1px 0 rgba(40, 30, 20, 0.05);
   --shadow-md: 0 8px 24px -10px rgba(40, 30, 20, 0.13);
   --shadow-lg: 0 24px 60px -20px rgba(40, 30, 20, 0.20);
 
@@ -190,6 +198,8 @@
     --danger-soft: oklch(54% 0.2 22 / 0.1);
     --violet: oklch(62% 0.16 52);
     --violet-soft: oklch(62% 0.16 52 / 0.10);
+    --wechat: oklch(58% 0.15 145);
+    --wechat-soft: oklch(58% 0.15 145 / 0.10);
     --shadow-sm: 0 1px 0 oklch(30% 0.05 50 / 0.05);
     --shadow-md: 0 8px 24px -10px oklch(30% 0.05 50 / 0.13);
     --shadow-lg: 0 24px 60px -20px oklch(30% 0.05 50 / 0.20);
@@ -228,8 +238,10 @@
   --danger-soft: oklch(54% 0.2 22 / 0.1);
   --violet: oklch(60% 0.16 290);
   --violet-soft: oklch(60% 0.16 290 / 0.10);
+  --wechat: oklch(62% 0.18 145);
+  --wechat-soft: oklch(62% 0.18 145 / 0.10);
 
-  --shadow-sm: 0 1px 0 oklch(20% 0.005 260 / 0.04);
+  --editor-header: 0 1px 0 oklch(20% 0.005 260 / 0.04);
   --shadow-md: 0 6px 20px -10px oklch(20% 0.005 260 / 0.10);
   --shadow-lg: 0 20px 50px -20px oklch(20% 0.005 260 / 0.18);
 
@@ -246,6 +258,8 @@
   --accent-strong: oklch(76% 0.20 285);
   --violet: oklch(74% 0.18 290);
   --violet-soft: oklch(74% 0.18 290 / 0.16);
+  --wechat: oklch(74% 0.20 145);
+  --wechat-soft: oklch(74% 0.20 145 / 0.16);
 }
 
 [data-theme-style="ember"] {

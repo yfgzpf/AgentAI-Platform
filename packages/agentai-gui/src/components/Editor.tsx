@@ -127,6 +127,7 @@ export const Editor: React.FC = () => {
   const [autoSave, setAutoSave] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(true); // 默认开启 AI 对话面板
   const [showFileTree, setShowFileTree] = useState(false); // 默认折叠文件树, 给浏览器更多空间
+  const [selectedPath, setSelectedPath] = useState<string>(''); // 用于定位文件时选中树节点
   const [showBottomPanel, setShowBottomPanel] = useState(false); // 默认关闭，保持浏览器清爽
   const [bottomPanelTab, setBottomPanelTab] = useState<'terminal' | 'logs' | 'browser' | 'problems'>('terminal');
   const bottomPanelHeight = 180;
@@ -292,7 +293,23 @@ export const Editor: React.FC = () => {
       }
     };
     window.addEventListener('agentai:open-file', handler as any);
-    return () => window.removeEventListener('agentai:open-file', handler as any);
+    
+    // 监听定位文件事件（展开文件树并选中）
+    const locateHandler = (e: any) => {
+      const path = e?.detail?.path;
+      if (typeof path === 'string' && path) {
+        // 先打开文件
+        openFile(path);
+        // 然后尝试在文件树中定位（通过设置 selectedPath 触发树展开）
+        setSelectedPath(path);
+      }
+    };
+    window.addEventListener('agentai:locate-file', locateHandler as any);
+    
+    return () => {
+      window.removeEventListener('agentai:open-file', handler as any);
+      window.removeEventListener('agentai:locate-file', locateHandler as any);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openFiles]);
 

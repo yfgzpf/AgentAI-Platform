@@ -129,3 +129,16 @@ __pycache__/
 
 # ===== Reserved Windows name (do not commit) =====
 nul
+
+# 数据库文件
+*.db
+*.db-journal
+
+# 构建产物（已存在于 .gitignore，确认）
+# node_modules/
+# dist/
+# packages/*/dist/
+
+# 临时文件
+*.bak
+*.bak.*

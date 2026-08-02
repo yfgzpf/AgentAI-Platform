@@ -17,6 +17,7 @@ import { AIContextPanel } from './AIContextPanel';
 import { AIInjectContextPanel } from './AIInjectContextPanel';
 import { AIToolCallPanel } from './AIToolCallPanel';
 import { MemoryFilesPanel } from './MemoryFilesPanel';
+import { AutoMemoryPanel } from './AutoMemoryPanel';
 import { ProjectRulesPanel } from './ProjectRulesPanel';
 import { GeneratedFilesPanel } from './GeneratedFilesPanel';
 import { TaskPlanPanel } from './TaskPlanPanel';
@@ -284,7 +285,12 @@ export const RightPanel: React.FC = () => {
             <AIToolCallPanel />
           </div>
         )}
-        {active === 'memory'  && <MemoryFilesPanel />}
+        {active === 'memory'  && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <AutoMemoryPanel />
+            <MemoryFilesPanel />
+          </div>
+        )}
         {active === 'rules'   && <ProjectRulesPanel />}
       </div>
     </div>

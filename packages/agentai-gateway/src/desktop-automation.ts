@@ -1157,8 +1157,8 @@ Remove-Item '${tB64Path.replace(/\\/g, '\\\\')}' -ErrorAction SilentlyContinue
 Remove-Item '${sB64Path.replace(/\\/g, '\\\\')}' -ErrorAction SilentlyContinue
 $tBytes = [Convert]::FromBase64String($tB64)
 $sBytes = [Convert]::FromBase64String($sB64)
-$tPath = "F:\\temp\\tmpl_${scriptGuid}.png"
-$sPath = "F:\\temp\\srce_${scriptGuid}.png"
+$tPath = Join-Path $env:TEMP "tmpl_${scriptGuid}.png"
+$sPath = Join-Path $env:TEMP "srce_${scriptGuid}.png"
 [System.IO.File]::WriteAllBytes($tPath, $tBytes)
 [System.IO.File]::WriteAllBytes($sPath, $sBytes)
 try {

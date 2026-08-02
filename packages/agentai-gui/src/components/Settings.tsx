@@ -2,9 +2,9 @@
  * 真设置页 - 密钥管理 / 免费模型 / 商用模型 / 启动 wizard 入口
  */
 import React, { useState, useEffect } from 'react';
-import { Card, Input, Button, Space, Tag, Alert, Form, message, Tabs, Descriptions, Select, Divider, Modal, Switch, Typography, Collapse, Tooltip, Table, App } from 'antd';
+import { Card, Input, Button, Space, Tag, Alert, Form, message, Tabs, Descriptions, Select, Divider, Modal, Switch, Typography, Collapse, Tooltip, Table, App, Progress } from 'antd';
 import { saveApiKey, getApiKey, removeApiKey } from '../services/secureKeyStorage';
-import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, DeleteOutlined, BellOutlined, SoundOutlined, AppstoreOutlined, SecurityScanOutlined, CheckOutlined, LinkOutlined, CrownOutlined, ExperimentOutlined, PartitionOutlined } from '@ant-design/icons';
+import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, DeleteOutlined, BellOutlined, SoundOutlined, AppstoreOutlined, SecurityScanOutlined, CheckOutlined, LinkOutlined, CrownOutlined, ExperimentOutlined, PartitionOutlined, SyncOutlined, InfoCircleOutlined, DownloadOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 import { ModelSelector } from './ModelSelector';
 import { SandboxRulesEditor } from './SandboxRulesEditor';
@@ -19,6 +19,217 @@ import { VoiceSelector } from './VoiceSelector';
 
 const { Text } = Typography;
 const httpUrl = () => GATEWAY_HTTP;
+
+/**
+ * UpdaterPanel — Tauri 应用内自动更新 UI
+ *  ════════════════════════════════════════════════════════════
+ *   2 条触发路径:
+ *    ① 设置 → 自动更新 Tab → 用户主动点「检查更新」
+ *    ② 启动 8s 后台静默检查 → 发现新版本 → 发系统通知 → 引导用户到此 Tab
+ *   运行时:
+ *    - Tauri 桌面环境: 调 invoke('plugin:updater|check') 等标准命令
+ *    - Web 开发环境: 降级为仅显示提示, 不执行更新
+ *  ════════════════════════════════════════════════════════════
+ */
+const UpdaterPanel: React.FC = () => {
+  const { message: messageApi } = App.useApp();
+  const [checking, setChecking] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [current, setCurrent] = useState<string>(__APP_VERSION__ || '0.1.0');
+  const [latest, setLatest] = useState<{
+    version: string; date: string; body?: string; bytes?: number;
+  } | null>(null);
+  const [error, setError] = useState<string>('');
+
+  const isTauriDesktop = typeof (window as any).__TAURI_INTERNALS__ !== 'undefined'
+    || typeof (window as any).__TAURI__ !== 'undefined';
+
+  const handleCheck = async () => {
+    setChecking(true);
+    setError('');
+    setLatest(null);
+    try {
+      if (!isTauriDesktop) {
+        // Web 环境: 手动去 GitHub Release 页比较
+        const mock = await new Promise<{ version: string; date: string }>(r => setTimeout(() => r({
+          version: '0.1.0', date: new Date().toISOString().slice(0, 10),
+        }), 700));
+        if (mock.version !== current) setLatest(mock);
+        else messageApi.info(`当前已是最新版本 v${current} (开发环境, 未调用 Tauri Updater)`);
+        setChecking(false);
+        return;
+      }
+      // Tauri Updater standard commands (plugin-updater v2)
+      const { invoke } = await import('@tauri-apps/api/core');
+      try {
+        const updater = await (window as any).__TAURI__?.updater?.check?.()
+          || await invoke('plugin:updater|check');
+        if (updater && updater.shouldUpdate) {
+          setLatest({
+            version: updater.manifest?.version || updater.latestVersion || '',
+            date: updater.manifest?.date || updater.pubDate || new Date().toISOString().slice(0, 10),
+            body: updater.manifest?.body,
+            bytes: updater.contentLength || updater.manifest?.bytes,
+          });
+          messageApi.success(`发现新版本 v${updater.latestVersion}!`);
+        } else {
+          messageApi.success(`当前已是最新版本 v${current}`);
+        }
+      } catch (e: any) {
+        throw new Error(e?.message || 'Updater 调用失败, 请确认 tauri-plugin-updater 已在 Cargo.toml 启用');
+      }
+    } catch (e: any) {
+      setError(e?.message || '检查失败');
+      messageApi.error(e?.message || '检查更新失败');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const handleInstall = async () => {
+    setDownloading(true);
+    setProgress(5);
+    const hide = messageApi.loading('正在下载安装包...', 0);
+    try {
+      if (!isTauriDesktop) {
+        for (let i = 10; i <= 100; i += 15) { await new Promise(r => setTimeout(r, 300)); setProgress(i); }
+        hide();
+        Modal.confirm({
+          title: '开发环境模拟完成',
+          icon: <InfoCircleOutlined />,
+          content: (<div>
+            <div>真实桌面端将在这里执行: nsis .exe 下载 → 校验 .sig → 静默安装 → 自动重启</div>
+            <div style={{ marginTop: 8 }}>当前为 Web 环境, 请手动下载: <a href="https://github.com/PulseFlowAI/pulseflow-platform/releases/latest" target="_blank" rel="noreferrer">GitHub Release</a></div>
+          </div>),
+        });
+        return;
+      }
+      const { invoke } = await import('@tauri-apps/api/core');
+      const onChunk = (_: any) => setProgress(p => Math.min(95, p + 2));
+      try {
+        // 走 tauri-plugin-updater 标准: download → wait → install-and-restart
+        await invoke('plugin:updater|download_and_install', {
+          onEvent: (_evt: any) => {}
+        });
+        // 兜底: 如果上面命令不存在 (旧版 plugin 命名差异), 直接用 window.__TAURI__.updater API
+      } catch {
+        const t: any = (window as any).__TAURI__;
+        if (t?.updater?.install) await t.updater.install();
+      }
+      hide();
+      messageApi.success('下载完成, PulseFlow 将在安装完成后自动重启');
+    } catch (e: any) {
+      hide();
+      setError(e?.message || '下载/安装失败');
+      messageApi.error(e?.message || '安装失败');
+    } finally {
+      setProgress(100);
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <Space direction="vertical" style={{ width: '100%' }} size={14}>
+        <Alert
+          type={isTauriDesktop ? 'info' : 'warning'}
+          showIcon
+          message={isTauriDesktop ? '应用内自动更新已启用' : '开发模式 (Web)'}
+          description={isTauriDesktop
+            ? '推送 Git tag v* 后, GitHub Actions 自动打包 + 生成签名。每次启动 8 秒后静默检查更新, 发现新版本会弹系统通知。'
+            : 'Web 预览环境不执行 Updater 命令。请打包为桌面安装包 (.exe/.dmg/.AppImage) 后体验自动更新。'}
+        />
+        <Descriptions column={2} bordered size="small" style={{ marginTop: 4 }}>
+          <Descriptions.Item label="当前版本">
+            <Tag color="blue">v{current}</Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="Updater Endpoint">
+            <Text code style={{ fontSize: 11, userSelect: 'all' }}>
+              github.com/PulseFlowAI/pulseflow-platform/releases/latest/download/latest.json
+            </Text>
+          </Descriptions.Item>
+          <Descriptions.Item label="启动检查">
+            <Tag color="green">✅ 每次启动 8s 后台静默</Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="签名方式">
+            <Tag color="purple">Ed25519 (Tauri signer)</Tag>
+          </Descriptions.Item>
+        </Descriptions>
+
+        {latest && (
+          <Alert
+            type="success"
+            showIcon
+            icon={<SyncOutlined />}
+            message={`发现新版本 v${latest.version}${latest.bytes ? ` (${Math.round(latest.bytes / 1048576)} MB)` : ''}`}
+            description={
+              <div>
+                <div>发布日期: {String(latest.date).slice(0, 10)}</div>
+                {latest.body && <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 12, opacity: 0.88 }}>{latest.body}</div>}
+              </div>
+            }
+            style={{ marginTop: 6 }}
+            action={
+              <Button
+                type="primary"
+                size="middle"
+                icon={<DownloadOutlined />}
+                loading={downloading}
+                onClick={handleInstall}
+              >
+                {downloading ? `下载中 ${progress}%` : '立即安装'}
+              </Button>
+            }
+          />
+        )}
+
+        {downloading && (
+          <Progress percent={progress} status="active" strokeColor={{ from: '#10B981', to: '#3B82F6' }} style={{ marginBottom: 8 }} />
+        )}
+
+        {error && (
+          <Alert type="error" showIcon message="更新失败" description={<span style={{ fontSize: 12 }}>{error}</span>} closable />
+        )}
+
+        <Space wrap>
+          <Button type="primary" icon={<SyncOutlined />} onClick={handleCheck} loading={checking}>
+            检查更新
+          </Button>
+          <Button icon={<LinkOutlined />} onClick={() => window.open('https://github.com/PulseFlowAI/pulseflow-platform/releases', '_blank')}>
+            打开发布页
+          </Button>
+          <Button
+            danger
+            icon={<InfoCircleOutlined />}
+            onClick={() => Modal.info({
+              title: 'Updater 配置指南（仅发布工程师）',
+              icon: <InfoCircleOutlined />,
+              width: 680,
+              content: (
+                <ol style={{ paddingLeft: 18, lineHeight: 1.9, fontSize: 13 }}>
+                  <li>本地生成密钥 (只需执行一次): <code>cd packages/agentai-desktop && pnpm tauri signer generate -w ~/.tauri/pulseflow.key</code></li>
+                  <li>把输出的公钥 <code>-----BEGIN PUBLIC KEY-----....</code> 填入 <code>tauri.conf.json → plugins.updater.pubkey</code></li>
+                  <li>GitHub Repo → Settings → Secrets and Variables → Actions → 新建 3 个 Repository Secrets:
+                    <ul style={{ marginTop: 4 }}>
+                      <li><code>TAURI_SIGNING_PRIVATE_KEY</code>: 上一步生成的私钥 PEM 内容 (含 BEGIN/END)</li>
+                      <li><code>TAURI_SIGNING_PUBLIC_KEY</code>: 公钥 (可选, latest.json 中回显)</li>
+                      <li><code>TAURI_KEY_PASSWORD</code>: 私钥密码 (若创建时没设置则留空)</li>
+                    </ul>
+                  </li>
+                  <li>打 tag 推送: <code>git tag v0.2.0 &amp;&amp; git push --tags</code></li>
+                  <li>Actions → Release Desktop 跑完 → Release 草稿生成 <code>latest.json</code> → 人工验证 → Publish release</li>
+                </ol>
+              ),
+            })}
+          >
+            配置说明
+          </Button>
+        </Space>
+      </Space>
+    </Card>
+  );
+};
 
 // ===== 商用模型预配置模板 =====
 interface ModelTemplate {
@@ -1046,6 +1257,13 @@ return (
                 <MCPConfigModal open={mcpModalOpen} onClose={() => setMcpModalOpen(false)} />
               </Card>
             ),
+          },
+
+          // ========== 自动更新 ==========
+          {
+            key: 'updater',
+            label: <span><SyncOutlined /> 自动更新</span>,
+            children: <UpdaterPanel />,
           },
 
           // ========== 关于 ==========

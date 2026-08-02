@@ -1,7 +1,13 @@
 # 复制Gateway和完整依赖
-$src = "F:\agentai-platform\packages\agentai-gateway\dist"
-$dst = "F:\agentai-platform\packages\agentai-desktop\src-tauri\resources\gateway-dist"
-$nmSrc = "F:\agentai-platform\node_modules"
+# ════════════════════════════════════════════════════════════
+# P0 修复: 移除 F:\agentai-platform 盘符硬编码
+#   $PSScriptRoot = packages/agentai-desktop/src-tauri/scripts
+#   monorepo root  = $PSScriptRoot/../../..
+# ════════════════════════════════════════════════════════════
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
+$src      = Join-Path $repoRoot "packages\agentai-gateway\dist"
+$dst      = Join-Path $repoRoot "packages\agentai-desktop\src-tauri\resources\gateway-dist-v2"
+$nmSrc    = Join-Path $repoRoot "node_modules"
 
 # 清理并创建目录
 if (Test-Path $dst) {

@@ -77,7 +77,7 @@ export const AutomationButton: React.FC = () => {
           <Tag style={{ fontSize: 10, padding: '0 4px', lineHeight: '16px' }}>{task.successRate}</Tag>
           {task.status === 'active' && (
             <PlayCircleOutlined
-              style={{ color: '#52c41a', cursor: 'pointer' }}
+              style={{ color: 'var(--success)', cursor: 'pointer' }}
               onClick={(e) => { e.stopPropagation(); triggerTask(task.id); }}
             />
           )}
@@ -117,7 +117,7 @@ export const AutomationButton: React.FC = () => {
           <button
             className="icon-btn-sm"
             style={{
-              color: activeCount > 0 ? '#faad14' : 'var(--muted-2)',
+              color: activeCount > 0 ? 'var(--warning)' : 'var(--muted-2)',
               position: 'relative',
             }}
           >
@@ -131,7 +131,7 @@ export const AutomationButton: React.FC = () => {
                   width: 6,
                   height: 6,
                   borderRadius: '50%',
-                  background: '#faad14',
+                  background: 'var(--warning)',
                 }}
               />
             )}

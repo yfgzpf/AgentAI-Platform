@@ -96,6 +96,7 @@ export interface ScheduleExecutionResult {
   error?: string;
   durationMs: number;
   executedAt: number;
+  sessionId?: string;
 }
 
 // ===== 持久化 =====
@@ -129,6 +130,8 @@ class TaskScheduler extends EventEmitter {
       ensureFile();
       const data = JSON.parse(fs.readFileSync(SCHEDULES_FILE, 'utf-8')) as TaskSchedule[];
       for (const s of data) {
+        // 数据迁移：确保旧数据有 config 字段
+        if (!s.config) s.config = {};
         this.schedules.set(s.id, s);
         // 自动恢复 active 状态的任务
         if (s.status === 'active') {
@@ -164,6 +167,7 @@ class TaskScheduler extends EventEmitter {
       timeoutMs: data.timeoutMs ?? 120_000,
       notifyOnFailure: data.notifyOnFailure ?? true,
       notifyOnSuccess: data.notifyOnSuccess ?? false,
+      config: data.config || {}, // 确保 config 不为 undefined
     };
     this.schedules.set(schedule.id, schedule);
     if (schedule.status === 'active') this._startJob(schedule);
@@ -352,7 +356,8 @@ class TaskScheduler extends EventEmitter {
       executionId,
       safeResult.success ? 'success' : (safeResult.error?.includes('超时') ? 'timeout' : 'failed'),
       safeResult.output,
-      safeResult.error
+      safeResult.error,
+      safeResult.sessionId
     );
 
     // 发射统一 execution:result 事件 (前端 ChatView/TaskCenterPanel 接收)
@@ -374,7 +379,7 @@ class TaskScheduler extends EventEmitter {
   /** 根据类型执行 */
   private async _executeByType(schedule: TaskSchedule): Promise<ScheduleExecutionResult> {
     const startTime = Date.now();
-    const cfg = schedule.config;
+    const cfg = schedule.config || {};
 
     switch (schedule.type) {
       case 'rpa': {
@@ -398,22 +403,45 @@ class TaskScheduler extends EventEmitter {
       }
 
       case 'ai_task': {
-        // 发送 AI 消息
+        // 生成新的会话 ID，确保每次自动化任务都在独立对话中执行
+        const timestamp = Date.now();
+        const newSessionId = `auto-${schedule.id}-${timestamp}`;
+        const sessionTitle = `${schedule.name} (${new Date(timestamp).toLocaleString('zh-CN')})`;
+        
+        // 先创建会话记录
+        try {
+          await fetch(`${this.gatewayUrl}/api/sessions`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: sessionTitle,
+              userId: 'automation',
+              workspace: `auto-${schedule.id}`,
+            }),
+          });
+        } catch (e: any) {
+          console.warn(`[task-scheduler] 创建会话记录失败: ${e.message}`);
+        }
+        
+        // 发送 AI 消息到新会话
         const resp = await fetch(`${this.gatewayUrl}/v1/chat`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: cfg.aiMessage || schedule.description,
-            sessionId: cfg.aiSessionId || `scheduled-${schedule.id}`,
+            sessionId: newSessionId,
             auto: true,
+            source: 'automation',
+            scheduleId: schedule.id,
           }),
         });
         const data: any = await resp.json();
+        
         return {
           scheduleId: schedule.id,
           success: !data.error,
           output: data.response?.slice(0, 500) || data.error,
+          sessionId: newSessionId,
           durationMs: Date.now() - startTime,
-          executedAt: Date.now(),
+          executedAt: timestamp,
         };
       }
 

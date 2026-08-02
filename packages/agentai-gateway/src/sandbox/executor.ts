@@ -51,22 +51,22 @@ export class CodeRunner {
     };
   }
 
-  /** 自动查找 Python 路径 */
+  /** 自动查找 Python 路径（优先用户级安装路径） */
   private findPython(): string {
     if (this.pythonPath) return this.pythonPath;
-    // 常见 Windows 安装路径
-    const common = [
-      'C:/Python314/python.exe', 'C:/Python313/python.exe',
-      'C:/Python312/python.exe', 'C:/Python311/python.exe',
-    ];
+    const versions = ['314', '313', '312', '311', '310'];
+    const localAppData = process.env.LOCALAPPDATA || `${process.env.USERPROFILE || '~'}/AppData/Local`;
+    const common: string[] = [];
+    for (const v of versions) common.push(`${localAppData}/Programs/Python/Python${v}/python.exe`);
+    for (const v of versions) common.push(`C:/Python${v}/python.exe`);
+    for (const v of versions.slice(0, 3)) common.push(`${process.env.PROGRAMFILES || 'C:/Program Files'}/Python${v}/python.exe`);
     for (const p of common) {
       try { if (fs.existsSync(p)) { this.pythonPath = p; return p; } } catch {}
     }
-    // PATH 查找: Windows 优先 py/ python, Unix 优先 python3
     const candidates = process.platform === 'win32'
       ? ['py', 'python', 'python3']
       : ['python3', 'python'];
-    this.pythonPath = candidates[0]; // 兜底
+    this.pythonPath = candidates[0];
     return this.pythonPath;
   }
 

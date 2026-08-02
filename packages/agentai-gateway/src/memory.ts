@@ -125,6 +125,39 @@ export async function writeMemory(entry: Omit<MemoryEntry, 'ts'>): Promise<Memor
     console.warn('[memory:writeMemory] background compression failed:', e?.message);
   });
 
+  // ══════════════════════════════════════════════════════
+  // 4. 反向镜像到 MemoryManager KV (双轨制合并 2/2)
+  //    仅当 entry 有明确的 kvKey 时才回写, 避免噪音污染 KV
+  //    和正向镜像一致: 异步 fire-and-forget, 静默失败
+  // ══════════════════════════════════════════════════════
+  const md = full.metadata || {};
+  if ((md as any).kvKey && full.workspace) {
+    (async () => {
+      try {
+        const mod = await import('./memory-manager.js');
+        const mgr = mod.getMemoryManager(full.workspace);
+        const scope = (((md as any).kvScope as string) || 'project') as 'user' | 'session' | 'project' | 'global';
+        const priority = (full.importance || 0) >= 0.8 ? 'high' : 'normal';
+        await mgr.remember({
+          key: (md as any).kvKey as string,
+          value: full.content || full.entityId || '',
+          scope,
+          metadata: {
+            priority,
+            mirroredFromJSONL: true,
+            entityId: full.entityId,
+            source: full.source,
+            role: full.role,
+            importance: full.importance,
+            userId: full.userId,
+          },
+        });
+      } catch {
+        /* 静默失败: 镜像总是可选的 */
+      }
+    })();
+  }
+
   return full;
 }
 

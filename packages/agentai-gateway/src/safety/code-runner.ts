@@ -52,12 +52,14 @@ function detectScriptType(scriptPath: string): 'js' | 'py' {
   return scriptPath.endsWith('.py') ? 'py' : 'js';
 }
 
-/** 查找 Python 可执行文件 */
+/** 查找 Python 可执行文件（优先用户级安装路径） */
 function findPython(): string {
-  const common = [
-    'C:/Python314/python.exe', 'C:/Python313/python.exe',
-    'C:/Python312/python.exe', 'C:/Python311/python.exe',
-  ];
+  const versions = ['314', '313', '312', '311', '310'];
+  const localAppData = process.env.LOCALAPPDATA || `${process.env.USERPROFILE || '~'}/AppData/Local`;
+  const common: string[] = [];
+  for (const v of versions) common.push(`${localAppData}/Programs/Python/Python${v}/python.exe`);
+  for (const v of versions) common.push(`C:/Python${v}/python.exe`);
+  for (const v of versions.slice(0, 3)) common.push(`${process.env.PROGRAMFILES || 'C:/Program Files'}/Python${v}/python.exe`);
   for (const p of common) {
     try { if (fs.existsSync(p)) return `"${p}"`; } catch {}
   }

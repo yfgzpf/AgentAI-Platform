@@ -12,6 +12,7 @@ import { useModeStore, MODE_CONFIG } from '../store/modeStore';
 import { VoiceWakeIndicator } from './VoiceWakeIndicator';
 import { MusicPlayer } from './MusicPlayer';
 import { gatewayFallback } from '../services/GatewayFallback';
+import { TokenPressureBar } from './TokenPressureBar';
 
 type GwStatus = 'online' | 'offline' | 'starting';  // 与 GatewayFallback 状态一致
 
@@ -318,14 +319,14 @@ export const StatusBar: React.FC = () => {
         </Tooltip>
       )}
 
-      {/* Token 用量 */}
-      {tokenStr && (
-        <Tooltip title={`上下文 Token: ${dash.tokens?.toLocaleString() || tokenStr}`} mouseEnterDelay={0.3}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>Token</span>
-            <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>{tokenStr}</span>
-          </span>
-        </Tooltip>
+      {/* Token 用量 + 压力可视化 (2026-08-03 升级) */}
+      {dash.tokens != null && (
+        <TokenPressureBar
+          used={dash.tokens}
+          max={128000}
+          messageCount={0}
+          toolCallCount={0}
+        />
       )}
 
       {/* 费用 */}

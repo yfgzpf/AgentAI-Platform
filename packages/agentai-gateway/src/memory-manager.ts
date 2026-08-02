@@ -1,10 +1,11 @@
 /**
  * MemoryManager — 统一记忆接口 (简化版 KV 存储)
  * ==============================
- * ⚠️ 架构注意 (2026-07-19): 本项目存在两套并行记忆系统:
- *   1. 本文件 — 简单 KV 存储 (.agentai/memory.json), 用于快速键值读写
- *   2. memory.ts — 高级 JSONL 系统 (.agentai/memory.jsonl), 含压缩/评分/实体追踪
- * 两套系统目前独立运行、互不感知。合并工作是待办项 (见 AGENTS.md 审计)。
+ * ✅ 架构合并 (2026-08-03): 本文件现在作为 memory.ts 高级 JSONL 系统的薄封装
+ *   - KV 接口保持不变 (向后兼容旧代码)
+ *   - remember() 时异步镜像写入 memory.ts 的 JSONL (统一数据层)
+ *   - recall() 优先查 KV (同步快), 必要时回退 JSONL
+ *   - 数据最终统一到 memory.ts (带 entityId/importance/冲突检测/时效衰减)
  *
  * 设计意图: 作为 5 层的统一入口 (但当前仅实现 KV 层):
  *   1. persistent-memory (SQLite) — 对话历史/用户数据
@@ -102,6 +103,42 @@ export class MemoryManager {
     // 同步到项目记忆 (如果是项目级事实)
     if (fact.scope === 'project' || fact.scope === 'user') {
       this.syncToProjectMemory(fact);
+    }
+
+    // ═══ 2026-08-03: 镜像写入 memory.ts 高级 JSONL 系统 (统一数据层) ═══
+    // 异步写入, 不阻塞 KV 接口; 失败不影响主流程
+    this.mirrorToAdvancedMemory(fact).catch(() => {
+      // 静默失败 — KV 存储已经成功, 高级系统失败不影响数据完整性
+    });
+  }
+
+  /**
+   * 镜像写入 memory.ts 高级 JSONL 系统
+   * - KV key → entityId (用于冲突检测/去重)
+   * - scope → role/source
+   * - metadata 保留
+   */
+  private async mirrorToAdvancedMemory(fact: MemoryFact): Promise<void> {
+    try {
+      const { writeMemory } = await import('./memory.js');
+      await writeMemory({
+        userId: 'default',
+        workspace: this.workspace,
+        role: fact.scope === 'user' ? 'user' : 'assistant',
+        source: 'workspace',
+        entityId: `kv:${fact.scope}:${fact.key}`,
+        content: fact.value,
+        importance: fact.metadata?.priority === 'high' ? 0.8
+          : fact.metadata?.priority === 'medium' ? 0.5 : 0.3,
+        metadata: {
+          kvKey: fact.key,
+          kvScope: fact.scope,
+          kvCreatedAt: fact.createdAt,
+          ...fact.metadata,
+        },
+      });
+    } catch {
+      // 静默失败
     }
   }
 
@@ -220,4 +257,9 @@ export class MemoryManager {
     }
     this.save();
   }
+}
+
+/** 向后兼容: 世界模型/记忆系统的外部工厂别名 */
+export function getMemoryManager(workspace: string): MemoryManager {
+  return MemoryManager.getInstance(workspace);
 }

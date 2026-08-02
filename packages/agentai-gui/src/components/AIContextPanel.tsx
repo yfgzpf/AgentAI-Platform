@@ -41,7 +41,7 @@ export const AIContextPanel: React.FC<Props> = ({
     >
       <AimOutlined style={{ fontSize: 12, color: 'var(--accent)', flexShrink: 0 }} />
       <span style={{ fontWeight: 500 }}>AI 运行上下文</span>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? '#22c55e' : '#6b7280', display: 'inline-block', flexShrink: 0 }} />
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? 'var(--success)' : 'var(--muted-2)', display: 'inline-block', flexShrink: 0 }} />
       {contextTokens > 0 && (
         <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>
           {(contextTokens / 1000).toFixed(0)}K
@@ -90,7 +90,7 @@ export const AIContextPanel: React.FC<Props> = ({
               <span><CodeOutlined style={{ marginRight: 2 }} />上下文用量</span>
               <span>{(contextTokens / 1000).toFixed(0)}K / {(maxContextTokens / 1000).toFixed(0)}K</span>
             </div>
-            <Progress percent={ctxPct} size="small" strokeColor={ctxPct > 80 ? '#ef4444' : ctxPct > 60 ? '#f59e0b' : '#6366f1'} trailColor="var(--border)" showInfo={false} style={{ margin: 0 }} />
+            <Progress percent={ctxPct} size="small" strokeColor={ctxPct > 80 ? 'var(--danger)' : ctxPct > 60 ? 'var(--warning)' : 'var(--violet)'} trailColor="var(--border)" showInfo={false} style={{ margin: 0 }} />
           </div>
         )}
 
@@ -102,7 +102,7 @@ export const AIContextPanel: React.FC<Props> = ({
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: 'var(--muted-2)', borderTop: '1px solid var(--border)', paddingTop: 4, marginTop: 2 }}>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? '#22c55e' : '#6b7280', display: 'inline-block' }} />
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? 'var(--success)' : 'var(--muted-2)', display: 'inline-block' }} />
           {currentTask ? '处理中' : '空闲'}
         </div>
       </div>

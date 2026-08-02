@@ -145,4 +145,67 @@ memoryRouter.get('/stats', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/memory/auto-captured
+ * 返回 AI 主动捕获的记忆条目 (source=auto_reflect)
+ * 支持按 category 过滤, 按 importance 排序
+ *
+ * 2026-08-03 新增: 配合前端 AutoMemoryPanel 可视化
+ */
+memoryRouter.get('/auto-captured', async (req: Request, res: Response) => {
+  try {
+    const userId = (req.query.userId as string) || 'default';
+    const workspace = (req.query.workspace as string) || '';
+    const category = req.query.category as string | undefined;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+
+    const all = await readMemory({ userId, workspace, limit: 200 });
+
+    // 过滤: 只返回自动捕获的 (source=auto_reflect 且有 category 元数据)
+    let filtered = all.filter(m =>
+      m.source === 'auto_reflect' && m.metadata?.category
+    );
+
+    // 按分类过滤
+    if (category) {
+      filtered = filtered.filter(m => m.metadata?.category === category);
+    }
+
+    // 按重要性排序 (importance 降序, 然后按时间降序)
+    filtered.sort((a, b) => {
+      const impA = (a.importance ?? 0) * 1000 + (a.ts / 1e10);
+      const impB = (b.importance ?? 0) * 1000 + (b.ts / 1e10);
+      return impB - impA;
+    });
+
+    // 限制数量
+    const result = filtered.slice(0, limit).map(m => ({
+      ts: m.ts,
+      category: m.metadata?.category as string,
+      title: m.metadata?.title as string,
+      content: m.content,
+      importance: m.importance ?? 0,
+      entityId: m.entityId,
+      tags: m.metadata?.tags as string[] || [],
+      sourceTool: m.metadata?.sourceTool as string | undefined,
+      industry: m.industry,
+    }));
+
+    // 按分类统计
+    const stats: Record<string, number> = {};
+    for (const m of filtered) {
+      const cat = (m.metadata?.category as string) || 'unknown';
+      stats[cat] = (stats[cat] || 0) + 1;
+    }
+
+    res.json({
+      items: result,
+      total: filtered.length,
+      stats,
+    });
+  } catch (err: any) {
+    res.json({ items: [], total: 0, stats: {}, error: err.message });
+  }
+});
+
 export { memoryRouter };

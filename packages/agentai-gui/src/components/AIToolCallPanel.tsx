@@ -63,8 +63,8 @@ export const AIToolCallPanel: React.FC = () => {
                 style={{
                   fontSize: 9, borderRadius: 2, margin: 0, border: 'none',
                   lineHeight: '18px', padding: '0 5px', cursor: 'default',
-                  background: t.status === 'success' ? 'var(--bg-2)' : t.status === 'failed' ? '#fcebeb' : '#e6f1fb',
-                  color: t.status === 'success' ? 'var(--fg-2)' : t.status === 'failed' ? '#a32d2d' : '#185fa5',
+                  background: t.status === 'success' ? 'var(--bg-2)' : t.status === 'failed' ? 'var(--danger-soft)' : 'var(--violet-soft)',
+                  color: t.status === 'success' ? 'var(--fg-2)' : t.status === 'failed' ? 'var(--danger)' : 'var(--violet)',
                 }}
               >
                 {t.status === 'running' ? <LoadingOutlined style={{ marginRight: 2 }} /> :
