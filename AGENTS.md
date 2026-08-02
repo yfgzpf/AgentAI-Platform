@@ -98,42 +98,43 @@ color: '#ddd';
 #### 1.1 Agent Loop (agentai-loop.ts)
 主循环架构: 用户消息 → 上下文构建 → LLM 调用 → 工具分派 → 结果入 log → 继续循环
 
-**上下文构建 (buildImmutablePrefix)**
-按需注入 8 层上下文:
-1. 系统提示 (system-prompt.ts)
-2. 用户身份 + 行业感知 (user-model.ts)
-3. 项目规则 (.trae/rules/)
-4. 持久记忆 (memory.jsonl, 限 10 条, 自动压缩)
-5. 跨会话进化经验 (evolution.ts)
-6. IDE 状态感知 (ide-state.ts, 打开文件/光标/诊断)
-7. 自进化规则 (.agentai/evolved-rules.json)
-8. 启动感知 (git log + 最近改动文件)
+**上下文构建 (buildImmutablePrefix) v3.3**
+按需注入 ~8 层上下文 (2026-07-19 合并精简自 19 层):
+1. 身份+技能匹配+进化记忆 (合并)
+2. 工具定义+IDE状态+项目记忆 (合并)
+3. 用户上下文+客户档案 (合并)
+4. 行业引擎+知识库RAG+用户模型 (合并)
+5. 持久记忆+进化规则+启动感知+上次会话 (合并)
+6. Workspace+项目规则+行为准则 (合并)
+7. 技能索引 (按 includeSkillsIndex)
+8. 用户偏好+额外system消息
 
 **主循环控制**
 - finish_reason='length' → 自动追加继续消息, 不中断任务
-- MAX_AUTO_RESUME=5, 短回复自动恢复执行
+- MAX_AUTO_RESUME=10, 短回复自动恢复执行
 - 完成标记检测 (已完成/done/finished) → 正常退出
 - 描述性回复无实际操作 → 继续执行
 - 每 10 轮注入工作记忆摘要, 防止长任务"失忆"
-- 3 分钟总超时保护
+- 60 分钟绝对超时保护 (10 分钟空闲超时)
 - 循环结束后: 有工具调用但无总结 → 追加一轮 LLM 总结
 
 #### 1.2 LLM 路由 (llm-router.ts)
-4 Provider: agentai(免费) / deepseek / openai / zhipu
-- 三维评分: 成功率 50% + 成本 30% + 延迟 20%
+8 Provider: agentai(免费) / deepseek / openai / zhipu / superapi / dxnt / sensenova / longcat
+- 五维评分: 复杂度匹配 30% + 上下文适配 15% + 成本 20% + 成功率 25% + 延迟 10%
 - Cost Guard 预检 + 后检
 - LRU 缓存 (相同请求直接命中)
 - 失败降级 + 熔断保护
-- 熔断 3 次触发智能模型切换 (smart-model-switcher.ts)
+- 30% 失败率触发智能模型切换 (smart-model-switcher.ts)
 
-**修复管道 (5 步)**
+**修复管道 (6 步)**
 1. flatten — 嵌套对象压平
 2. scavenge — 从 `<think>` 块抢救 JSON
 3. storm — 检测工具调用风暴
 4. truncation — 补全截断 JSON
 5. **tool call JSON 自动修复** — 尾逗号/单引号/无引号 key/undefined
+6. **text→tool_call 回退** — 解析 func(args)/```tool```/XML/DSML 模式
 
-### 二、工具系统 (57+ 工具)
+### 二、工具系统 (141 工具)
 
 #### 2.1 文件操作 (精确编辑 + 安全守护)
 | 工具 | 能力 |
@@ -231,7 +232,8 @@ AI 经常做某操作 → create_tool({name:'diff_files', script:'...'})
 
 ### 六、安全机制
 
-- 沙箱守卫: 所有文件操作经过 sandboxGuard 检查
+- 沙箱守卫 v3.2: **默认全放行, 仅拒系统路径** (C:/Windows, ~/.ssh 等) — "只要不动操作系统权限全放行"
+- 沙箱设置页: 路径预置面板自动识别盘符, 一键加入 allow 列表
 - 凭证遮蔽: API key/token/password 自动从 LLM 上下文中移除
 - 物理备份: write_file/multi_edit 修改前备份到 .agentai/backups/
 - undo_edit: 支持回滚最近一次修改
@@ -268,3 +270,75 @@ AI 经常做某操作 → create_tool({name:'diff_files', script:'...'})
 
 ### 一句话
 **这是一个被严重低估的项目 — 它有自我进化的骨架，只差一颗更强的大脑。**
+
+---
+
+## 2026-07-19 全面审计结果
+
+### 已修复
+- IDE 上下文重复注入 bug ([agentai-loop.ts](packages/agentai-gateway/src/agentai-loop.ts))
+- 记忆系统双轨制已标注 (memory.ts ↔ memory-manager.ts)
+- 上文所有数字已更新为实际值
+- P1: 删除 5 个死代码文件 (decision-gate.ts, self-verifier.ts, autonomous-goal-engine.ts, execution-reflection.ts, trust-ladder.ts)
+- P1: 删除 system-prompt.ts 死函数 (buildFullSystemPrompt, buildLayeredSystemPrompt, classifyIntent 等, ~226 行)
+- P1: system-prompt.ts 从 476 行缩减到 ~250 行 (仅保留 AGENT_SYSTEM_IDENTITY)
+- P3: 删除 .bak 备份文件 (system-prompt.ts.bak, system-prompt-lite.ts.bak)
+- 清理 trust-ladder 死代码链 (6 个文件: integrated-agent-core, unified-agent-core, innovations-integration, production-entry, unified-core-demo, trust-ladder.test)
+- 清理桌面端 gateway-dist-v2 中 28 个死代码编译副本 (.js + .d.ts)
+- typecheck 验证通过
+- P1: 修复沙箱 "AI 频繁被拒" 问题 — 3 个根因修复:
+  1. checker.ts: 白名单模式 → workspace 内路径默认放行 (仍保护系统路径)
+  2. tools.ts sandboxGuard: prompt 不再当 deny 处理 (.env 等敏感文件可正常写入)
+  3. rules.ts: 移除 node_modules/dist/build/.git 的默认 deny (非系统级安全威胁)
+- P1: 沙箱 v3.2 "只要不动操作系统权限全放行":
+  1. checker.ts: 默认 deny → 默认 allow, 仅 deny 规则拦截 (C:/Windows, ~/.ssh 等系统路径)
+  2. rules.ts: 新增 getAvailableDrives() 自动识别盘符 + getPathPresets() 路径预置
+  3. router.ts: 新增 GET /v1/sandbox/presets API 端点
+  4. SandboxRulesEditor.tsx: 预置路径面板 (盘符/用户目录/项目目录, 点击即加入 allow)
+- gui typecheck 通过
+- P2: 上下文注入合并 (19 层 → ~8 层, ~30% token 节省):
+  1. §1+§1a+§1b 合并: 身份+技能+进化记忆 → 一条
+  2. §1.5+§1.6+§1.7 合并: 工具+IDE+项目记忆 → 一条
+  3. §2+§2.5 合并: 用户上下文+客户档案 → 一条
+  4. §3+§3b+§3.5 合并: 行业引擎+用户模型+知识库+洞察 → 一条
+  5. §4+§4.7+§4.8+§4.9 合并: 持久记忆+进化规则+启动感知+上次会话 → 一条
+  6. §6+§6.3+§6.5 合并: workspace+项目规则+行为准则 → 一条 (精简重复指令)
+- P2: industry-engine.ts ~690 行硬编码已标注改进方向 (迁入 JSON 配置)
+- P2: ide-state.ts 验证无问题 (无客户端时已正确返回空)
+- P1: 前端创作组件颜色硬编码修复 (~50 处):
+  1. ImageGen.tsx: 16处 #fff/#888/#666 等 → var(--fg)/var(--muted)/var(--border)
+  2. VideoGen.tsx: 14处 → CSS 变量 (含视频播放器/历史记录)
+  3. WritePage.tsx: 23处 → CSS 变量 (含编辑器/工具栏/底栏)
+  4. WritePage 容器 background '#0f0f0f' → var(--bg) 支持主题切换
+- P1: Image Studio v2.0 — 图像工作室 5 模式创作:
+  1. backend image.ts: 新增 mode 参数 (text2img/img2img/style_transfer/edit/tryon)
+  2. frontend ImageStudio.tsx: Tab 架构, 共享历史, 对话式改图
+  3. 风格迁移: 12 种预设 (梵高/莫奈/浮世绘/水墨/赛博朋克...)
+  4. VideoGen: +8 场景 +4 模型 +2 时长选项
+  5. App.tsx: ImageStudio 替换 ImageGen
+- P1: 对话改图 + 模型系统增强:
+  1. modelStore: 新增 capabilities 字段 (chat/image/video/multimodal) + IMAGE_EDIT_MODEL_IDS
+  2. modelStore: 新增 chatMode 状态 (chat/image_edit) + setChatMode
+  3. ModelSelector: chatMode 感知 — 图片模式自动过滤 image-capable 模型
+  4. App.tsx: TitleBar 添加 🎨 对话改图切换按钮 (点击自动选千问/豆包/GLM 等)
+  5. settings.ts: 新增 GET /v1/settings/keys/status (全量密钥状态, 解决前端同步问题)
+
+### 已知问题 (待修复)
+
+| 严重度 | 问题 | 位置 |
+|--------|------|------|
+| P2 | industry-engine.ts ~690 行硬编码行业规则 (已标注, 建议迁入 JSON 配置) | industry-engine.ts |
+| P2 | ide-state.ts 无客户端时正常返回空 (已验证无问题, 移除误报) | ide-state.ts |
+
+### 框架能力实际数据
+
+| 指标 | 原文档 | 实际 |
+|------|--------|------|
+| LLM Provider | 4 | 8 |
+| 工具数量 | 57+ | 141 |
+| 评分维度 | 3D | 5D |
+| MAX_AUTO_RESUME | 5 | 10 |
+| 绝对超时 | 3 分钟 | 60 分钟 |
+| 修复管道 | 5 步 | 6 步 |
+| 熔断条件 | 3 次失败 | 30% 失败率 |
+| 上下文注入层数 | 8 | ~8 (已从 19 层合并精简) |

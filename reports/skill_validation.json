@@ -1,0 +1,61 @@
+{
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "pass_rate": "100.0%"
+  },
+  "details": [
+    {
+      "skill_name": "cad-ai-designer",
+      "exists_skill_md": true,
+      "exists_handler": true,
+      "handler_executable": true,
+      "skill_md_valid": true,
+      "test_execution": true,
+      "errors": [],
+      "status": "✅ PASS"
+    },
+    {
+      "skill_name": "construction-supervisor",
+      "exists_skill_md": true,
+      "exists_handler": true,
+      "handler_executable": true,
+      "skill_md_valid": true,
+      "test_execution": true,
+      "errors": [],
+      "status": "✅ PASS"
+    },
+    {
+      "skill_name": "material-selector",
+      "exists_skill_md": true,
+      "exists_handler": true,
+      "handler_executable": true,
+      "skill_md_valid": true,
+      "test_execution": true,
+      "errors": [],
+      "status": "✅ PASS"
+    },
+    {
+      "skill_name": "quotation-generator",
+      "exists_skill_md": true,
+      "exists_handler": true,
+      "handler_executable": true,
+      "skill_md_valid": true,
+      "test_execution": true,
+      "errors": [],
+      "status": "✅ PASS"
+    },
+    {
+      "skill_name": "requirement-interview",
+      "exists_skill_md": true,
+      "exists_handler": true,
+      "handler_executable": true,
+      "skill_md_valid": true,
+      "test_execution": true,
+      "errors": [],
+      "status": "✅ PASS"
+    }
+  ],
+  "failed_skills": []
+}

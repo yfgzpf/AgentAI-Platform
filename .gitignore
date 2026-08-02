@@ -1,7 +1,6 @@
 # ===== Dependencies =====
 node_modules/
 .pnpm-store/
-pnpm-lock.yaml
 package-lock.json
 yarn.lock
 
@@ -101,3 +100,28 @@ backend.log
 .reasonix/
 .trae/
 !.trae/rules/
+.workbuddy/
+.catpaw/
+.smoke-ws/
+.trae-cn/
+
+# ===== Scratch one-off scripts & build artifacts (root) =====
+_pkg/
+_build_all.mjs
+_*.log
+_*.txt
+
+# ===== Orphan package dirs (legacy) =====
+packages/gui/
+packages/packages/
+
+# ===== Cache & temp (do not commit) =====
+.cache/
+packages/agentai-gateway/.cache/
+huggingface/
+__pycache__/
+*.tmp
+*.bak
+
+# ===== Reserved Windows name (do not commit) =====
+nul
