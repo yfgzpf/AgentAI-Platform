@@ -198,15 +198,10 @@ git push origin v0.1.0
 | `TAURI_SIGNING_PUBLIC_KEY` | （见下方） | 公钥内容（可选） |
 | `TAURI_KEY_PASSWORD` | （留空） | 私钥密码 |
 
-**私钥内容**：
-```
-dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5TkJ3cm5xYkMzWXBid3dLVU5WUU0wNm5sWVNmVEtCN3VNOXFhYzJ6eTZnZ0FBQkFBQUFBQUFBQUFBQUlBQUFBQTVvQ1lDSGZWNUp6MVJxdXhCcXdaRmw5QWF6dWNyU3BEK0F2bUxsWE5ILzBEWGFTTkU1S3p6ak1OQmdGazVoK085N1lXUjNlS0Fqb1ZpSVUxSFJXOFR3c3ZTMTdzTi9wejQ4dU12WmdzaWlVNVFDNlBCY0labGg3RzQvenkxenVrQXpSZWpEc2dmV1U9Cg==
-```
-
-**公钥内容**：
-```
-dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIwMTBDODFFNzk4QjdGQjUKUldTMWY0dDVIc2dRc05DRzdJVEhpbzhjWWgzR2RiZStKdFQ5eUFNY2dvZ3c0SkFIZ25ZWklqc1AK
-```
+> ⚠️ **安全提醒**：密钥内容已从本文档移除（2026-08-03 重新生成）。请从以下位置获取：
+> - 私钥：`F:\agentai-platform\.env` 中的 `TAURI_PRIVATE_KEY`
+> - 公钥：`packages/agentai-desktop/src-tauri/tauri.conf.json` 中的 `plugins.updater.pubkey`
+> - 密码：`PulseFlow2026SecureKey`
 
 ---
 
