@@ -346,8 +346,14 @@ export const AutomationPanel: React.FC = () => {
           active: { color: 'success', text: '运行中', icon: CheckCircleOutlined },
           paused: { color: 'warning', text: '已暂停', icon: PauseCircleOutlined },
           disabled: { color: 'default', text: '已禁用', icon: CloseCircleOutlined },
+          // 2026-08-03: 补充更多状态避免 undefined 报错
+          running: { color: 'success', text: '运行中', icon: CheckCircleOutlined },
+          finished: { color: 'success', text: '完成', icon: CheckCircleOutlined },
+          failed: { color: 'error', text: '失败', icon: CloseCircleOutlined },
+          error: { color: 'error', text: '失败', icon: CloseCircleOutlined },
+          pending: { color: 'warning', text: '待执行', icon: PauseCircleOutlined },
         };
-        const s = statusMap[status];
+        const s = statusMap[status] || statusMap['active'] || { color: 'default', text: status, icon: null };
         return <Badge status={s.color as any} text={s.text} />;
       },
     },
