@@ -136,7 +136,13 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
     fetchMemories();
     // 每 30 秒刷新一次
     const timer = setInterval(fetchMemories, 30_000);
-    return () => clearInterval(timer);
+    // 2026-08-03: 监听 SSE 实时记忆更新事件, 立即刷新无需等待轮询
+    const onMemoryUpdated = () => { fetchMemories(); };
+    window.addEventListener('agentai:memory-updated', onMemoryUpdated);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('agentai:memory-updated', onMemoryUpdated);
+    };
   }, [fetchMemories]);
 
   // 格式化时间

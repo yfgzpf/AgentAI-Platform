@@ -1175,6 +1175,14 @@ export const ChatView: React.FC = () => {
         }
         orchestrator.updateStage(stage, 'running');
       },
+      onMemoryAuto: (info: any) => {
+        if (info.written > 0) {
+          // 通知 AutoMemoryPanel 刷新 (通过自定义事件)
+          window.dispatchEvent(new CustomEvent('agentai:memory-updated', {
+            detail: { written: info.written, skipped: info.skipped, ts: Date.now() },
+          }));
+        }
+      },
       onApprovalRequired: (info: any) => {
         setApprovalProposal({
           id: info.id,

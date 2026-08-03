@@ -2123,19 +2123,19 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         } catch { /* working memory optional */ }
       }
 
-      // ═══ 主动记忆更新 (2026-08-03 新增) ═══
-      // 每 5 轮自动检查: 是否有值得持久化的发现/决策/教训
-      if (this.iteration > 0 && this.iteration % 5 === 0) {
+      // ═══ 主动记忆更新 (2026-08-03 扩展: 捕获更多值得持久化的发现) ═══
+      // 每 3 轮检查一次 (原 5 轮太快, 改为 3 轮提高覆盖率)
+      if (this.iteration > 0 && this.iteration % 3 === 0) {
         try {
           const { rememberBatch } = await import('./self-memory-updater.js');
           const candidates: any[] = [];
 
-          // 1. 提取已完成的工具调用 (可能包含 bug 修复)
+          // 1. Bug 修复 (原有逻辑)
           const toolMessages = this.context.appendOnlyLog
             .filter(m => m.role === 'tool' && (m as any).name);
           const fixTools = toolMessages.filter(m => {
             const content = String((m as any).content || '');
-            return /修复|fixed|resolve|error|bug/i.test(content);
+            return /修复|fixed|resolve|error|bug|panic|crash/i.test(content);
           });
           for (const t of fixTools.slice(-3)) {
             const content = String((t as any).content || '').slice(0, 200);
@@ -2150,14 +2150,39 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             });
           }
 
-          // 2. 提取用户关键指令 (可能包含偏好)
+          // 2. 成功写入文件 (项目结构变更)
+          const writeTools = toolMessages.filter(m => {
+            const name = (m as any).name;
+            return name && /write_file|create_file|edit_file|str_replace|multi_edit/.test(name);
+          });
+          const seenFiles = new Set<string>();
+          for (const t of writeTools.slice(-5)) {
+            const content = String((t as any).content || '');
+            const pathMatch = content.match(/(?:file_path|path)['":\s]*([^\s'")\],]+\.\w{1,5})/);
+            const filePath = pathMatch?.[1];
+            if (filePath && !seenFiles.has(filePath)) {
+              seenFiles.add(filePath);
+              const brief = content.slice(0, 150).replace(/\n+/g, ' ').trim();
+              candidates.push({
+                category: 'project_fact',
+                title: `写入文件: ${filePath.split(/[\\/]/).pop()}`,
+                entityId: `write:${filePath.slice(-50)}`,
+                importance: 3,
+                tags: ['auto-captured', 'file-change'],
+                sourceTool: (t as any).name,
+                content: `写入文件 ${filePath}: ${brief}`,
+              });
+            }
+          }
+
+          // 3. 用户指令/偏好 (原有逻辑 + 扩展关键词)
           const userMsgs = this.context.appendOnlyLog
             .filter(m => m.role === 'user' && typeof m.content === 'string')
             .map(m => (m as any).content as string)
-            .filter(c => c.length > 20 && c.length < 200);
-          for (const u of userMsgs.slice(-2)) {
-            // 简单启发: 包含 "不要/必须/总是/永远" 等强指令词
-            if (/不要|必须|总是|永远|禁止|务必|一定要/.test(u)) {
+            .filter(c => c.length > 15 && c.length < 300);
+          for (const u of userMsgs.slice(-3)) {
+            // 扩展关键词: 风格/方法/工具/格式等偏好
+            if (/不要|必须|总是|永远|禁止|务必|一定要|我喜欢|我偏好|不要用|不要用.*而是|保持.*风格|代码风格|命名.*规范|不要用.*类|请用/.test(u)) {
               candidates.push({
                 category: 'user_preference',
                 title: `偏好: ${u.slice(0, 40)}`,
@@ -2169,12 +2194,53 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             }
           }
 
-          // 3. 批量写入
+          // 4. 工具调用模式 (高频使用的工具)
+          const toolNameCount = new Map<string, number>();
+          for (const m of toolMessages) {
+            const name = (m as any).name;
+            if (name) toolNameCount.set(name, (toolNameCount.get(name) || 0) + 1);
+          }
+          for (const [name, count] of toolNameCount) {
+            if (count >= 3) {
+              candidates.push({
+                category: 'pattern',
+                title: `高频工具: ${name}`,
+                entityId: `pattern:tool:${name}`,
+                importance: 3,
+                tags: ['auto-captured', 'tool-pattern'],
+                sourceTool: name,
+                content: `工具 ${name} 在本会话中被调用 ${count} 次, 是处理此类任务的高效方式`,
+              });
+            }
+          }
+
+          // 5. 任务完成时的总结 (lastText 作为任务摘要提示)
+          const lastUserMsg = this.context.appendOnlyLog
+            .filter(m => m.role === 'user' && typeof m.content === 'string')
+            .pop();
+          if (lastUserMsg && (lastUserMsg as any).content) {
+            const text = (lastUserMsg as any).content as string;
+            if (text.includes('任务') || text.includes('项目') || text.includes('代码')) {
+              // 只在前 N 轮捕获一次, 避免重复
+              if (this.iteration < 20 || this.iteration % 10 === 0) {
+                candidates.push({
+                  category: 'project_fact',
+                  title: `任务目标: ${text.slice(0, 60)}`,
+                  entityId: `task:${text.slice(0, 30)}`,
+                  importance: 3,
+                  tags: ['auto-captured', 'task-summary'],
+                  content: `用户任务: ${text}`,
+                });
+              }
+            }
+          }
+
+          // 6. 批量写入
           if (candidates.length > 0) {
             const workspace = this.opts.workspace || process.cwd();
             const result = await rememberBatch(workspace, candidates);
             if (result.written > 0) {
-              logger.info(`[self-memory] 自动写入 ${result.written} 条记忆 (跳过 ${result.skipped})`);
+              logger.info(`[self-memory] 自动写入 ${result.written} 条记忆 (跳过 ${result.skipped}, 候选 ${candidates.length})`);
               this.emit('memory:auto-captured', { written: result.written, skipped: result.skipped });
             }
           }

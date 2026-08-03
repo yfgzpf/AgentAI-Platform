@@ -840,6 +840,13 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         loop.on('plan:created', (info: any) => {
           sendEvent('plan_created', info);
         });
+        // 2026-08-03: plan:stage 和 memory:auto-captured 事件转发 (之前缺失, 导致右侧面板不更新)
+        loop.on('plan:stage', (info: any) => {
+          sendEvent('plan_stage', info);
+        });
+        loop.on('memory:auto-captured', (info: any) => {
+          sendEvent('memory_auto', info);
+        });
 
         // ====== 统一注入附件到上下文 (所有执行路径: loop.run / MasterController subtasks) ======
         let runMessage: string | { content: any[] } = message;

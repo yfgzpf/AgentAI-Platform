@@ -21,6 +21,7 @@ export interface ApiStreamHandlers {
   onSubagentDone?: (info: { id: string; result: string }) => void;
   onSubagentError?: (info: { id: string; error: string }) => void;
   onToolStuck?: (info: { tool: string; count: number }) => void;
+  onMemoryAuto?: (info: { written: number; skipped: number }) => void;
   onDone?: (info: { provider?: string; content?: string; usage?: any; displayModel?: string }) => void;
   onError?: (err: string) => void;
 }
@@ -188,6 +189,7 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
               case 'tool_result': handlers.onToolResult?.(data); break;
               case 'plan_created': handlers.onPlanCreated?.(data); break;
               case 'plan_stage': handlers.onPlanStage?.(data); break;
+              case 'memory_auto': handlers.onMemoryAuto?.(data); break;
               case 'approval_required': handlers.onApprovalRequired?.(data); break;
               case 'ask_user': handlers.onAskUser?.(data); break;
               case 'clarify:required': handlers.onClarifyRequired?.(data); break;
