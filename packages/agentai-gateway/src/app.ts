@@ -911,4 +911,46 @@ export function startBackgroundJobs(skillsDir: string, io?: IOServer) {
       });
     }
   }).catch((e: any) => console.warn('[task-scheduler] event connect failed:', e?.message));
+
+  // P3: 将 AutomationEngine 事件连接到 Socket.IO + 通知引擎 (2026-08-03 修复: 之前完全未监听)
+  import('./automation-engine.js').then(({ getAutomationEngine }) => {
+    const engine = getAutomationEngine(process.cwd());
+    if (io) {
+      engine.on('cron:result', (data: any) => {
+        const job = engine.listCronJobs().find(j => j.id === data.jobId);
+        const success = job?.lastResult ? !job.lastResult.startsWith('❌') : true;
+        io.emit('execution:result', {
+          source: 'automation', name: job?.name || data.jobId, success,
+          error: !success ? job?.lastResult : undefined, durationMs: 0,
+        });
+        import('./notification-engine.js').then(({ getNotificationEngine }) => {
+          getNotificationEngine().send({
+            level: success ? 'success' : 'error',
+            title: `自动化任务: ${job?.name || data.jobId}`,
+            body: success ? '执行成功' : (job?.lastResult || '执行失败'),
+            source: 'automation', metadata: { taskId: data.jobId },
+          });
+        }).catch(() => {});
+        io.emit('automation:update', {});
+      });
+      engine.on('cron:created', (job: any) => {
+        io.emit('execution:result', { source: 'automation', event: 'create', name: job.name, success: true });
+        io.emit('automation:update', {});
+      });
+      engine.on('cron:deleted', () => io.emit('automation:update', {}));
+      engine.on('auto:presets-installed', (data: any) => {
+        io.emit('execution:result', { source: 'automation', name: '预设模板自动安装', success: true });
+        io.emit('automation:update', {});
+      });
+      engine.on('rule:created', (rule: any) => {
+        io.emit('execution:result', { source: 'automation', name: `自动化规则: ${rule.name}`, success: true });
+        io.emit('automation:update', {});
+      });
+      engine.on('bg:created', (task: any) => {
+        io.emit('execution:result', { source: 'automation', name: `后台任务: ${task.name}`, success: true });
+        io.emit('automation:update', {});
+      });
+      console.log('[automation-engine] 事件已连接到 Socket.IO');
+    }
+  }).catch((e: any) => console.warn('[automation-engine] event connect failed:', e?.message));
 }

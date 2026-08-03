@@ -10,6 +10,7 @@
  * 6. 创建新任务（基础）
  */
 import React, { useState, useEffect } from 'react';
+import io from 'socket.io-client';
 import {
   Card, Table, Button, Tag, Space, Modal, message, Spin,
   Statistic, Row, Col, Progress, Tooltip, Popconfirm,
@@ -167,13 +168,28 @@ export const AutomationPanel: React.FC = () => {
     loadSchedules();
     loadStats();
     
-    // 定时刷新
+    // 定时刷新 (兜底)
     const interval = setInterval(() => {
       loadSchedules();
       loadStats();
     }, 30000);
     
-    return () => clearInterval(interval);
+    // 实时 Socket.IO 监听: 自动化任务执行/创建/删除时立即刷新
+    const gatewayWs = (window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789';
+    const httpUrl = gatewayWs.replace(/^ws([s]?):\/\//, 'http$1://');
+    const sock = io(httpUrl, { transports: ['websocket', 'polling'], reconnection: true, reconnectionDelay: 1000 });
+    sock.on('automation:update', () => { loadSchedules(); loadStats(); });
+    // 自动化任务执行完成时弹出通知
+    sock.on('execution:result', (data: any) => {
+      if (data.source === 'automation' && data.event !== 'start') {
+        const isOk = data.success;
+        const msg = `自动化任务「${data.name || '未知'}」${isOk ? '执行成功' : '执行失败'}`;
+        (isOk ? message.success : message.error)({ content: msg, duration: 5 });
+        loadSchedules();
+      }
+    });
+    
+    return () => { clearInterval(interval); sock.close(); };
   }, []);
 
   // 手动执行任务
