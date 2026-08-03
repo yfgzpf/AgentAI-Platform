@@ -21,6 +21,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
@@ -49,6 +52,8 @@ jobs:
       - name: Create Draft Release
         id: create_release
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           name: PulseFlow ${{ steps.get_tag.outputs.tag }}
           body: |
@@ -76,7 +81,6 @@ jobs:
             - Gateway 依赖 / Playwright Chromium → **一键自动安装**
           draft: true
           prerelease: false
-          generate_release_notes: true
 
   build:
     needs: create-release
