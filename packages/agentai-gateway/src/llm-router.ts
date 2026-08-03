@@ -1442,10 +1442,26 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
         if (m.role === 'system') { systemMsgs.push(m); continue; }
         otherMsgs.push(m);
       }
-      // system消息始终保留
+      // ═══ 2026-08-03: system 消息预算上限 = 80K tokens ═══
+      // 原因: buildImmutablePrefix 拼接 30+ 个 system 块 (工具描述+规则+记忆+项目文档),
+      //       容易吃光 token 预算, 导致对话历史的 user 消息被截断 → API 返回 "No user query found"
+      // 策略: 从旧到新裁剪 system 消息, 保留最近追加的 (演化规则/最新记忆)
+      const SYSTEM_BUDGET = 80_000; // system 消息最多 80K tokens
+      let sysTotal = 0;
+      const trimmedSystem: typeof systemMsgs = [];
       for (const m of systemMsgs) {
-        totalEst += Math.ceil((typeof m.content === 'string' ? m.content : '').length * 0.7);
+        const est = Math.ceil((typeof m.content === 'string' ? m.content : '').length * 0.7);
+        if (sysTotal + est > SYSTEM_BUDGET && trimmedSystem.length > 0) {
+          console.warn(`[truncate] system budget ${sysTotal} > ${SYSTEM_BUDGET}, dropping ${trimmedSystem.length} system msgs`);
+          break;
+        }
+        sysTotal += est;
+        trimmedSystem.push(m);
       }
+      systemMsgs.length = 0;
+      systemMsgs.push(...trimmedSystem);
+      totalEst = sysTotal;
+      // system消息始终保留
       // 从最新消息往前保留, 直到超限
       const kept: typeof req.messages = [];
       for (let i = otherMsgs.length - 1; i >= 0; i--) {
