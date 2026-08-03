@@ -5,9 +5,9 @@
 import { Router, Request, Response } from 'express';
 import { getAutomationEngine, AUTOMATION_PRESETS } from '../automation-engine.js';
 
-export function createAutomationRouter(workspace: string): Router {
+export function createAutomationRouter(workspace: string, registry?: any): Router {
   const r = Router();
-  const engine = getAutomationEngine(workspace);
+  const engine = getAutomationEngine(workspace, registry);
 
   // GET /v1/automation/crons — 所有定时任务
   r.get('/v1/automation/crons', (_req: Request, res: Response) => {

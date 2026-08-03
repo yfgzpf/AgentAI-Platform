@@ -615,7 +615,7 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
   app.use(createCleanerRouter());
   app.use('/v1/commercial-models', commercialModelsRouter);
   app.use('/v1/models', createModelsRouter(deps.router));
-  app.use(createAutomationRouter(process.cwd()));  // 自动化引擎 API
+  app.use(createAutomationRouter(process.cwd(), deps.registry));  // 自动化引擎 API (注入 registry 让 cron 能找到工具)
   app.use('/v1/knowledge', createKnowledgeRouter());
   app.use(musicProxyRouter);
   app.use('/v1/suggestions', suggestionsRouter);
