@@ -1680,7 +1680,7 @@ if (id === 'agentai') {
       // 强制清理 baseUrl 末尾逗号/分号 (用户从配置复制时常带这些)
       baseUrl = baseUrl.replace(/[,\;]+$/, '').replace(/\s+$/, '');
       const fetchUrl = baseUrl.includes('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
-      console.log(`[router] executeProvider: id=${id}, model=${modelName}, baseUrl=${baseUrl}, url=${fetchUrl}, hasKey=${!!apiKey}, msgs=${truncatedMessages.length}(sys=${systemMsgs.length},user=${truncatedMessages.filter(m=>m.role==='user').length},asst=${truncatedMessages.filter(m=>m.role==='assistant').length},tool=${truncatedMessages.filter(m=>m.role==='tool').length})`);
+      console.log(`[router] executeProvider: id=${id}, model=${modelName}, baseUrl=${baseUrl}, url=${fetchUrl}, hasKey=${!!apiKey}, msgs=${truncatedMessages.length}(user=${truncatedMessages.filter(m=>m.role==='user').length},asst=${truncatedMessages.filter(m=>m.role==='assistant').length},tool=${truncatedMessages.filter(m=>m.role==='tool').length})`);
       const flakyTimeout = AgentAIRouter.FLAKY_PROVIDERS.has(id)
         ? AgentAIRouter.FLAKY_TIMEOUT_MS
         : 300_000;

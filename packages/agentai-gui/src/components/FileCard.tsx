@@ -96,20 +96,18 @@ export const FileCard: React.FC<FileCardProps> = ({
   const dir = path.slice(0, path.length - filename.length);
 
   // ═══ 通用 handler (定义在 return 前, 避免 read 模式提前 return 后找不到) ═══
+  
+  /**
+   * "打开"按钮 → 自动切换到编辑器页面 + 打开文件
+   */
   const handleOpen = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    // 始终触发全局事件，确保 Editor 能监听并打开文件
+    // 1. 触发 Editor 打开文件
     window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path } }));
+    // 2. 切换到编辑器页面（自动的）
+    window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
     
-    // 切换到编辑器视图
-    try {
-      // 使用全局事件通知 App 切换到 editor 页面
-      window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
-    } catch {}
-    
-    if (onOpenInEditor) {
-      onOpenInEditor(path);
-    }
+    if (onOpenInEditor) onOpenInEditor(path);
     antdMsg.info(`正在打开: ${filename}`);
   };
 
@@ -121,24 +119,20 @@ export const FileCard: React.FC<FileCardProps> = ({
     });
   };
 
+  /**
+   * "定位"按钮 → 在左侧文件树中展开并高亮该文件（不跳转页面）
+   */
   const handleLocate = (e: React.MouseEvent) => {
     e?.stopPropagation();
-    // 触发全局事件，让 PulseFlowSidebar 定位到文件
-    window.dispatchEvent(new CustomEvent('agentai:locate-file', { detail: { path } }));
+    // 触发全局事件：让左侧 PulseFlowSidebar 切换到"文件"tab + 展开到目标文件
+    window.dispatchEvent(new CustomEvent('agentai:sidebar-locate-file', { 
+      detail: { path, tab: 'files' } 
+    }));
     
     if (onLocateInTree) {
       onLocateInTree(path);
-    } else {
-      // 尝试切换到编辑器页面并定位
-      try {
-        window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
-        // 延迟触发定位，等待 Editor 加载完成
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('agentai:locate-file', { detail: { path } }));
-        }, 300);
-      } catch {}
-      antdMsg.info(`定位到: ${path}`);
     }
+    antdMsg.info(`已定位: ${filename}`);
   };
 
   const handleDownload = (e: React.MouseEvent) => {

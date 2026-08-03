@@ -243,6 +243,7 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
   const [tree, setTree] = useState<FsNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [highlightPath, setHighlightPath] = useState<string>(''); // 高亮目标文件
 
   const loadTree = useCallback(async () => {
     if (!workspace) return;
@@ -264,9 +265,71 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
     return () => window.removeEventListener('agentai:file-created', h);
   }, [loadTree]);
 
+  // 监听定位文件事件 → 展开到目标文件并高亮
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ path: string }>;
+      const targetPath = ce.detail?.path;
+      if (!targetPath) return;
+      
+      // 设置高亮路径
+      setHighlightPath(targetPath);
+      
+      // 展开所有父目录
+      const newExpanded: Record<string, boolean> = {};
+      let current = targetPath;
+      while (current && current !== workspace) {
+        newExpanded[current] = true;
+        const parent = current.replace(/[/\\][^/\\]+$/, '') || current;
+        if (parent === current) break;
+        current = parent;
+      }
+      setExpanded(prev => ({ ...prev, ...newExpanded }));
+      
+      // 5秒后清除高亮
+      setTimeout(() => setHighlightPath(''), 5000);
+    };
+    
+    window.addEventListener('agentai:sidebar-locate-file', handler);
+    return () => window.removeEventListener('agentai:sidebar-locate-file', handler);
+  }, [workspace]);
+
+  /**
+   * 递归展开到目标路径的所有父目录
+   */
+  const expandToPath = useCallback((targetPath: string) => {
+    const newExpanded: Record<string, boolean> = { ...expanded };
+    
+    // 从目标路径向上，展开每个父目录
+    let current = targetPath;
+    while (current && current.length > workspace.length) {
+      // 检查是否是树中的节点
+      const checkInTree = (nodes: FsNode[]): boolean => {
+        for (const node of nodes) {
+          if (current.startsWith(node.path)) {
+            newExpanded[node.path] = true;
+            if (node.children) checkInTree(node.children);
+            return true;
+          }
+        }
+        return false;
+      };
+      checkInTree(tree);
+      
+      // 移到最后一个路径分隔符
+      const lastSep = Math.max(current.lastIndexOf('/'), current.lastIndexOf('\\'));
+      if (lastSep <= 0) break;
+      current = current.slice(0, lastSep);
+    }
+    
+    setExpanded(newExpanded);
+  }, [tree, expanded, workspace]);
+
   const renderNode = (node: FsNode, depth: number): React.ReactNode => {
     const isExpanded = expanded[node.path];
     const isDir = node.type === 'dir';
+    const isHighlighted = node.path === highlightPath;
+    
     return (
       <div key={node.path}>
         <div
@@ -274,14 +337,33 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
             if (isDir) setExpanded(p => ({ ...p, [node.path]: !p[node.path] }));
             else onFileOpen?.(node.path);
           }}
-          style={{ paddingLeft: depth * 12 + 4, padding: '2px 4px', fontSize: 11, cursor: 'pointer',
-            borderRadius: 3, display: 'flex', alignItems: 'center', gap: 4,
-            color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-          onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--card)'}
-          onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+          style={{ 
+            paddingLeft: depth * 12 + 4, 
+            padding: '2px 4px', 
+            fontSize: 11, 
+            cursor: 'pointer',
+            borderRadius: 3, 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 4,
+            color: 'var(--fg-2)', 
+            whiteSpace: 'nowrap', 
+            overflow: 'hidden', 
+            textOverflow: 'ellipsis',
+            background: isHighlighted ? 'rgba(99,102,241,0.15)' : undefined,
+            border: isHighlighted ? '1px solid rgba(99,102,241,0.4)' : '1px solid transparent',
+          }}
+          onMouseEnter={e => { if (!isHighlighted) (e.currentTarget as HTMLElement).style.background = 'var(--card)'; }}
+          onMouseLeave={e => { if (!isHighlighted) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
         >
           {isDir ? (isExpanded ? '📂' : '📁') : '📄'}
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
+          <span style={{ 
+            overflow: 'hidden', 
+            textOverflow: 'ellipsis',
+            fontWeight: isHighlighted ? 600 : 'normal',
+            color: isHighlighted ? 'var(--accent)' : undefined,
+          }}>{node.name}</span>
+          {isHighlighted && <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--accent)' }}>◀</span>}
         </div>
         {isDir && isExpanded && node.children?.map(c => renderNode(c, depth + 1))}
       </div>
@@ -315,6 +397,21 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
   const sessions = getMySessions();
   const activeId = useSessionStore.getState().activeId;
   const chatStore = useChatStore.getState();
+
+  // 监听定位文件事件 → 自动切换到"文件"tab
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ path: string; tab?: string }>;
+      // 切换到指定的 tab（默认是 'files'）
+      if (ce.detail?.tab) {
+        setActiveTab(ce.detail.tab as TabKey);
+      } else {
+        setActiveTab('files');
+      }
+    };
+    window.addEventListener('agentai:sidebar-locate-file', handler);
+    return () => window.removeEventListener('agentai:sidebar-locate-file', handler);
+  }, []);
   
   // 按日期分组会话
   const groupedSessions = useMemo(() => {
