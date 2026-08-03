@@ -102,7 +102,10 @@ export function addTrustedPattern(toolName: string, pathPattern: string): void {
   const patterns = loadTrustedPatterns();
   // 去重
   if (!patterns.some(p => p.toolName === toolName && p.pathPattern === pathPattern)) {
-    patterns.push({ toolName, pathPattern, trustedAt: Date.now() });
+    const compiledRegex = pathPattern !== '*'
+      ? new RegExp(`^${pathPattern.replace(/\*/g, '.*').replace(/\//g, '\\/').replace(/\\/g, '\\')}?$`, 'i')
+      : undefined;
+    patterns.push({ toolName, pathPattern, trustedAt: Date.now(), compiledRegex });
     saveTrustedPatterns(patterns);
   }
 }
