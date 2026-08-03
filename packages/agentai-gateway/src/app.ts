@@ -844,18 +844,9 @@ export function startBackgroundJobs(skillsDir: string, io?: IOServer) {
 
     // 将 CronDispatcher 事件连接到 Socket.IO 推送
     if (io) {
-      cron.on('error-rate-alert', (data: any) => {
-        io.emit('cron:alert', { type: 'error-rate', ...data });
-      });
-      cron.on('follow-up:tasks', (data: any) => {
-        io.emit('cron:result', { type: 'follow-up', ...data });
-      });
-      // 通用 cron 执行结果推送
-      cron.on('task:completed', (data: any) => {
-        io.emit('execution:result', { source: 'cron', ...data });
-      });
-      cron.on('task:failed', (data: any) => {
-        io.emit('execution:result', { source: 'cron', ...data });
+      // TaskScheduler 只 emit 'execution:result'，统一接收后转发
+      cron.on('execution:result', (data: any) => {
+        io.emit('execution:result', data);
       });
     }
   }).catch((e: any) => console.warn('[cron] start failed:', e?.message));

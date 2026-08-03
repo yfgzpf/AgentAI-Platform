@@ -22,6 +22,8 @@ export interface ApiStreamHandlers {
   onSubagentError?: (info: { id: string; error: string }) => void;
   onToolStuck?: (info: { tool: string; count: number }) => void;
   onMemoryAuto?: (info: { written: number; skipped: number }) => void;
+  onWidgetShow?: (info: { widgetType: string; content: any }) => void;
+  onProgress?: (info: { step: string; percent?: number; description?: string; toolCount?: number; successCount?: number; failCount?: number }) => void;
   onDone?: (info: { provider?: string; content?: string; usage?: any; displayModel?: string }) => void;
   onError?: (err: string) => void;
 }
@@ -199,6 +201,8 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
               case 'subagent_done': handlers.onSubagentDone?.(data); break;
               case 'subagent_error': handlers.onSubagentError?.(data); break;
               case 'tool_stuck': handlers.onToolStuck?.(data); break;
+              case 'widget_show': handlers.onWidgetShow?.(data); break;
+              case 'progress': handlers.onProgress?.(data); break;
               case 'done': handlers.onDone?.({ provider: data.provider, content: data.content, usage: data.usage, displayModel: data.displayModel }); return;
               case 'error': handlers.onError?.(data.error || data.text || 'Unknown error'); return;
             }

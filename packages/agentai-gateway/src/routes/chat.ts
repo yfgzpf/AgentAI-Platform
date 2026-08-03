@@ -1087,11 +1087,10 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             }
           };
           const onToolEnd = (info: any) => {
-            // 不再每次工具调用都推进到verify, 只更新solve进度
-            // verify和report在loop完成后统一推进
+            // tool:result 已通过 sendEvent('tool_result') 推送前端，此处不再需要
           };
           loop.on('tool:start', onToolStart);
-          loop.on('tool:end', onToolEnd);
+          loop.on('tool:result', onToolEnd);
 
           // 注册loop到活跃追踪 (可被abort端点中断 + 新消息压制)
           let loopAborted = false;
