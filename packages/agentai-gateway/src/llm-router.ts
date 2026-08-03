@@ -1433,10 +1433,11 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
     );
     const maxInputTokens = Math.floor(ctxWindow * 0.85); // 留15%给输出
     let truncatedMessages = req.messages;
+    // 定义 systemMsgs 在块外，供后续日志使用
+    const systemMsgs: typeof req.messages = [];
     {
       // 粗略估算: 1个中文字≈1.5token, 1个英文词≈1token
       let totalEst = 0;
-      const systemMsgs: typeof req.messages = [];
       const otherMsgs: typeof req.messages = [];
       for (const m of req.messages) {
         if (m.role === 'system') { systemMsgs.push(m); continue; }

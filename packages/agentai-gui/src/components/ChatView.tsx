@@ -1137,7 +1137,7 @@ export const ChatView: React.FC = () => {
         const stageLabels: Record<string, string> = {
           plan: '规划', solve: '执行', verify: '验证', fix: '修复', report: '报告',
           explore: '探索', analyze: '分析', implement: '实现', test: '测试', deploy: '部署',
-          understand: '理解', execute: '执行', report: '报告',
+          understand: '理解', execute: '执行',
         };
         // 修复: 处理后端发送的 stages 格式，确保每个 stage 有 status 字段
         const incomingStages = info.stages || [{ key: 'plan', label: '规划' }, { key: 'solve', label: '执行' }, { key: 'verify', label: '验证' }];
