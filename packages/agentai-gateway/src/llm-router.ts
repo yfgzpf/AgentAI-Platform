@@ -1461,17 +1461,50 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
       systemMsgs.length = 0;
       systemMsgs.push(...trimmedSystem);
       totalEst = sysTotal;
-      // system消息始终保留
       // 从最新消息往前保留, 直到超限
       const kept: typeof req.messages = [];
+      const dropped: typeof req.messages = [];
       for (let i = otherMsgs.length - 1; i >= 0; i--) {
-        // 特殊标记: 标记这条消息的索引位置, 用于后续的完整性检查
         const est = Math.ceil((typeof otherMsgs[i].content === 'string' ? otherMsgs[i].content : '').length * 0.7);
-        if (totalEst + est > maxInputTokens && kept.length > 2) break;
+        if (totalEst + est > maxInputTokens && kept.length > 2) {
+          // 收集被丢弃的旧消息，后续生成摘要注入
+          for (let j = i; j >= 0; j--) dropped.push(otherMsgs[j]);
+          break;
+        }
         totalEst += est;
         kept.unshift(otherMsgs[i]);
       }
-      truncatedMessages = [...systemMsgs, ...kept];
+      // ═══ 2026-08-03: 丢弃的消息生成结构化摘要, 避免 AI 丢失历史上下文 ═══
+      if (dropped.length > 0) {
+        const userReqs: string[] = [];
+        const aiActions: string[] = [];
+        const filesModified = new Set<string>();
+        const errorsHit: string[] = [];
+        for (const m of dropped.reverse()) {
+          const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+          if (m.role === 'user') {
+            userReqs.push(text.slice(0, 120));
+          } else if (m.role === 'assistant') {
+            const brief = text.slice(0, 80).replace(/\n+/g, ' ').trim();
+            if (brief) aiActions.push(brief);
+          } else if (m.role === 'tool') {
+            const toolName = (m as any).name || 'tool';
+            if (text.startsWith('[ERROR]')) errorsHit.push(`${toolName}: ${text.slice(8, 60)}`);
+            const pathMatch = text.match(/(?:file_path|path)['":\s]*([^\s'")\],]+\.\w{1,5})/);
+            if (pathMatch?.[1]) filesModified.add(pathMatch[1]);
+          }
+        }
+        const summaryParts: string[] = [];
+        if (userReqs.length > 0) summaryParts.push(`用户请求: ${userReqs.join(' | ')}`);
+        if (filesModified.size > 0) summaryParts.push(`修改文件: ${[...filesModified].join(', ')}`);
+        if (errorsHit.length > 0) summaryParts.push(`历史错误: ${errorsHit.slice(-3).join('; ')}`);
+        const summaryText = summaryParts.join('\n') || `旧对话 (${dropped.length} 条消息已压缩)`;
+        const summaryMsg: ChatMessage = { role: 'system', content: `[历史摘要 · ${dropped.length} 条旧消息] ${summaryText}` };
+        truncatedMessages = [summaryMsg, ...systemMsgs, ...kept];
+        console.log(`[truncate] dropped ${dropped.length} msgs → injected summary, kept ${kept.length}, sys=${systemMsgs.length}`);
+      } else {
+        truncatedMessages = [...systemMsgs, ...kept];
+      }
 
       // ═══ 完整性修复: 确保 tool 消息有前置 assistant(tool_calls) ═══
       // DeepSeek/OpenAI 要求: tool 消息前面必须有 assistant 消息包含 tool_calls
