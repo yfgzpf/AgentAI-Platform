@@ -66,8 +66,15 @@ function loadTrustedPatterns(): TrustedPattern[] {
   if (trustedPatternsCache) return trustedPatternsCache;
   try {
     if (fs.existsSync(TRUSTED_COMMANDS_FILE)) {
-      trustedPatternsCache = JSON.parse(fs.readFileSync(TRUSTED_COMMANDS_FILE, 'utf-8'));
-      return trustedPatternsCache || [];
+      const raw: TrustedPattern[] = JSON.parse(fs.readFileSync(TRUSTED_COMMANDS_FILE, 'utf-8'));
+      // 反序列化后补齐 compiledRegex (JSON 无法保留 RegExp 对象, 必须运行时重建)
+      trustedPatternsCache = raw.map(p => ({
+        ...p,
+        compiledRegex: p.pathPattern !== '*'
+          ? new RegExp(`^${p.pathPattern.replace(/\*/g, '.*').replace(/\//g, '\\/').replace(/\\/g, '\\')}?$`, 'i')
+          : undefined,
+      }));
+      return trustedPatternsCache;
     }
   } catch { /* ignore */ }
   return [];
