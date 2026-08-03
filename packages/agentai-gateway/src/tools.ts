@@ -496,7 +496,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'browser_click', description: '在内嵌浏览器中点击指定元素. 通过CSS selector定位元素并模拟点击.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位要点击的元素 (如 "#search-btn", "a.login", "[data-testid=submit]")' }, wait_ms: { type: 'number', default: 1000, description: '点击后等待毫秒数' } }, required: ['selector'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'browser_type', description: '在内嵌浏览器的输入框中输入文本. 先聚焦元素再输入.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位输入框' }, text: { type: 'string', description: '要输入的文本' }, press_enter: { type: 'boolean', default: false, description: '输入后是否按Enter' } }, required: ['selector','text'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'browser_screenshot', description: '截取当前浏览器页面的截图, 返回截图数据用于AI视觉分析.', parameters: { type: 'object', properties: { selector: { type: 'string', description: '可选: 只截取指定元素的截图' }, full_page: { type: 'boolean', default: false, description: '是否截取完整页面' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
-  { name: 'browser_extract', description: '从当前浏览器页面提取文本内容. 可提取整个页面或指定元素. extract_type=tables 时自动解析表格为 JSON 数组.', parameters: { type: 'object', properties: { selector: { type: 'string', description: '可选: CSS selector 提取特定元素' }, extract_type: { type: 'string', enum: ['text','html','links','tables','cards'], default: 'text', description: '提取类型: text=纯文本, html=HTML源码, links=所有链接, tables=表格数据(JSON), cards=卡片列表(JSON)' }, fields: { type: 'object', description: 'extract_type=cards 时指定字段映射, 如 {title:".title", price:".price"}' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'browser_extract', description: '从当前浏览器页面提取文本内容. 可提取整个页面或指定元素. extract_type=tables 时自动解析表格为 JSON 数组. extract_type=dehydration 时用 DOM 脱水 (索引化) 替代截图, token 消耗降低 5-10 倍, 返回带 [index] 的文本+元素列表.', parameters: { type: 'object', properties: { selector: { type: 'string', description: '可选: CSS selector 提取特定元素' }, extract_type: { type: 'string', enum: ['text','html','links','tables','cards','dehydration'], default: 'text', description: '提取类型: text=纯文本, html=HTML源码, links=所有链接, tables=表格数据(JSON), cards=卡片列表(JSON), dehydration=DOM脱水(索引化文本, 比截图便宜10倍)' }, fields: { type: 'object', description: 'extract_type=cards 时指定字段映射, 如 {title:".title", price:".price"}' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   // ====== 浏览器自动化增强工具 ======
   { name: 'browser_submit', description: '提交内嵌浏览器中的表单. 通过CSS selector定位form元素并触发submit. 适用于搜索表单、登录表单等.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位 form 元素 (如 "#search-form", "form.login")' } }, required: ['selector'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'browser_upload', description: '在内嵌浏览器中上传文件. 通过CSS selector定位 input[type=file] 元素并设置文件路径. 注意: 出于安全限制, 文件路径需为工作区内文件.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位 input[type=file] 元素' }, file_path: { type: 'string', description: '文件路径 (工作区内相对路径或绝对路径)' } }, required: ['selector','file_path'] }, parallelSafe: false, riskLevel: 'high' },
@@ -510,6 +510,8 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'browser_get_attribute', description: '获取内嵌浏览器中元素的属性值. 用于读取 href, src, data-* 等属性.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector 定位元素' }, attribute: { type: 'string', description: '属性名 (如 "href", "src", "value", "data-id")' } }, required: ['selector','attribute'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'browser_scan', description: '扫描当前浏览器页面的可交互元素. 返回元素列表(tag/selector/text/位置/交互分数). 用于导航或点击后重新获取页面结构, 无需重新导航.', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
   { name: 'browser_snapshot', description: '一次性获取当前页面的截图+元素列表+URL. 比分别调用 browser_screenshot + browser_scan 更高效. 返回 base64 截图和元素列表, AI 可"看到"页面并据此操作.', parameters: { type: 'object', properties: { full_page: { type: 'boolean', default: false, description: '是否截取完整页面 (包括滚动区域)' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'browser_click_by_index', description: '按 DOM 脱水索引点击元素. 比 CSS selector 更可靠: 索引是实时分配的, 不受 DOM 变化影响. 需先用 browser_extract type=dehydration 获取页面索引, 然后用索引号操作. 例: 脱水返回 [3]<button>提交</>, 调用 browser_click_by_index({index:3}).', parameters: { type: 'object', properties: { index: { type: 'number', description: '脱水返回的元素索引号' } }, required: ['index'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'browser_type_by_index', description: '按 DOM 脱水索引在元素中输入文本. 需先用 browser_extract type=dehydration 获取页面索引后用索引号输入. 例: 脱水返回 [5]<input placeholder="搜索">', parameters: { type: 'object', properties: { index: { type: 'number', description: '脱水返回的元素索引号' }, text: { type: 'string', description: '要输入的文本' }, press_enter: { type: 'boolean', default: false, description: '输入后是否按Enter' } }, required: ['index','text'] }, parallelSafe: false, riskLevel: 'medium' },
   // ====== RPA 操作录制与回放 ======
   { name: 'browser_record', description: '录制浏览器操作序列. 用户在浏览器中手动操作, 系统自动捕获并转为可回放的步骤脚本. action=start 开始录制, action=stop 停止并保存, action=status 查看录制状态, action=cancel 取消录制, action=list 列出已保存脚本, action=delete 删除脚本, action=get 查看脚本详情.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['start','stop','status','cancel','list','delete','get'], default: 'status', description: '录制控制动作' }, name: { type: 'string', description: '脚本名称 (start 时)' }, start_url: { type: 'string', description: '录制起始URL (start 时)' }, description: { type: 'string', description: '脚本描述 (stop 时可选)' }, script_id: { type: 'string', description: '脚本ID (delete/get 时)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'browser_replay', description: '回放已录制的浏览器操作脚本. 按录制的步骤自动执行, 支持变量替换 ({{变量名}}). 也可直接传入步骤列表创建临时回放. 适合重复性网页操作: 数据采集、表单批量填写、定时巡检等.', parameters: { type: 'object', properties: { script_id: { type: 'string', description: '已保存的脚本ID (二选一)' }, steps: { type: 'array', items: { type: 'object', properties: { action: { type: 'string', description: '操作类型: navigate/click/type/select/submit/wait/press_key/hover' }, selector: { type: 'string' }, text: { type: 'string' }, url: { type: 'string' }, value: { type: 'string' }, key: { type: 'string' }, wait_ms: { type: 'number' }, screenshot: { type: 'boolean' } } }, description: '直接传入步骤列表 (无需预录制, 二选一)' }, variables: { type: 'object', description: '变量替换 (如 {keyword:"手机"} → 步骤中 {{keyword}} 被替换)' }, name: { type: 'string', description: '创建新脚本时的名称 (与 steps 配合使用)' } }, required: [] }, parallelSafe: false, riskLevel: 'high' },
@@ -2945,16 +2947,33 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
   browser_extract: async (args: any, ctx?: any) => {
     try {
       const { selector, extract_type = 'text', fields } = args;
-      // 优先使用 Playwright 引擎
       const { getBrowserEngine } = await import('./browser-engine.js');
       const engine = getBrowserEngine();
       if (engine.isRunning()) {
         try {
+          // DOM 脱水 (借鉴 page-agent): 索引化文本, 比截图便宜 10x
+          if (extract_type === 'dehydration') {
+            const result = await engine.dehydrate();
+            const elemList = result.elements.slice(0, 30).map((e: any) =>
+              `  [${e.index}] <${e.tag}>${e.text ? ` "${e.text.slice(0, 40)}"` : ''}` +
+              (e.href ? ` href="${e.href}"` : '') +
+              (e.type ? ` type="${e.type}"` : '')
+            ).join('\n');
+            return {
+              success: true,
+              output: `✅ DOM 脱水完成 (共 ${result.totalElements} 个可交互元素)\n\n📄 脱水文本:\n${result.text.slice(0, 3000)}\n\n📋 元素索引表 (前30):\n${elemList}`,
+              data: { text: result.text, elements: result.elements, totalElements: result.totalElements },
+            };
+          }
+          // 普通提取
           const pwContent = await engine.extract(selector, extract_type, fields);
           const pwResult = (extract_type === 'html' && pwContent) ? minifyHtml(pwContent) : pwContent;
           const maxLen = (extract_type === 'tables' || extract_type === 'cards') ? 10000 : 5000;
           return { success: true, output: `✅ 提取完成 (${extract_type}):\n${pwResult.slice(0, maxLen)}`, data: { content: pwResult } };
-        } catch { /* 降级到 iframe */ }
+        } catch (e) {
+          if (extract_type !== 'dehydration') throw e;
+          // dehydration 失败: 降级为普通文本提取
+        }
       }
       const { getBrowserBridge } = await import('./browser-bridge.js');
       const bridge = getBrowserBridge();
@@ -3276,6 +3295,30 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       }
       return { success: false, output: `获取属性失败: ${result.error || '元素未找到'}` };
     } catch (e: any) { return { success: false, output: `browser_get_attribute error: ${e.message}` }; }
+  },
+
+  browser_click_by_index: async (args: any, ctx?: any) => {
+    try {
+      const { index } = args;
+      if (index == null) return { success: false, output: 'index required. 先用 browser_extract type=dehydration 获取页面索引。' };
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (!engine.isRunning()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await engine.clickByIndex(index);
+      return { success: true, output: result };
+    } catch (e: any) { return { success: false, output: `browser_click_by_index error: ${e.message}` }; }
+  },
+
+  browser_type_by_index: async (args: any, ctx?: any) => {
+    try {
+      const { index, text, press_enter } = args;
+      if (index == null || !text) return { success: false, output: 'index and text required. 先用 browser_extract type=dehydration 获取页面索引。' };
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (!engine.isRunning()) return { success: false, output: '浏览器未启动, 请先使用 browser_navigate 打开页面' };
+      const result = await engine.typeByIndex(index, text, press_enter);
+      return { success: true, output: result };
+    } catch (e: any) { return { success: false, output: `browser_type_by_index error: ${e.message}` }; }
   },
 
   // ====== 浏览器扫描 + 快照 ======

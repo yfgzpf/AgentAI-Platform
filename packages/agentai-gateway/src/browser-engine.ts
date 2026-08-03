@@ -98,7 +98,229 @@ export interface ElementInfo {
   rect: { x: number; y: number; width: number; height: number };
 }
 
+/** DOM 脱水输出: 单行文本, 如 [3]<button type="submit">提交</> */
+export interface DehydratedElement {
+  index: number;          // 全局唯一索引, LLM 用此定位
+  tag: string;
+  text: string;
+  attrs?: Record<string, string>;
+  role?: string;
+  ariaLabel?: string;
+  placeholder?: string;
+  href?: string;
+  type?: string;
+  scrollable?: boolean;
+}
+
+/** DOM 脱水结果: 带索引的文本 + 元素索引表 */
+export interface DehydrationResult {
+  text: string;                          // LLM 可读的脱水文本
+  elements: DehydratedElement[];          // 元素索引表 (LLM 可用)
+  totalElements: number;                 // 交互元素总数
+  pageUrl: string;
+  pageTitle: string;
+  viewport: { width: number; height: number };
+}
+
+/**
+ * DOM 脱水脚本 (运行在 Playwright 页面上下文中)
+ * 借鉴 page-agent 的脱水思路:
+ *   - 提取所有可交互元素, 分配 [index]
+ *   - 脱水: 移除样式/隐藏元素/冗余容器
+ *   - 输出文本格式: [3]<button type="submit">提交</>
+ *   - 保留父-子层级缩进
+ */
+const DEHYDRATE_JS = `() => {
+  const INTERACTIVE_TAGS = new Set(['a','button','input','select','textarea','details','summary','label']);
+  const INTERACTIVE_ATTRS = ['onclick','onkeydown','role'];
+  const ATTR_WHITELIST = ['type','value','name','placeholder','for','disabled','checked','tabindex','aria-label','aria-expanded','aria-haspopup','href','target','src','role','data-testid'];
+  const SCROLLABLE_TAGS = new Set(['div','section','main','article','aside','span']);
+
+  const elements = [];        // [index, Element]
+  const indexMap = new WeakMap<Element, number>();
+
+  function isInteractive(el) {
+    const tag = el.tagName.toLowerCase();
+    if (INTERACTIVE_TAGS.has(tag)) return true;
+    if (INTERACTIVE_ATTRS.some(a => el.hasAttribute(a))) return true;
+    if (el.onclick || el.onkeydown || el.getAttribute('role') === 'button') return true;
+    if (el.style.cursor === 'pointer') return true;
+    if (el.getAttribute('contenteditable') === 'true') return true;
+    return false;
+  }
+
+  function isHidden(el) {
+    try {
+      const style = window.getComputedStyle(el);
+      return style.display === 'none' || style.visibility === 'hidden' || el.hidden || el.hasAttribute('hidden');
+    } catch { return false; }
+  }
+
+  function isRedundant(el) {
+    const tag = el.tagName.toLowerCase();
+    if (['script','style','noscript','template','meta','link'].includes(tag)) return true;
+    if (el.classList.contains('hidden') || el.classList.contains('sr-only')) return true;
+    return false;
+  }
+
+  function capText(s, max = 80) {
+    if (!s) return '';
+    s = s.replace(/\\s+/g, ' ').trim();
+    return s.length > max ? s.slice(0, max) + '…' : s;
+  }
+
+  function getRelevantAttrs(el) {
+    const attrs = {};
+    for (const key of ATTR_WHITELIST) {
+      const val = el.getAttribute(key);
+      if (val) attrs[key] = val;
+    }
+    return attrs;
+  }
+
+  function indexElement(el) {
+    const idx = elements.length;
+    elements.push(el);
+    indexMap.set(el, idx);
+    return idx;
+  }
+
+  function getScrollableInfo(el) {
+    try {
+      const style = window.getComputedStyle(el);
+      const overflow = style.overflow;
+      const isScrollable = (overflow === 'scroll' || overflow === 'auto' || overflow === 'overlay') && el.scrollHeight > el.clientHeight;
+      if (isScrollable && SCROLLABLE_TAGS.has(el.tagName.toLowerCase())) {
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  function buildLine(el, idx, indent) {
+    const tag = el.tagName.toLowerCase();
+    const attrs = getRelevantAttrs(el);
+    const text = capText(el.textContent || '');
+    const scrollable = getScrollableInfo(el);
+
+    // 构建属性字符串
+    let attrStr = '';
+    if (Object.keys(attrs).length > 0) {
+      attrStr = ' ' + Object.entries(attrs).map(([k,v]) => k + '="' + v + '"').join(' ');
+    }
+
+    // 如果元素可滚动, 加上 data-scrollable
+    if (scrollable) {
+      attrStr += ' data-scrollable';
+    }
+
+    const prefix = '[*' + idx + ']';
+    const open = prefix + '<' + tag + attrStr + '>';
+    const close = '</>';
+
+    // 只输出带文本的交互元素 (脱水核心)
+    if (isInteractive(el) && !isHidden(el) && !isRedundant(el)) {
+      if (text.length > 0) {
+        return ' '.repeat(indent) + open + text + close;
+      }
+      // 无文本但可交互 (如 submit 按钮无 label), 输出 tag
+      return ' '.repeat(indent) + open + close;
+    }
+
+    // 非交互但有文本的内容节点 (脱水文本)
+    if (!isRedundant(el) && text.length > 0 && !isInteractive(el)) {
+      return ' '.repeat(indent) + text;
+    }
+
+    // 可滚动容器 (脱水标记)
+    if (scrollable) {
+      return ' '.repeat(indent) + open + '(scrollable)' + close;
+    }
+
+    return null;
+  }
+
+  function walkTree(el, depth, lines) {
+    if (depth > 10) return;
+    if (isRedundant(el)) return;
+    if (isHidden(el)) return;
+
+    // 交互元素: 分配索引, 输出脱水行
+    if (isInteractive(el)) {
+      const idx = indexElement(el);
+      const line = buildLine(el, idx, depth * 2);
+      if (line) lines.push(line);
+      // 交互元素不递归子节点 (避免重复)
+      return;
+    }
+
+    // 可滚动容器
+    if (getScrollableInfo(el)) {
+      const idx = indexElement(el);
+      const line = buildLine(el, idx, depth * 2);
+      if (line) lines.push(line);
+    }
+
+    // 非交互节点: 收集子节点
+    if (el.children && depth < 10) {
+      for (const child of el.children) {
+        walkTree(child, depth + 1, lines);
+      }
+    }
+  }
+
+  const lines = [];
+  if (document.body) {
+    for (const child of document.body.children) {
+      walkTree(child, 0, lines);
+    }
+  }
+
+  // 构建元素索引表 (供后端缓存, 用于 clickByIndex)
+  const indexedElements = elements.map((el, idx) => ({
+    index: idx,
+    tag: el.tagName.toLowerCase(),
+    text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100),
+    attrs: (() => { const a = {}; for (const k of ATTR_WHITELIST) { const v = el.getAttribute(k); if (v) a[k] = v; } return Object.keys(a).length > 0 ? a : null; })(),
+    selector: (() => {
+      if (el.id) return '#' + el.id;
+      // 尝试用 nth-of-type 生成可靠 selector
+      try {
+        let cur = el; let parts = [];
+        while (cur && cur !== document.body && cur !== document.documentElement && parts.length < 4) {
+          let sel = cur.tagName.toLowerCase();
+          if (cur.id) { sel = '#' + cur.id; parts.unshift(sel); break; }
+          const cls = (cur.className || '').toString().trim();
+          if (cls) sel += '.' + cls.split(/\\s+/)[0];
+          const parent = cur.parentElement;
+          if (parent) {
+            const siblings = Array.from(parent.children).filter(s => s.tagName === cur.tagName);
+            if (siblings.length > 1) sel += ':nth-of-type(' + (siblings.indexOf(cur) + 1) + ')';
+          }
+          parts.unshift(sel);
+          cur = cur.parentElement;
+        }
+        return parts.join(' > ');
+      } catch { return null; }
+    })(),
+    rect: (() => { try { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; } catch { return null; } })(),
+  }));
+
+  return {
+    text: lines.join('\\n'),
+    indexedElements,
+    totalElements: elements.length,
+    url: window.location.href,
+    title: document.title || '',
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+  };
+}`;
+
 class BrowserEngine extends EventEmitter {
+  /** 缓存的元素索引表 (每次脱水后更新, 用于 clickByIndex) */
+  private _indexedElements: DehydratedElement[] = [];
+  private _indexCacheExpiry = 0;  // ms 时间戳, 超时后索引失效
+
   private browser: any = null;
   private context: any = null;
   private pages: Map<string, any> = new Map();
@@ -538,6 +760,116 @@ class BrowserEngine extends EventEmitter {
     } catch {
       return [];
     }
+  }
+
+  // ===== DOM 脱水 (借鉴 page-agent) =====
+
+  /**
+   * DOM 脱水: 把当前页面 DOM 转为带索引的文本表示
+   * 输出: "[3]<button type="submit">提交</>" 格式
+   * 优势: token 消耗比截图低 5-10x, 纯文本模型即可理解
+   */
+  async dehydrate(): Promise<DehydrationResult> {
+    const page = this.getActivePage();
+    if (!page) throw new Error('没有活跃标签页');
+
+    const raw = await page.evaluate(DEHYDRATE_JS);
+    if (!raw) throw new Error('DOM 脱水失败: 页面为空');
+
+    // 转换前端数据结构 → DehydrationResult
+    const elements: DehydratedElement[] = raw.indexedElements.map((e: any) => ({
+      index: e.index,
+      tag: e.tag,
+      text: e.text,
+      attrs: e.attrs,
+      href: e.attrs?.href || undefined,
+      type: e.attrs?.type || undefined,
+      ariaLabel: e.attrs?.['aria-label'] || undefined,
+    }));
+
+    this._indexedElements = elements;
+    this._indexCacheExpiry = Date.now() + 30000;  // 30 秒过期
+
+    return {
+      text: raw.text,
+      elements,
+      totalElements: raw.totalElements,
+      pageUrl: raw.url,
+      pageTitle: raw.title,
+      viewport: raw.viewport,
+    };
+  }
+
+  /**
+   * 按索引点击元素 (页面对话框中分配的索引号)
+   * 比 CSS selector 更可靠: 索引是实时分配的, selector 可能因 DOM 变化失效
+   */
+  async clickByIndex(index: number, waitMs = 1000): Promise<string> {
+    const page = this.getActivePage();
+    if (!page) throw new Error('没有活跃标签页');
+
+    // 缓存过期, 重新脱水
+    if (Date.now() > this._indexCacheExpiry || !this._indexedElements[index]) {
+      await this.dehydrate();
+    }
+
+    const el = this._indexedElements[index];
+    if (!el) throw new Error(`索引 ${index} 无效。请重新调用 browser_extract type=dehydration 获取当前页面索引。`);
+
+    if (!el.attrs?.selector) {
+      // 用坐标点击作为兜底
+      throw new Error(`索引 ${index} (${el.tag}: ${el.text}) 缺少定位信息, 请重新扫描`);
+    }
+
+    // 直接用 Playwright click
+    const sel = el.attrs?.selector;
+    try {
+      if (!sel) throw new Error(`索引 ${index} 缺少定位信息`);
+      await page.click(sel, { timeout: 8000 });
+    } catch {
+      // selector 失效: 用 evaluate 直接操作 DOM (JS 字符串运行在浏览器上下文)
+      await page.evaluate(`
+        (function(){
+          var e = document.querySelector(${JSON.stringify(el.attrs?.selector || '')});
+          if (e) { e.click(); return; }
+          var els = Array.from(document.querySelectorAll('*')).filter(function(x){
+            var r = x.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          });
+          if (els[${index}]) els[${index}].click();
+        })();
+      `);
+    }
+
+    if (waitMs > 0) await page.waitForTimeout(waitMs);
+    return `点击成功: [${index}] <${el.tag}> ${el.text || '(no text)'}`;
+  }
+
+  /**
+   * 按索引输入文本
+   */
+  async typeByIndex(index: number, text: string, pressEnter = false): Promise<string> {
+    const page = this.getActivePage();
+    if (!page) throw new Error('没有活跃标签页');
+
+    if (Date.now() > this._indexCacheExpiry || !this._indexedElements[index]) {
+      await this.dehydrate();
+    }
+
+    const el = this._indexedElements[index];
+    if (!el) throw new Error(`索引 ${index} 无效。请重新调用 browser_extract type=dehydration。`);
+
+    if (!el.attrs?.selector) throw new Error(`索引 ${index} 缺少定位信息`);
+
+    const selector = el.attrs?.selector;
+    if (!selector) throw new Error(`索引 ${index} 缺少定位信息`);
+    await page.fill(selector, text, { timeout: 5000 }).catch(async () => {
+      await page.click(selector, { timeout: 3000 }).catch(() => {});
+      await page.keyboard.type(text);
+    });
+    if (pressEnter) await page.keyboard.press('Enter');
+
+    return `输入成功: [${index}] <${el.tag}> "${text}"`;
   }
 
   // ===== 等待 =====

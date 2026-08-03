@@ -136,7 +136,7 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
   - 视觉驱动: 屏幕找文字(click_text/wait_for_text/find_text_on_screen)、屏幕找图(click_image/wait_for_image/find_image_on_screen)、输入到文本框(type_into_text) — 适用没有API的桌面程序
   - 进程: 列出(list_processes)、杀(kill_process)、通知(notify)、启动(launch_app)、系统信息(system_info)
   - 系统控制: 锁屏(lock_screen)、音量(set_volume/toggle_mute)、等待窗口(wait_for_window)
-**🌐 浏览器自动化**: 导航(browser_navigate)、点击(browser_click)、输入(browser_type)、截图(browser_screenshot)、提取内容(browser_extract)
+**🌐 浏览器自动化**: 导航(browser_navigate)、点击(browser_click)、输入(browser_type)、截图(browser_screenshot)、提取内容(browser_extract)、DOM脱水(browser_extract type=dehydration — 比截图便宜10倍, 返回带索引的文本)、按索引操作(browser_click_by_index / browser_type_by_index — 比CSS selector更可靠)
   - 高级: 提交(browser_submit)、上传(browser_upload)、标签管理(browser_tabs)、Cookie设置(browser_set_cookies)
   - 交互: 等待(browser_wait_for)、选择(browser_select)、悬停(browser_hover)、按键(browser_press_key)、滚动(browser_scroll_to)、获取属性(browser_get_attribute)
   - 分析: 页面扫描(browser_scan — 提取所有可交互元素)、快照(browser_snapshot — 完整DOM/ARIA树)
