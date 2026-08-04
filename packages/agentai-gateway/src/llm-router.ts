@@ -1287,7 +1287,17 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
   // ===== Provider 执行 (具体 HTTP/SSE 调用) =====
   private async executeProvider(id: ProviderId, req: ChatRequest, subModel?: string): Promise<any> {
     console.log(`[router] executeProvider entry: id=${id}, subModel=${subModel || 'undefined'}, req.subModel=${req.subModel || 'undefined'}`);
-    
+
+    // ═══ 前置防护: 如果请求中没有任何真实 user 消息, 注入兜底请求 ═══
+    // 原因: agentai-loop 的多条消息构建路径 (超时降级/L4 rescue/history-compress)
+    //       可能在 sanitizeToolMessages 或 consolidateSystemInjections 后丢失 user 消息,
+    //       导致 agnes 返回 "No user query found" (400), zhipu 返回 1214 "messages 参数非法"
+    const userMsgCount = req.messages.filter(m => m.role === 'user').length;
+    if (userMsgCount === 0) {
+      console.warn(`[guard] executeProvider: req.messages has 0 user msgs (total=${req.messages.length}), injecting fallback`);
+      req = { ...req, messages: [...req.messages, { role: 'user', content: '请继续完成之前的任务。' }] };
+    }
+
     // ===== Phase 2: 模型性能指标收集（零侵入）=====
     // 初始化指标收集上下文，失败不影响主流程
     let metricsContext: any = null;
@@ -1434,11 +1444,13 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
     const maxInputTokens = Math.floor(ctxWindow * 0.85); // 留15%给输出
     let truncatedMessages = req.messages;
     // 定义 systemMsgs 在块外，供后续日志使用
-    const systemMsgs: typeof req.messages = [];
+    const systemMsgs: ChatMessage[] = [];
+    const otherMsgs: ChatMessage[] = [];
     {
       // 粗略估算: 1个中文字≈1.5token, 1个英文词≈1token
       let totalEst = 0;
-      const otherMsgs: typeof req.messages = [];
+      // otherMsgs 已在块外定义，这里清空使用
+      otherMsgs.length = 0;
       for (const m of req.messages) {
         if (m.role === 'system') { systemMsgs.push(m); continue; }
         otherMsgs.push(m);
@@ -1449,7 +1461,7 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
       // 策略: 从旧到新裁剪 system 消息, 保留最近追加的 (演化规则/最新记忆)
       const SYSTEM_BUDGET = 80_000; // system 消息最多 80K tokens
       let sysTotal = 0;
-      const trimmedSystem: typeof systemMsgs = [];
+      const trimmedSystem: ChatMessage[] = [];
       for (const m of systemMsgs) {
         const est = Math.ceil((typeof m.content === 'string' ? m.content : '').length * 0.7);
         if (sysTotal + est > SYSTEM_BUDGET && trimmedSystem.length > 0) {
@@ -1463,17 +1475,22 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
       systemMsgs.push(...trimmedSystem);
       totalEst = sysTotal;
       // 从最新消息往前保留, 直到超限
-      const kept: typeof req.messages = [];
-      const dropped: typeof req.messages = [];
+      // ═══ 关键修复: 必须确保至少保留一条 user 消息, 否则 API 返回 "No user query found" ═══
+      const kept: ChatMessage[] = [];
+      const dropped: ChatMessage[] = [];
+      let hasUserMsg = false;
       for (let i = otherMsgs.length - 1; i >= 0; i--) {
         const est = Math.ceil((typeof otherMsgs[i].content === 'string' ? otherMsgs[i].content : '').length * 0.7);
-        if (totalEst + est > maxInputTokens && kept.length > 2) {
+        // 条件: 超出 token 限制 && 已保留至少2条消息 && (已有user消息 || 当前是最后一条消息)
+        const canDrop = totalEst + est > maxInputTokens && kept.length > 2 && (hasUserMsg || i === 0);
+        if (canDrop) {
           // 收集被丢弃的旧消息，后续生成摘要注入
           for (let j = i; j >= 0; j--) dropped.push(otherMsgs[j]);
           break;
         }
         totalEst += est;
         kept.unshift(otherMsgs[i]);
+        if (otherMsgs[i].role === 'user') hasUserMsg = true;
       }
       // ═══ 2026-08-03: 丢弃的消息生成结构化摘要, 避免 AI 丢失历史上下文 ═══
       if (dropped.length > 0) {
@@ -1564,6 +1581,22 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
         fixed.splice(lastAssistantIdx, 1);
       }
       truncatedMessages = fixed;
+
+      // ═══ 终极防护: 确保 truncatedMessages 中至少有一条真实的 user 消息 ═══
+      // 场景: 当所有已丢弃的消息包含 user 消息, 而 kept 中没有真实 user 消息时,
+      //       历史摘要以 role='system' 注入, 导致 API 返回 "No user query found" (400)
+      //       zhipu GLM 同样会返回 "messages 参数非法" (1214)
+      //       修复: 如果没有真实 user 消息, 注入一个最小兜底 user 请求
+      const realUserMsgs = truncatedMessages.filter(m => m.role === 'user');
+      if (realUserMsgs.length === 0) {
+        // 尝试从 dropped 中恢复用户请求摘要作为 user 消息
+        const lastUserReq = dropped.find(m => m.role === 'user');
+        const fallbackContent = lastUserReq
+          ? `[历史用户请求] ${typeof lastUserReq.content === 'string' ? lastUserReq.content.slice(0, 200) : JSON.stringify(lastUserReq.content).slice(0, 200)}`
+          : '请继续完成之前的任务。';
+        truncatedMessages.push({ role: 'user', content: fallbackContent });
+        console.warn(`[truncate] 防护: truncatedMessages 无 user 消息, 已注入兜底请求`);
+      }
     }
 
     // ═══ DeepSeek 判定 (提前, 用于 bodyObj 中的 reasoning_content 保留决策) ═══
