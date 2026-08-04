@@ -241,6 +241,17 @@ jobs:
           path: _updater_out
           retention-days: 7
 
+      # 🔑 关键修复: 上传安装包到 Release Assets
+      - name: Upload Release Asset (installer)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
+          files: |
+            packages/agentai-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle_dir }}/*.exe
+            packages/agentai-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle_dir }}/*.dmg
+            packages/agentai-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle_dir }}/*.AppImage
+          fail_on_unmatched_files: false
+
   merge-and-publish-latest:
     runs-on: ubuntu-latest
     needs: [build, create-release]
