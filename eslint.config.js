@@ -43,7 +43,7 @@ export default [
 
   // ===== TS + React 配置 (针对源文件) =====
   {
-    files: ['**/*.{ts,tsx,js,jsx}'],
+    files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
