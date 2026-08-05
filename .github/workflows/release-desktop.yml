@@ -117,16 +117,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 项目是 pnpm workspace（packages/* 有 workspace:* 依赖），统一用 pnpm/action-setup，
+      # 避免在项目目录执行 npm install（npm 不识别 workspace: 协议 → EUNSUPPORTEDPROTOCOL）
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Install pnpm via npm
-        run: |
-          npm install -g pnpm@9.15.0
-          pnpm --version
-        shell: bash
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -169,9 +171,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
 
       - name: Build Tauri Desktop + Updater Signature
         uses: tauri-apps/tauri-action@v0

@@ -14,22 +14,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 项目是 pnpm workspace（packages/* 有 workspace:* 依赖），
+      # 必须用 pnpm 安装；npm 不识别 workspace: 协议，会直接 EUNSUPPORTEDPROTOCOL
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
+        shell: bash
 
       - name: Lint
-        run: npm run lint
+        run: pnpm run lint
+        shell: bash
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
+        shell: bash
 
       - name: Test
-        run: npm test
+        run: pnpm run test
+        shell: bash
 
   secret-scan:
     name: Secret Scan
