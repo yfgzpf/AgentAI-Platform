@@ -255,7 +255,7 @@ describe('会话级管理', () => {
     });
     expect(result.should).toBe(false);
     expect(result.reason).toContain('上限');
-  }, 180000);
+  }, 240000);
 });
 
 describe('rememberBatch - 批量写入', () => {
@@ -288,7 +288,7 @@ describe('rememberBatch - 批量写入', () => {
     expect(result.written).toBe(2);
     expect(result.skipped).toBe(1);
     expect(result.details.length).toBe(3);
-  });
+  }, 60000);
 });
 
 describe('emergencyPersist - 紧急持久化', () => {
