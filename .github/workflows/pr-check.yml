@@ -19,41 +19,17 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install pnpm
-        run: |
-          curl -fsSL https://get.pnpm.io/install.sh | sh -
-          echo "$HOME/.local/share/pnpm" >> $GITHUB_PATH
-        shell: bash
-
-      - name: Verify pnpm
-        run: |
-          export PATH="$HOME/.local/share/pnpm:$PATH"
-          pnpm --version
-        shell: bash
-
       - name: Install dependencies
-        run: |
-          export PATH="$HOME/.local/share/pnpm:$PATH"
-          pnpm install --no-frozen-lockfile
-        shell: bash
+        run: npm install
 
       - name: Lint
-        run: |
-          export PATH="$HOME/.local/share/pnpm:$PATH"
-          pnpm lint
-        shell: bash
+        run: npm run lint
 
       - name: Typecheck
-        run: |
-          export PATH="$HOME/.local/share/pnpm:$PATH"
-          pnpm typecheck
-        shell: bash
+        run: npm run typecheck
 
       - name: Test
-        run: |
-          export PATH="$HOME/.local/share/pnpm:$PATH"
-          pnpm test
-        shell: bash
+        run: npm test
 
   secret-scan:
     name: Secret Scan
