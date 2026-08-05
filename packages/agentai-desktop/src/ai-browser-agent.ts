@@ -1,3 +1,5 @@
+/* eslint-disable no-console */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * AI Browser Agent - AI视觉驱动浏览器自动化
  * 
@@ -17,7 +19,6 @@
 import { chromium, Browser, Page } from 'playwright';
 import OpenAI from 'openai';
 import { writeFileSync } from 'fs';
-import { join } from 'path';
 
 interface AIAction {
   type: 'click' | 'type' | 'scroll' | 'wait' | 'press' | 'screenshot';
@@ -301,7 +302,6 @@ export class AIBrowserAgent {
    */
   private async findHighEngagementVideos(count: number): Promise<any[]> {
     this.log('寻找高互动视频');
-    const videos: any[] = [];
 
     // 滚动加载更多视频
     for (let i = 0; i < 3; i++) {
