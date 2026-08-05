@@ -62,7 +62,14 @@
     "copyright": "© 2026 PulseFlow Team",
     "homepage": "https://github.com/pulseflow/platform",
     "windows": {
-      "nsis": {}
+      "nsis": {
+        "oneClick": false,
+        "perMachine": false,
+        "allowToChangeInstallationDirectory": true,
+        "deleteAppDataOnUninstall": false,
+        "displayLanguageSelector": true
+      },
+      "targets": ["nsis"]
     },
     "linux": {
       "deb": {
