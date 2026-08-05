@@ -24,7 +24,7 @@
     "dev:desktop": "pnpm --filter @agentai/desktop tauri dev",
     "dev:gateway": "pnpm --filter @agentai/gateway dev",
     "build": "pnpm -r build",
-    "build:desktop": "pnpm --filter @agentai/desktop tauri build",
+    "build:desktop": "node packages/agentai-desktop/scripts/build-for-desktop.mjs",
     "test": "pnpm -r test",
     "test:integration": "pnpm -r test:integration",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
@@ -40,6 +40,7 @@
   "devDependencies": {
     "@commitlint/cli": "^19.0.0",
     "@commitlint/config-conventional": "^19.0.0",
+    "@eslint/js": "^9.39.4",
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",

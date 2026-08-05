@@ -122,19 +122,21 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install pnpm
-        run: npm install -g pnpm@9.15.0
+      - name: Install dependencies (npm)
+        run: npm install
+        working-directory: packages/agentai-gateway
 
-      - name: Setup pnpm store path
-        run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            export PNPM_HOME="$APPDATA/pnpm"
-          else
-            export PNPM_HOME="$HOME/.local/share/pnpm"
-          fi
-          echo "$PNPM_HOME" >> $GITHUB_PATH
-          pnpm config set store-dir "$PNPM_HOME/store"
-        shell: bash
+      - name: Build Gateway
+        run: npm run build
+        working-directory: packages/agentai-gateway
+
+      - name: Install GUI dependencies
+        run: npm install
+        working-directory: packages/agentai-gui
+
+      - name: Build GUI
+        run: npm run build
+        working-directory: packages/agentai-gui
 
       - name: Cache Rust cargo
         uses: actions/cache@v4

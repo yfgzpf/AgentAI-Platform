@@ -7,7 +7,7 @@
     "frontendDist": "../../agentai-gui/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm --filter @agentai/gui dev",
-    "beforeBuildCommand": "node scripts/build-for-desktop.mjs"
+    "beforeBuildCommand": "npm run build:desktop"
   },
   "app": {
     "windows": [
