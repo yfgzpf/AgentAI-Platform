@@ -162,17 +162,21 @@ export const Avatar: React.FC<AvatarProps> = ({
               transition: 'box-shadow 0.3s ease, opacity 0.3s ease',
             }}
           >
-            {/* X 双线 */}
+            {/* PulseFlow 脉搏波纹 */}
             <svg
               viewBox="0 0 24 24"
-              width={Math.round(size * 0.55)}
-              height={Math.round(size * 0.55)}
+              width={Math.round(size * 0.6)}
+              height={Math.round(size * 0.6)}
               style={{ display: 'block' }}
             >
-              <line x1="5"  y1="5"  x2="19" y2="19"
-                stroke={aiPal!.ring} strokeWidth="2.5" strokeLinecap="round" />
-              <line x1="19" y1="5"  x2="5"  y2="19"
-                stroke={aiPal!.ring} strokeWidth="2.5" strokeLinecap="round" />
+              <polyline
+                points="2,12 6,12 8,6 11,18 14,9 16,12 22,12"
+                fill="none"
+                stroke={aiPal!.ring}
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
           </div>
         ) : useImage ? (
