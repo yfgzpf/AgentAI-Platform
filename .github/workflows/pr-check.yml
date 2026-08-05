@@ -22,23 +22,38 @@ jobs:
       - name: Install pnpm
         run: |
           curl -fsSL https://get.pnpm.io/install.sh | sh -
-          export PNPM_HOME="$HOME/.local/share/pnpm"
-          export PATH="$PNPM_HOME:$PATH"
-          echo "$PNPM_HOME" >> $GITHUB_PATH
+          echo "$HOME/.local/share/pnpm" >> $GITHUB_PATH
+        shell: bash
+
+      - name: Verify pnpm
+        run: |
+          export PATH="$HOME/.local/share/pnpm:$PATH"
           pnpm --version
         shell: bash
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: |
+          export PATH="$HOME/.local/share/pnpm:$PATH"
+          pnpm install --no-frozen-lockfile
+        shell: bash
 
       - name: Lint
-        run: pnpm lint
+        run: |
+          export PATH="$HOME/.local/share/pnpm:$PATH"
+          pnpm lint
+        shell: bash
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: |
+          export PATH="$HOME/.local/share/pnpm:$PATH"
+          pnpm typecheck
+        shell: bash
 
       - name: Test
-        run: pnpm test
+        run: |
+          export PATH="$HOME/.local/share/pnpm:$PATH"
+          pnpm test
+        shell: bash
 
   secret-scan:
     name: Secret Scan
