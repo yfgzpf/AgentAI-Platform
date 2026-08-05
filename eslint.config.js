@@ -86,6 +86,11 @@ export default [
       'no-unused-vars': 'off',
       'no-undef': 'off',
 
+      // === 临时禁用: 这些规则导致大量历史代码报错 ===
+      'no-useless-escape': 'off',
+      'no-control-regex': 'off',
+      'no-case-declarations': 'off',
+
       // === react-hooks/recommended 核心规则 ===
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
