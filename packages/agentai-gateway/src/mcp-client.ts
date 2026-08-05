@@ -328,8 +328,6 @@ export class MCPClient extends EventEmitter {
       }
 
       return data;
-    } catch (error: any) {
-      throw error;
     } finally {
       clearTimeout(timeoutId);
     }

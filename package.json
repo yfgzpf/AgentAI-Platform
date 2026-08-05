@@ -24,7 +24,7 @@
     "dev:desktop": "pnpm --filter @agentai/desktop tauri dev",
     "dev:gateway": "pnpm --filter @agentai/gateway dev",
     "build": "pnpm -r build",
-    "build:desktop": "node packages/agentai-desktop/scripts/build-for-desktop.mjs",
+    "build:desktop": "pnpm --filter @agentai/desktop tauri build",
     "test": "pnpm -r test",
     "test:integration": "pnpm -r test:integration",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",

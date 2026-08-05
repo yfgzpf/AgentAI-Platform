@@ -1710,6 +1710,7 @@ if (id === 'agentai') {
       }
     }
 
+    // eslint-disable-next-line no-useless-catch -- try/catch 是方法级兜底, 错误抛给 tryOne 触发降级
     try {
       // 强制清理 baseUrl 末尾逗号/分号 (用户从配置复制时常带这些)
       baseUrl = baseUrl.replace(/[,\;]+$/, '').replace(/\s+$/, '');
@@ -1900,6 +1901,7 @@ if (id === 'sensenova') {
       };
     } catch (err: any) {
       // 抛给 tryOne: 标记失败 → router 自动降级到下一个 provider
+      // eslint-disable-next-line no-useless-catch
       throw err;
     }
   }

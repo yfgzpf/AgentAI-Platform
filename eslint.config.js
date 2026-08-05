@@ -33,8 +33,25 @@ export default [
       'dist', 'build', 'node_modules',
       '**/*.min.js',
       'src-tauri/target',
+      '**/src-tauri/target',
       '.workbuddy',
       'packages/*/dist', 'packages/*/build',
+      // ===== 二进制 / 非代码文件 (防止 Parsing error) =====
+      '**/*.db', '**/*.sqlite', '**/*.jpg', '**/*.jpeg', '**/*.png', '**/*.gif',
+      '**/*.webp', '**/*.ico', '**/*.pdf', '**/*.log', '**/*.lock',
+      '**/*.tsbuildinfo', '**/*.ttf', '**/*.woff', '**/*.woff2',
+      '**/*.mp4', '**/*.mp3', '**/*.wav', '**/*.zip', '**/*.tar', '**/*.gz',
+      // vendor 构建产物 (被 git 跟踪, 但不应 lint)
+      'references/cursor-mcp/dist',
+      // 本地打包产物 (desktop 内嵌的 gateway 构建副本)
+      '**/gateway-dist-v2',
+      '**/src-tauri/target',
+      // ===== 大体积生成/存储目录 (eslint . 在 flat config 下会遍历所有文件, 必须显式排除) =====
+      '.pnpm-store',      // pnpm content-addressed store, 海量压缩包文件 (8049 problems 元凶)
+      '.git',
+      'output', 'reports', 'models', 'SkillOpt',   // 根目录生成/输出目录
+      'coverage', 'reports/*', '.vite', '.turbo',
+      '**/*.min.js.map', '**/*.js.map',
     ],
   },
 
@@ -111,6 +128,15 @@ export default [
   {
     rules: {
       'no-empty': ['error', { allowEmptyCatch: true }],
+    },
+  },
+
+  // ===== 全局关闭: 历史代码兼容 (无 files 限制, 确保任何文件都 off) =====
+  {
+    rules: {
+      'no-useless-escape': 'off',
+      'no-control-regex': 'off',
+      'no-case-declarations': 'off',
     },
   },
 

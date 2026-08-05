@@ -130,6 +130,9 @@ __pycache__/
 # ===== Reserved Windows name (do not commit) =====
 nul
 
+# ===== Tauri / minisign 签名密钥 (切勿提交, 实测未泄露但须防误提交) =====
+PulseFlow
+
 # 数据库文件
 *.db
 *.db-journal

@@ -54,6 +54,8 @@ const DEFAULTS: QQConfig = {
   },
 };
 
+// interface QQConfig (类型) 与 const QQConfig (值) 同名是 TS 合法声明合并, eslint core 规则误报
+// eslint-disable-next-line no-redeclare
 export const QQConfig = {
   load(): QQConfig {
     // 1. 默认值

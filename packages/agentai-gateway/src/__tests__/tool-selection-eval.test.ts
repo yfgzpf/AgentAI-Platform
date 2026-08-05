@@ -414,7 +414,7 @@ async function llmSelectTools(
       console.log(`[eval-debug] trying ${p.name} promptLen=${fullPrompt.length}`);
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
+    const timer = setTimeout(() => controller.abort(), 5000);
     try {
       const resp = await fetch(`${p.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -708,8 +708,9 @@ describe('工具选对率评估 (真实 LLM 模式)', () => {
   ];
 
   const available = providers.filter(p => p.apiKey);
-  if (available.length === 0) {
-    it.skip('缺少任何 LLM API Key, 跳过真实 LLM 评估', () => {});
+  // 真实 LLM 评估默认跳过 (避免 CI 无 API key 时触发真实请求), 仅当显式设置 EVAL_REAL_LLM=1 才执行
+  if (process.env.EVAL_REAL_LLM !== '1' || available.length === 0) {
+    it.skip('未显式设置 EVAL_REAL_LLM=1 或缺少 API Key, 跳过真实 LLM 评估', () => {});
     return;
   }
   console.log(`[eval] 可用 provider: ${available.map(p => p.name).join(', ')}`);

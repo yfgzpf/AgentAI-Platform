@@ -1430,12 +1430,6 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
 
       // Step 3: 最终降级 - 代码生成的简化版 (不是占位图, 是真实可用的图表)
       return { success: true, output: generateFallbackSvg(type, title, description) };
-
-      // 输出为 Markdown 代码块 (前端会检测 language-svg 并渲染)
-      return {
-        success: true,
-        output: `\`\`\`svg\n${svg}\n\`\`\``,
-      };
     } catch (e: any) {
       return { success: false, output: `Error: ${e.message}` };
     }

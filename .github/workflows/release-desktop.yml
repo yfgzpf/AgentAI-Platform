@@ -122,21 +122,20 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install dependencies (npm)
-        run: npm install
-        working-directory: packages/agentai-gateway
+      - name: Enable corepack and install pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+        shell: bash
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build Gateway
-        run: npm run build
-        working-directory: packages/agentai-gateway
-
-      - name: Install GUI dependencies
-        run: npm install
-        working-directory: packages/agentai-gui
+        run: pnpm --filter @agentai/gateway build
 
       - name: Build GUI
-        run: npm run build
-        working-directory: packages/agentai-gui
+        run: pnpm --filter @agentai/gui build
 
       - name: Cache Rust cargo
         uses: actions/cache@v4

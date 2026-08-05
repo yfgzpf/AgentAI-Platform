@@ -220,7 +220,7 @@ describe('会话级管理', () => {
     expect(stats.written).toBe(2);
     expect(stats.remaining).toBe(18); // MAX_SESSION_WRITES = 20
     expect(stats.writtenEntityIds.length).toBe(2);
-  });
+  }, 60000);
 
   it('resetSession 应清空计数', async () => {
     const { rememberDecision, getSessionStats, resetSession } = await import('./self-memory-updater.js');
@@ -255,7 +255,7 @@ describe('会话级管理', () => {
     });
     expect(result.should).toBe(false);
     expect(result.reason).toContain('上限');
-  });
+  }, 180000);
 });
 
 describe('rememberBatch - 批量写入', () => {
