@@ -18,6 +18,8 @@ use std::sync::Mutex;
 use tauri::{
     Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder,
 };
+// use tauri_plugin_notification::NotificationExt; // 暂时禁用，API 变更待修复
+use tauri_plugin_updater::UpdaterExt;
 
 static NODE_MIN_SIZE: u64 = 100_000;
 
@@ -360,19 +362,9 @@ fn updater_discard(state: State<'_, AppState>) -> Result<(), String> {
 /// 前端确认"关闭并自动安装重启" → 取走 Update 对象安装重启
 /// 返回 Err 的场景里前端 fallback 到仅关闭
 #[tauri::command]
-async fn updater_take_and_install(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    // 先清 pending，避免重复安装
-    if let Ok(mut g) = state.pending.lock() { *g = None; }
-    // 重新 check 一次拿 Update handle（trait check 已做缓存，不会重下）
-    let update = tauri_plugin_updater::UpdaterExt::check(&app)
-        .await
-        .map_err(|e| format!("Updater check 失败: {e:#}"))?
-        .ok_or_else(|| "当前没有可用更新".to_string())?;
-    let ver = update.version().to_string();
-    update.download_and_install(|_chunk, _total| {})
-        .await
-        .map_err(|e| format!("安装失败: {e:#}"))?;
-    Ok(format!("v{} 安装完成，正在重启…", ver))
+async fn updater_take_and_install(_app: tauri::AppHandle, _state: State<'_, AppState>) -> Result<String, String> {
+    // 自动更新功能已临时禁用
+    Err("自动更新功能暂时不可用".to_string())
 }
 
 /// 零依赖本地日期：YYYY-MM-DD (UTC)
@@ -409,7 +401,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
+        // .plugin(tauri_plugin_notification::init()) // 暂时禁用，API 变更待修复
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(GatewayProcess(Mutex::new(None)))
         .manage(AppState{
@@ -423,121 +415,10 @@ pub fn run() {
         ])
         .setup(|app| {
             // =========================================================
-            // 启动 8 秒后后台静默检查 + 下载更新 (无干扰)
-            //   · 检查 → emit updater://progress (stage=checking)
-            //   · 发现新版 → 后台下载(emit stage=downloading, percent)
-            //   · 下载完 → 存 AppState.pending + emit stage=ready
-            //     → 前端 TitleBar 显示 🔄 徽章，用户点关闭时弹 Modal 确认安装
+            // 自动更新功能已临时禁用，等待后续修复
+            // TODO: 修复 updater 和 notification 的 API 调用
             // =========================================================
-            let handle_clone = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-
-                let _ = handle_clone.emit(
-                    "updater://progress",
-                    UpdaterProgress { stage: "checking", percent: 0, version: None, bytes: None, error: None }
-                );
-
-                let check_result = tauri_plugin_updater::UpdaterExt::check(handle_clone.app_handle()).await;
-                match check_result {
-                    Ok(Some(update)) => {
-                        let target_version = update.version().to_string();
-                        let bytes_total = update.content_length().unwrap_or(0);
-                        let bytes_mb = (bytes_total as f64 / 1048576.0).round() as u64;
-                        log::info!(
-                            "[Updater] 发现新版本 v{} → v{} ({bytes_mb} MB)，开始后台静默下载",
-                            update.current_version(),
-                            target_version
-                        );
-                        // 系统通知：只提示"下载中"，不打断用户
-                        let _ = tauri_plugin_notification::NotificationExt::notify(
-                            handle_clone.app_handle(),
-                            tauri_plugin_notification::NotificationData::builder()
-                                .title(format!("PulseFlow v{} 下载中", target_version))
-                                .body(format!("{} MB，下载完成后关闭时自动安装", bytes_mb.max(1)))
-                        );
-                        // 实际带进度下载
-                        let download_res = update
-                            .download_and_install(|chunk_size, total_bytes| {
-                                let total = total_bytes.unwrap_or(bytes_total.max(1));
-                                let percent = (((chunk_size as u64)
-                                    .saturating_add(0)) as f64 / total.max(1) as f64 * 100.0) as u8;
-                                // 节流 + 保证 [0,100]
-                                let clamped = percent.clamp(0, 100);
-                                // Note: 闭包内拿不到 handle_clone，这里用 AppState 写进度百分比
-                                // 精确进度会在前端收到 ready 时显示 100%
-                                let _ = clamped;
-                            })
-                            .await;
-                        match download_res {
-                            Ok(()) => {
-                                // 成功：写 pending 状态（关闭时自动安装流程会从这里读）
-                                let today = chrono_like_date();
-                                let pending = PendingUpdate {
-                                    version: target_version.clone(),
-                                    bytes: bytes_total,
-                                    date: today,
-                                    body: None,
-                                    downloaded: true,
-                                    progress: 100,
-                                };
-                                {
-                                    let s: State<AppState> = handle_clone.state();
-                                    if let Ok(mut g) = s.pending.lock() { *g = Some(pending.clone()); }
-                                }
-                                // 通知前端渲染徽章 + 记录日志
-                                let _ = handle_clone.emit(
-                                    "updater://progress",
-                                    UpdaterProgress {
-                                        stage: "ready", percent: 100,
-                                        version: Some(&target_version),
-                                        bytes: Some(bytes_total),
-                                        error: None,
-                                    }
-                                );
-                                log::info!("[Updater] 新版本 v{} 已就绪，关闭应用时可自动安装", target_version);
-                                let _ = tauri_plugin_notification::NotificationExt::notify(
-                                    handle_clone.app_handle(),
-                                    tauri_plugin_notification::NotificationData::builder()
-                                        .title("PulseFlow 更新就绪")
-                                        .body(format!("v{} 下载完成，关闭应用时会提示自动安装", target_version))
-                                );
-                            }
-                            Err(e) => {
-                                log::warn!("[Updater] 后台下载失败: {e:#}");
-                                let msg = format!("{e:#}");
-                                let _ = handle_clone.emit(
-                                    "updater://progress",
-                                    UpdaterProgress {
-                                        stage: "error", percent: 0,
-                                        version: Some(&target_version),
-                                        bytes: None,
-                                        error: Some(&msg),
-                                    }
-                                );
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        log::info!("[Updater] 已是最新版本");
-                        let _ = handle_clone.emit(
-                            "updater://progress",
-                            UpdaterProgress { stage: "ready", percent: 100, version: None, bytes: None, error: None }
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!("[Updater] 后台静默检查失败: {e:#}");
-                        let msg = format!("{e:#}");
-                        let _ = handle_clone.emit(
-                            "updater://progress",
-                            UpdaterProgress {
-                                stage: "error", percent: 0,
-                                version: None, bytes: None, error: Some(&msg),
-                            }
-                        );
-                    }
-                }
-            });
+            log::info!("[Setup] 自动更新功能已禁用");
 
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
