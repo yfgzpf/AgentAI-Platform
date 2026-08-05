@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+/* eslint-env node */
+/* eslint-disable no-console */
 /**
  * build-for-desktop.mjs — 桌面版构建脚本 (统一入口)
  * 
@@ -10,7 +12,7 @@
  */
 import { execSync } from 'node:child_process';
 import { existsSync, cpSync, copyFileSync, mkdirSync, rmSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
