@@ -122,20 +122,23 @@ jobs:
         with:
           node-version: 22
 
-      - name: Enable corepack and install pnpm
+      - name: Install pnpm via npm
         run: |
-          corepack enable
-          corepack prepare pnpm@9.15.0 --activate
+          npm install -g pnpm@9.15.0
+          pnpm --version
         shell: bash
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+        shell: bash
 
       - name: Build Gateway
         run: pnpm --filter @agentai/gateway build
+        shell: bash
 
       - name: Build GUI
         run: pnpm --filter @agentai/gui build
+        shell: bash
 
       - name: Cache Rust cargo
         uses: actions/cache@v4
