@@ -49,6 +49,7 @@ const ProactiveSuggestionsPanel = lazy(() => import('./components/ProactiveSugge
 const XuanjiPanel = lazy(() => import('./components/XuanjiPanel').then(m => ({ default: m.XuanjiPanel })));
 const AutomationPanel = lazy(() => import('./components/AutomationPanel').then(m => ({ default: m.AutomationPanel })));
 const TaskCenterPanel = lazy(() => import('./components/TaskCenterPanel').then(m => ({ default: m.TaskCenterPanel })));
+const TaskBoard = lazy(() => import('./components/TaskBoard').then(m => ({ default: m.TaskBoard })));
 const EvolutionPanel = lazy(() => import('./components/EvolutionPanel').then(m => ({ default: m.EvolutionPanel })));
 const SandboxRulesEditor = lazy(() => import('./components/SandboxRulesEditor').then(m => ({ default: m.SandboxRulesEditor })));
 import { KnowledgeGraphPanelChunk, preloadLazyChunks } from './lazyChunks';

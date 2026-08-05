@@ -327,7 +327,8 @@ export interface LoopOptions {
   displayModelLabel?: string;
   /** 持久记忆系统引用 (用于注入上下文) */
   persistentMemory?: any;
-  /** 用户手动选择模型 (跳过自动路由) */
+  /** Agent 任务上下文 (来自 AgentTaskStore, 注入 system prompt) */
+  agentTaskContext?: string;
   userPickedModel?: boolean;
   /** 运行模式: auto/planning/readonly */
   mode?: string;
@@ -627,6 +628,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       thinking: opts.thinking ?? false,
       thinkingBudget: opts.thinkingBudget ?? 0,
       persistentMemory: opts.persistentMemory ?? null,
+      agentTaskContext: opts.agentTaskContext ?? '',
       userPickedModel: opts.userPickedModel ?? false,
       mode: opts.mode ?? 'auto',
       modelConfig: opts.modelConfig ?? { baseURL: '', modelName: '', provider: '' },
@@ -828,6 +830,39 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
     if (memCtx) {
       systemMsgs.push({ role: 'system', content: memCtx });
     }
+
+    // === 1.76 Agent 任务板上下文 (对标 Trae TodoWrite: 跨会话任务连续性) ===
+    // 读取最近任务 + 当前活跃任务 + 下一步推荐, 注入 system prompt
+    try {
+      const { AgentTaskStore } = await import('./agent-task-store.js');
+      const taskStore = AgentTaskStore.getInstance(this.opts.workspace || process.cwd());
+      const activeTasks = taskStore.getActiveTasks(this.opts.workspace || process.cwd());
+      const recentTasks = taskStore.getRecentTasks(this.opts.workspace || process.cwd(), 5);
+      const nextSteps = taskStore.getNextSteps(this.opts.workspace || process.cwd());
+      const ctxParts: string[] = [];
+      if (activeTasks.length > 0) {
+        ctxParts.push('## 当前正在执行');
+        for (const t of activeTasks) ctxParts.push(`- [running] ${t.title}`);
+        ctxParts.push('');
+      }
+      if (recentTasks.length > 0) {
+        ctxParts.push('## 最近完成');
+        for (const t of recentTasks.slice(0, 3)) {
+          ctxParts.push(`- [done] ${t.title}`);
+          if (t.result) ctxParts.push(`  结果: ${(t.result as string).slice(0, 150)}`);
+        }
+        ctxParts.push('');
+      }
+      if (nextSteps.length > 0) {
+        ctxParts.push('## 推荐下一步');
+        for (const s of nextSteps) ctxParts.push(s);
+        ctxParts.push('');
+      }
+      if (ctxParts.length > 0) {
+        const taskCtx = '# Agent 任务上下文\n' + ctxParts.join('\n');
+        systemMsgs.push({ role: 'system', content: taskCtx });
+      }
+    } catch { /* task store unavailable, skip silently */ }
 
     // === 1.75 远程开发环境上下文 (2026-07-30 新增) ===
     // 当用户连接到远程环境时，注入远程上下文让 AI 感知
@@ -2473,6 +2508,16 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           const systemMsgs = messages.filter(m => m.role === 'system');
           const nonSystem = messages.filter(m => m.role !== 'system');
           messages = sanitizeToolMessages([...systemMsgs, ...nonSystem.slice(-6)]);
+          // ═══ 兜底: 如果压缩后没有真实 user 消息, 注入最小请求防止 API 400 ═══
+          const hasRealUser = messages.some(m => m.role === 'user');
+          if (!hasRealUser) {
+            const lastUser = [...messages].reverse().find(m => m.role === 'user');
+            const fallback = lastUser
+              ? `[历史用户请求] ${typeof lastUser.content === 'string' ? lastUser.content.slice(0, 150) : JSON.stringify(lastUser.content).slice(0, 150)}`
+              : '请继续完成之前的任务。';
+            messages.push({ role: 'user', content: fallback });
+            console.warn(`[timeout-degrade] 兜底注入 user 消息, 防止 API 400`);
+          }
         }
         llmTimedOut = false; // 重置标志
       }
@@ -2680,6 +2725,15 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           const sysMsgs = this.context.immutablePrefix;
           const recentLogs = this.context.appendOnlyLog.slice(-4);
           req.messages = sanitizeToolMessages([...sysMsgs, ...recentLogs]);
+          // ═══ L4 兜底: 确保有真实 user 消息 ═══
+          if (!req.messages.some(m => m.role === 'user')) {
+            const lastUser = [...recentLogs].reverse().find(m => m.role === 'user');
+            const fallback = lastUser
+              ? `[历史用户请求] ${typeof lastUser.content === 'string' ? lastUser.content.slice(0, 150) : JSON.stringify(lastUser.content).slice(0, 150)}`
+              : '请继续完成之前的任务。';
+            req.messages.push({ role: 'user', content: fallback });
+            console.warn(`[L4-rescue] 兜底注入 user 消息`);
+          }
           retryRes = await this.router.chat(req);
           req.tools = origTools;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {

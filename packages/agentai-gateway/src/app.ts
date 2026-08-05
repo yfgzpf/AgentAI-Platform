@@ -65,6 +65,7 @@ import { createPresetWorkflowsRouter } from './routes/preset-workflows.js';
 import { createQihuangRouter } from './routes/qihuang.js';
 import { createRemoteRouter } from './routes/remote.js';
 import { createPascalRouter } from './routes/pascal.js';
+import { createAgentTaskRouter } from './routes/agent-tasks.js';
 
 export interface AppDeps {
   /** 共享依赖 (router / sessions / 等) */
@@ -626,6 +627,7 @@ app.use('/v1/qihuang', createQihuangRouter(deps.router));  // 岐枢四诊系统
 app.use('/v1/remote', createRemoteRouter());  // 远程开发环境 API
 app.use('/api/gateway/pascal', createPascalRouter());  // Pascal Editor 3D 建筑编辑器 API
 app.use('/api/external-connections', (await import('./routes/external-connections.js')).default);  // 外部连接管理 API (Android/SketchUp/微信)
+app.use('/v1/agent-tasks', createAgentTaskRouter());  // Agent 任务板 API (对标 Trae TodoWrite)
 
   // ===== IDE 状态感知 =====
   app.post('/v1/ide-state', (req, res) => {
