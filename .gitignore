@@ -115,6 +115,9 @@ _*.txt
 packages/gui/
 packages/packages/
 
+# ===== Orphan gitlink SkillOpt (no .gitmodules, keep local only) =====
+SkillOpt/
+
 # ===== Cache & temp (do not commit) =====
 .cache/
 packages/agentai-gateway/.cache/
