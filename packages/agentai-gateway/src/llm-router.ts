@@ -214,6 +214,22 @@ export class AgentAIRouter extends EventEmitter {
     exceeded: false,
     disabled: false,
   };
+  /** 重试: 指数退避基础延迟 (1s 起步) */
+  private static readonly RETRY_BASE_DELAY_MS = 1_000;
+  /** 重试: 指数退避最大延迟 (30s) */
+  private static readonly RETRY_MAX_DELAY_MS = 30_000;
+  /** 连续失败黑名单: 连续 N 次失败后额外锁定 (秒) */
+  private static readonly CONSECUTIVE_FAIL_BLACKLIST_SEC = 120;
+  /** 连续失败阈值: 达到后启用黑名单 */
+  private static readonly CONSECUTIVE_FAIL_THRESHOLD = 3;
+  /** 主动健康检查间隔 (秒) */
+  private static readonly HEALTH_CHECK_INTERVAL_SEC = 60;
+  /** 每个 provider 连续失败计数 */
+  private _consecutiveFailures = new Map<ProviderId, number>();
+  /** 每个 provider 最后成功时间 */
+  private _lastSuccessAt = new Map<ProviderId, number>();
+  /** 主动健康检查定时器 */
+  private _healthCheckTimer: ReturnType<typeof setInterval> | null = null;
 
   /** 每个 provider 是否支持 reasoning_content (流式响应急时检测, 不写死) */
   private _hasReasoningSupport = new Map<ProviderId, boolean>();
@@ -610,8 +626,10 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
           } catch (err) {
             console.warn(`[router] ${req.model} attempt ${retry + 1}/${MAX_RETRY} failed: ${(err as Error).message?.slice(0, 80)}`);
             if (retry < MAX_RETRY - 1) {
-              // 重试前等待一小段时间
-              await new Promise(r => setTimeout(r, 500 * (retry + 1)));
+              // ═══ 指数退避: 1s, 2s, 4s (对标 Trae: 尊重 API 节奏) ═══
+              const delay = Math.min(AgentAIRouter.RETRY_BASE_DELAY_MS * Math.pow(2, retry), AgentAIRouter.RETRY_MAX_DELAY_MS);
+              console.info(`[router] wait ${delay/1000}s before retry ${retry + 2}/${MAX_RETRY}`);
+              await new Promise(r => setTimeout(r, delay));
             }
           }
         }
@@ -896,6 +914,19 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
 
   private tryRecoverCircuit(p: ProviderStats): void {
     if (!p.tripped || !p.trippedAt) return;
+    // ═══ 连续失败锁定: 检查额外锁定时间 ═══
+    const blacklistAt = (p as any).__blacklistedAt as number | undefined;
+    if (blacklistAt) {
+      const blacklistDuration = AgentAIRouter.CONSECUTIVE_FAIL_BLACKLIST_SEC * 1000;
+      if (Date.now() - blacklistAt < blacklistDuration) {
+        console.debug(`[router] ${p.id} still blacklisted (${Math.ceil((blacklistDuration - (Date.now() - blacklistAt)) / 1000)}s remaining)`);
+        return;
+      }
+      // 锁定到期, 清除
+      (p as any).__blacklistedAt = undefined;
+      console.info(`[router] ${p.id} blacklist expired, allowing recovery`);
+    }
+    // 正常冷却
     if (Date.now() - p.trippedAt < AgentAIRouter.CB_COOLDOWN_MS) return;
     // 冷却期已过 — 恢复
     p.tripped = false;
@@ -1789,13 +1820,15 @@ if (id === 'sensenova') {
         let usage: any = { prompt_tokens: 0, completion_tokens: 0 };
         let streamModel = modelName;
         let contentTruncated = false;
+        let streamError: Error | null = null;
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split('\n');
-          buf = lines.pop() || '';
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop() || '';
           for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed || !trimmed.startsWith('data:')) continue;
@@ -1848,6 +1881,12 @@ if (id === 'sensenova') {
               if (req.onDelta && delta.content) (req.onDelta as any)(delta.content);
             } catch { /* ignore parse errors */ }
           }
+          } // end while
+        } catch (e: any) {
+          // ═══ SSE 流中断恢复: 记录错误但返回已收到的内容 ═══
+          streamError = e;
+          console.warn(`[router] SSE stream interrupted for ${id}: ${(e.message || String(e)).slice(0, 100)}`);
+          // 不 throw — 返回部分响应, 让调用方决定是否需要 fallback
         }
 
         const toolCalls: ToolCall[] = [...toolCallsAcc.values()]
@@ -1858,17 +1897,25 @@ if (id === 'sensenova') {
             return { id: tc.id || `call_${Math.random()}`, name: tc.name, args };
           });
 
+        // ═══ 流中断时返回部分响应 (而非 throw) ═══
+        if (streamError && fullContent.length === 0) {
+          // 完全无内容 → 抛出, 触发 fallback
+          throw streamError;
+        }
+        console.info(`[router] SSE partial response: ${id} ${fullContent.length} chars, error: ${(streamError?.message || 'none').slice(0, 80)}`);
+
         return {
           content: fullContent,
           reasoningContent: fullThinking || undefined,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           model: streamModel,
-          finishReason: 'stop',
+          finishReason: streamError ? 'stream_error' : 'stop',
           usage: {
             prompt_tokens: usage.prompt_tokens ?? usage.promptTokens ?? 0,
             completion_tokens: usage.completion_tokens ?? usage.completionTokens ?? 0,
             total_tokens: (usage.prompt_tokens ?? usage.promptTokens ?? 0) + (usage.completion_tokens ?? usage.completionTokens ?? 0),
           },
+          streamError: streamError?.message || undefined,
         };
       }
 
@@ -1996,12 +2043,14 @@ if (id === 'sensenova') {
     const statusMatch = _err.message?.match(/HTTP\s*(\d{3})/);
     if (statusMatch) p.lastErrorStatus = parseInt(statusMatch[1], 10);
 
-    // === 速率限制 (429) 单独处理 — 不触发熔断 ===
+    // === 速率限制 (429) 单独处理 — 不触发熔断, 尊重 Retry-After ===
     if (p.lastErrorStatus === 429) {
-      const backoff = Math.min(
-        AgentAIRouter.RL_BASE_COOLDOWN_MS * Math.pow(AgentAIRouter.RL_BACKOFF_FACTOR, p.rateLimitRetryCount),
-        AgentAIRouter.RL_MAX_COOLDOWN_MS,
-      );
+      // 尝试从错误消息中提取 Retry-After 秒数
+      const retryAfterMatch = _err.message?.match(/Retry-After:\s*(\d+)/i);
+      const retryAfterSec = retryAfterMatch ? parseInt(retryAfterMatch[1], 10) : undefined;
+      const baseBackoff = retryAfterSec ? retryAfterSec * 1000 :
+        AgentAIRouter.RL_BASE_COOLDOWN_MS * Math.pow(AgentAIRouter.RL_BACKOFF_FACTOR, p.rateLimitRetryCount);
+      const backoff = Math.min(baseBackoff, AgentAIRouter.RL_MAX_COOLDOWN_MS);
       p.rateLimitCooldownUntil = Date.now() + backoff;
       p.rateLimitRetryCount++;
       // 429 不计入成功/失败率, 撤消 failureCount++
@@ -2047,11 +2096,88 @@ if (id === 'sensenova') {
         this.emit('circuit:tripped', { provider: p.id });
       }
     }
+
+    // ═══ 连续失败追踪: 连续 N 次失败 → 额外锁定 ═══
+    const consec = (this._consecutiveFailures.get(p.id) ?? 0) + 1;
+    this._consecutiveFailures.set(p.id, consec);
+    if (consec >= AgentAIRouter.CONSECUTIVE_FAIL_THRESHOLD && !p.tripped) {
+      // 连续失败达到阈值, 额外锁定
+      p.tripped = true;
+      p.trippedAt = Date.now();
+      console.warn(`[router] ${p.id} consecutive failures=${consec} ≥ ${AgentAIRouter.CONSECUTIVE_FAIL_THRESHOLD}, blacklisting for ${AgentAIRouter.CONSECUTIVE_FAIL_BLACKLIST_SEC}s`);
+      // 延长熔断时间
+      (p as any).__blacklistedAt = Date.now();
+    }
   }
 
   // ===== 反思门 (已废弃 - P2-2 清理) =====
   // _lastReflectAt, _reflectEvery, shouldReflect(), reflect() 已在 P2-2 删除
   // isCircuitOpen() 保留在第 736 行
+
+  // ===== 主动健康检查 (每 60s) =====
+  private async _healthCheck(): Promise<void> {
+    try {
+      const checks = Array.from(this.providers.entries())
+        .filter(([id]) => process.env[`${id.toUpperCase()}_API_KEY`] || process.env[id.toUpperCase() + '_KEY'])
+        .map(async ([id, p]) => {
+          if (p.tripped || this.isRateLimited(p)) return;
+          try {
+            const t0 = Date.now();
+            const res = await fetch(`${this._getBaseUrl(id)}/models`, {
+              headers: { 'Authorization': `Bearer ${this._getApiKey(id)}` },
+              signal: AbortSignal.timeout(5000),
+            });
+            const elapsed = Date.now() - t0;
+            if (res.ok) {
+              this._consecutiveFailures.set(id, 0);
+              this._lastSuccessAt.set(id, Date.now());
+              p.recentLatencyMs.push(elapsed);
+              if (p.recentLatencyMs.length > 10) p.recentLatencyMs.shift();
+              console.debug(`[router] health ok: ${id} (${elapsed}ms)`);
+            } else {
+              // 非 401/403 → 不标记熔断 (可能是健康检查端点问题)
+              console.debug(`[router] health check: ${id} HTTP ${res.status} (${elapsed}ms)`);
+            }
+          } catch (e: any) {
+            console.debug(`[router] health check failed: ${id} - ${(e.message as string).slice(0, 60)}`);
+          }
+        });
+      await Promise.all(checks);
+    } catch { /* ignore */ }
+  }
+
+  private _getBaseUrl(id: string): string {
+    const map: Record<string, string> = {
+      agentai: 'https://api.agent-ai.cn/v1',
+      deepseek: 'https://api.deepseek.com/v1',
+      openai: 'https://api.openai.com/v1',
+      zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+      sensenova: 'https://sensenova.cn-north-4.myhuaweicloud.com/v1',
+      longcat: 'https://api.longcat.cloud/v1',
+    };
+    return map[id] || 'https://api.openai.com/v1';
+  }
+
+  private _getApiKey(id: string): string {
+    const map: Record<string, string> = {
+      agentai: 'AGENTAI_API_KEY',
+      deepseek: 'DEEPSEEK_API_KEY',
+      openai: 'OPENAI_API_KEY',
+      zhipu: 'ZHIPU_API_KEY',
+      sensenova: 'SENSENOVA_API_KEY',
+      longcat: 'LONGCAT_API_KEY',
+    };
+    return process.env[map[id] || ''] || '';
+  }
+
+  // ===== 关闭 (清理定时器) =====
+  public shutdown(): void {
+    if (this._healthCheckTimer) {
+      clearInterval(this._healthCheckTimer);
+      this._healthCheckTimer = null;
+      console.info('[router] health checker stopped');
+    }
+  }
   // 类在此关闭
 }
 
