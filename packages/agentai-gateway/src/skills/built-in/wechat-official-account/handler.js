@@ -67,72 +67,52 @@ async function publishArticle(args) {
 }
 
 async function analyzeBenchmarks(args) {
-  try {
-    // In real implementation, this would use Feishu API to read benchmark data
-    // For now, return a placeholder
-    return {
-      success: true,
-      output: 'Benchmark analysis completed',
-      data: { summary: 'Top performing articles in niche' }
-    };
-  } catch (e) {
-    return { success: false, output: `Benchmark analysis failed: ${e.message}` };
-  }
+  // In real implementation, this would use Feishu API to read benchmark data
+  // For now, return a placeholder
+  return {
+    success: true,
+    output: 'Benchmark analysis completed',
+    data: { summary: 'Top performing articles in niche' }
+  };
 }
 
 async function generateArticle(args) {
-  try {
-    // In real implementation, this would call DeepSeek API
-    // For now, return a placeholder
-    return {
-      success: true,
-      output: 'Article generated successfully',
-      data: { content: 'Generated article content' }
-    };
-  } catch (e) {
-    return { success: false, output: `Article generation failed: ${e.message}` };
-  }
+  // In real implementation, this would call DeepSeek API
+  // For now, return a placeholder
+  return {
+    success: true,
+    output: 'Article generated successfully',
+    data: { content: 'Generated article content' }
+  };
 }
 
 async function checkQuality(args) {
-  try {
-    // In real implementation, this would call Python quality check script
-    // For now, return a placeholder
-    return {
-      success: true,
-      output: 'Quality check passed',
-      data: { passed: true }
-    };
-  } catch (e) {
-    return { success: false, output: `Quality check failed: ${e.message}` };
-  }
+  // In real implementation, this would call Python quality check script
+  // For now, return a placeholder
+  return {
+    success: true,
+    output: 'Quality check passed',
+    data: { passed: true }
+  };
 }
 
 async function generateImages(articleContent) {
-  try {
-    // In real implementation, this would call image generation API
-    // For now, return a placeholder
-    return {
-      success: true,
-      output: 'Images generated successfully',
-      data: { images: [] }
-    };
-  } catch (e) {
-    return { success: false, output: `Image generation failed: ${e.message}` };
-  }
+  // In real implementation, this would call image generation API
+  // For now, return a placeholder
+  return {
+    success: true,
+    output: 'Images generated successfully',
+    data: { images: [] }
+  };
 }
 
 async function formatAndPublish(args) {
-  try {
-    // In real implementation, this would convert Markdown to WeChat HTML
-    // and publish to draft box
-    return {
-      success: true,
-      output: 'Article published to draft box'
-    };
-  } catch (e) {
-    return { success: false, output: `Publication failed: ${e.message}` };
-  }
+  // In real implementation, this would convert Markdown to WeChat HTML
+  // and publish to draft box
+  return {
+    success: true,
+    output: 'Article published to draft box'
+  };
 }
 
 module.exports = {

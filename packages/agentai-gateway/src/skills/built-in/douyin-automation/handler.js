@@ -138,7 +138,7 @@ async function searchCustomers(args) {
   
   // Step 4: Collect results
   const results = [];
-  for (let i = 0; i < maxResults || 10; i++) {
+  for (let i = 0; i < (maxResults || 10); i++) {
     // Take screenshot of current search results
     const screenshotResult = await callMcpTool('another_take_screenshot');
     if (!screenshotResult.success) break;

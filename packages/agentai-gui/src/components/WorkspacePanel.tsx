@@ -434,7 +434,7 @@ const EmptyHint: React.FC<{ text: string }> = ({ text }) => (
 function getFileIcon(name: string): React.ReactNode {
   const ext = name.split('.').pop()?.toLowerCase();
   switch (ext) {
-    case 'ts': case 'tsx': case 'js': case 'jsx': case 'tsx': return <CodeOutlined />;
+    case 'ts': case 'tsx': case 'js': case 'jsx': return <CodeOutlined />;
     case 'md': case 'txt': case 'log': return <FileTextOutlined />;
     default: return <FileOutlined />;
   }

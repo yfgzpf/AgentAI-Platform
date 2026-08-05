@@ -365,7 +365,9 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
           }}>{node.name}</span>
           {isHighlighted && <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--accent)' }}>◀</span>}
         </div>
-        {isDir && isExpanded && node.children?.map(c => renderNode(c, depth + 1))}
+        {isDir && isExpanded && node.children && (
+          <div>{node.children.map(c => renderNode(c, depth + 1))}</div>
+        )}
       </div>
     );
   };

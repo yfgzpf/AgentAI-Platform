@@ -68,11 +68,11 @@
   --editor-comment: #3d3d55;
 
   /* ── 对话字体大小系统 (可调) ── */
-  --chat-font-size: 13px;
-  --chat-line-height: 1.65;
-  --chat-code-font-size: 12px;
-  --tool-font-size: 11px;
-  --ui-font-size: 12px;
+  --chat-font-size: 12.5px;
+  --chat-line-height: 1.6;
+  --chat-code-font-size: 11.5px;
+  --tool-font-size: 10.5px;
+  --ui-font-size: 11px;
 
   /* ── 图标尺寸标准 ── */
   --icon-size-xs: 10px;   /* 标签/徽章内小图标 */

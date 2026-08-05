@@ -83,10 +83,11 @@ export const UserMsg: React.FC<{
             <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
               {imageSegments.map((img, i) => (
                 <img
-                  key={i}
+                  key={`user-img-${i}`}
                   src={img.base64 ? `data:image/png;base64,${img.base64}` : img.url}
                   alt={img.alt || ''}
-                  style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', border: '2px solid rgba(255,255,255,0.3)' }}
+                  style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', border: '2px solid rgba(255,255,255,0.3)', cursor: 'zoom-in' }}
+                  onClick={() => { const src = img.base64 ? `data:image/png;base64,${img.base64}` : img.url; if (src) window.open(src, '_blank'); }}
                 />
               ))}
             </div>
@@ -1320,7 +1321,9 @@ export const AssistantMsg: React.FC<{
         {/* 4. 非文本非工具段: 图片 / 错误卡片 / 视频 / widget (紧跟最终回复) */}
         {nonTextSegments.filter(s => s.kind === 'image' || s.kind === 'error' || s.kind === 'video' || s.kind === 'widget').map((s, i) => {
           if (s.kind === 'image') {
-            return <ImageCard key={`nt-${i}`} url={(s as any).url}
+            // ═══ 修复: 用 s.id 唯一 key 防重复渲染 ═══
+            const imgKey = (s as any).id || `img-${i}-${Date.now()}`;
+            return <ImageCard key={imgKey} url={(s as any).url}
               base64={(s as any).base64} alt={(s as any).alt} filePath={(s as any).filePath} />;
           }
           if (s.kind === 'error') {
@@ -1444,10 +1447,13 @@ export const ImageCard: React.FC<{
             onLoad={() => setLoaded(true)}
             onError={() => setError(true)}
             style={{
-              maxWidth: '100%', maxHeight: 480, borderRadius: 4,
+              maxWidth: '100%', maxHeight: 240, borderRadius: 4, cursor: 'zoom-in',
               display: loaded ? 'block' : 'none',
               objectFit: 'contain',
+              transition: 'transform 0.15s',
             }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.02)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; }}
           />
         )}
       </div>

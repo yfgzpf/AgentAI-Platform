@@ -1715,7 +1715,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                 <Space>
                   <span>发现 {resumableTasks.length} 个可恢复的长任务</span>
                   <Tag color="orange">跨会话继续</Tag>
-                  <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 8 }}>
+                  <span style={{ fontSize: 'var(--tool-font-size)', color: 'var(--text-secondary)', marginLeft: 8 }}>
                     (8秒后自动收起)
                   </span>
                 </Space>
@@ -1771,7 +1771,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                     </Button>
                   ))}
                   {resumableTasks.length > 3 && (
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    <span style={{ fontSize: 'var(--ui-font-size)', color: 'var(--text-secondary)' }}>
                       等 {resumableTasks.length - 3} 个...
                     </span>
                   )}
@@ -1853,7 +1853,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
               <div style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '3px 10px', borderRadius: 12,
-                fontSize: 11, fontWeight: 600, marginBottom: 12,
+                fontSize: 'var(--ui-font-size)', fontWeight: 600, marginBottom: 12,
                 background: (INDUSTRY_BADGE_THEME as any)[currentIndustry]?.bgColor || 'rgba(255,255,255,0.06)',
                 color: (INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--fg-2)',
                 border: `1px solid ${(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--border)'}40`,
@@ -1865,7 +1865,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)', marginBottom: 6 }}>
               有什么可以帮你的？
             </div>
-            <div style={{ fontSize: 12, color: 'var(--muted-2)', marginBottom: 20 }}>
+            <div style={{ fontSize: 'var(--ui-font-size)', color: 'var(--muted-2)', marginBottom: 20 }}>
               {systemInfo || 'PulseFlow · 岐黄'} · 10+ 免费模型 · 越用越懂你
             </div>
 
@@ -1892,7 +1892,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                 >
                   <span style={{ fontSize: 18 }}>{demo.icon}</span>
                   <span style={{ fontWeight: 600, color: 'var(--fg)' }}>{demo.label}</span>
-                  <span style={{ fontSize: 10, color: 'var(--muted-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                  <span style={{ fontSize: 'var(--tool-font-size)', color: 'var(--muted-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
                     {demo.prompt}
                   </span>
                 </button>
@@ -1907,7 +1907,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                     key={action.label}
                     onClick={() => { composerRef.current?.setDraft(action.prompt); composerRef.current?.focus(); }}
                     style={{
-                      padding: '3px 10px', borderRadius: 6, fontSize: 11,
+                      padding: '3px 10px', borderRadius: 6, fontSize: 'var(--tool-font-size)',
                       background: 'transparent', border: '1px solid var(--border)',
                       color: 'var(--muted-2)', cursor: 'pointer',
                     }}
@@ -2020,7 +2020,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             display: 'flex', alignItems: 'center', gap: 4,
             padding: '6px 14px', borderRadius: 20,
             background: 'var(--accent)', color: '#fff',
-            border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            border: 'none', cursor: 'pointer', fontSize: 'var(--ui-font-size)', fontWeight: 600,
             boxShadow: 'var(--shadow-md)', zIndex: 50,
             animation: 'fadeIn 0.2s ease-out',
           }}
@@ -2040,7 +2040,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           {queuedSends.map((t, i) => (
             <span key={i} style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '2px 10px', borderRadius: 4, fontSize: 11,
+              padding: '2px 10px', borderRadius: 4, fontSize: 'var(--tool-font-size)',
               background: 'var(--accent-soft)', border: '1px solid var(--accent)',
               color: 'var(--fg)',
             }}>
@@ -2196,7 +2196,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                   }, 300);
                 }}
                 style={{
-                  fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                  fontSize: 'var(--tool-font-size)', padding: '2px 8px', borderRadius: 4,
                   background: 'var(--accent)', color: '#fff', border: 'none',
                   cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
                 }}
@@ -2221,7 +2221,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         <div style={{
           margin: '0 12px 6px', padding: '6px 12px',
           borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--fg)',
+          display: 'flex', alignItems: 'center', gap: 12, fontSize: 'var(--ui-font-size)', color: 'var(--fg)',
         }}>
           {/* 进度条 */}
           <div style={{
@@ -2240,11 +2240,11 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           {/* 进度信息 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 200 }}>
             <span style={{ fontWeight: 600 }}>{progress.percent}%</span>
-            <span style={{ color: 'var(--muted)', fontSize: 10 }}>{progress.description}</span>
+            <span style={{ color: 'var(--muted)', fontSize: 'var(--tool-font-size)' }}>{progress.description}</span>
           </div>
           {/* 工具调用统计 */}
           {progress.toolCount && (
-            <div style={{ fontSize: 10, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 'var(--tool-font-size)', color: 'var(--muted)' }}>
               {progress.successCount || 0}✓ · {progress.failCount || 0}✗
             </div>
           )}

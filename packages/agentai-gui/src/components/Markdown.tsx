@@ -390,7 +390,7 @@ export const Markdown: React.FC<Props> = ({ content, streaming }) => {
   // 如果没有 SVG，走纯 Markdown 路径 (性能最优)
   if (parts.length === 1 && parts[0].type === 'text') {
     return (
-      <div className="markdown-body" style={{ fontSize: 14, lineHeight: 1.6, wordBreak: 'break-word' }}>
+      <div className="markdown-body" style={{ fontSize: 'var(--chat-font-size)', lineHeight: 'var(--chat-line-height)', wordBreak: 'break-word' }}>
         <ReactMarkdown {...MARKDOWN_PROPS}>{text}</ReactMarkdown>
       </div>
     );
@@ -398,7 +398,7 @@ export const Markdown: React.FC<Props> = ({ content, streaming }) => {
 
   // 混合渲染: 文本 + SVG 交替
   return (
-    <div style={{ fontSize: 14, lineHeight: 1.6, wordBreak: 'break-word' }}>
+    <div style={{ fontSize: 'var(--chat-font-size)', lineHeight: 'var(--chat-line-height)', wordBreak: 'break-word' }}>
       {parts.map((part, i) =>
         part.type === 'svg' ? (
           <SvgDiagram key={i} svg={part.content} />

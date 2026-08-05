@@ -89,8 +89,26 @@ export const FileCard: React.FC<FileCardProps> = ({
   op, path, content, oldContent, size, diffStats, batchCount, ok, onOpenInEditor, onLocateInTree,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const [showContent, setShowContent] = useState(false);
   const { icon, color, lang } = getLangMeta(path);
   const opMeta = OP_META[op];
+
+  // 计算编辑统计信息 (提升到顶层, 保证 hooks 无条件调用)
+  const editStats = useMemo(() => {
+    if (!oldContent || !content) return null;
+    const oldLines = oldContent.split('\n');
+    const newLines = content.split('\n');
+    let added = 0;
+    let removed = 0;
+
+    // 简单的行级diff统计
+    const oldSet = new Set(oldLines);
+    const newSet = new Set(newLines);
+    added = newLines.filter(line => !oldSet.has(line)).length;
+    removed = oldLines.filter(line => !newSet.has(line)).length;
+
+    return { added, removed, total: oldLines.length };
+  }, [oldContent, content]);
 
   const filename = path.split(/[\\/]/).pop() || path;
   const dir = path.slice(0, path.length - filename.length);
@@ -158,7 +176,6 @@ export const FileCard: React.FC<FileCardProps> = ({
   // ─── read 模式: 纯导航卡片 + 查看内容按钮 ───
   // 只显示文件名 + 语言徽标 + 大小，无任何内容预览
   if (op === 'read') {
-    const [showContent, setShowContent] = useState(false);
     const previewLines = content ? content.split('\n').slice(0, 10) : [];
     const totalLines = content ? content.split('\n').length : 0;
 
@@ -273,23 +290,6 @@ export const FileCard: React.FC<FileCardProps> = ({
   const previewLines = content ? content.split('\n').slice(0, 6) : [];
   const totalLines = content ? content.split('\n').length : 0;
   const truncated = totalLines > 6;
-
-  // 计算编辑统计信息
-  const editStats = useMemo(() => {
-    if (!oldContent || !content) return null;
-    const oldLines = oldContent.split('\n');
-    const newLines = content.split('\n');
-    let added = 0;
-    let removed = 0;
-    
-    // 简单的行级diff统计
-    const oldSet = new Set(oldLines);
-    const newSet = new Set(newLines);
-    added = newLines.filter(line => !oldSet.has(line)).length;
-    removed = oldLines.filter(line => !newSet.has(line)).length;
-    
-    return { added, removed, total: oldLines.length };
-  }, [oldContent, content]);
 
   return (
     <div

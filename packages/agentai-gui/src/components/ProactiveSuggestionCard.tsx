@@ -24,24 +24,23 @@ interface Props {
 }
 
 const ProactiveSuggestionCard: React.FC<Props> = ({ suggestion, onAccept, onDismiss }) => {
-  // 防御性空值检查
-  if (!suggestion || !suggestion.context) {
-    return null;
-  }
-
+  // ✨ Hooks 必须无条件调用 (放在 early return 之前, 保证渲染顺序一致)
   const [expanded, setExpanded] = useState(false);
   const [impactBreakdown, setImpactBreakdown] = useState(false);
-
-  // ✨ 动态效果状态
   const [glowing, setGlowing] = useState(false);
   useEffect(() => {
-    if (suggestion.context.urgency > 0.8) {
+    if (suggestion?.context?.urgency > 0.8) {
       const interval = setInterval(() => {
         setGlowing(prev => !prev);
       }, 1500);
       return () => clearInterval(interval);
     }
-  }, [suggestion.context.urgency]);
+  }, [suggestion?.context?.urgency]);
+
+  // 防御性空值检查
+  if (!suggestion || !suggestion.context) {
+    return null;
+  }
 
   // ✨ 优先级映射
   const getPriorityColor = (priority: string) => {
