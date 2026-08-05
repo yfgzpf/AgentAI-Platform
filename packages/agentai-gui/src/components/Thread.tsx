@@ -27,7 +27,10 @@ import FileChangeTree from './FileChangeTree';
 export const TurnDivider: React.FC<{ label: string }> = ({ label }) => (
   <div style={{
     display: 'flex', alignItems: 'center', gap: 10,
-    padding: '20px 16px 10px', opacity: 0.7,
+    padding: '12px var(--chat-row-padding-x)', opacity: 0.7,
+    fontSize: 'var(--tool-font-size)', color: 'var(--muted-2)',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--bg-2)',
   }}>
     <div style={{
       width: 6, height: 6, borderRadius: '50%',
@@ -61,7 +64,7 @@ export const UserMsg: React.FC<{
   const imageSegments = segments?.filter(s => s.kind === 'image') || [];
   const fileTags = segments?.filter(s => s.kind === 'text' && s.text !== text) || [];
   return (
-    <div className="msg-enter" style={{ display: 'flex', padding: '6px 16px', gap: 10, alignItems: 'flex-start', justifyContent: 'flex-end' }}>
+    <div className="msg-enter" style={{ display: 'flex', padding: `6px var(--chat-row-padding-x)`, gap: 'var(--chat-row-gap)', alignItems: 'flex-start', justifyContent: 'flex-end' }}>
       <div style={{ maxWidth: '78%', minWidth: 0, order: 1 }}>
         {time && (
           <div style={{ textAlign: 'right', fontSize: 10, color: 'var(--muted-2)', marginBottom: 4, paddingRight: 4 }}>
@@ -1220,13 +1223,13 @@ export const AssistantMsg: React.FC<{
   }, [pending, onDone]);
 
   return (
-    <div className="msg-enter" style={{ display: 'flex', gap: 10, padding: '6px 16px', alignItems: 'flex-start' }}>
+    <div className="msg-enter" style={{ display: 'flex', gap: 'var(--chat-row-gap)', padding: `6px var(--chat-row-padding-x)`, alignItems: 'flex-start' }}>
       {/* AI 头像 (按 provider 动态显示) */}
       <Avatar
         kind="ai"
         name={model || '岐黄'}
         state={pending ? 'pending' : status === 'error' ? 'error' : 'done'}
-        size={24}
+        size={parseInt(getComputedStyle(document.documentElement).getPropertyValue('--chat-avatar-size')) || 24}
         messageId={messageId}
       />
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1589,9 +1592,8 @@ export const UserReviewCard: React.FC<{
 }> = ({ text, actions }) => (
   <div className="msg-enter" style={{
     display: 'flex', flexDirection: 'column', gap: 8,
-    margin: '0 16px 8px', padding: '12px 14px',
+    margin: 'var(--chat-card-margin-y) var(--chat-card-margin-x)', padding: '12px 14px',
     borderRadius: 10,
-    background: 'var(--card)',
     border: '1px solid var(--border)',
     boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
   }}>
@@ -1629,7 +1631,7 @@ export const FollowUpCard: React.FC<{
   onSelect: (q: string) => void;
 }> = ({ questions, onSelect }) => (
   <div className="msg-enter" style={{
-    margin: '0 16px 8px', padding: '8px 12px',
+    margin: 'var(--chat-card-margin-y) var(--chat-card-margin-x)', padding: '8px 12px',
     borderRadius: 10,
     background: 'var(--bg-2)',
     border: '1px dashed var(--border)',

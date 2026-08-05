@@ -1815,8 +1815,10 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         ref={scrollRef}
         onScroll={handleScroll}
         style={{
-          flex: 1, overflowY: 'auto', padding: '8px 0',
+          flex: 1, overflowY: 'auto',
+          padding: `var(--chat-scroll-padding-y) 0`,
           position: 'relative',
+          maxWidth: '100%',
         }}
       >
         {/* 上轮会话摘要提示 (v3.1) - 新对话时显示, 让用户知道 AI 记得上轮 */}
@@ -1862,7 +1864,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                 <span>{(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.label || currentIndustry}</span>
               </div>
             )}
-            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)', marginBottom: 6 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)', marginBottom: 6, lineHeight: 1.3 }}>
               有什么可以帮你的？
             </div>
             <div style={{ fontSize: 'var(--ui-font-size)', color: 'var(--muted-2)', marginBottom: 20 }}>

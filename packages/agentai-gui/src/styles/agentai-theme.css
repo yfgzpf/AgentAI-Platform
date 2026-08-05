@@ -53,6 +53,19 @@
   --radius: 8px;
   --radius-lg: 12px;
 
+  /* ── 对话布局 Tokens (统一间距/宽度) ── */
+  --chat-row-padding-x: 16px;           /* 消息行左右内边距 */
+  --chat-row-gap: 10px;                  /* 头像与内容间距 */
+  --chat-bubble-padding-y: 10px;         /* 气泡上下内边距 */
+  --chat-bubble-padding-x: 14px;         /* 气泡左右内边距 */
+  --chat-scroll-padding-y: 6px;          /* 滚动区上下内边距 */
+  --chat-max-width: 800px;              /* 消息流最大宽度 (大屏居中) */
+  --chat-avatar-size: 24px;             /* 头像尺寸 */
+  --chat-card-margin-y: 4px;            /* 卡片上下外边距 */
+  --chat-card-margin-x: 36px;           /* 卡片左右外边距 (头像 + gap) */
+  --chat-welcome-grid-max: 480px;        /* 欢迎页 demo 卡片宽度 */
+  --chat-turn-divider-padding: 16px;    /* 轮次分隔符内边距 */
+
   --titlebar-bg: linear-gradient(180deg, #242438 0%, #1e1e2a 100%);
   --titlebar-border: #2e2e45;
 
