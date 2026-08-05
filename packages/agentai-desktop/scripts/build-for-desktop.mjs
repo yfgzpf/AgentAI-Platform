@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-/* eslint-env node */
-/* eslint-disable no-console */
+/* global console, process */
 /**
  * build-for-desktop.mjs — 桌面版构建脚本 (统一入口)
  * 

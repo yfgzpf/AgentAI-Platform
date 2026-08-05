@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global console, process */
 /**
  * prepare-gateway.mjs — Gateway 构建产物打包脚本 (v4)
  *
