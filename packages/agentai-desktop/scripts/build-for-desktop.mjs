@@ -67,16 +67,23 @@ try {
 }
 
 // 安装 Playwright Chromium (浏览器自动化核心能力，必须成功)
-console.log('[3/4] Installing Playwright Chromium...');
-try {
-  execSync('npx playwright install chromium', {
-    cwd: GW_DST, stdio: 'inherit', timeout: 300_000,
-  });
-  console.log('[3/4] Playwright Chromium installed ✓');
-} catch (e) {
-  console.error('[3/4] Playwright Chromium install failed:', e.message);
-  console.error('浏览器自动化功能将无法使用，构建中止');
-  process.exit(1);
+// 在 CI 环境中跳过，避免超时或网络问题
+const isCI = process.env.CI === 'true';
+console.log(`[3/4] CI environment: ${isCI}`);
+if (!isCI) {
+  console.log('[3/4] Installing Playwright Chromium...');
+  try {
+    execSync('npx playwright install chromium', {
+      cwd: GW_DST, stdio: 'inherit', timeout: 300_000,
+    });
+    console.log('[3/4] Playwright Chromium installed ✓');
+  } catch (e) {
+    console.error('[3/4] Playwright Chromium install failed:', e.message);
+    console.error('浏览器自动化功能将无法使用，构建中止');
+    process.exit(1);
+  }
+} else {
+  console.log('[3/4] Skipping Playwright install in CI (will auto-install on first run)');
 }
 
 // 注意：Playwright Chromium 不打包到安装包中（文件太大，~4GB）

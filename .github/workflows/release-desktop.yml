@@ -173,12 +173,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build Gateway dist
-        run: pnpm --filter @agentai/gateway build
-
-      - name: Build GUI dist
-        run: pnpm --filter @agentai/gui build
-
       - name: Build Tauri Desktop + Updater Signature
         uses: tauri-apps/tauri-action@v0
         id: tauri_build
