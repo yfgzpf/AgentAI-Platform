@@ -171,7 +171,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build Gateway dist
         run: pnpm --filter @agentai/gateway build
