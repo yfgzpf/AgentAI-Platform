@@ -98,6 +98,14 @@ export default [
     rules: {
       'no-console': 'off',
       '@typescript-eslint/no-require-imports': 'off',
+      'no-empty': 'off',
+    },
+  },
+
+  // ===== 全局放宽: 允许空 catch 块 =====
+  {
+    rules: {
+      'no-empty': ['error', { allowEmptyCatch: true }],
     },
   },
 

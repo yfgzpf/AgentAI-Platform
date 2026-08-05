@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* global console, process */
 /**
  * prepare-gateway.mjs — Gateway 构建产物打包脚本 (v4)
  *
@@ -129,6 +128,6 @@ if (missing === 0) {
 try {
     const size = execSync(`du -sh "${GW_DST}/node_modules" 2>&1`, { encoding: 'utf-8', timeout: 5000, shell: true });
     console.log(`[prepare] node_modules size: ${size.trim().split('\t')[0]}`);
-} catch {}
+} catch { /* ignore */ }
 
 console.log('[prepare] ✅ all ready');

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* global console, process */
 /**
  * build-for-desktop.mjs — 桌面版构建脚本 (统一入口)
  * 
