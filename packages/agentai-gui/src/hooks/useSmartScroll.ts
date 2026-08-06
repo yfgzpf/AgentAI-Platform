@@ -25,8 +25,13 @@ export function useSmartScroll(deps: DependencyList) {
     if (nearBottom) hasNewMessageRef.current = false;
   }, []);
 
-  // 新消息到达时自动滚动
+  // 新消息到达时自动滚动 (防抖 150ms, 避免图片加载等多次触发)
+  const lastScrollTimeRef = useRef(0);
   useEffect(() => {
+    const now = Date.now();
+    const elapsed = now - lastScrollTimeRef.current;
+    if (elapsed < 150) return; // 去抖: 150ms 内只执行一次
+    lastScrollTimeRef.current = now;
     if (scrollRef.current && !isScrolledUpRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     } else if (scrollRef.current) {

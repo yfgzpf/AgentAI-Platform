@@ -1217,9 +1217,11 @@ export const AssistantMsg: React.FC<{
   const textSegments = nonToolSegments.filter(s => s.kind === 'text');
   const nonTextSegments = nonToolSegments.filter(s => s.kind !== 'text');
 
-  // AI 完成后通知父组件滚动到顶部查看最终回复
+  // AI 完成后通知父组件滚动到底部 (仅当 pending 从 true → false 时触发一次)
+  const prevPendingRef = useRef(false);
   React.useEffect(() => {
-    if (!pending && onDone) onDone();
+    if (prevPendingRef.current && !pending && onDone) onDone();
+    prevPendingRef.current = pending;
   }, [pending, onDone]);
 
   return (
