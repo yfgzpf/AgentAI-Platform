@@ -17,13 +17,14 @@
  *   NVIDIA 组首项为 "NVIDIA Auto (智能择优)" — 系统自动选择最佳模型
  */
 import React, { useState } from 'react';
-import { Select, Space, Tag, Tooltip, Badge, Dropdown, Checkbox } from 'antd';
+import { Select, Space, Tag, Tooltip, Badge, Dropdown, Checkbox, Modal, Button } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined, CheckCircleFilled, ThunderboltOutlined, CrownOutlined, RobotOutlined,
-  DownOutlined,
+  LockOutlined, DownOutlined,
 } from '@ant-design/icons';
 import { useModelStore, type ModelConfig } from '../store/modelStore';
+import { useSubscriptionStore, SUBSCRIPTION_PLANS } from '../store/subscriptionStore';
 import { useModelMetrics } from '../hooks/useModelMetrics'; // Phase 3: 模型性能指标
 
 /* ===== 密钥检查 ===== */
@@ -56,6 +57,7 @@ function channelName(baseURL: string): string {
     'api.minimax.chat': 'MiniMax',
     'api.anthropic.com': 'Claude',
     'superapi.vanguard.dpdns.org': 'SuperAPI',
+    'alro.huazhiweilai.com': 'ALRC',
     'token.sensenova.cn': 'SenseNova',
     'api.longcat.chat': 'LongCat',
     // nvidia 已移除
@@ -65,7 +67,7 @@ function channelName(baseURL: string): string {
 
 /** 判断是否为工厂组 (单一密钥共享多模型) */
 function isFactoryGroup(m: ModelConfig): boolean {
-  return ['superapi', 'sensenova', 'longcat'].includes(m.provider || '');
+  return ['superapi', 'alrc', 'sensenova', 'longcat'].includes(m.provider || '');
 }
 
 /* ===== Props ===== */
@@ -80,7 +82,12 @@ interface Props {
 /* ===== 组件 ===== */
 export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
   const { models, activeModelId, setActive, commercialKeys, chatMode } = useModelStore();
+  const { planId, expiresAt, isPaid } = useSubscriptionStore();
   const activeModel = models.find(m => m.id === activeModelId) || models[0];
+
+  // 订阅弹窗
+  const [showSubscribeModal, setShowSubscribeModal] = useState(false);
+  const [pendingModelId, setPendingModelId] = useState<string | null>(null);
   
   // Phase 3: 模型性能指标
   const { getModelMetrics } = useModelMetrics();
@@ -136,6 +143,16 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
   const groups = Array.from(groupMap.values());
 
   const handleSelect = (id: string) => {
+    // 检查订阅锁定
+    const model = models.find(m => m.id === id);
+    if (model?.locked) {
+      const requiredPlan = model.requiredPlan;
+      if (!isPaid || !SUBSCRIPTION_PLANS[planId]?.chatModels.includes(id)) {
+        setPendingModelId(id);
+        setShowSubscribeModal(true);
+        return;
+      }
+    }
     setActive(id);
     onSelect?.();
   };
@@ -267,7 +284,52 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
 
   const triggerSize = mode === 'minimal' ? { fontSize: 11, padding: '3px 8px', maxWidth: 120 } : { fontSize: 10, padding: '2px 6px', maxWidth: 100 };
 
+  // 订阅锁定弹窗
+  const renderSubscribeModal = () => {
+    if (!showSubscribeModal || !pendingModelId) return null;
+    const model = models.find(m => m.id === pendingModelId);
+    const requiredPlan = SUBSCRIPTION_PLANS[model?.requiredPlan || 'pro'];
+    return (
+      <Modal
+        open={showSubscribeModal}
+        title={
+          <Space>
+            <LockOutlined style={{ color: 'var(--warning)' }} />
+            需要订阅才能使用此模型
+          </Space>
+        }
+        onCancel={() => { setShowSubscribeModal(false); setPendingModelId(null); }}
+        footer={[
+          <Button key="close" onClick={() => { setShowSubscribeModal(false); setPendingModelId(null); }}>取消</Button>,
+          <Button
+            key="subscribe"
+            type="primary"
+            icon={<CrownOutlined />}
+            onClick={() => {
+              setShowSubscribeModal(false);
+              setPendingModelId(null);
+              window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'settings' as any } }));
+            }}
+          >
+            前往订阅
+          </Button>,
+        ]}
+        width={400}
+      >
+        <div style={{ fontSize: 13, color: 'var(--fg)', lineHeight: 1.8 }}>
+          <div>
+            模型 <b>{model?.label}</b> 需要 <b>{requiredPlan?.name || '专业版'}</b> 及以上订阅才能使用。
+          </div>
+          <div style={{ marginTop: 8, color: 'var(--muted-2)', fontSize: 12 }}>
+            💡 订阅后即可解锁 {requiredPlan?.chatModels?.length || 0}+ 个 ALRC 模型，畅享 GPT-5、Claude、Grok 等顶级模型。
+          </div>
+        </div>
+      </Modal>
+    );
+  };
+
   return (
+    <>
     <Dropdown
       trigger={['click']}
       getPopupContainer={() => document.body}
@@ -301,8 +363,10 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
         </span>
       </Tooltip>
     </Dropdown>
+    {renderSubscribeModal()}
+    </>
   );
-};
+}
 
 /* ===== 分组标签 (full 模式用) ===== */
 const GroupTags: React.FC<{
@@ -414,4 +478,4 @@ onChange={(e) => {
       </div>
     </div>
   );
-};
+}
