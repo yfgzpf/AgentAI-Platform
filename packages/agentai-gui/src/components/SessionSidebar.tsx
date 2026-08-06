@@ -61,22 +61,8 @@ export const SessionSidebar: React.FC<{
   /* ---- 切换对话 ---- */
   const handleSelect = useCallback((sessionId: string) => {
     setActive(sessionId);
-    clearMessages();
-    // 从 sessionStore 加载消息到 chatStore
-    const mySessions = getMySessions();
-    const session = mySessions.find(s => s.id === sessionId);
-    if (session) {
-      for (const msg of session.messages) {
-        useChatStore.getState().appendMessage({
-          id: `restored-${msg.ts}`,
-          role: msg.role as 'user' | 'assistant',
-          segments: [{ kind: 'text', text: msg.content }],
-          ts: msg.ts,
-          status: 'done',
-        });
-      }
-    }
-  }, [getMySessions, clearMessages, setActive]);
+    // 消息加载由 useSessionAutoSave 处理 (避免与 useEffect 竞态)
+  }, [setActive]);
 
   /* ---- 删除会话 ---- */
   const handleDelete = useCallback((sessionId: string) => {
