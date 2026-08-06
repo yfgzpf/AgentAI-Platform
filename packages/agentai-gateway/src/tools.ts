@@ -5252,6 +5252,145 @@ return { success: false, output: `git_clone: ${e.message?.slice(0, 500)}` };
     }
   },
 
+  // ====== 主动知识探索 ======
+  knowledge_explore: async (args: any, ctx?: any) => {
+    try {
+      const { detectKnowledgeGaps, shouldExplore } = await import('./knowledge/gap-detector.js');
+      const { exploreGitHub, quickExplore } = await import('./knowledge/github-explorer.js');
+      const { distillFromRepository } = await import('./knowledge/distiller.js');
+      const { writeMemory } = await import('./memory.js');
+
+      const { task = '', concept, maxResults = 3 } = args || {};
+      const userId = ctx?.userId || 'system';
+
+      let resultText: string[] = [];
+
+      // 模式 1: 指定概念直接探索
+      if (concept) {
+        resultText.push(`🔍 主动探索概念: ${concept}`);
+
+        // 探索 GitHub
+        const repos = await quickExplore(concept, maxResults);
+        if (repos.length === 0) {
+          resultText.push(`  ⚠️ 未找到 "${concept}" 相关优质仓库`);
+          return { success: true, output: resultText.join('\n'), data: { concept, repos: [] } };
+        }
+
+        resultText.push(`  找到 ${repos.length} 个相关仓库:`);
+        for (const repo of repos.slice(0, maxResults)) {
+          resultText.push(`  - ${repo.owner}/${repo.name} ⭐${repo.stars} (${repo.language})`);
+          resultText.push(`    ${repo.description?.slice(0, 80) || ''}`);
+          resultText.push(`    评分: ${Math.round(repo.quality.overall * 100)}分 | ${repo.url}`);
+
+          // 自动蒸馏高质量仓库
+          if (repo.quality.overall > 0.6 && repo.readmeContent) {
+            try {
+              const distill = await distillFromRepository(repo, concept);
+              if (distill.nodes && distill.nodes.length > 0) {
+                // 存入记忆
+                await writeMemory({
+                  userId,
+                  content: JSON.stringify({
+                    type: 'learned_knowledge',
+                    concept,
+                    source: `${repo.owner}/${repo.name}`,
+                    nodes: distill.nodes.map((n: any) => ({
+                      concept: n.concept,
+                      domain: n.domain,
+                      confidence: n.confidence,
+                      summary: n.summary?.slice(0, 200),
+                    })),
+                  }),
+                  tags: ['knowledge', 'exploration'],
+                  metadata: { source: `${repo.owner}/${repo.name}`, confidence: distill.overallConfidence },
+                });
+                resultText.push(`    ✅ 已蒸馏 ${distill.nodes.length} 个知识节点 (置信度: ${(distill.overallConfidence * 100).toFixed(0)}%)`);
+              }
+            } catch (e: any) {
+              resultText.push(`    ⚠️ 蒸馏失败: ${e.message?.slice(0, 50)}`);
+            }
+          }
+        }
+        return { success: true, output: resultText.join('\n'), data: { concept, repos: repos.slice(0, maxResults) } };
+      }
+
+      // 模式 2: 自动检测知识缺口 (基于 task)
+      if (!task) {
+        resultText.push('ℹ️ 未指定 task 或 concept, 跳过本次探索');
+        return { success: true, output: resultText.join('\n'), data: { mode: 'idle' } };
+      }
+
+      resultText.push(`🧠 分析任务知识缺口: ${task.slice(0, 100)}`);
+
+      const gapResult = await detectKnowledgeGaps(task);
+
+      if (gapResult.recommendedAction === 'proceed') {
+        resultText.push('  ✅ 知识充足，无需探索');
+        return { success: true, output: resultText.join('\n'), data: { gaps: gapResult.gaps, action: 'proceed' } };
+      }
+
+      if (gapResult.gaps.length === 0) {
+        resultText.push('  ✅ 未发现知识缺口');
+        return { success: true, output: resultText.join('\n'), data: { gaps: [] } };
+      }
+
+      resultText.push(`  发现 ${gapResult.gaps.length} 个知识缺口，开始探索...`);
+
+      // 探索每个缺口
+      let totalDistilled = 0;
+      for (const gap of gapResult.gaps.slice(0, 3)) {
+        resultText.push(`\n  📌 缺口: ${gap.concept} (置信度: ${(gap.confidence * 100).toFixed(0)}%, 优先级: ${(gap.priority * 100).toFixed(0)}%)`);
+
+        try {
+          const repos = await quickExplore(gap.concept, maxResults);
+          if (repos.length === 0) {
+            resultText.push(`    ⚠️ 未找到相关仓库`);
+            continue;
+          }
+
+          resultText.push(`    找到 ${repos.length} 个仓库, 开始蒸馏...`);
+
+          for (const repo of repos.slice(0, maxResults)) {
+            if (repo.quality.overall > 0.5 && repo.readmeContent) {
+              try {
+                const distill = await distillFromRepository(repo, gap.concept);
+                if (distill.nodes && distill.nodes.length > 0) {
+                  await writeMemory({
+                    userId,
+                    content: JSON.stringify({
+                      type: 'learned_knowledge',
+                      concept: gap.concept,
+                      source: `${repo.owner}/${repo.name}`,
+                      nodes: distill.nodes.map((n: any) => ({
+                        concept: n.concept,
+                        domain: n.domain,
+                        confidence: n.confidence,
+                        summary: n.summary?.slice(0, 200),
+                      })),
+                    }),
+                    tags: ['knowledge', 'exploration'],
+                    metadata: { source: `${repo.owner}/${repo.name}`, confidence: distill.overallConfidence },
+                  });
+                  totalDistilled += distill.nodes.length;
+                  resultText.push(`    ✅ ${repo.owner}/${repo.name}: 蒸馏 ${distill.nodes.length} 个节点`);
+                }
+              } catch (e: any) {
+                resultText.push(`    ⚠️ ${repo.name} 蒸馏失败`);
+              }
+            }
+          }
+        } catch (e: any) {
+          resultText.push(`    ⚠️ 探索失败: ${e.message?.slice(0, 50)}`);
+        }
+      }
+
+      resultText.push(`\n🎯 探索完成: 新增 ${totalDistilled} 个知识节点`);
+      return { success: true, output: resultText.join('\n'), data: { gaps: gapResult.gaps, totalDistilled } };
+    } catch (e: any) {
+      return { success: false, output: `knowledge_explore error: ${e.message?.slice(0, 200)}` };
+    }
+  },
+
   // ====== render_widget Handler (2026-06-26) ======
   render_widget: async (args: any) => {
     const { title, content, type = 'svg', width, height } = args;

@@ -418,6 +418,9 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   /** 最后提及的文件 (用于解析"这个文件"等指代) */
   private _lastMentionedFile: string | null = null;
 
+  /** 主动知识探索: 每轮会话只触发一次，避免重复探索 */
+  private _knowledgeExploreDone = false;
+
   /** onDelta 节流器: 50ms 内合并多次 delta, 避免海量事件堆积 */
   private _deltaBuf = '';
   private _deltaTimer: NodeJS.Timeout | null = null;
@@ -3244,7 +3247,33 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             }
           } catch { /* evolution recall optional */ }
         }
-        
+
+        // ═══ 主动知识探索 (授人以渔): 每轮会话只触发一次，任务完成后自动检测知识缺口 ═══
+        if (!this._knowledgeExploreDone
+          && this.iteration > 2
+          && toolResults.length > 0
+          && !toolResults.some(r => r.name === 'knowledge_explore')) {
+          this._knowledgeExploreDone = true;
+          const userGoal = messageText.slice(0, 200);
+          console.log(`[knowledge-explore] 主动知识探索触发: iteration=${this.iteration}, goal=${userGoal.slice(0, 60)}`);
+          try {
+            const exploreResult = await this.registry.executeOne(
+              { id: `knowledge-explore-${Date.now()}`, name: 'knowledge_explore', args: { task: userGoal } },
+              { userId: this.opts.userId, workspace: this.opts.workspace, abortSignal: this.opts.abortSignal },
+            );
+            if (exploreResult?.output) {
+              this.context.appendOnlyLog.push({
+                role: 'assistant',
+                content: `📚 知识探索: ${exploreResult.output}`,
+              });
+              this.emit('log:appended', { role: 'assistant', content: exploreResult.output });
+              console.log(`[knowledge-explore] 探索完成: ${(exploreResult.output || '').slice(0, 100)}`);
+            }
+          } catch (e: any) {
+            console.warn(`[knowledge-explore] 探索失败 (非致命):`, e?.message?.slice(0, 80));
+          }
+        }
+
         for (const r of toolResults) {
           const out = r.output || '';
           // 1) 模块缺失 → 自动安装 (npm + pip)
