@@ -103,12 +103,31 @@ export class SmartModelSwitcher {
       };
     }
 
-    // 检查任务紧急程度
-    if (urgency === 'low' && rateLimitStatus.waitTime < 60) {
-      console.log(`[SmartModelSwitcher] 任务不紧急，等待时间短，建议等待`);
+    // ═══ 修复: 限速时优先等待而非切换商用API ═══
+    // 原 provider 只是有限速 (非永久熔断), 应等待恢复而非切换到商用API
+    // 只有在冷却时间过长 (>60s) 且任务紧急时才考虑切换
+    if (rateLimitStatus.waitTime <= 30) {
+      console.log(`[SmartModelSwitcher] 限速冷却时间短 (${rateLimitStatus.waitTime}s), 等待恢复而非切换`);
       return {
         shouldSwitch: false,
-        reason: `等待${rateLimitStatus.waitTime}秒后重试`,
+        reason: `限速冷却中, 等待${rateLimitStatus.waitTime}s后重试`,
+        currentProvider,
+        targetProvider: currentProvider,
+        hasApiKey: true,
+        apiKeySource: 'env',
+        estimatedCost: 0,
+        estimatedTime: rateLimitStatus.waitTime,
+      };
+    }
+
+    // ═══ 修复: 检查原 provider 是否已恢复 ═══
+    // 如果 rateLimitStatus 携带了准确的等待时间, 说明原 provider 正在冷却
+    // 此时不应切换到其他提供商, 应等待原 provider 恢复
+    if (rateLimitStatus.waitTime > 0 && rateLimitStatus.waitTime < 60) {
+      console.log(`[SmartModelSwitcher] 原 provider 限速冷却中 (${rateLimitStatus.waitTime}s), 等待恢复`);
+      return {
+        shouldSwitch: false,
+        reason: `等待${rateLimitStatus.waitTime}s后重试原 provider`,
         currentProvider,
         targetProvider: currentProvider,
         hasApiKey: true,

@@ -2772,9 +2772,14 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         
         // 尝试智能切换
         const switcher = await this._getSmartSwitcher();
+        // ═══ 修复: 传入准确的速率限制信息, 让 switcher 判断是否等待而非切换 ═══
+        const currentStats = (this.router as any)['providers']?.get(req.model);
+        const waitTimeSec = currentStats?.rateLimitCooldownUntil
+          ? Math.ceil((currentStats.rateLimitCooldownUntil - Date.now()) / 1000)
+          : 0;
         const decision = switcher.analyzeSwitchNeed(
           String(req.model),
-          { isLimited: true, waitTime: 0, remainingRequests: 0 },
+          { isLimited: true, waitTime: waitTimeSec, remainingRequests: 0, resetTime: '' },
           'medium' as any,
           'medium' as any,
         );

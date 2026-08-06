@@ -586,6 +586,21 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
 
           console.warn(`[chat] model ${mapped.provider} unavailable (key=${hasKey}, tripped=${isTripped}), falling back`);
 
+          // ═══ 修复: 检查原 provider 是否只是限速冷却中 ═══
+          // 如果原 provider (如 agentai) 只是因为 429 限速, 而非永久熔断, 优先让它恢复
+          // 避免 agnes → zhipu → deepseek 的无效切换循环
+          const originalStats = router['providers']?.get(mapped.provider);
+          if (originalStats?.rateLimitCooldownUntil) {
+            const now = Date.now();
+            if (now >= originalStats.rateLimitCooldownUntil) {
+              // 冷却已过期, 原 provider 已恢复 → 优先返回原 provider
+              console.log(`[chat] model ${mapped.provider} rate limit expired, recovering → prefer original`);
+              return { ...mapped, fallback: false };
+            }
+            const remainingSec = Math.ceil((originalStats.rateLimitCooldownUntil - now) / 1000);
+            console.log(`[chat] model ${mapped.provider} rate-limited (⏳ ${remainingSec}s remaining), will retry after cooldown`);
+          }
+
           const fallbackOrder = ['agentai', 'zhipu', 'deepseek'];
           for (const fb of fallbackOrder) {
             if (fb !== mapped.provider && process.env[keyMap[fb]] && !router['providers']?.get(fb)?.tripped) {
