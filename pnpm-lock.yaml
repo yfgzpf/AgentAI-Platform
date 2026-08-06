@@ -143,6 +143,9 @@ importers:
       uuid:
         specifier: ^9.0.0
         version: 9.0.1
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
       xlsx:
         specifier: ^0.18.5
         version: 0.18.5
