@@ -178,27 +178,37 @@ export const SessionSidebar: React.FC<{
             </>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 2, flexShrink: 0, opacity: isActive ? 1 : 0, transition: 'opacity 0.15s', alignItems: 'flex-start', paddingTop: 2 }}>
           <button
             onClick={(e) => {
               e.stopPropagation();
-              if (window.confirm('删除此会话?')) handleDelete(s.id);
+              if (window.confirm('确定删除此会话？')) {
+                handleDelete(s.id);
+              }
             }}
+            title="删除此会话"
             style={{
-              opacity: 0,
-              padding: '2px 4px',
-              border: 'none',
+              padding: '1px 4px',
+              border: '1px solid var(--border)',
+              borderRadius: 3,
               background: 'transparent',
-              color: 'var(--danger)',
+              color: 'var(--muted-2)',
               cursor: 'pointer',
-              fontSize: 10,
+              fontSize: 9,
               lineHeight: 1,
-              transition: 'opacity 0.15s',
             }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLElement).style.color = 'var(--danger)';
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--danger)';
+              (e.currentTarget as HTMLElement).style.background = 'rgba(239,68,68,0.1)';
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)';
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+              (e.currentTarget as HTMLElement).style.background = 'transparent';
+            }}
           >
-            ✕
+            删
           </button>
         </div>
       </div>
