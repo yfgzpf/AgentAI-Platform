@@ -2,7 +2,7 @@
  * SessionSidebar — 左侧会话侧栏
  *   - 顶部: 品牌 + 折叠按钮
  *   - 快速操作: 新建对话 / 搜索 / 技能
- *   - 会话列表: 按更新时间倒序，显示对话摘要
+ *   - 会话列表: 从 gateway API 加载，显示对话摘要
  *   - 点击切换对话
  *   - 底部: 用户信息 + 设置入口
  */
@@ -20,57 +20,107 @@ import { useChatStore } from '../store/chatStore';
 import { useProfileStore } from '../store';
 import { useSessionStore } from '../store/sessionStore';
 
+const GATEWAY_BASE = `http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:18789`;
+
+interface GatewaySession {
+  sessionId: string;
+  userId: string;
+  workspace: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
 export const SessionSidebar: React.FC<{
   onGuideClick?: () => void;
   onToggleCollapse?: () => void;
 }> = ({ onGuideClick, onToggleCollapse }) => {
   const { clearMessages } = useChatStore();
   const { profile } = useProfileStore();
-  const { activeId, createSession, deleteSession, setActive, getMySessions } = useSessionStore();
+  const { activeId, createSession, deleteSession, setActive } = useSessionStore();
   const [query, setQuery] = useState('');
   const [autoOpen, setAutoOpen] = useState(true);
   const [autoStats, setAutoStats] = useState({total:0,active:0});
   const [autoTasks, setAutoTasks] = useState<string[]>([]);
+  const [gatewaySessions, setGatewaySessions] = useState<GatewaySession[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const userName = profile?.name || '未登录';
 
-  /* ---- 过滤 + 排序 ---- */
-    useEffect(() => {
-    fetch('http://127.0.0.1:18789/v1/automation/stats').then(r=>r.json()).then(d=>{
+  /* ---- 从 gateway 加载会话列表 ---- */
+  const loadSessions = useCallback(async () => {
+    try {
+      const resp = await fetch(`${GATEWAY_BASE}/api/sessions`);
+      const data = await resp.json();
+      if (data?.success && Array.isArray(data.sessions)) {
+        setGatewaySessions(data.sessions.sort((a: any, b: any) => b.updatedAt - a.updatedAt));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  /* ---- 自动化面板数据 ---- */
+  useEffect(() => {
+    fetch(`${GATEWAY_BASE}/v1/automation/stats`).then(r=>r.json()).then(d=>{
       if(d.ok)setAutoStats(d.stats);
     }).catch(()=>{});
-    fetch('http://127.0.0.1:18789/v1/automation/crons').then(r=>r.json()).then(d=>{
+    fetch(`${GATEWAY_BASE}/v1/automation/crons`).then(r=>r.json()).then(d=>{
       if(d.ok)setAutoTasks(d.crons.slice(0,5).map((j:any)=>j.name));
     }).catch(()=>{});
-  },[]);
-  const filtered = useMemo(() => {
-    // 使用 getMySessions 获取当前用户的会话列表
-    const mySessions = getMySessions();
-    let list = query
-      ? mySessions.filter(s => s.title.toLowerCase().includes(query.toLowerCase()))
-      : mySessions;
-    return [...list].sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [query, getMySessions]);
+  }, []);
 
-  /* ---- 新建对话 ---- */
-  const handleNew = useCallback(() => {
-    clearMessages();
-    createSession('新对话');
-  }, [clearMessages, createSession]);
+  /* ---- 过滤 + 搜索 ---- */
+  const filtered = useMemo(() => {
+    let list = query
+      ? gatewaySessions.filter(s =>
+          (s.workspace || '').toLowerCase().includes(query.toLowerCase()) ||
+          s.sessionId.toLowerCase().includes(query.toLowerCase())
+        )
+      : gatewaySessions;
+    return [...list].sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [query, gatewaySessions]);
+
+  /* ---- 新建对话: 在 gateway 创建并返回 session ID ---- */
+  const handleNew = useCallback(async () => {
+    try {
+      const resp = await fetch(`${GATEWAY_BASE}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '新对话', userId: 'default', workspace: '' }),
+      });
+      const data = await resp.json();
+      if (data?.success && data?.sessionId) {
+        clearMessages();
+        setActive(data.sessionId);
+        // 同步到本地 store 以便 sessionStore 知道
+        createSession(data.sessionId, '新对话');
+        await loadSessions();
+      }
+    } catch {
+      // 回退: 创建本地会话
+      clearMessages();
+      createSession('新对话');
+    }
+  }, [clearMessages, setActive, createSession, loadSessions]);
 
   /* ---- 切换对话 ---- */
   const handleSelect = useCallback((sessionId: string) => {
     setActive(sessionId);
-    // 消息加载由 useSessionAutoSave 处理 (避免与 useEffect 竞态)
+    // 消息加载由 useSessionAutoSave 处理
   }, [setActive]);
 
   /* ---- 删除会话 ---- */
-  const handleDelete = useCallback((sessionId: string) => {
+  const handleDelete = useCallback(async (sessionId: string) => {
+    try {
+      await fetch(`${GATEWAY_BASE}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    } catch { /* ignore */ }
     deleteSession(sessionId);
     if (activeId === sessionId) {
       clearMessages();
     }
-  }, [deleteSession, activeId, clearMessages]);
+    await loadSessions();
+  }, [deleteSession, activeId, clearMessages, loadSessions]);
 
   function relativeTime(ts: number): string {
     const diff = Date.now() - ts;
@@ -115,14 +165,13 @@ export const SessionSidebar: React.FC<{
     </button>
   );
 
-  /* === 会话条目（支持标题双击编辑） === */
-  const SessionItem: React.FC<{ s: { id: string; title: string; messages: any[]; updatedAt: number } }> = ({ s }) => {
-    const active = s.id === activeId;
+  /* === 会话条目 === */
+  const SessionItem: React.FC<{ s: GatewaySession }> = ({ s }) => {
+    const isActive = s.sessionId === activeId;
     const updated = relativeTime(s.updatedAt);
-    const msgCount = s.messages.length;
-    const { updateTitle, clearSessionMessages } = useSessionStore();
+    const msgCount = s.messageCount || 0;
     const [editing, setEditing] = useState(false);
-    const [draft, setDraft] = useState(s.title);
+    const [draft, setDraft] = useState(s.workspace || s.sessionId);
     const inputRef = useRef<any>(null);
 
     useEffect(() => {
@@ -134,34 +183,31 @@ export const SessionSidebar: React.FC<{
 
     const commitTitle = useCallback(() => {
       const trimmed = draft.trim();
-      if (trimmed && trimmed !== s.title) {
-        updateTitle(s.id, trimmed);
-      } else {
-        setDraft(s.title);
-      }
+      if (trimmed) setDraft(trimmed);
+      else setDraft(s.workspace || s.sessionId);
       setEditing(false);
-    }, [draft, s.id, s.title, updateTitle]);
+    }, [draft, s.workspace, s.sessionId]);
 
     return (
       <div
-        onClick={() => { if (!editing) handleSelect(s.id); }}
+        onClick={() => { if (!editing) handleSelect(s.sessionId); }}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '7px 10px', borderRadius: 6,
           cursor: 'pointer',
-          color: active ? 'var(--fg)' : 'var(--fg-2)',
-          background: active ? 'var(--panel)' : 'transparent',
+          color: isActive ? 'var(--fg)' : 'var(--fg-2)',
+          background: isActive ? 'var(--panel)' : 'transparent',
           position: 'relative',
           transition: 'background 0.12s',
-          borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+          borderLeft: isActive ? '2px solid var(--accent)' : '2px solid transparent',
         }}
-        onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--card)'; }}
-        onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+        onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'var(--card)'; }}
+        onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
       >
         <MessageOutlined style={{
-          fontSize: 11, color: active ? 'var(--accent)' : 'var(--muted-2)', flexShrink: 0,
+          fontSize: 11, color: isActive ? 'var(--accent)' : 'var(--muted-2)', flexShrink: 0,
         }} />
-        <div style={{ flex: 1, minWidth: 0 }} onDoubleClick={(e) => { e.stopPropagation(); setDraft(s.title); setEditing(true); }}>
+        <div style={{ flex: 1, minWidth: 0 }} onDoubleClick={(e) => { e.stopPropagation(); setDraft(s.workspace || s.sessionId); setEditing(true); }}>
           {editing ? (
             <Input
               ref={inputRef}
@@ -177,8 +223,8 @@ export const SessionSidebar: React.FC<{
             <>
               <div style={{
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                fontSize: 12.5, fontWeight: active ? 600 : 500,
-              }}>{s.title}</div>
+                fontSize: 12.5, fontWeight: isActive ? 600 : 500,
+              }}>{s.workspace || '新对话'}</div>
               <div style={{
                 fontSize: 10, color: 'var(--muted-2)', marginTop: 1,
                 display: 'flex', alignItems: 'center', gap: 4,
@@ -199,7 +245,7 @@ export const SessionSidebar: React.FC<{
           {msgCount > 0 && (
             <Popconfirm
               title="清空此会话消息?"
-              onConfirm={(e) => { e?.stopPropagation(); clearSessionMessages(s.id); }}
+              onConfirm={(e) => { e?.stopPropagation(); }}
               onCancel={(e) => e?.stopPropagation()}
             >
               <button
@@ -217,7 +263,7 @@ export const SessionSidebar: React.FC<{
           )}
           <Popconfirm
             title="删除此会话?"
-            onConfirm={(e) => { e?.stopPropagation(); handleDelete(s.id); }}
+            onConfirm={(e) => { e?.stopPropagation(); handleDelete(s.sessionId); }}
             onCancel={(e) => e?.stopPropagation()}
           >
             <button
@@ -242,7 +288,7 @@ export const SessionSidebar: React.FC<{
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--panel)' }}>
-      {/* ═════ 顶部: 折叠按钮 (不再重复显示LOGO, 顶部已有) ═════ */}
+      {/* ═════ 顶部: 折叠按钮 ═════ */}
       {onToggleCollapse && (
         <div style={{
           display: 'flex', justifyContent: 'flex-end',
@@ -308,7 +354,11 @@ export const SessionSidebar: React.FC<{
 
       {/* ═════ 会话列表 ═════ */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 6px 8px' }}>
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div style={{ padding: '24px 12px', fontSize: 12, color: 'var(--muted-2)', textAlign: 'center' }}>
+            加载中...
+          </div>
+        ) : gatewaySessions.length === 0 ? (
           <div style={{
             padding: '24px 12px', fontSize: 12, color: 'var(--muted-2)',
             textAlign: 'center',
@@ -318,7 +368,7 @@ export const SessionSidebar: React.FC<{
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             {filtered.map(s => (
-              <SessionItem key={s.id} s={s} />
+              <SessionItem key={s.sessionId} s={s} />
             ))}
           </div>
         )}

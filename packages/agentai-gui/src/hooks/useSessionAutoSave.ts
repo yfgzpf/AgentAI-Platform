@@ -2,9 +2,9 @@
  * useSessionAutoSave — 会话自动保存 hook (P2-1: 从 ChatView 抽取)
  *
  * 功能:
- * 1. 每 30 秒自动保存所有消息到 sessionStore
+ * 1. 每 30 秒自动保存所有消息到 gateway
  * 2. 每次消息变化时保存最后一条消息
- * 3. 会话切换时从 gateway API 加载历史消息 (异步, 比本地 persist 更全)
+ * 3. 会话切换时从 gateway API 加载历史消息
  */
 import { useEffect, useRef } from 'react';
 import { useChatStore, type ChatMessage } from '../store/chatStore';
@@ -16,7 +16,7 @@ export function useSessionAutoSave(
   messages: ChatMessage[],
   activeId: string | null,
 ) {
-  const { addMessage, getMySessions } = useSessionStore();
+  const { addMessage } = useSessionStore();
   const { setMessages: setChatMessages, clearMessages } = useChatStore();
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const prevActiveIdRef = useRef<string | null>(activeId);
@@ -26,11 +26,10 @@ export function useSessionAutoSave(
   useEffect(() => {
     if (!activeId || prevActiveIdRef.current === activeId) return;
     const id = activeId;
-    // 防重复加载
     if (loadingRef.current[id]) return;
     loadingRef.current[id] = true;
 
-    // 先同步清空，再异步加载（保证 UI 立即响应）
+    // 先同步清空，让 UI 立即响应
     clearMessages();
     prevActiveIdRef.current = id;
 
@@ -39,35 +38,24 @@ export function useSessionAutoSave(
       .then(data => {
         loadingRef.current[id] = false;
         if (data?.success && data?.messages?.length > 0) {
-          // 使用 setMessages 原子替换，避免逐个 addMessage 触发多次重渲染
-          const restored = data.messages.map((msg: any) => ({
-            id: `restored-${msg.ts || Date.now()}`,
+          // 原子替换：一次渲染完成
+          setChatMessages(data.messages.map((msg: any) => ({
+            id: `restored-${msg.timestamp || Date.now()}`,
             role: msg.role as 'user' | 'assistant',
             segments: [{ kind: 'text' as const, text: msg.content }],
-            ts: msg.ts || Date.now(),
+            ts: msg.timestamp || Date.now(),
             status: 'done' as const,
-          }));
-          setChatMessages(restored);
+          })));
         }
+        // 空会话保持清空状态
       })
       .catch(() => {
         loadingRef.current[id] = false;
-        // 加载失败 → 回退到本地 persist 数据
-        const session = getMySessions().find(s => s.id === id);
-        if (session && session.messages.length > 0) {
-          const restored = session.messages.map((msg: any) => ({
-            id: `restored-${msg.ts}`,
-            role: msg.role as 'user' | 'assistant',
-            segments: [{ kind: 'text' as const, text: msg.content }],
-            ts: msg.ts,
-            status: 'done' as const,
-          }));
-          setChatMessages(restored);
-        }
+        // 加载失败保持清空（不显示旧数据）
       });
-  }, [activeId, clearMessages, getMySessions, setChatMessages]);
+  }, [activeId, clearMessages, setChatMessages]);
 
-  /* ---- Auto-save: 每30秒保存到 sessionStore ---- */
+  /* ---- Auto-save: 每30秒推送消息到 gateway ---- */
   useEffect(() => {
     if (!activeId || messages.length === 0) return;
     const timer = setInterval(() => {
@@ -82,7 +70,7 @@ export function useSessionAutoSave(
     return () => { clearInterval(timer); autoSaveTimerRef.current = null; };
   }, [activeId, messages.length, addMessage, messages]);
 
-  /* ---- 保存最后一条消息到 sessionStore ---- */
+  /* ---- 保存最后一条消息到 gateway ---- */
   useEffect(() => {
     if (!activeId || messages.length === 0) return;
     const last = messages[messages.length - 1];
