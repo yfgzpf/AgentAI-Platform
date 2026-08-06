@@ -4,50 +4,68 @@
  * 功能:
  * 1. 每 30 秒自动保存所有消息到 sessionStore
  * 2. 每次消息变化时保存最后一条消息
- * 3. 会话切换时从 sessionStore 加载历史消息 (替代 Sidebar 手动加载)
+ * 3. 会话切换时从 gateway API 加载历史消息 (异步, 比本地 persist 更全)
  */
 import { useEffect, useRef } from 'react';
 import { useChatStore, type ChatMessage } from '../store/chatStore';
 import { useSessionStore } from '../store/sessionStore';
 
+const GATEWAY_BASE = `http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:18789`;
+
 export function useSessionAutoSave(
   messages: ChatMessage[],
   activeId: string | null,
 ) {
-  const { addMessage, getMySessions, getActive } = useSessionStore();
+  const { addMessage, getMySessions } = useSessionStore();
   const { setMessages: setChatMessages, clearMessages } = useChatStore();
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const prevActiveIdRef = useRef<string | null>(activeId);
-  const prevSessionTitleRef = useRef<string>('');
+  const loadingRef = useRef<Record<string, boolean>>({});
 
-  /* ---- 会话切换: 从 sessionStore 加载历史消息 ---- */
+  /* ---- 会话切换: 从 gateway 异步加载历史消息 ---- */
   useEffect(() => {
-    if (prevActiveIdRef.current !== activeId) {
-      const isNewSession = prevActiveIdRef.current === null;
-      const prevSession = prevActiveIdRef.current
-        ? getMySessions().find(s => s.id === prevActiveIdRef.current)
-        : undefined;
-      const newSession = activeId ? getMySessions().find(s => s.id === activeId) : undefined;
+    if (!activeId || prevActiveIdRef.current === activeId) return;
+    const id = activeId;
+    // 防重复加载
+    if (loadingRef.current[id]) return;
+    loadingRef.current[id] = true;
 
-      // 如果新会话已有持久化消息，原子替换；否则清空
-      if (newSession && newSession.messages.length > 0) {
-        const restored = newSession.messages.map(msg => ({
-          id: `restored-${msg.ts}`,
-          role: msg.role as 'user' | 'assistant',
-          segments: [{ kind: 'text' as const, text: msg.content }],
-          ts: msg.ts,
-          status: 'done' as const,
-        }));
-        setChatMessages(restored);
-      } else {
-        // 新会话或无历史消息 → 清空
-        clearMessages();
-      }
+    // 先同步清空，再异步加载（保证 UI 立即响应）
+    clearMessages();
+    prevActiveIdRef.current = id;
 
-      prevActiveIdRef.current = activeId;
-      prevSessionTitleRef.current = newSession?.title || '';
-    }
-  }, [activeId, getMySessions, setChatMessages, clearMessages]);
+    fetch(`${GATEWAY_BASE}/api/sessions/${id}/messages`)
+      .then(r => r.json())
+      .then(data => {
+        loadingRef.current[id] = false;
+        if (data?.success && data?.messages?.length > 0) {
+          // 使用 setMessages 原子替换，避免逐个 addMessage 触发多次重渲染
+          const restored = data.messages.map((msg: any) => ({
+            id: `restored-${msg.ts || Date.now()}`,
+            role: msg.role as 'user' | 'assistant',
+            segments: [{ kind: 'text' as const, text: msg.content }],
+            ts: msg.ts || Date.now(),
+            status: 'done' as const,
+          }));
+          setChatMessages(restored);
+        }
+      })
+      .catch(() => {
+        loadingRef.current[id] = false;
+        // 加载失败 → 回退到本地 persist 数据
+        const session = getMySessions().find(s => s.id === id);
+        if (session && session.messages.length > 0) {
+          const restored = session.messages.map((msg: any) => ({
+            id: `restored-${msg.ts}`,
+            role: msg.role as 'user' | 'assistant',
+            segments: [{ kind: 'text' as const, text: msg.content }],
+            ts: msg.ts,
+            status: 'done' as const,
+          }));
+          setChatMessages(restored);
+        }
+      });
+  }, [activeId, clearMessages, getMySessions, setChatMessages]);
 
   /* ---- Auto-save: 每30秒保存到 sessionStore ---- */
   useEffect(() => {
