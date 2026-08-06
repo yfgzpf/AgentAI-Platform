@@ -9,9 +9,9 @@
  * 发送消息 → ChatView 发送 + addMessage 同步到 localStorage
  */
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Input, Tooltip, Popconfirm } from 'antd';
+import { Input, Tooltip, Popconfirm, message } from 'antd';
 import {
-  PlusOutlined, SearchOutlined,
+  PlusOutlined, SearchOutlined, DeleteOutlined,
   AppstoreOutlined,
   UserOutlined, SettingOutlined,
   ClockCircleOutlined, MessageOutlined,
@@ -79,7 +79,8 @@ export const SessionSidebar: React.FC<{
   }, [setActive]);
 
   /* ---- 删除会话 ---- */
-  const handleDelete = useCallback((id: string) => {
+  const handleDelete = useCallback((id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     deleteSession(id);
     // 用 ref 确保拿到最新 sessions，而不是陈旧闭包
     const remaining = sessionsRef.current.filter(s => s.id !== id);
@@ -88,6 +89,7 @@ export const SessionSidebar: React.FC<{
       const nextId = remaining[Math.min(idx, remaining.length - 1)]?.id;
       if (nextId) setActive(nextId);
     }
+    message.success('会话已删除');
   }, [deleteSession, setActive]);
 
   function relativeTime(ts: number): string {
@@ -147,6 +149,7 @@ export const SessionSidebar: React.FC<{
 
     return (
       <div
+        className="session-item"
         onClick={() => { if (!editing) handleSelect(s.id); }}
         style={{
           display: 'flex', alignItems: 'flex-start', gap: 6,
@@ -186,39 +189,64 @@ export const SessionSidebar: React.FC<{
             </>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 2, flexShrink: 0, opacity: isActive ? 1 : 0, transition: 'opacity 0.15s', alignItems: 'flex-start', paddingTop: 2 }}>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (window.confirm('确定删除此会话？')) {
-                handleDelete(s.id);
-              }
-            }}
-            title="删除此会话"
-            style={{
-              padding: '1px 4px',
-              border: '1px solid var(--border)',
-              borderRadius: 3,
-              background: 'transparent',
-              color: 'var(--muted-2)',
-              cursor: 'pointer',
-              fontSize: 9,
-              lineHeight: 1,
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLElement).style.color = 'var(--danger)';
-              (e.currentTarget as HTMLElement).style.borderColor = 'var(--danger)';
-              (e.currentTarget as HTMLElement).style.background = 'rgba(239,68,68,0.1)';
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)';
-              (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
-              (e.currentTarget as HTMLElement).style.background = 'transparent';
-            }}
+        {/* 删除按钮 - 使用 Popconfirm，hover 显示 */}
+        <div
+          className="session-actions"
+          style={{
+            display: 'flex',
+            gap: 2,
+            flexShrink: 0,
+            opacity: 0,
+            transition: 'opacity 0.15s',
+            alignItems: 'flex-start',
+            paddingTop: 2,
+          }}
+        >
+          <Popconfirm
+            title="删除会话"
+            description="确定要删除此会话吗？此操作不可恢复。"
+            onConfirm={(e) => handleDelete(s.id, e as unknown as React.MouseEvent)}
+            onCancel={(e) => e?.stopPropagation()}
+            okText="删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
           >
-            删
-          </button>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              title="删除此会话"
+              style={{
+                padding: '2px 6px',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                background: 'transparent',
+                color: 'var(--muted-2)',
+                cursor: 'pointer',
+                fontSize: 11,
+                lineHeight: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.color = 'var(--danger)';
+                (e.currentTarget as HTMLElement).style.borderColor = 'var(--danger)';
+                (e.currentTarget as HTMLElement).style.background = 'rgba(239,68,68,0.1)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)';
+                (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+                (e.currentTarget as HTMLElement).style.background = 'transparent';
+              }}
+            >
+              <DeleteOutlined style={{ fontSize: 12 }} />
+            </button>
+          </Popconfirm>
         </div>
+        <style>{`
+          .session-item:hover .session-actions {
+            opacity: 1 !important;
+          }
+        `}</style>
       </div>
     );
   };

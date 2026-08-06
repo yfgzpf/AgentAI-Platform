@@ -421,6 +421,48 @@ export const ChatView: React.FC = () => {
   // P2-1: 会话切换时重置滚动状态
   useEffect(() => { resetScroll(); }, [activeId, resetScroll]);
 
+  // 会话类型感知: 点击生图/生视频会话时自动切换 chatMode
+  useEffect(() => {
+    if (!activeId) return;
+    const session = useSessionStore.getState().sessions.find(s => s.id === activeId);
+    if (session?.type === 'image' && chatMode !== 'image_edit') {
+      useModelStore.getState().setChatMode('image_edit');
+      const imgModels = useModelStore.getState().models.filter(m => m.modelType === 'image' && m.enabled);
+      if (imgModels.length > 0) useModelStore.getState().setActive(imgModels[0].id);
+    } else if (session?.type === 'chat' && chatMode === 'image_edit') {
+      useModelStore.getState().setChatMode('chat');
+    }
+  }, [activeId]);
+
+  // 监听 chatMode 变化，显示引导提示
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ mode: string }>;
+      if (ce.detail?.mode === 'image_edit' && messages.length === 0) {
+        // 首次进入生图模式，添加引导消息
+        setTimeout(() => {
+          // 获取可用的生图模型列表
+          const imageModels = useModelStore.getState().models.filter(m =>
+            m.modelType === 'image' && m.enabled
+          );
+          const modelList = imageModels.length > 0
+            ? imageModels.map(m => `• ${m.label}`).join('\n')
+            : '• 暂无可用生图模型，请在设置中配置 ALRC 密钥';
+
+          appendMessage({
+            id: `welcome-${Date.now()}`,
+            role: 'system',
+            content: `🎨 **对话改图模式已激活**\n\n您现在可以使用自然语言与 AI 协作生成和编辑图片。\n\n**可用生图模型：**\n${modelList}\n\n**使用方式：**\n• 直接输入图片描述词生成图片（如：画一只橘猫）\n• 上传图片后描述修改需求（如：把背景换成星空）\n• 支持风格迁移、局部编辑、虚拟换装等多种玩法\n\n💡 **提示：** 生图结果会自动保存到历史记录，可在左侧「生图」标签查看`,
+            ts: Date.now(),
+            segments: [{ kind: 'text', text: `🎨 **对话改图模式已激活**\n\n您现在可以使用自然语言与 AI 协作生成和编辑图片。\n\n**可用生图模型：**\n${modelList}\n\n**使用方式：**\n• 直接输入图片描述词生成图片（如：画一只橘猫）\n• 上传图片后描述修改需求（如：把背景换成星空）\n• 支持风格迁移、局部编辑、虚拟换装等多种玩法\n\n💡 **提示：** 生图结果会自动保存到历史记录，可在左侧「生图」标签查看` }],
+          });
+        }, 300);
+      }
+    };
+    window.addEventListener('agentai:switch-chat-mode', handler);
+    return () => window.removeEventListener('agentai:switch-chat-mode', handler);
+  }, [messages.length]);
+
   // 智能清空: 先保存记忆再清空
   const smartClear = useCallback(() => {
     try {

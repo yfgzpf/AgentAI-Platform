@@ -78,15 +78,89 @@ import FloatingSuggestionToast from './components/FloatingSuggestionToast';
 import { useSuggestionSSE } from './hooks/useSuggestionSSE';
 import { useSuggestionStore } from './store/suggestionStore';
 import { Splash } from './components/Splash';
+import { AuthPage } from './components/AuthPage';
 import { ReuseIdentityPrompt } from './components/ReuseIdentityPrompt';
 import { GlobalBrowserDrawer, openGlobalBrowser } from './components/GlobalBrowserDrawer';
 import { useIdeState } from './hooks/useIdeState';
 import { useUpdaterStore, mountUpdaterEventBus } from './store/updaterStore';
+import { useSubscriptionStore, SUBSCRIPTION_PLANS } from './store/subscriptionStore';
 
 // 暴露到 window, 顶部导航按钮可调用
 if (typeof window !== 'undefined') {
   (window as any).openGlobalBrowser = openGlobalBrowser;
 }
+
+/* ════════════════ 订阅路由守卫 ════════════════ */
+const SubscriptionGuard: React.FC<{
+  page: PageMeta;
+  onSubscribe: () => void;
+  children: React.ReactNode;
+}> = ({ page, onSubscribe, children }) => {
+  const { planId, expiresAt, isPaid } = useSubscriptionStore();
+  const isSubscribed = isPaid && expiresAt > Date.now();
+
+  if (isSubscribed) {
+    return <>{children}</>;
+  }
+
+  // 未订阅，显示引导页面
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      height: '100%', padding: 40, textAlign: 'center',
+    }}>
+      <div style={{
+        width: 80, height: 80, borderRadius: '50%',
+        background: 'linear-gradient(135deg, #6366F1 0%, #EC4899 100%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 40, marginBottom: 24,
+      }}>
+        {page.icon}
+      </div>
+      <h2 style={{ fontSize: 24, fontWeight: 600, marginBottom: 12, color: 'var(--fg)' }}>
+        {page.label} 需要订阅
+      </h2>
+      <p style={{ fontSize: 14, color: 'var(--muted-2)', maxWidth: 400, lineHeight: 1.8, marginBottom: 24 }}>
+        {page.desc}<br />
+        订阅后可解锁 {page.label} 功能，以及更多高级模型和生图次数。
+      </p>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', marginBottom: 32 }}>
+        {Object.values(SUBSCRIPTION_PLANS).map(plan => (
+          <div key={plan.id} style={{
+            padding: '16px 20px', borderRadius: 12, border: '1px solid var(--border)',
+            background: plan.popular ? 'var(--accent-soft)' : 'var(--panel)',
+            minWidth: 140, position: 'relative',
+          }}>
+            {plan.popular && (
+              <span style={{
+                position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)',
+                background: 'var(--accent)', color: '#fff', fontSize: 10, padding: '2px 8px',
+                borderRadius: 10,
+              }}>推荐</span>
+            )}
+            <div style={{ fontSize: 20, marginBottom: 4 }}>{plan.icon}</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{plan.name}</div>
+            <div style={{ fontSize: 12, color: 'var(--muted-2)' }}>¥{plan.priceMonth}/月</div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={onSubscribe}
+        style={{
+          padding: '12px 32px', borderRadius: 8, border: 'none',
+          background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 500,
+          cursor: 'pointer', transition: 'opacity 0.15s',
+        }}
+        onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '0.9'}
+        onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '1'}
+      >
+        前往订阅
+      </button>
+    </div>
+  );
+};
 
 /* ════════════════ 对话改图切换按钮 ════════════════ */
 const ChatModeToggle: React.FC = () => {
@@ -250,6 +324,7 @@ export const App: React.FC = () => {
   const [wechatModalVisible, setWechatModalVisible] = useState(false);
   const [setupWizardVisible, setSetupWizardVisible] = useState(false);
   const [splashVisible, setSplashVisible] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [gitPanelVisible, setGitPanelVisible] = useState(false);
   const [terminalPanelVisible, setTerminalPanelVisible] = useState(false);
   const [terminalTasks, setTerminalTasks] = useState<TerminalTask[]>([]);
@@ -554,6 +629,13 @@ export const App: React.FC = () => {
     return !!stored?.name && !!stored?.industry;
   });
 
+  /* --- 认证检查 --- */
+  useEffect(() => {
+    const token = localStorage.getItem('agentai-auth-token');
+    const userId = localStorage.getItem('agentai-auth-user');
+    setIsAuthenticated(!!(token && userId));
+  }, []);
+
   /* --- 首次启动环境检测 (仅 Tauri 桌面端打包后生效) --- */
   useEffect(() => {
     // 开发环境 (Vite dev server) 不检测, 避免开发时误弹
@@ -717,6 +799,7 @@ export const App: React.FC = () => {
    * ║ - layer = false: 关闭 antd v5 @layer 特性(部分打包器不兼容)║
    * ╚═══════════════════════════════════════════════════════════════╝
    */
+  if (isAuthenticated === false) return <AuthPage />;
   return (
     <StyleProvider hashPriority="high" layer={false}>
       <ConfigProvider
@@ -1097,7 +1180,16 @@ export const App: React.FC = () => {
           <div className="app-content">
             <ErrorBoundary key={page} onRetry={() => setPage(page)}>
               <Suspense fallback={<PageSkeleton />}>
-                {currentPage?.comp ? <currentPage.comp /> : <PageSkeleton />}
+                {/* 订阅路由守卫 */}
+                {currentPage?.requireSubscription ? (
+                  <SubscriptionGuard page={currentPage} onSubscribe={() => setPage('settings')}>
+                    <currentPage.comp />
+                  </SubscriptionGuard>
+                ) : currentPage?.comp ? (
+                  <currentPage.comp />
+                ) : (
+                  <PageSkeleton />
+                )}
               </Suspense>
             </ErrorBoundary>
           </div>
@@ -1195,7 +1287,7 @@ export const App: React.FC = () => {
       />
 
       {/* Splash 启动欢迎页 (PulseFlow v2, 3600ms 多阶段动画) */}
-      {splashVisible && (
+      {splashVisible && isAuthenticated !== false && (
         <Splash onFinish={() => setSplashVisible(false)} duration={3600} />
       )}
 
