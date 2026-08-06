@@ -768,6 +768,10 @@ html, body {
   0%, 100% { opacity: 0.6; }
   50%      { opacity: 0.3; }
 }
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 
 .msg-enter { animation: msgSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 .bubble-enter { animation: bubbleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }

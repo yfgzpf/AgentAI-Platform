@@ -89,76 +89,74 @@ function detectAndInsertImage(
   try {
     const parsed = typeof result === 'string' ? JSON.parse(result) : result;
 
+    // ═══ 提取待插入的图片候选 (url/base64) ═══
+    let candidateUrl: string | undefined;
+    let candidateBase64: string | undefined;
+    let candidateAlt: string | undefined;
+    let candidateFilePath: string | undefined;
+
     // 1. 桌面截图: desktop_automate screenshot 返回 screenshot_data
     if (toolName === 'desktop_automate' && parsed.screenshot_data?.base64) {
-      const base64 = parsed.screenshot_data.base64;
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'image',
-          base64,
-          alt: parsed.screenshot_data.alt || '桌面截图',
-          filePath: parsed.screenshot_data.path,
-        }],
-      }));
-      return;
+      candidateBase64 = parsed.screenshot_data.base64;
+      candidateAlt = parsed.screenshot_data.alt || '桌面截图';
+      candidateFilePath = parsed.screenshot_data.path;
     }
 
     // 2. 浏览器截图: browser_screenshot 返回 imageBase64
-    if ((toolName === 'browser_screenshot' || toolName === 'browser_screenshot_full') && parsed.imageBase64) {
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'image',
-          base64: parsed.imageBase64,
-          alt: '浏览器截图',
-        }],
-      }));
-      return;
+    else if ((toolName === 'browser_screenshot' || toolName === 'browser_screenshot_full') && parsed.imageBase64) {
+      candidateBase64 = parsed.imageBase64;
+      candidateAlt = '浏览器截图';
     }
 
-    // 3. 图片生成: generate_image 优先使用 localPath (后端已下载到本地, 无 CORS/URL过期)
-    if (toolName === 'generate_image') {
-      // 3a. 优先用 localPath (通过 gateway 文件接口加载)
+    // 3. 图片生成: generate_image 优先使用 localPath
+    else if (toolName === 'generate_image') {
       if (parsed.localPath) {
         const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
-        const imgUrl = `${gatewayHttp}/api/files/download?path=${encodeURIComponent(parsed.localPath)}`;
-        updateMessage(botId, (m: any) => ({
-          ...m,
-          segments: [...m.segments, {
-            kind: 'image',
-            url: imgUrl,
-            alt: parsed.prompt || 'AI 生成图片',
-            filePath: parsed.localPath,
-          }],
-        }));
-        return;
-      }
-      // 3b. 降级: 用原始 URL
-      if (parsed.imageUrl || parsed.url) {
-        updateMessage(botId, (m: any) => ({
-          ...m,
-          segments: [...m.segments, {
-            kind: 'image',
-            url: parsed.imageUrl || parsed.url,
-            alt: parsed.prompt || 'AI图片',
-          }],
-        }));
-        return;
+        candidateUrl = `${gatewayHttp}/api/files/download?path=${encodeURIComponent(parsed.localPath)}`;
+        candidateAlt = parsed.prompt || 'AI 生成图片';
+        candidateFilePath = parsed.localPath;
+      } else if (parsed.imageUrl || parsed.url) {
+        candidateUrl = parsed.imageUrl || parsed.url;
+        candidateAlt = parsed.prompt || 'AI图片';
       }
     }
 
     // 4. 通用检测: 只要有 imageUrl/imageBase64 字段
-    if (parsed.imageUrl || parsed.imageBase64) {
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'image',
-          url: parsed.imageUrl,
-          base64: parsed.imageBase64,
-          alt: parsed.alt || toolName,
-        }],
-      }));
+    else if (parsed.imageUrl || parsed.imageBase64) {
+      candidateUrl = parsed.imageUrl;
+      candidateBase64 = parsed.imageBase64;
+      candidateAlt = parsed.alt || toolName;
+    }
+
+    // ═══ 图片去重: 已有相同 url 或 base64 的 image segment 则跳过 ═══
+    if (candidateUrl || candidateBase64) {
+      candidateAlt = candidateAlt || '图片';
+      updateMessage(botId, (m: any) => {
+        const existing = m.segments?.find((s: any) => {
+          if (s.kind !== 'image') return false;
+          if (candidateUrl && s.url === candidateUrl) return true;
+          if (candidateBase64 && s.base64 === candidateBase64) return true;
+          return false;
+        });
+        if (existing) return m; // 重复, 不插入
+        return {
+          ...m,
+          segments: [...m.segments, {
+            kind: 'image',
+            url: candidateUrl,
+            base64: candidateBase64,
+            alt: candidateAlt,
+            filePath: candidateFilePath,
+          }],
+        };
+      });
+      if (candidateUrl || candidateFilePath) {
+        const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
+        const imgDataUrl = candidateFilePath
+          ? `${gatewayHttp}/api/files/download?path=${encodeURIComponent(candidateFilePath)}`
+          : candidateUrl;
+        onImageDetected?.(imgDataUrl || '', candidateAlt!, candidateFilePath);
+      }
       return;
     }
   } catch {

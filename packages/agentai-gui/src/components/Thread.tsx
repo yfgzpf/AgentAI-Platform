@@ -1435,14 +1435,21 @@ export const ImageCard: React.FC<{
         <span>{alt || '截图/图片'}</span>
         {filePath && <span style={{ marginLeft: 'auto' }}>{filePath}</span>}
       </div>
-      <div style={{ padding: 8, display: 'flex', justifyContent: 'center', background: 'var(--bg)' }}>
+      <div style={{ padding: 8, display: 'flex', justifyContent: 'center', background: 'var(--bg)', minHeight: 120 }}>
         {error ? (
-          <div style={{ padding: 20, color: 'var(--danger)', fontSize: 12 }}>
+          <div style={{ padding: '40px 20px', color: 'var(--danger)', fontSize: 12, textAlign: 'center', width: '100%' }}>
+            <div style={{ fontSize: 20, marginBottom: 4 }}>⚠️</div>
             图片加载失败
           </div>
         ) : !loaded && (
-          <div style={{ padding: 20, color: 'var(--muted-2)', fontSize: 12 }}>
-            加载中..
+          <div style={{ width: '100%', minHeight: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {/* 骨架屏占位: 固定高度防止 layout shift */}
+            <div style={{
+              width: '100%', height: 120, borderRadius: 6,
+              background: 'linear-gradient(90deg, var(--panel) 25%, var(--border) 50%, var(--panel) 75%)',
+              backgroundSize: '200% 100%',
+              animation: 'shimmer 1.5s infinite',
+            }} />
           </div>
         )}
         {src && (
@@ -1455,7 +1462,8 @@ export const ImageCard: React.FC<{
               maxWidth: '100%', maxHeight: 240, borderRadius: 4, cursor: 'zoom-in',
               display: loaded ? 'block' : 'none',
               objectFit: 'contain',
-              transition: 'transform 0.15s',
+              transition: 'opacity 0.15s ease',
+              opacity: loaded ? 1 : 0,
             }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.02)'; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; }}
