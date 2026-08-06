@@ -179,33 +179,27 @@ export const SessionSidebar: React.FC<{
           )}
         </div>
         <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-          <Popconfirm
-            title="删除此会话?"
-            okText="删除"
-            cancelText="取消"
-            okButtonProps={{ style: { background: 'var(--danger)', borderColor: 'var(--danger)' } }}
-            onConfirm={(e) => { e?.stopPropagation(); handleDelete(s.id); }}
-            onCancel={(e) => e?.stopPropagation()}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (window.confirm('删除此会话?')) handleDelete(s.id);
+            }}
+            style={{
+              opacity: 0,
+              padding: '2px 4px',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--danger)',
+              cursor: 'pointer',
+              fontSize: 10,
+              lineHeight: 1,
+              transition: 'opacity 0.15s',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
           >
-            <button
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                opacity: 0,
-                padding: '2px 4px',
-                border: 'none',
-                background: 'transparent',
-                color: 'var(--danger)',
-                cursor: 'pointer',
-                fontSize: 10,
-                lineHeight: 1,
-                transition: 'opacity 0.15s',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
-            >
-              ✕
-            </button>
-          </Popconfirm>
+            ✕
+          </button>
         </div>
       </div>
     );
