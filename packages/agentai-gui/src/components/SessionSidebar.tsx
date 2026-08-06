@@ -29,6 +29,8 @@ export const SessionSidebar: React.FC<{
   const { clearMessages } = useChatStore();
   const { profile } = useProfileStore();
   const { sessions, activeId, createSession, deleteSession, setActive } = useSessionStore();
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const [query, setQuery] = useState('');
   const [autoOpen, setAutoOpen] = useState(true);
   const [autoStats, setAutoStats] = useState({total:0,active:0});
@@ -79,14 +81,14 @@ export const SessionSidebar: React.FC<{
   /* ---- 删除会话 ---- */
   const handleDelete = useCallback((id: string) => {
     deleteSession(id);
-    // 删除后自动切换到另一个会话，避免界面卡死
-    const remaining = sessions.filter(s => s.id !== id);
+    // 用 ref 确保拿到最新 sessions，而不是陈旧闭包
+    const remaining = sessionsRef.current.filter(s => s.id !== id);
     if (remaining.length > 0) {
-      const idx = sessions.findIndex(s => s.id === id);
+      const idx = sessionsRef.current.findIndex(s => s.id === id);
       const nextId = remaining[Math.min(idx, remaining.length - 1)]?.id;
       if (nextId) setActive(nextId);
     }
-  }, [deleteSession, sessions, setActive]);
+  }, [deleteSession, setActive]);
 
   function relativeTime(ts: number): string {
     const diff = Date.now() - ts;
