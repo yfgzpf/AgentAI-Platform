@@ -29,7 +29,7 @@ import { getModelContextWindow, getDefaultContextWindow, getCapability } from '.
 import { modelMetrics } from './model-metrics-service.js';
 
 // ===== 类型定义 =====
-export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'zhipu' | 'superapi' | 'dxnt' | string;
+export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'zhipu' | 'superapi' | 'alrc' | 'dxnt' | string;
 
 /** OpenAI 图片内容块 */
 export interface ImageContentBlock {
@@ -298,6 +298,29 @@ export class AgentAIRouter extends EventEmitter {
       tripped: true,  // 默认熔断, 等用户配置 API Key 后解除
       rateLimitRetryCount: 0,
     });
+    this.providers.set('alrc', {
+      id: 'alrc',
+      costPer1kInput: 0,
+      costPer1kOutput: 0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: true,  // 默认熔断, 等用户配置 API Key 后解除
+      rateLimitRetryCount: 0,
+    });
+    // 模型工厂 (与 alrc 同一平台, 分组密钥模式)
+    this.providers.set('factory', {
+      id: 'factory',
+      costPer1kInput: 0,
+      costPer1kOutput: 0,
+      totalCalls: 0,
+      successCount: 0,
+      failureCount: 0,
+      recentLatencyMs: [],
+      tripped: true,  // 默认熔断, 等用户配置 API Key 后解除
+      rateLimitRetryCount: 0,
+    });
     this.providers.set('dxnt', {
       id: 'dxnt',
       costPer1kInput: 0,      // 免费 (用户自有 API Key)
@@ -356,6 +379,8 @@ export class AgentAIRouter extends EventEmitter {
       openai: 'OPENAI_API_KEY',
       zhipu: 'ZHIPU_API_KEY',
       superapi: 'SUPERAPI_API_KEY',
+      alrc: 'ALRC_API_KEY',
+factory: 'FACTORY_CHAT_KEY',
       dxnt: 'DXNT_API_KEY',
       sensenova: 'SENSENOVA_API_KEY',
       longcat: 'LONGCAT_API_KEY',
@@ -492,7 +517,11 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
     //   3. 多次失败 → 才切换到备用模型
     //   参考 ZCode: Agnes AI 运行稳定, 不需要频繁切换
     const MAX_RETRY = 3;  // 同一模型最大重试次数
-    let forceProvider: string | undefined = req.model;  // 始终锁定用户选择的模型
+    // 提取 provider 名: req.model 可能是 "alrc" 或 "alrc:deepseek-v4-flash"
+    let forceProvider: string | undefined = req.model;
+    if (req.model && req.model.includes(':')) {
+      forceProvider = req.model.split(':')[0];  // "alrc:deepseek-v4-flash" → "alrc"
+    }
 
     // 检测是否需要视觉能力 (消息中含 image_url)
     const needsVision = req.messages.some(m => {
@@ -570,6 +599,7 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
       dxnt:      ['dxnt'],
       deepseek:  ['deepseek'],
       superapi:  ['superapi'],
+      alrc:      ['alrc', 'factory'],
       qwen:      ['qwen'],
       moonshot:  ['moonshot'],
       doubao:    ['doubao'],
@@ -636,10 +666,16 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
         // 所有重试都失败, 记录并继续尝试备用模型
         console.warn(`[router] ${req.model} failed after ${MAX_RETRY} retries, trying fallback`);
         this.recordFailure(targetProvider, new Error(`${MAX_RETRY} retries exhausted`));
+        // 付费模型: 重试失败后不轮换到其他模型, 返回空响应让 loop 链处理
+        // 只有免费模型 (agnes/zhipu) 才 fallback 到其他免费模型
+        if (isPremiumModel) {
+          console.info(`[router] 付费模型 ${req.model} 重试失败, 不轮换到其他模型 (付费模型固定调用)`);
+          return premiumEmpty();
+        }
       }
     }
 
-    // ═══ 备用模型轮换 (仅当主模型完全失败时) ═══
+    // ═══ 备用模型轮换 (仅免费模型, 或用户未指定模型时) ═══
     for (const model of ranked) {
       if (!model?.provider) continue;
       // 跳过用户指定的模型 (已经尝试过了)
@@ -772,7 +808,7 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
     }
 
     // === 用户自定义模型兜底 (不在内置 6 个中的 provider) ===
-    const builtinIds = new Set(['agnes', 'agentai', 'deepseek', 'openai', 'zhipu', 'superapi', 'dxnt', 'sensenova', 'longcat']);
+    const builtinIds = new Set(['agnes', 'agentai', 'deepseek', 'openai', 'zhipu', 'superapi', 'alrc', 'factory', 'dxnt', 'sensenova', 'longcat']);
     for (const [pid, p] of this.providers) {
       if (builtinIds.has(pid)) continue;
       if (this.isRateLimited(p) || this.isCircuitOpen(p)) continue;
@@ -1376,6 +1412,9 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
       zhipu:   { keyEnv: 'ZHIPU_API_KEY',   baseEnv: 'ZHIPU_BASE_URL',   defaultBase: 'https://open.bigmodel.cn/api/paas/v4', modelEnv: 'ZHIPU_MODEL', defaultModel: 'glm-4.7-flash' },
       superapi: { keyEnv: 'SUPERAPI_API_KEY', baseEnv: 'SUPERAPI_BASE_URL', defaultBase: 'https://superapi.vanguard.dpdns.org/v1', modelEnv: 'SUPERAPI_MODEL', defaultModel: 'deepseek-v4-flash' },
+      alrc: { keyEnv: 'ALRC_API_KEY', baseEnv: 'ALRC_BASE_URL', defaultBase: 'https://alro.huazhiweilai.com/v1', modelEnv: 'ALRC_MODEL', defaultModel: 'deepseek-v4-flash' },
+      // 模型工厂分组密钥: 同一 baseURL, 不同分组密钥
+      factory: { keyEnv: 'FACTORY_CHAT_KEY', baseEnv: 'ALRC_BASE_URL', defaultBase: 'https://alro.huazhiweilai.com/v1', modelEnv: 'ALRC_MODEL', defaultModel: 'deepseek-v4-flash' },
       dxnt: { keyEnv: 'DXNT_API_KEY', baseEnv: 'DXNT_BASE_URL', defaultBase: 'https://www.dxnt.com', modelEnv: 'DXNT_MODEL', defaultModel: 'dxnt.com/free' },
       sensenova: { keyEnv: 'SENSENOVA_API_KEY', baseEnv: 'SENSENOVA_BASE_URL', defaultBase: 'https://token.sensenova.cn/v1', modelEnv: 'SENSENOVA_MODEL', defaultModel: 'sensenova-6.7-flash-lite' },
       longcat: { keyEnv: 'LONGCAT_API_KEY', baseEnv: 'LONGCAT_BASE_URL', defaultBase: 'https://api.longcat.chat/openai', modelEnv: 'LONGCAT_MODEL', defaultModel: 'LongCat-2.0' },
@@ -1420,6 +1459,36 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
       // 🔧 清洗 API Key: 去除首尾空白、逗号、分号、引号等污染字符
       if (apiKey) {
         apiKey = apiKey.trim().replace(/^[,;\s"'`]+|[,;\s"'`]+$/g, '');
+      }
+      // 模型工厂: 按 subModel 类型从对应分组密钥中查找
+      // 如果主密钥没找到, 尝试从分组密钥中查找
+      if (!apiKey && (id === 'alrc' || id === 'factory') && subModel) {
+        const FACTORY_GROUP_KEYS: Record<string, string> = {
+          // 对话模型
+          'deepseek-v4-flash': 'FACTORY_CHAT_KEY', 'deepseek-v4-pro': 'FACTORY_CHAT_KEY',
+          'glm-4.7': 'FACTORY_CHAT_KEY', 'glm-5': 'FACTORY_CHAT_KEY', 'glm-5.1': 'FACTORY_CHAT_KEY', 'glm-5.2': 'FACTORY_CHAT_KEY',
+          'kimi-k2.5': 'FACTORY_CHAT_KEY', 'kimi-k2.6': 'FACTORY_CHAT_KEY', 'kimi-k2.7-code': 'FACTORY_CHAT_KEY', 'kimi-k3': 'FACTORY_CHAT_KEY',
+          'MiniMax-M2.5': 'FACTORY_CHAT_KEY', 'MiniMax-M2.7': 'FACTORY_CHAT_KEY', 'MiniMax/MiniMax-M3': 'FACTORY_CHAT_KEY',
+          'hy3': 'FACTORY_CHAT_KEY',
+          // 生图模型
+          'nano-banana': 'FACTORY_IMAGE_KEY', 'nano-banana-2': 'FACTORY_IMAGE_KEY', 'nano-banana-pro': 'FACTORY_IMAGE_KEY',
+          'gpt-image-2': 'FACTORY_IMAGE_KEY', 'gpt-image-2-vip': 'FACTORY_IMAGE_KEY',
+          // 视频
+          'seedance-1.0-lite': 'FACTORY_VIDEO_KEY', 'seedance-1.0-pro': 'FACTORY_VIDEO_KEY', 'seedance-2.0': 'FACTORY_VIDEO_KEY',
+        };
+        const groupKey = FACTORY_GROUP_KEYS[subModel];
+        if (groupKey) {
+          apiKey = process.env[groupKey];
+          if (apiKey) {
+            apiKey = apiKey.trim().replace(/^[,;\s"'`]+|[,;\s"'`]+$/g, '');
+            console.log(`[router] 🔧 ${id} 使用分组密钥 ${groupKey} (model=${subModel})`);
+          }
+        }
+        // 最终 fallback: 尝试 ALRC_API_KEY
+        if (!apiKey) {
+          apiKey = process.env['ALRC_API_KEY'];
+          if (apiKey) apiKey = apiKey.trim().replace(/^[,;\s"'`]+|[,;\s"'`]+$/g, '');
+        }
       }
       // 智能 Base URL: 自动检测用户是否填了完整路径(含 /chat/completions)
       let rawUrl = process.env[cfg.baseEnv] || cfg.defaultBase;
@@ -1551,6 +1620,15 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
         const summaryMsg: ChatMessage = { role: 'system', content: `[历史摘要 · ${dropped.length} 条旧消息] ${summaryText}` };
         truncatedMessages = [summaryMsg, ...systemMsgs, ...kept];
         console.log(`[truncate] dropped ${dropped.length} msgs → injected summary, kept ${kept.length}, sys=${systemMsgs.length}`);
+        
+        // ═══ 2026-08-12: 添加上下文压缩提示 ═══
+        // 记录压缩信息，供外层返回给用户提示
+        (truncatedMessages as any)._truncationInfo = {
+          dropped: dropped.length,
+          kept: kept.length,
+          contextWindow: ctxWindow,
+          modelName: modelName || 'unknown',
+        };
       } else {
         truncatedMessages = [...systemMsgs, ...kept];
       }

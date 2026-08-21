@@ -28,6 +28,7 @@ const PROVIDER_ENV_KEY: Record<string, string> = {
   openai: 'OPENAI_API_KEY',
   zhipu: 'ZHIPU_API_KEY',
   superapi: 'SUPERAPI_API_KEY',
+  alrc: 'ALRC_API_KEY',
   sensenova: 'SENSENOVA_API_KEY',
   longcat: 'LONGCAT_API_KEY',
   // nvidia: 'NVIDIA_API_KEY', 已移除

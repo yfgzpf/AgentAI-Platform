@@ -23,7 +23,7 @@ export function createPresetWorkflowsRouter(): Router {
   // 查询接口
   // ═══════════════════════════════════════════════════════════
 
-  /** GET /api/preset-workflows — 获取所有预置工作流 */
+  /** GET /api/preset-workflows — 获取所有预置工作流 (含参数/步骤/示例) */
   router.get('/', (_req: Request, res: Response) => {
     res.json({
       ok: true,
@@ -35,6 +35,13 @@ export function createPresetWorkflowsRouter(): Router {
         estimatedTime: w.estimatedTime,
         triggers: w.triggers,
         requiredKeys: w.requiredKeys,
+        parameters: w.parameters,
+        stages: w.stages.map((s, i) => ({
+          step: i + 1,
+          skill: s.skill,
+          description: s.skill?.replace(/_/g, ' ') || s.id,
+        })),
+        examples: w.examples,
       })),
       categories: getCategories(),
     });

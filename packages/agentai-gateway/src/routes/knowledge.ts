@@ -312,11 +312,14 @@ export function createKnowledgeRouter(): Router {
    * GET /v1/knowledge/explore-stats
    * 获取探索统计信息
    */
-  router.get('/explore-stats', async (_req: Request, res: Response) => {
+  router.get('/explore-stats', async (req: Request, res: Response) => {
     try {
       // 从记忆系统查询知识相关数据
+      // ═══ 2026-08-12: 添加 workspace 隔离 ═══
+      const workspace = (req.query.workspace as string) || process.cwd();
       const memories = await readMemory({
         userId: 'knowledge_system',
+        workspace,
         limit: 100,
       });
       
@@ -394,10 +397,13 @@ export function createKnowledgeRouter(): Router {
    * GET /v1/knowledge/nodes
    * 获取知识节点列表
    */
-  router.get('/nodes', async (_req: Request, res: Response) => {
+  router.get('/nodes', async (req: Request, res: Response) => {
     try {
+      // ═══ 2026-08-12: 添加 workspace 隔离 ═══
+      const workspace = (req.query.workspace as string) || process.cwd();
       const memories = await readMemory({
         userId: 'knowledge_system',
+        workspace,
         limit: 50,
       });
       

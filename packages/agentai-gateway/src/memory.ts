@@ -86,17 +86,10 @@ async function atomicAppendFile(filePath: string, line: string): Promise<void> {
 }
 
 export async function writeMemory(entry: Omit<MemoryEntry, 'ts'>): Promise<MemoryEntry> {
-  // 自动注入当前行业 (从 industryEngine 读取)
-  let autoIndustry = entry.industry;
-  if (!autoIndustry) {
-    try {
-      const { industryEngine } = await import('./industry-engine.js');
-      autoIndustry = (industryEngine as any).activeIndustry || 'general';
-    } catch (e: any) {
-      console.warn('[memory:writeMemory] industryEngine import failed, using default "general":', e?.message);
-      autoIndustry = 'general';
-    }
-  }
+  // ★ 修复: 不再从单例读取行业. 参数为空时默认 'general', 由调用方传入正确值
+  let autoIndustry = entry.industry || 'general';
+  // 注意: 调用方 (agentai-loop) 应通过 opts.industryId 或显式参数传入行业
+  // 此处不再回退到读取全局单例 activeIndustry, 避免跨用户污染
   const full: MemoryEntry = { ts: Date.now(), ...entry, industry: autoIndustry };
   const line = JSON.stringify(full) + '\n';
 
@@ -178,7 +171,13 @@ const COMPRESS_THRESHOLD = 50;  // 阈值提高，给重要性评估更多空间
 const KEEP_RECENT = 20;
 const KEEP_HIGH_VALUE = 15;     // 保留高价值记忆数量
 
+// P0 修复: 压缩防重入锁 — 避免并发写入导致 EPERM 死循环
+const compressingFiles = new Set<string>();
+
 async function compressMemoryFile(filePath: string): Promise<void> {
+  // 防重入: 如果该文件正在压缩, 跳过
+  if (compressingFiles.has(filePath)) return;
+  compressingFiles.add(filePath);
   try {
     const { evaluateBatch, generateSummary } = await import('./memory-importance.js');
 
@@ -252,13 +251,31 @@ async function compressMemoryFile(filePath: string): Promise<void> {
     ];
 
     const newContent = compressed.map(e => JSON.stringify(e)).join('\n') + '\n';
-    const tmpPath = `${filePath}.compress.tmp`;
-    await fs.writeFile(tmpPath, newContent, 'utf-8');
-    await fs.rename(tmpPath, filePath);
+    
+    // P0 修复: Windows 上 rename 会因文件锁定失败 (EPERM)
+    // 改为: 先 unlink 原文件再 writeFile, 如果 unlink 失败则直接覆盖写入
+    try {
+      await fs.unlink(filePath).catch(() => {}); // 忽略 unlink 失败 (文件可能不存在)
+      await fs.writeFile(filePath, newContent, 'utf-8');
+    } catch (writeErr: any) {
+      // 如果直接写入也失败, 尝试 rename 兜底
+      try {
+        const tmpPath = `${filePath}.compress.tmp`;
+        await fs.writeFile(tmpPath, newContent, 'utf-8');
+        // Windows: 用 copy + unlink 替代 rename
+        await fs.copyFile(tmpPath, filePath);
+        await fs.unlink(tmpPath).catch(() => {});
+      } catch (fallbackErr: any) {
+        console.warn('[memory] compression write failed:', fallbackErr?.message);
+        return; // 静默失败, 不影响主流程
+      }
+    }
 
     console.log(`[memory] 智能压缩: ${entries.length} → ${compressed.length} entries (高价值: ${highValue.length}, 摘要: ${archiveLowValue.length})`);
   } catch (e: any) {
     console.warn('[memory] compression failed:', e?.message);
+  } finally {
+    compressingFiles.delete(filePath);
   }
 }
 
@@ -278,17 +295,9 @@ export async function readMemory(opts: {
   }
   files.push(path.join(userDir, `${opts.userId}.jsonl`));
 
-  // 获取当前行业
-  let currentIndustry = opts.currentIndustry;
-  if (!currentIndustry) {
-    try {
-      const { industryEngine } = await import('./industry-engine.js');
-      currentIndustry = (industryEngine as any).activeIndustry || 'general';
-    } catch (e: any) {
-      console.warn('[memory:readMemory] industryEngine import failed, using default "general":', e?.message);
-      currentIndustry = 'general';
-    }
-  }
+  // ★ 修复: 不再从单例读取行业. 参数为空时默认 'general'
+  let currentIndustry = opts.currentIndustry || 'general';
+  // 注意: 调用方应通过 opts.currentIndustry 显式传入行业 ID
 
   const all: MemoryEntry[] = [];
   for (const file of files) {

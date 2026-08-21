@@ -75,6 +75,8 @@ export class AutomationEngine extends EventEmitter {
 
   constructor(workspace: string, registry?: any) {
     super();
+    // P1 修复: 增加最大监听器限制, 防止定时任务触发时内存泄漏警告
+    this.setMaxListeners(50);
     this.workspace = workspace;
     this._registry = registry;
   }

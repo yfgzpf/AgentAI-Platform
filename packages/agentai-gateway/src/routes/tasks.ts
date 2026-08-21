@@ -20,6 +20,7 @@ import {
   loadTaskSnapshot,
   markTaskStatus,
   cleanupOldTasks,
+  cleanupTasks,
   formatResumeContext,
   deleteDirReliable,
   TASKS_ROOT,
@@ -37,9 +38,10 @@ export function createTasksRouter(): Router {
     try {
       const userId = req.query.userId as string | undefined;
       const status = req.query.status as any;
+      const workspace = req.query.workspace as string | undefined;
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
 
-      let tasks = listAllTasks({ userId, status });
+      let tasks = listAllTasks({ userId, status, workspace });
 
       // 过滤掉 30 分钟前还没活动的 running 任务 (实际是 abandoned)
       // (listAllTasks 内部已自动转换, 这里只是 sanity check)
@@ -67,7 +69,8 @@ export function createTasksRouter(): Router {
   r.get('/resumable', (req: Request, res: Response) => {
     try {
       const userId = req.query.userId as string | undefined;
-      const tasks = findResumableTasks(userId);
+      const workspace = req.query.workspace as string | undefined;
+      const tasks = findResumableTasks(userId, workspace);
       // 同时附带恢复上下文 (注入 LLM)
       const enriched = tasks.map(t => {
         const snap = loadTaskSnapshot(t.taskId);
@@ -218,14 +221,22 @@ export function createTasksRouter(): Router {
 
   /**
    * POST /v1/tasks/cleanup
-   * 清理过期任务
-   * Body: { maxAgeDays?: number, default 30 }
+   * 清理过期任务 (智能: 超龄 + 无效 + 超量)
+   * Body: { maxAgeDays?: number, maxTaskCount?: number, removeTrivial?: boolean }
    */
   r.post('/cleanup', (req: Request, res: Response) => {
     try {
-      const maxAgeDays = req.body?.maxAgeDays ?? 30;
-      const removed = cleanupOldTasks(maxAgeDays);
-      res.json({ success: true, removed, maxAgeDays });
+      const maxAgeDays = req.body?.maxAgeDays ?? 7;
+      const maxTaskCount = req.body?.maxTaskCount ?? 50;
+      const removeTrivial = req.body?.removeTrivial ?? true;
+      const result = cleanupTasks({ maxAgeDays, maxTaskCount, removeTrivial });
+      res.json({
+        success: true,
+        removed: result.removed,
+        byReason: result.byReason,
+        maxAgeDays,
+        maxTaskCount,
+      });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
     }

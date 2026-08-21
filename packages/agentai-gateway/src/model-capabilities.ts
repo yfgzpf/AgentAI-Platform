@@ -86,10 +86,10 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
   // ─── DeepSeek ───
   {
     id: 'deepseek',
-    label: 'DeepSeek V4 Flash (128K)',
+    label: 'DeepSeek V4 Flash (1M)',
     provider: 'deepseek',
     subModel: 'deepseek-v4-flash',
-    contextWindow: 131_072,    // 128K
+    contextWindow: 1_048_576,  // 1M
     isFree: false,
     rateLimitRPM: 100,
     rateLimitTPM: 100_000,
@@ -97,27 +97,27 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
   },
   {
     id: 'deepseek-pro',
-    label: 'DeepSeek V4 Pro',
+    label: 'DeepSeek V4 Pro (1M)',
     provider: 'deepseek',
     subModel: 'deepseek-v4-pro',
-    contextWindow: 131_072,
+    contextWindow: 1_048_576,  // 1M
     isFree: false,
     rateLimitRPM: 50,
     rateLimitTPM: 50_000,
     costPer1K: 0.001,
   },
 
-  // ─── SuperAPI (DeepSeek 兼容) ───
+  // ─── ALRC 聚合平台 ───
   {
-    id: 'superapi',
-    label: 'SuperAPI · DeepSeek V4 Flash',
-    provider: 'superapi',
-    subModel: 'deepseek-v4-flash',
+    id: 'alrc',
+    label: 'ALRC · GPT-5.4 (128K)',
+    provider: 'alrc',
+    subModel: 'gpt-5.4',
     contextWindow: 131_072,
     isFree: false,
     rateLimitRPM: 60,
     rateLimitTPM: 60_000,
-    costPer1K: 0.0002,
+    costPer1K: 0.00016,
   },
 
   // ─── OpenAI ───

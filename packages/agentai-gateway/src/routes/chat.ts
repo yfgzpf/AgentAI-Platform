@@ -161,15 +161,15 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
     res.json({ ok: true, patterns: getTrustedPatterns() });
   });
 
-  // 行业激活 (支持动态切换)
-  let currentIndustryId = '';
-  const tryActivateIndustry = (reqBody: any) => {
+// 行业激活 (支持动态切换)
+let currentIndustryId = '';
+const tryActivateIndustry = async (reqBody: any) => {
     if (!industryEngine) return;
     const profile = reqBody?.profile;
     const newIndustry = profile?.industry || 'general';
     // 行业变化时重新激活
     if (newIndustry !== currentIndustryId) {
-      const config = industryEngine.activate(newIndustry);
+      const config = await industryEngine.activate(newIndustry);
       if (config) {
         // 注册行业技能到 ToolRegistry
         for (const skill of config.skills) {
@@ -208,6 +208,26 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
 
     console.log(`[chat] ➡️ POST /v1/chat | userId=${userId} stream=${stream} model=${requestModel || 'default'} msgLen=${(message || '').length}`);
 
+    // ═══ 智能核心: 多模型自动路由 ═══
+    // 当用户没有指定模型时, 根据消息内容自动选择最优模型
+    var effectiveModel: string | undefined = requestModel;
+    if (!effectiveModel || effectiveModel === 'default' || effectiveModel === 'auto') {
+      try {
+        const { autoRouteModel } = await import('../intelligent-core.js');
+        // 获取可用模型列表
+        const router = Router.getInstance();
+        const availableModels = Array.from(router.providers.keys()).filter(id => {
+          const p = router.providers.get(id);
+          return p && !p.tripped;
+        });
+        const routing = autoRouteModel(message || '', availableModels);
+        if (routing.modelId && routing.confidence > 0.5) {
+          effectiveModel = routing.modelId;
+          console.log(`[chat] 🧠 智能路由: ${routing.taskType} → ${routing.modelId} (${routing.reason}, 置信度 ${(routing.confidence * 100).toFixed(0)}%)`);
+        }
+      } catch { /* 智能路由失败不影响主流程 */ }
+    }
+
     // 速率限制检查 (内部调用使用更高限制)
     const isInternalReq = !!_internal;
     const rl = limiter.check(userId, isInternalReq);
@@ -239,7 +259,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       }
 
       // 行业激活 (从用户传入的 profile 读取)
-      tryActivateIndustry(req.body);
+      await tryActivateIndustry(req.body);
 
       // 更新用户身份 (从 profile 读取完整数据: 姓名/行业/用例/技能)
       if (userModel && profile) {
@@ -502,28 +522,50 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           'sensenova-glm-5.2': { provider: 'sensenova', subModel: 'glm-5.2', label: 'GLM-5.2 (SenseNova)' },
           // 美团 LongCat (免费额度)
           'longcat-2.0': { provider: 'longcat', subModel: 'LongCat-2.0', label: 'LongCat-2.0' },
-          // SuperAPI 模型工厂 (子模型独立展示, 统一使用 SUPERAPI_API_KEY)
-          'superapi-deepseek-v4-flash': { provider: 'superapi', subModel: 'deepseek-v4-flash', label: 'SuperAPI · DeepSeek V4 Flash' },
-          'superapi-deepseek-v4-pro':  { provider: 'superapi', subModel: 'deepseek-v4-pro',  label: 'SuperAPI · DeepSeek V4 Pro' },
-          'superapi-glm-5.2':          { provider: 'superapi', subModel: 'glm-5.2',           label: 'SuperAPI · GLM-5.2' },
-          'superapi-qwen3.7-plus':     { provider: 'superapi', subModel: 'qwen3.7-plus',      label: 'SuperAPI · Qwen3.7 Plus' },
-          'superapi-qwen3.7-max':      { provider: 'superapi', subModel: 'qwen3.7-max',       label: 'SuperAPI · Qwen3.7 Max' },
-          'superapi-qwen3.6-plus':     { provider: 'superapi', subModel: 'qwen3.6-plus',      label: 'SuperAPI · Qwen3.6 Plus' },
-          'superapi-kimi-k2.7-code':   { provider: 'superapi', subModel: 'kimi-k2.7-code',    label: 'SuperAPI · Kimi K2.7 Code' },
-          'superapi-grok-4.3':         { provider: 'superapi', subModel: 'grok-4.3',          label: 'SuperAPI · Grok 4.3' },
-          'superapi-doubao-seed-2.0-pro': { provider: 'superapi', subModel: 'doubao-seed-2.0-pro', label: 'SuperAPI · 豆包 Seed 2.0 Pro' },
-          'superapi-step-3.7-flash':   { provider: 'superapi', subModel: 'step-3.7-flash',    label: 'SuperAPI · Step 3.7 Flash' },
-          'superapi-mimo-v2.5-pro':    { provider: 'superapi', subModel: 'mimo-v2.5-pro',     label: 'SuperAPI · Mimo V2.5 Pro' },
-          'superapi-minimax-m3':       { provider: 'superapi', subModel: 'MiniMax-M3',         label: 'SuperAPI · MiniMax M3' },
+          // ALRC 聚合平台 (https://alro.huazhiweilai.com/v1) — 实际可用模型 (2026-08-15 同步)
+          // DeepSeek
+          'alrc-deepseek-v4-flash': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash' },
+          'alrc-deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-pro', label: 'ALRC · DeepSeek V4 Pro' },
+          // 智谱 GLM
+          'alrc-glm-4.7': { provider: 'alrc', subModel: 'glm-4.7', label: 'ALRC · GLM 4.7' },
+          'alrc-glm-5': { provider: 'alrc', subModel: 'glm-5', label: 'ALRC · GLM 5' },
+          'alrc-glm-5.1': { provider: 'alrc', subModel: 'glm-5.1', label: 'ALRC · GLM 5.1' },
+          'alrc-glm-5.2': { provider: 'alrc', subModel: 'glm-5.2', label: 'ALRC · GLM 5.2' },
+          // Kimi
+          'alrc-kimi-k2.5': { provider: 'alrc', subModel: 'kimi-k2.5', label: 'ALRC · Kimi K2.5' },
+          'alrc-kimi-k2.6': { provider: 'alrc', subModel: 'kimi-k2.6', label: 'ALRC · Kimi K2.6' },
+          'alrc-kimi-k2.7-code': { provider: 'alrc', subModel: 'kimi-k2.7-code', label: 'ALRC · Kimi K2.7 Code' },
+          'alrc-kimi-k3': { provider: 'alrc', subModel: 'kimi-k3', label: 'ALRC · Kimi K3' },
+          // MiniMax
+          'alrc-minimax-m2.5': { provider: 'alrc', subModel: 'MiniMax-M2.5', label: 'ALRC · MiniMax M2.5' },
+          'alrc-minimax-m2.7': { provider: 'alrc', subModel: 'MiniMax-M2.7', label: 'ALRC · MiniMax M2.7' },
+          'alrc-minimax-m3': { provider: 'alrc', subModel: 'MiniMax/MiniMax-M3', label: 'ALRC · MiniMax M3' },
+          // 其他
+          'alrc-hy3': { provider: 'alrc', subModel: 'hy3', label: 'ALRC · HY3' },
+          // 兼容旧格式: alrc:model-name
+          'alrc:deepseek-v4-flash': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash' },
+          'alrc:deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-pro', label: 'ALRC · DeepSeek V4 Pro' },
+          'alrc:glm-4.7': { provider: 'alrc', subModel: 'glm-4.7', label: 'ALRC · GLM 4.7' },
+          'alrc:glm-5': { provider: 'alrc', subModel: 'glm-5', label: 'ALRC · GLM 5' },
+          'alrc:glm-5.1': { provider: 'alrc', subModel: 'glm-5.1', label: 'ALRC · GLM 5.1' },
+          'alrc:glm-5.2': { provider: 'alrc', subModel: 'glm-5.2', label: 'ALRC · GLM 5.2' },
+          'alrc:kimi-k2.5': { provider: 'alrc', subModel: 'kimi-k2.5', label: 'ALRC · Kimi K2.5' },
+          'alrc:kimi-k2.6': { provider: 'alrc', subModel: 'kimi-k2.6', label: 'ALRC · Kimi K2.6' },
+          'alrc:kimi-k2.7-code': { provider: 'alrc', subModel: 'kimi-k2.7-code', label: 'ALRC · Kimi K2.7 Code' },
+          'alrc:kimi-k3': { provider: 'alrc', subModel: 'kimi-k3', label: 'ALRC · Kimi K3' },
+          'alrc:minimax-m2.5': { provider: 'alrc', subModel: 'MiniMax-M2.5', label: 'ALRC · MiniMax M2.5' },
+          'alrc:minimax-m2.7': { provider: 'alrc', subModel: 'MiniMax-M2.7', label: 'ALRC · MiniMax M2.7' },
+          'alrc:minimax-m3': { provider: 'alrc', subModel: 'MiniMax/MiniMax-M3', label: 'ALRC · MiniMax M3' },
+          'alrc:hy3': { provider: 'alrc', subModel: 'hy3', label: 'ALRC · HY3' },
           // NVIDIA NIM 模型已移除 (2026-07-25): 需自建 GPU Docker + 端点不稳定 + 中国大陆不可达
         };
 
         // 动态注册自定义模型 (前端通过 modelConfig 传递)
-        if (modelConfig && requestModel && !MODEL_MAP[requestModel]) {
-          MODEL_MAP[requestModel] = {
-            provider: modelConfig.provider || requestModel,
+        if (modelConfig && effectiveModel && !MODEL_MAP[effectiveModel]) {
+          MODEL_MAP[effectiveModel] = {
+            provider: modelConfig.provider || effectiveModel,
             subModel: modelConfig.modelName,
-            label: modelConfig.modelName || requestModel,
+            label: modelConfig.modelName || effectiveModel,
             baseURL: modelConfig.baseURL,
           };
         }
@@ -563,6 +605,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             deepseek: 'DEEPSEEK_API_KEY',
             openai: 'OPENAI_API_KEY',
             zhipu: 'ZHIPU_API_KEY',
+            alrc: 'ALRC_API_KEY',
+            factory: 'FACTORY_CHAT_KEY',
             superapi: 'SUPERAPI_API_KEY',
             sensenova: 'SENSENOVA_API_KEY',
             longcat: 'LONGCAT_API_KEY',
@@ -618,8 +662,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         let sessionId: string;
         const sessionData = sessionManager.getWithExtra?.(sessionKey) ?? sessionManager.get(sessionKey);
         if (!sessionData) {
-          const selected = selectAvailableModel(requestModel);
-          const userPickedModel = !!requestModel && requestModel in MODEL_MAP;
+          const selected = selectAvailableModel(effectiveModel);
+          const userPickedModel = !!effectiveModel && effectiveModel in MODEL_MAP;
           loop = new AgentAILoop(router, registry, [], {
             maxIterations: 30, userId, workspace, persistentMemory,
             model: selected.provider,
@@ -653,7 +697,27 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           }
         } else {
           loop = sessionData.loop;
-          sessionId = loop.getContext().sessionId;
+          // P0 修复: 每次新请求创建独立 PM 上下文
+          // 之前: sessionId 复用 → 持久消息累积所有历史对话 → "继续"时 AI 看到装修报价单等旧任务
+          // 现在: 每个新请求独立 PM, "继续"只注入上一条 PM 对话
+          if (persistentMemory) {
+            const prevPmSessionId = loop.getContext().sessionId;
+            const freshPmSessionId = `pm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            persistentMemory.createCheckpoint(freshPmSessionId, userId, workspace);
+            // 持久化当前用户消息到新 PM 上下文
+            persistentMemory.addMessage(freshPmSessionId, { role: 'user', content: message });
+            // 保存上一次的 PM sessionId, 供后续记忆注入使用 (只参考最近 1 次)
+            if (prevPmSessionId) {
+              try { (sessionData as any)._prevPmSessionId = prevPmSessionId; } catch {}
+            }
+            sessionId = freshPmSessionId;
+            // 更新 loop context 的 sessionId 以使用新的 PM 上下文
+            if (loop.getContext) {
+              loop.getContext().sessionId = freshPmSessionId;
+            }
+          } else {
+            sessionId = loop.getContext().sessionId;
+          }
           // 递增 callCount, 确保 "只在首轮注入历史" 的检查生效
           (sessionData as any).callCount = ((sessionData as any).callCount || 0) + 1;
           sessionManager.set(sessionKey, sessionData);
@@ -681,77 +745,60 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         // 立即发送 thinking 事件 (消除空白等待感)
         sendEvent('thinking', { msg: '正在思考...' });
 
-        // ====== 跨会话记忆注入: 仅在首轮加载 (避免重复注入) ======
-        // v3.1 (2026-07-15) 升级: 富上下文注入, 解决"AI不记得上轮做了什么"
-        //   - 注入 5 条 user + 5 条 assistant (而不是 3 条 150 字符)
-        //   - 包含工具调用摘要 (file_write / generate_image / web_search 等)
-        //   - 重复查询检测 (如果用户问类似问题, 提示 AI "你上次已经回答过")
+        // ====== 跨会话记忆注入: 智能分拣, 只参考上次对话 ======
+        // P1 修复: 检测上次对话时间, 超过 60 分钟视为全新对话 (不注入旧上下文)
+        // 原因: 旧 PM 可能包含几十天前的任务, 沿用会误导 AI
         if (persistentMemory && sessionId) {
           try {
             const sessionData_ = sessionManager.get(sessionKey);
-            const callCount = sessionData_?.callCount || 0;
-            if (callCount <= 1) {
-              const lastMsgs = persistentMemory.getMessages(sessionId);
-              if (lastMsgs?.length) {
-                // ── 1. 提取最近 5 轮对话 ──
-                const recent = lastMsgs.slice(-20); // 最近 20 条
-                const userTurns = recent.filter((m:any) => m.role === 'user');
-                const assistantTurns = recent.filter((m:any) => m.role === 'assistant');
-                const toolTurns = recent.filter((m:any) => m.role === 'tool');
-
-                // ── 2. 工具调用摘要 (从 tool 消息中提取工具名) ──
-                const toolSummary = toolTurns
-                  .map((m:any) => m.name || (typeof m.content === 'string' ? m.content.match(/^\[(\w+)\]/)?.[1] : '') || '')
-                  .filter(Boolean)
-                  .filter((n: string) => !n.startsWith('error'))
-                  .reduce((acc: string[], n: string) => {
-                    if (!acc.includes(n)) acc.push(n);
-                    return acc;
-                  }, [])
-                  .slice(0, 10);
-
-                // ── 3. 重复查询检测 ──
-                const normalize = (s: string) => s.toLowerCase().replace(/[^\w\u4e00-\u9fa5]/g, '').slice(0, 30);
-                const currentQ = normalize(message);
-                const isDuplicate = userTurns.some((um: any) => {
-                  const oldQ = normalize(typeof um.content === 'string' ? um.content : '');
-                  return oldQ && currentQ && (oldQ === currentQ || (oldQ.length >= 8 && currentQ.includes(oldQ.slice(0, 12))));
-                });
-
-                // ── 4. 构建富上下文 ──
-                const lastUserMsgs = userTurns.slice(-3).map((m: any, i: number) =>
-                  `${i + 1}. [用户] ${(typeof m.content === 'string' ? m.content : '[多媒体]').slice(0, 200)}`
-                ).join('\n');
-                const lastAssistantMsgs = assistantTurns.slice(-3).map((m: any, i: number) =>
-                  `${i + 1}. [AI] ${(typeof m.content === 'string' ? m.content : '').slice(0, 300)}...`
-                ).join('\n\n');
-
-                const isContinuation = /^(继续|接着|接着做|上次|之前|刚才|那个|go on|continue)/i.test(message.trim());
-
-                const ctxLines: string[] = [
-                  `## 📚 上一轮会话上下文 (${lastMsgs.length} 条历史, 这里是上次的真实操作, 不是新任务)`,
-                ];
-                if (lastUserMsgs) ctxLines.push(`\n**用户最近 3 次提问**:\n${lastUserMsgs}`);
-                if (lastAssistantMsgs) ctxLines.push(`\n**AI 最近 3 次回复** (开头 300 字符):\n${lastAssistantMsgs}`);
-                if (toolSummary.length > 0) {
-                  ctxLines.push(`\n**上轮使用过的工具**: ${toolSummary.join(', ')}`);
-                }
-                if (isDuplicate) {
-                  ctxLines.push(`\n⚠️ **检测到重复查询**: 用户刚才问过类似问题, 请检查你之前是否已经回答/生成了内容。如果是, 直接给结果而不是重新询问。`);
-                }
-                if (isContinuation) {
-                  ctxLines.push(`\n💡 用户说"继续", 表明是接续上轮任务, 请直接基于上文继续。`);
+            const prevPmSessionId = sessionData_?._prevPmSessionId;
+            const lookupSessionId = prevPmSessionId || sessionId;
+            const lastMsgs = persistentMemory.getMessages(lookupSessionId);
+            if (lastMsgs?.length) {
+                // P1 修复: 检查上次对话的时间戳, 超过 60 分钟则跳过注入
+                const lastMsg = lastMsgs[lastMsgs.length - 1];
+                const lastMsgTs = lastMsg?.timestamp || 0;
+                const ageMin = (Date.now() - lastMsgTs) / 60000;
+                if (ageMin > 60) {
+                  console.log(`[chat] 上次对话 ${ageMin.toFixed(0)} 分钟前, 跳过旧记忆注入 (session=${lookupSessionId})`);
+                  // 清空过期的 _prevPmSessionId, 避免继续沿用
+                  if (sessionData_) { try { (sessionData_ as any)._prevPmSessionId = undefined; } catch {} }
                 } else {
-                  ctxLines.push(`\n以上是历史参考, 用户当前的新消息见下方 user 消息。`);
+                  const isContinuation = /^(继续|接着|接着做|上次|之前|刚才|那个|go on|continue|恢复|resume)/i.test(message.trim());
+                  if (isContinuation) {
+                    // 用户明确要继续 — 注入完整上下文
+                    const recent = lastMsgs.slice(-20);
+                    const userTurns = recent.filter((m:any) => m.role === 'user');
+                    const assistantTurns = recent.filter((m:any) => m.role === 'assistant');
+                    const toolTurns = recent.filter((m:any) => m.role === 'tool');
+                    const toolSummary = toolTurns
+                      .map((m:any) => m.name || (typeof m.content === 'string' ? m.content.match(/^\[(\w+)\]/)?.[1] : '') || '')
+                      .filter(Boolean)
+                      .filter((n: string) => !n.startsWith('error'))
+                      .reduce((acc: string[], n: string) => { if (!acc.includes(n)) acc.push(n); return acc; }, [])
+                      .slice(0, 10);
+                    const lastUserMsgs = userTurns.slice(-3).map((m: any, i: number) =>
+                      `${i + 1}. [用户] ${(typeof m.content === 'string' ? m.content : '[多媒体]').slice(0, 200)}`
+                    ).join('\n');
+                    const lastAssistantMsgs = assistantTurns.slice(-3).map((m: any, i: number) =>
+                      `${i + 1}. [AI] ${(typeof m.content === 'string' ? m.content : '').slice(0, 300)}...`
+                    ).join('\n\n');
+                    const ctxLines: string[] = [`## 📚 上次会话上下文 (用户要求继续)`];
+                    if (lastUserMsgs) ctxLines.push(`\n**用户最近 3 次提问**:\n${lastUserMsgs}`);
+                    if (lastAssistantMsgs) ctxLines.push(`\n**AI 最近 3 次回复** (开头 300 字符):\n${lastAssistantMsgs}`);
+                    if (toolSummary.length > 0) ctxLines.push(`\n**上轮使用过的工具**: ${toolSummary.join(', ')}`);
+                    ctxLines.push(`\n💡 用户说"继续", 请直接基于上文继续, 不要重新探索。`);
+                    loopOpts.contextInject = (loopOpts.contextInject || '') + '\n\n' + ctxLines.join('\n');
+                  } else {
+                    // 普通对话 — 只注入 1 行简短摘要
+                    const lastUser = lastMsgs.filter((m:any) => m.role === 'user').pop();
+                    const lastUserText = typeof lastUser?.content === 'string' ? lastUser.content.slice(0, 80) : '';
+                    if (lastUserText) {
+                      loopOpts.contextInject = (loopOpts.contextInject || '') + 
+                        `\n[上次摘要] 用户上次问了: "${lastUserText}"。当前是新任务, 除非用户提到"继续", 否则不要回顾上次。`;
+                    }
+                  }
                 }
-
-                if (lastUserMsgs || lastAssistantMsgs) {
-                  loop.context?.appendOnlyLog?.push({
-                    role: 'system',
-                    content: ctxLines.join('\n'),
-                  });
-                }
-              }
             }
           } catch (e: any) { /* persistent memory init fallback */ }
         }
@@ -872,7 +919,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             if (att.kind === 'image' && att.dataUrl) {
               imageBlocks.push({ type: 'image_url', image_url: { url: att.dataUrl } });
             } else if (att.content) {
-              attachmentParts.push(`--- 附件: ${att.name} ---\n${att.content}\n--- 附件结束 ---`);
+              const pathInfo = att.filePath ? `\n[文件路径: ${att.filePath} — 你可以用 read_file 工具直接访问此文件]` : '';
+              attachmentParts.push(`--- 附件: ${att.name} ---\n${att.content}${pathInfo}\n--- 附件结束 ---`);
             }
           }
           // 图片统一注入 appendOnlyLog (让所有执行路径都能看到)
@@ -915,7 +963,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
             needMasterController = false; // 极简消息不绕编排器
         }
 
-        const effectiveModel = requestModel || 'agentai';
+        effectiveModel = effectiveModel || requestModel || 'agentai';
         const isFreeModel = ['agentai', 'zhipu', 'agnes-2.5-flash', 'agnes-2.0'].includes(effectiveModel);
 
         // 如果不需要 MasterController, 直接走 loop.run() (分支 3)
@@ -1110,8 +1158,17 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           // 注册loop到活跃追踪 (可被abort端点中断 + 新消息压制)
           let loopAborted = false;
           const abortHandler = () => { loopAborted = true; loop.abort(); };
-          activeLoops.set(sessionId || 'default', { loop, abort: abortHandler });
-          activeLoops.set(sessionKey, { loop, abort: abortHandler }); // 供新消息压制用
+activeLoops.set(sessionId || 'default', { loop, abort: abortHandler });
+activeLoops.set(sessionKey, { loop, abort: abortHandler }); // 供新消息压制用
+
+// P0 修复: SSE 断开时中止 loop — 用户切对话后后台任务立即停止
+// 否则 loop 会继续跑 → 调用工具 → HookCapture 找不到 session → 返回 undefined → AI 空回复 → 死循环
+req.on('close', () => {
+  if (!loopAborted) {
+    console.log(`[chat] SSE 客户端断开, 中止 loop: ${sessionKey}`);
+    abortHandler();
+  }
+});
 
           // 注入前端系统规则 (文件时间线/版本回退/浏览器元素识别等)
           if (systemRules && loop.context?.immutablePrefix) {
@@ -1250,18 +1307,26 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         // 美团 LongCat
         'longcat-2.0': { provider: 'longcat', subModel: 'LongCat-2.0', label: 'LongCat-2.0' },
         // SuperAPI 模型工厂
-        'superapi-deepseek-v4-flash': { provider: 'superapi', subModel: 'deepseek-v4-flash', label: 'SuperAPI · DeepSeek V4 Flash' },
-        'superapi-deepseek-v4-pro':  { provider: 'superapi', subModel: 'deepseek-v4-pro',  label: 'SuperAPI · DeepSeek V4 Pro' },
-        'superapi-glm-5.2':          { provider: 'superapi', subModel: 'glm-5.2',           label: 'SuperAPI · GLM-5.2' },
-        'superapi-qwen3.7-plus':     { provider: 'superapi', subModel: 'qwen3.7-plus',      label: 'SuperAPI · Qwen3.7 Plus' },
-        'superapi-qwen3.7-max':      { provider: 'superapi', subModel: 'qwen3.7-max',       label: 'SuperAPI · Qwen3.7 Max' },
-        'superapi-qwen3.6-plus':     { provider: 'superapi', subModel: 'qwen3.6-plus',      label: 'SuperAPI · Qwen3.6 Plus' },
-        'superapi-kimi-k2.7-code':   { provider: 'superapi', subModel: 'kimi-k2.7-code',    label: 'SuperAPI · Kimi K2.7 Code' },
-        'superapi-grok-4.3':         { provider: 'superapi', subModel: 'grok-4.3',          label: 'SuperAPI · Grok 4.3' },
-        'superapi-doubao-seed-2.0-pro': { provider: 'superapi', subModel: 'doubao-seed-2.0-pro', label: 'SuperAPI · 豆包 Seed 2.0 Pro' },
-        'superapi-step-3.7-flash':   { provider: 'superapi', subModel: 'step-3.7-flash',    label: 'SuperAPI · Step 3.7 Flash' },
-        'superapi-mimo-v2.5-pro':    { provider: 'superapi', subModel: 'mimo-v2.5-pro',     label: 'SuperAPI · Mimo V2.5 Pro' },
-        'superapi-minimax-m3':       { provider: 'superapi', subModel: 'MiniMax-M3',         label: 'SuperAPI · MiniMax M3' },
+        'alrc-gpt-5.4': { provider: 'alrc', subModel: 'gpt-5.4', label: 'ALRC · GPT-5.4' },
+        'alrc-gpt-5.4-mini': { provider: 'alrc', subModel: 'gpt-5.4-mini', label: 'ALRC · GPT-5.4 Mini' },
+        'alrc-gpt-5.5': { provider: 'alrc', subModel: 'gpt-5.5', label: 'ALRC · GPT-5.5' },
+        'alrc-gpt-5.5-compact': { provider: 'alrc', subModel: 'gpt-5.5-openai-compact', label: 'ALRC · GPT-5.5 Compact' },
+        'alrc-gpt-5.6-luna': { provider: 'alrc', subModel: 'gpt-5.6-luna', label: 'ALRC · GPT-5.6 Luna' },
+        'alrc-gpt-5.6-sol': { provider: 'alrc', subModel: 'gpt-5.6-sol', label: 'ALRC · GPT-5.6 Sol' },
+        'alrc-gpt-5.6-terra': { provider: 'alrc', subModel: 'gpt-5.6-terra', label: 'ALRC · GPT-5.6 Terra' },
+        'alrc-claude-fable-5': { provider: 'alrc', subModel: 'claude-fable-5', label: 'ALRC · Claude Fable 5' },
+        'alrc-claude-haiku-4-5': { provider: 'alrc', subModel: 'claude-haiku-4-5-20250101', label: 'ALRC · Claude Haiku 4.5' },
+        'alrc-claude-opus-4-6': { provider: 'alrc', subModel: 'claude-opus-4-6', label: 'ALRC · Claude Opus 4.6' },
+        'alrc-grok-4.5': { provider: 'alrc', subModel: 'grok-4.5', label: 'ALRC · Grok 4.5' },
+        'alrc-grok-composer-2.5': { provider: 'alrc', subModel: 'grok-composer-2.5-fast', label: 'ALRC · Grok Composer 2.5' },
+        'alrc-lingyan-3.5': { provider: 'alrc', subModel: 'lingyan-3.5', label: 'ALRC · 灵岩 3.5' },
+        'alrc-doubao-seed-2-0-pro': { provider: 'alrc', subModel: 'doubao-seed-2-0-pro-260215', label: 'ALRC · 豆包 Seed 2.0 Pro' },
+        // ALRC 生图模型
+        'alrc-nano-banana': { provider: 'alrc', subModel: 'nano-banana', label: 'ALRC · Nano Banana' },
+        'alrc-nano-banana-2': { provider: 'alrc', subModel: 'nano-banana-2', label: 'ALRC · Nano Banana 2' },
+        'alrc-nano-banana-pro': { provider: 'alrc', subModel: 'nano-banana-pro', label: 'ALRC · Nano Banana Pro' },
+        'alrc-gpt-image-2': { provider: 'alrc', subModel: 'gpt-image-2', label: 'ALRC · GPT Image 2' },
+        'alrc-gpt-image-2-vip': { provider: 'alrc', subModel: 'gpt-image-2-vip', label: 'ALRC · GPT Image 2 VIP' },
         // NVIDIA NIM 模型已移除 (2026-07-25)
       };
 
@@ -1277,7 +1342,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
         const userPicked = !!(mapped && mapped.provider);
         if (userPicked) {
           // SuperAPI: 从 modelConfig 获取子模型名
-          const superApiModelName = mapped.provider === 'superapi' && modelConfig?.modelName ? modelConfig.modelName : '';
+          const superApiModelName = mapped.provider === 'alrc' && modelConfig?.modelName ? modelConfig.modelName : '';
           loop = new AgentAILoop(router, registry, [], {
             maxIterations: 30, userId, workspace, mode,
             model: mapped.provider,
@@ -1324,9 +1389,19 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           persistentMemory.addMessage(sid, { role: 'user', content: message });
         }
       } else {
-        // Session 已存在，持久化用户消息（追加到旧 checkpoint）
+        // Session 已存在
+        // P0 修复: 同样创建独立 PM 上下文, 不追加到旧 checkpoint
         if (persistentMemory) {
-          persistentMemory.addMessage(sessionData.loop.getContext().sessionId, { role: 'user', content: message });
+          const prevPmSid = sessionData.loop.getContext().sessionId;
+          const freshPmSid = `pm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          persistentMemory.createCheckpoint(freshPmSid, userId, workspace);
+          persistentMemory.addMessage(freshPmSid, { role: 'user', content: message });
+          // 更新 loop context sessionId
+          if (sessionData.loop.getContext) {
+            sessionData.loop.getContext().sessionId = freshPmSid;
+          }
+          // 保存上一次 PM sessionId
+          try { (sessionData as any)._prevPmSessionId = prevPmSid; } catch {}
         }
         // 模型切换: 非流式路径也需要处理
         const userModelId2 = req.body?.model;
@@ -1353,7 +1428,8 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
           if (att.kind === 'image' && att.dataUrl) {
             imageBlocks.push({ type: 'image_url', image_url: { url: att.dataUrl } });
           } else if (att.content) {
-            attachmentParts.push(`--- 附件: ${att.name} ---\n${att.content}\n--- 附件结束 ---`);
+            const pathInfo = att.filePath ? `\n[文件路径: ${att.filePath} — 你可以用 read_file 工具直接访问此文件]` : '';
+            attachmentParts.push(`--- 附件: ${att.name} ---\n${att.content}${pathInfo}\n--- 附件结束 ---`);
           }
         }
         if (imageBlocks.length > 0) {
@@ -1754,6 +1830,72 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
       });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e?.message });
+    }
+  });
+
+  // ====== POST /v1/prompt/optimize — 提示词优化专家 (接入真实 LLM) ======
+  // 核心理念: 用户给中文就按中文复述, 只是把意图描述得更清楚、任务更完整、结构化更清晰
+  // 支持 chat / image / video 三种模式
+  r.post('/v1/prompt/optimize', async (req: Request, res: Response) => {
+    try {
+      const { text, type = 'chat', context } = req.body || {};
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: 'text 字段不能为空' });
+      }
+
+      // 统一指令: 保持原始语言, 补全意图, 结构化输出
+      const typeHint: Record<string, string> = {
+        chat: '这是一条对话指令。请补全用户没说但AI需要知道的信息, 分解模糊指令为明确步骤。',
+        image: '这是一条生图描述。请补充画面细节(主体/背景/光影/构图/风格), 但保持用户原始语言。',
+        video: '这是一条生视频描述。请补充运动/镜头/时间线/环境, 但保持用户原始语言。',
+      };
+
+      const instruction = `你是一个提示词优化专家。你的任务是帮用户把模糊的输入补全为清晰、完整、结构化的提示词。
+
+规则:
+1. 用户用什么语言, 你就用什么语言输出 (中文输入→中文输出, 英文输入→英文输出)
+2. 不要翻译, 只是在原始语言基础上补全和优化
+3. 补全用户没说但AI需要知道的上下文
+4. 把模糊指令分解为明确的、结构化的步骤
+5. 保留用户的原始意图, 不改变核心需求
+6. 如果包含多个任务, 用编号列表分解
+7. 让提示词更全面、更清晰, 让AI能更好地理解用户意图
+
+${typeHint[type] || typeHint.chat}
+
+请直接输出优化后的提示词, 不要加任何解释说明。`;
+
+      const contextHint = context ? `\n\n参考信息: ${context}` : '';
+      const userMessage = `${instruction}\n\n用户原始输入:\n"""\n${text}\n"""${contextHint}`;
+
+      // 直接调用 LLM 路由器
+      const chatResp = await router.chat({
+        model: 'agentai',
+        messages: [
+          { role: 'user', content: userMessage },
+        ],
+        temperature: 0.3,
+        maxTokens: 1000,
+      });
+
+      const enhanced = (chatResp.content || '').trim();
+
+      if (!enhanced) {
+        throw new Error('LLM 返回空内容');
+      }
+
+      res.json({
+        ok: true,
+        enhanced,
+        provider: chatResp.provider || 'agentai',
+      });
+    } catch (e: any) {
+      console.error('[prompt/optimize] Error:', e?.message || e);
+      res.json({
+        ok: false,
+        error: e?.message || '优化失败',
+        enhanced: req.body?.text || '',
+      });
     }
   });
 

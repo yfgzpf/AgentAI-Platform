@@ -270,12 +270,12 @@ export class SmartModelSwitcher {
       rateLimit: 100, // 每分钟100次
     });
 
-    // SuperAPI 模型工厂 (第一优先: 用户指定先用 SuperAPI)
-    this.commercialApiConfigs.set('superapi', {
-      provider: 'superapi',
-      apiKeyEnvKey: 'SUPERAPI_API_KEY',
-      endpoint: 'https://superapi.vanguard.dpdns.org/v1',
-      model: 'deepseek-v4-flash',
+    // ALRC 聚合平台 (替代 SuperAPI)
+    this.commercialApiConfigs.set('alrc', {
+      provider: 'alrc',
+      apiKeyEnvKey: 'ALRC_API_KEY',
+      endpoint: 'https://alro.huazhiweilai.com/v1',
+      model: 'gpt-5.4',
       costPerRequest: 0.001,
       rateLimit: 120,
     });
@@ -315,7 +315,7 @@ export class SmartModelSwitcher {
    * 选择商用provider
    * 优先级 2026-08-03 修复：
    *   - 异厂优先：Agnes 2.5 失败 → 禁止再切同厂 2.0（因为还是同一套 API，同厂失败率接近 100%）
-   *   - 正确顺序（用户反馈）：免费异厂智谱 → deepseek-flash → superapi → 其他商用
+   *   - 正确顺序（用户反馈）：免费异厂智谱 → deepseek-flash → alrc → 其他商用
    *   - 自动排除当前 provider 所属的**整个供应商组**
    */
   private _selectCommercialProvider(taskComplexity: 'simple' | 'medium' | 'complex', excludeProvider?: string): string {
@@ -335,9 +335,9 @@ export class SmartModelSwitcher {
       { id: 'sensenova', members: ['sensenova'],                     tier: 'free' },
       { id: 'longcat',   members: ['longcat'],                       tier: 'free' },
       { id: 'dxnt',      members: ['dxnt'],                          tier: 'free' },
-      // 商用池（用户指定: 智谱不行时切 deepseek-flash / superapi）
+      // 商用池（用户指定: 智谱不行时切 deepseek-flash / alrc）
       { id: 'deepseek',  members: ['deepseek'],                      tier: 'commercial' },
-      { id: 'superapi',  members: ['superapi'],                      tier: 'commercial' },
+      { id: 'alrc',      members: ['alrc'],                          tier: 'commercial' },
       { id: 'qwen',      members: ['qwen'],                          tier: 'commercial' },
       { id: 'moonshot',  members: ['moonshot'],                      tier: 'commercial' },
       { id: 'doubao',    members: ['doubao'],                        tier: 'commercial' },
@@ -360,8 +360,8 @@ export class SmartModelSwitcher {
       }
     }
 
-    // 第二优先：商用异厂 (顺序：deepseek-flash → superapi → 其他商用 → 最后 openai 成本最高)
-    const COMMERCIAL_ORDER = ['deepseek', 'superapi', 'qwen', 'moonshot', 'doubao', 'minimax', 'anthropic', 'openai'];
+    // 第二优先：商用异厂 (顺序：deepseek-flash → alrc → 其他商用 → 最后 openai 成本最高)
+    const COMMERCIAL_ORDER = ['deepseek', 'alrc', 'qwen', 'moonshot', 'doubao', 'minimax', 'anthropic', 'openai'];
     for (const gid of COMMERCIAL_ORDER) {
       const g = VENDOR_GROUPS.find(x => x.id === gid);
       if (!g || shouldSkipGroup(g)) continue;

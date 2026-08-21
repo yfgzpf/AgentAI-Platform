@@ -117,6 +117,18 @@ export const TOOL_GROUPS: Record<string, string[]> = {
         'construction_plan',
         'safety_check',
         'material_calc'
+    ],
+
+    // 行业操作组（医疗/中医）(2026-08-07)
+    medical_ops: [
+        'analyze_symptom',
+        'generate_health_report',
+        'query_drug_info',
+        'tcm_diagnose',           // 中医辨证
+        'tcm_classic_search',     // 古籍检索
+        'tcm_case_match',         // 医案匹配
+        'tcm_herb_query',         // 药材查询
+        'tcm_wellness_plan'       // 养生调理
     ]
 };
 
@@ -127,6 +139,7 @@ export const INDUSTRY_TOOL_MAP: Record<string, string[]> = {
     decoration: TOOL_GROUPS.decoration_ops ?? [],
     real_estate: TOOL_GROUPS.real_estate_ops ?? [],
     construction: TOOL_GROUPS.construction_ops ?? [],
+    medical: TOOL_GROUPS.medical_ops ?? [],  // ★ 医疗/中医 (2026-08-07)
     software: [...(TOOL_GROUPS.file_ops ?? []), ...(TOOL_GROUPS.git_ops ?? []), ...(TOOL_GROUPS.generate_ops ?? [])],
     general: [] // 通用不加载行业特定工具
 };

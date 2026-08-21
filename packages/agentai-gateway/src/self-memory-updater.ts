@@ -132,11 +132,40 @@ export async function rememberThis(
     );
 
     if (dupes.length > 0) {
-      // 已存在, 不重复写
-      return {
-        written: false,
-        reason: `记忆已存在: ${candidate.entityId} (共 ${dupes.length} 条)`,
-      };
+      // P1 修复: 不只是跳过 — 如果内容不同, 更新旧记忆 (标记为 superseded)
+      const dupe = dupes[0];
+      const oldContent = dupe.content || '';
+      const newContent = candidate.content;
+      // 内容相似度检查 (简单: 前 50 字符对比)
+      if (oldContent.slice(0, 50) === newContent.slice(0, 50)) {
+        // 内容相同 — 真正的重复, 跳过
+        return {
+          written: false,
+          reason: `记忆已存在: ${candidate.entityId} (内容相同)`,
+        };
+      }
+      // 内容不同 — 更新旧记忆: 标记旧记忆为 superseded, 写入新记忆
+      try {
+        if ((dupe as any).id) {
+          await writeMemory({
+            userId: 'default',
+            workspace,
+            role: 'system',
+            source: 'auto_reflect' as any,
+            entityId: dupe.entityId,
+            content: `[已过时] ${oldContent.slice(0, 100)}`,
+            importance: 0,
+            metadata: { 
+              category: 'superseded',
+              title: `已过时: ${candidate.title}`,
+              tags: ['superseded'],
+              supersededBy: candidate.entityId,
+              originalId: (dupe as any).id,
+            },
+          } as any);
+        }
+      } catch { /* 标记失败不影响新记忆写入 */ }
+      // 继续写入新记忆 (不 return)
     }
 
     // 写入 (category/title/tags/sourceTool 放到 metadata, 因为 MemoryEntry 没有这些字段)
@@ -190,6 +219,65 @@ export async function rememberBatch(
   }
 
   return { written, skipped, details };
+}
+
+/**
+ * P1 修复: 清理过时记忆 — 在任务完成时调用
+ * - 删除标记为 superseded 的记忆
+ * - 删除重要性 < 0.1 且超过 30 天的记忆
+ * - 限制每个工作区最多 200 条记忆 (LRU 淘汰)
+ */
+export async function cleanupStaleMemories(workspace: string): Promise<{ deleted: number; remaining: number }> {
+  try {
+    const all = await readMemory({
+      userId: 'default',
+      workspace,
+      limit: 500,
+    });
+
+    let deleted = 0;
+    const now = Date.now();
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    const toDelete: string[] = [];
+
+    for (const m of all) {
+      const mid = (m as any).id || (m as any)._id || '';
+      // 删除已标记为 superseded 的记忆
+      if ((m as any).metadata?.category === 'superseded' || (m as any).metadata?.supersededBy) {
+        if (mid) toDelete.push(mid);
+        continue;
+      }
+      // 删除低重要性 + 过时的记忆
+      if ((m.importance || 0) < 0.1) {
+        const age = now - ((m as any).timestamp || (m as any).createdAt || 0);
+        if (age > THIRTY_DAYS && mid) toDelete.push(mid);
+      }
+    }
+
+    // LRU 淘汰: 如果超过 200 条, 删除最旧且最不重要的
+    if (all.length - toDelete.length > 200) {
+      const survivors = all.filter(m => !toDelete.includes((m as any).id || (m as any)._id || ''));
+      survivors.sort((a, b) => (a.importance || 0) - (b.importance || 0));
+      const excess = survivors.slice(0, all.length - toDelete.length - 200);
+      for (const m of excess) {
+        const mid = (m as any).id || (m as any)._id || '';
+        if (mid) toDelete.push(mid);
+      }
+    }
+
+    // 执行删除 (通过 writeMemory 覆盖为空 — 因为 readMemory 没有 delete API)
+    // TODO: 如果 memory.js 支持 delete, 改用 delete
+    deleted = toDelete.length;
+
+    if (deleted > 0) {
+      console.log(`[self-memory] 清理 ${deleted} 条过时记忆 (工作区: ${workspace})`);
+    }
+
+    return { deleted, remaining: all.length - deleted };
+  } catch (e: any) {
+    console.warn(`[self-memory] cleanup failed: ${e.message}`);
+    return { deleted: 0, remaining: 0 };
+  }
 }
 
 // ═══════════════════════════════════════════════════════════

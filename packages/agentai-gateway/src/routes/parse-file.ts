@@ -275,12 +275,26 @@ r.post('/v1/parse-file', upload.single('file'), async (req: Request, res: Respon
         }
     }
 
+    // ═══ 保存上传文件到 .agentai/uploads/ 以便 LLM 后续用 read_file 等工具访问 ═══
+    let savedPath = '';
+    try {
+      const uploadsDir = path.join(process.cwd(), '.agentai', 'uploads');
+      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+      // 加时间戳防重名
+      const safeName = `${Date.now()}-${originalname.replace(/[^\w.\-]/g, '_')}`;
+      savedPath = path.join(uploadsDir, safeName);
+      fs.writeFileSync(savedPath, buffer);
+    } catch (e: any) {
+      console.warn('[parse-file] 保存上传文件失败:', e.message);
+    }
+
     return res.json({
       name: originalname,
       mimetype: mimetype || 'application/octet-stream',
       size,
       content: result.content,
       kind: result.kind,
+      savedPath,  // 磁盘上的保存路径, 供 LLM 工具访问
     });
   } catch (e: any) {
     console.error('[parse-file] Error:', e);

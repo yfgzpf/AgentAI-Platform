@@ -418,7 +418,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'glob', description: 'List files matching a glob pattern', parameters: { type: 'object', properties: { pattern: { type: 'string' }, path: { type: 'string' }, limit: { type: 'number', default: 200 } }, required: ['pattern'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'directory_tree', description: 'Recursively list directory as tree', parameters: { type: 'object', properties: { path: { type: 'string' }, maxDepth: { type: 'number', default: 2 } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'list_directory', description: 'List files and directories in a workspace path (non-recursive, flat list)', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Relative path within workspace (e.g. "src/")' } }, required: ['path'] }, parallelSafe: true, riskLevel: 'low' },
-  { name: 'read_file', description: 'Read file contents, optionally from a line offset with a limit', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Relative path within workspace (e.g. "src/index.ts")' }, offset: { type: 'number', description: 'Line offset (1-based)' }, limit: { type: 'number', description: 'Max lines to read' } }, required: ['file_path'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'read_file', description: 'Read file contents, optionally from a line offset with a limit. Set summary=true to get file structure (exports, functions, imports, complexity) instead of full content — use this first for large files to decide which parts to read.', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Relative path within workspace (e.g. "src/index.ts")' }, offset: { type: 'number', description: 'Line offset (1-based)' }, limit: { type: 'number', description: 'Max lines to read' }, summary: { type: 'boolean', description: 'If true, return file structure (exports/functions/imports) instead of full content. Use this first for large files.' } }, required: ['file_path'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'write_file', description: 'Write content to a file (overwrites existing)', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Relative path within workspace (e.g. "src/output.txt")' }, content: { type: 'string', description: 'Content to write' } }, required: ['file_path','content'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'delete_file', description: 'Delete a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'undo_edit', description: 'Undo the last AI edit on a file by restoring from backup (.agentai/backups/)', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'File to restore' } }, required: ['file_path'] }, parallelSafe: false, riskLevel: 'medium' },
@@ -459,6 +459,8 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'wait_for_image', description: '等待指定图片在屏幕上出现 (轮询模板匹配). 适用于: 等待图标/动画/状态变化.', parameters: { type: 'object', properties: { templatePath: { type: 'string' }, timeoutMs: { type: 'number', default: 10000 }, pollMs: { type: 'number', default: 2000 }, threshold: { type: 'number', default: 0.85 } }, required: ['templatePath'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'search_content', description: 'Search file contents matching a pattern (supports regex). Output includes line numbers.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Search pattern (text or regex)' }, path: { type: 'string' }, glob: { type: 'string', description: 'File glob filter (e.g. "*.ts")' }, type: { type: 'string', description: 'File type shortcut: ts/js/py/go/rs/java/css/html/json/md' }, context: { type: 'number', default: 2, description: 'Context lines before/after match' }, regex: { type: 'boolean', default: false, description: 'Treat pattern as regex' }, files_only: { type: 'boolean', default: false, description: 'Only return matching file paths' } }, required: ['pattern'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'run_background', description: 'Start a long-running background process', parameters: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' }, waitSec: { type: 'number', default: 3 } }, required: ['command'] }, parallelSafe: false, riskLevel: 'high' },
+  // P1 修复: run_command — 同步执行 shell 命令并返回结果 (自动化任务直接用)
+  { name: 'run_command', description: '执行 shell 命令并返回输出 (同步等待完成). 用于自动化任务/备份/测试等. 参数: command(命令), cwd(工作目录,可选), timeout_ms(超时,默认30秒)', parameters: { type: 'object', properties: { command: { type: 'string', description: 'shell 命令' }, cwd: { type: 'string', description: '工作目录 (默认 workspace)' }, timeout_ms: { type: 'number', default: 30000, description: '超时毫秒数 (最大 120000)' } }, required: ['command'] }, parallelSafe: false, riskLevel: 'high' },
   { name: 'job_output', description: 'Read output of a background job', parameters: { type: 'object', properties: { jobId: { type: 'number' }, tailLines: { type: 'number', default: 80 } }, required: ['jobId'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'wait_for_job', description: 'Wait for a background job to finish', parameters: { type: 'object', properties: { jobId: { type: 'number' }, timeoutMs: { type: 'number', default: 5000 } }, required: ['jobId'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'stop_job', description: 'Stop a background job', parameters: { type: 'object', properties: { jobId: { type: 'number' } }, required: ['jobId'] }, parallelSafe: false, riskLevel: 'high' },
@@ -473,7 +475,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'remember_this', description: '【AI 主动结构化记忆 / 长期知识沉淀】\n主动将关键发现/决策/教训/项目事实写入项目记忆, 跨会话复用。比 remember 更结构化, 支持分类、重要性、去重。\n\n⚠️ 关键区别:\n- remember = 简单键值记忆 (key-value)\n- remember_this = 结构化记忆 (5 类分类 + 重要性 1-5 + entityId 去重)\n- evolve_prompt = 永久行为规则\n\n🔑 5 类记忆分类:\n- bug_fix: Bug 修复 (症状→根因→方案)\n- decision: 关键决策 (选择+理由)\n- pattern: 代码/架构模式\n- user_preference: 用户偏好\n- project_fact: 项目事实\n\n💡 触发场景:\n- 修复一个 bug → remember_this(category:bug_fix)\n- 做出技术选型 → remember_this(category:decision)\n- 发现项目规律 → remember_this(category:pattern)\n- 用户表达偏好 → remember_this(category:user_preference)\n- 确认项目约束 → remember_this(category:project_fact)\n\n📝 示例:\n- remember_this({category:"bug_fix", title:"PowerShell不支持&&", content:"...", entityId:"bug:ps:&&", importance:4})\n- remember_this({category:"decision", title:"使用BM25而非向量检索", content:"...", entityId:"decision:bm25", importance:5})', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['bug_fix','decision','pattern','user_preference','project_fact'], description: '记忆分类' }, title: { type: 'string', description: '简短标题 (展示用)' }, content: { type: 'string', description: '核心内容 (详细描述)' }, entityId: { type: 'string', description: '实体ID (用于去重, 如 "bug:llm-router:comments")' }, importance: { type: 'number', minimum: 1, maximum: 5, description: '重要性 1-5 (5=必须记住, <3 不写入)' }, tags: { type: 'array', items: { type: 'string' }, description: '标签 (可选)' } }, required: ['category','title','content','entityId','importance'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'session_manage', description: '【AI 自主管理对话会话】\n查看、删除、归档对话历史。AI 可以自主管理会话生命周期，避免记忆过载或清理无关历史。\n\n🔑 触发场景:\n- 用户说"删除某天的对话"/"清理旧会话"/"忘记上次"\n- AI 判断某些会话已无关，需要清理\n- 会话过多导致性能下降\n\n🛠️ 5 种 action:\n- list = 列出所有会话 (返回 session_id, 创建时间, 最后活跃, 消息数)\n- delete = 删除指定 session (完全删除，不可恢复)\n- archive = 归档 session (从活跃列表移除，但保留数据)\n- summary = 获取指定 session 的摘要\n- cleanup_old = 清理 N 天前的所有会话\n\n💡 示例:\n- session_manage({action:"list"}) — 查看所有会话\n- session_manage({action:"delete", session_id:"xxx"}) — 删除某会话\n- session_manage({action:"cleanup_old", older_than_days:7}) — 清理 7 天前的会话', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['list','delete','archive','summary','cleanup_old'], description: '操作类型' }, session_id: { type: 'string', description: 'delete/archive/summary 时需要' }, older_than_days: { type: 'number', description: 'cleanup_old 时指定天数' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'high' },
-  { name: 'spawn_subagent', description: '创建子智能体执行独立任务。适用场景：(1)需要并行处理多个独立子任务 (2)需要深度探索代码库而不影响主对话 (3)需要独立搜索调研。子智能体有独立上下文，结果自动汇总回主对话。长任务建议先 plan_task 分解，再对独立子任务各 spawn 一个子智能体。', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['explore','research','review','security-review','battle','architect','frontend','backend','tester','tech-writer','performance'], description: 'explore=代码探索, research=搜索调研, review=代码审查, security-review=安全审查, battle=多Agent竞争, architect=架构师, frontend=前端工程师, backend=后端工程师, tester=测试工程师, tech-writer=技术写作, performance=性能专家' }, task: { type: 'string', description: '子智能体要完成的具体任务描述' }, numAgents: { type: 'number', description: 'Number of competing agents (battle mode only, default 3)' } }, required: ['type','task'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'spawn_subagent', description: '创建子智能体执行独立任务。适用场景：(1)需要并行处理多个独立子任务 (2)需要深度探索代码库而不影响主对话 (3)需要独立搜索调研 (4)医疗行业下可调用中医专业角色。子智能体有独立上下文，结果自动汇总回主对话。长任务建议先 plan_task 分解，再对独立子任务各 spawn 一个子智能体。\n\n📋 可用类型:\n- 通用: explore/research/review/security-review/battle/architect/frontend/backend/tester/tech-writer/performance/pentest/fix-verifier\n- 中医(仅medical行业): tcm_diagnostic(辨证专家)/tcm_classic(古籍检索)/tcm_case(医案匹配)/tcm_herb(药材查询)/tcm_wellness(养生调理)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['explore','research','review','security-review','battle','architect','frontend','backend','tester','tech-writer','performance','pentest','fix-verifier','tcm_diagnostic','tcm_classic','tcm_case','tcm_herb','tcm_wellness'], description: 'explore=代码探索, research=搜索调研, review=代码审查, security-review=安全审查, battle=多Agent竞争, architect=架构师, frontend=前端工程师, backend=后端工程师, tester=测试工程师, tech-writer=技术写作, performance=性能专家, pentest=渗透测试, fix-verifier=修复验证, tcm_diagnostic=中医辨证, tcm_classic=古籍检索, tcm_case=医案匹配, tcm_herb=药材查询, tcm_wellness=养生调理' }, task: { type: 'string', description: '子智能体要完成的具体任务描述' }, numAgents: { type: 'number', description: 'Number of competing agents (battle mode only, default 3)' } }, required: ['type','task'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'run_team', description: '【AI 团队协作】启动预设 AI 团队执行复杂任务。团队由多个角色 Agent 组成, 支持并行/串行/审查三种工作流, 结果自动综合。\n\n可用团队:\n- code-review: 代码审查团队 (架构师+安全专家+性能专家, 并行)\n- feature-dev: 功能开发团队 (架构师+前端+后端+测试, 串行)\n- docs: 文档团队 (技术写作+校对, 串行)\n- debug: 调试团队 (探索+审查+安全, 并行)\n- security-audit: 安全审计团队 (漏洞扫描+架构安全+代码探索, 并行)\n- refactor: 重构团队 (架构师+前端+后端+测试, 串行)\n\n适用场景: 需要多角色协作的复杂任务, 如全面代码审查、全栈功能开发、系统性重构等。\n不适用: 简单单步任务用 spawn_subagent, 独立调研用 spawn_subagent(research)。', parameters: { type: 'object', properties: { teamId: { type: 'string', enum: ['code-review','feature-dev','docs','debug','security-audit','refactor'], description: '团队 ID' }, task: { type: 'string', description: '团队要完成的任务描述' } }, required: ['teamId','task'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'share_port', description: '【公网分享本地端口】将本地端口通过 localtunnel 隧道暴露为公网 URL, 任何人访问该 URL 都会转发到你的 localhost。无需注册, 完全免费。\n\n🔑 触发场景 (用户提到以下关键词时主动使用):\n- "公网分享"/"分享给他人"/"远程访问"/"外网访问"\n- "把 localhost 分享出去"/"让别人打开"\n- "Webhook 测试"/"在线演示"/"远程预览"\n- "把我的开发服务器分享出去"\n\n🛠️ 4 种 action:\n- create: 创建隧道 (返回公网 URL, 必填: port)\n- list: 列出所有活跃隧道\n- close: 关闭指定隧道 (必填: tunnel_id)\n- close_all: 关闭所有隧道\n\n💡 典型用法:\n- share_port({action:"create", port:3000}) → 返回 https://xxx.loca.lt 公网URL\n- share_port({action:"list"}) → 查看所有隧道\n- share_port({action:"close", tunnel_id:"tun_xxx"}) → 关闭\n\n⚠️ 安全:\n- 仅 1024-65535 端口 (拒绝 22/3389 等系统端口)\n- 首次使用需安装 localtunnel 包 (npm_install)\n- 隧道 URL 仅返回给当前用户, 不会写入日志\n\n不适用: 内网穿透用 frp/ngrok, 这个仅用于临时分享。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['create','list','close','close_all'], description: 'create=创建隧道, list=列出隧道, close=关闭指定, close_all=关闭全部' }, port: { type: 'number', description: '本地端口号 (create 时必填, 1024-65535)' }, subdomain: { type: 'string', description: '可选: 指定子域名 (如 myapp → myapp.loca.lt)' }, tunnel_id: { type: 'string', description: 'close 时必填' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'spec_generate', description: '为模糊需求生成结构化 PRD。当用户请求模糊时（如"帮我做一个功能"），调用此工具生成包含用户故事、目标、边界、验收标准、测试标准的 PRD 文档。生成后展示给用户确认，确认后调用 plan_task 拆分子任务。', parameters: { type: 'object', properties: { request: { type: 'string', description: '用户原始需求描述' } }, required: ['request'] }, parallelSafe: true, riskLevel: 'low' },
@@ -511,6 +513,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'browser_scan', description: '扫描当前浏览器页面的可交互元素. 返回元素列表(tag/selector/text/位置/交互分数). 用于导航或点击后重新获取页面结构, 无需重新导航.', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
   { name: 'browser_snapshot', description: '一次性获取当前页面的截图+元素列表+URL. 比分别调用 browser_screenshot + browser_scan 更高效. 返回 base64 截图和元素列表, AI 可"看到"页面并据此操作.', parameters: { type: 'object', properties: { full_page: { type: 'boolean', default: false, description: '是否截取完整页面 (包括滚动区域)' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'browser_click_by_index', description: '按 DOM 脱水索引点击元素. 比 CSS selector 更可靠: 索引是实时分配的, 不受 DOM 变化影响. 需先用 browser_extract type=dehydration 获取页面索引, 然后用索引号操作. 例: 脱水返回 [3]<button>提交</>, 调用 browser_click_by_index({index:3}).', parameters: { type: 'object', properties: { index: { type: 'number', description: '脱水返回的元素索引号' } }, required: ['index'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'browser_close', description: '关闭内嵌浏览器. 当浏览器任务已完成 (如已获取所需信息、已提交表单、已截图) 时调用此工具自动关闭浏览器, 无需用户手动关闭. 也可在 AI 判断不再需要浏览器时调用.', parameters: { type: 'object', properties: { reason: { type: 'string', description: '关闭原因 (如 "任务已完成", "不再需要浏览器")' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'browser_type_by_index', description: '按 DOM 脱水索引在元素中输入文本. 需先用 browser_extract type=dehydration 获取页面索引后用索引号输入. 例: 脱水返回 [5]<input placeholder="搜索">', parameters: { type: 'object', properties: { index: { type: 'number', description: '脱水返回的元素索引号' }, text: { type: 'string', description: '要输入的文本' }, press_enter: { type: 'boolean', default: false, description: '输入后是否按Enter' } }, required: ['index','text'] }, parallelSafe: false, riskLevel: 'medium' },
   // ====== RPA 操作录制与回放 ======
   { name: 'browser_record', description: '录制浏览器操作序列. 用户在浏览器中手动操作, 系统自动捕获并转为可回放的步骤脚本. action=start 开始录制, action=stop 停止并保存, action=status 查看录制状态, action=cancel 取消录制, action=list 列出已保存脚本, action=delete 删除脚本, action=get 查看脚本详情.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['start','stop','status','cancel','list','delete','get'], default: 'status', description: '录制控制动作' }, name: { type: 'string', description: '脚本名称 (start 时)' }, start_url: { type: 'string', description: '录制起始URL (start 时)' }, description: { type: 'string', description: '脚本描述 (stop 时可选)' }, script_id: { type: 'string', description: '脚本ID (delete/get 时)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
@@ -643,6 +646,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
 { name: 'write_file_remote', description: '写入文件到远程服务器。当连接到远程环境时，使用此工具修改远程文件。', parameters: { type: 'object', properties: { file_path: { type: 'string', description: '远程文件路径（绝对路径或相对于远程工作目录）' }, content: { type: 'string', description: '要写入的文件内容' } }, required: ['file_path', 'content'] }, parallelSafe: false, riskLevel: 'high' },
 { name: 'list_directory_remote', description: '列出远程服务器上的目录内容。当连接到远程环境时，使用此工具浏览远程文件系统。', parameters: { type: 'object', properties: { path: { type: 'string', description: '远程目录路径（绝对路径或相对于远程工作目录）' } }, required: ['path'] }, parallelSafe: true, riskLevel: 'medium' },
 { name: 'run_shell_command_remote', description: '在远程环境执行 shell 命令。当连接到远程环境时，使用此工具在远程执行命令。', parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' }, cwd: { type: 'string', description: '工作目录（可选，默认远程工作目录）' }, timeout: { type: 'number', description: '超时时间（秒，默认60）' } }, required: ['command'] }, parallelSafe: false, riskLevel: 'high' },
+{ name: 'run_shell_command', description: '在本地执行 shell 命令并返回输出。用于: 安装依赖、运行脚本、执行系统命令、检查环境。注意: 危险命令会被沙箱拦截。', parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' }, cwd: { type: 'string', description: '工作目录（可选，默认当前工作目录）' }, timeout: { type: 'number', description: '超时时间（秒，默认30）' } }, required: ['command'] }, parallelSafe: false, riskLevel: 'high' },
 { name: 'search_content_remote', description: '在远程服务器上搜索文件内容。使用 grep 命令在远程搜索。', parameters: { type: 'object', properties: { pattern: { type: 'string', description: '搜索模式（正则表达式）' }, path: { type: 'string', description: '搜索路径' }, file_pattern: { type: 'string', description: '文件匹配模式（如 *.ts，可选）' } }, required: ['pattern', 'path'] }, parallelSafe: true, riskLevel: 'medium' },
 { name: 'get_remote_environment_info', description: '获取当前远程环境的详细信息，包括系统信息、磁盘空间等。', parameters: { type: 'object', properties: {} }, required: [], parallelSafe: true, riskLevel: 'low' },
 
@@ -1725,6 +1729,28 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
         }
       }
       let content = fs.readFileSync(resolved, 'utf-8');
+      // 智能核心: summary=true 时只返回文件结构 (函数签名/导出/依赖), 不返回全文
+      if (args.summary === true || args.structure === true) {
+        try {
+          const { analyzeFileStructure } = await import('./intelligent-core.js');
+          const struct = analyzeFileStructure(resolved);
+          const lines: string[] = [
+            `[文件结构] ${fp} (${struct.lines}行, 复杂度${struct.complexity})`,
+            ``,
+            `导出: ${struct.exports.length > 0 ? struct.exports.join(', ') : '(无)'}`,
+            `依赖 (${struct.imports.length}):`,
+            ...struct.imports.slice(0, 20).map(i => `  ← ${i.from} (${i.names.join(', ')})`),
+            ``,
+            `函数 (${struct.functions.length}):`,
+            ...struct.functions.slice(0, 30).map(f => `  ${f.isExported ? '📤 ' : '   '}${f.isAsync ? 'async ' : ''}${f.name}(${f.params}) :${f.line}`),
+            ``,
+            `类 (${struct.classes.length}):`,
+            ...struct.classes.slice(0, 10).map(c => `  📦 ${c.name} :${c.line} [${c.methods.slice(0, 5).join(', ')}]`),
+          ];
+          if (struct.functions.length > 30) lines.push(`... (还有 ${struct.functions.length - 30} 个函数)`);
+          return { success: true, output: lines.join('\n'), data: { structure: struct } };
+        } catch { /* 降级到正常读取 */ }
+      }
       if (offset) {
         const lines = content.split('\n');
         const start = offset - 1;
@@ -1822,6 +1848,32 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
         msg += `\n\n🌐 HTML 文件已生成，可在浏览器中打开预览:\n📄 file://${resolved}`;
       }
       
+      // ═══ 智能核心: 代码风格分析 + 变更影响分析 + Lint检查 + 最小改动 ═══
+      try {
+        const { buildStyleGuide, buildImpactAnalysis, buildLintCheckDirective, checkMinimalChange } = await import('./intelligent-core.js');
+        // 代码风格
+        if (oldContent !== null) {
+          const styleGuide = buildStyleGuide(resolved);
+          msg += `\n${styleGuide}`;
+        }
+        // 变更影响分析
+        const ws = wm().projectDir;
+        const impact = buildImpactAnalysis(resolved, ws);
+        if (impact) {
+          msg += `\n${impact}`;
+        }
+        // Lint 驱动修复指令
+        const lintDirective = buildLintCheckDirective(resolved);
+        msg += `\n${lintDirective}`;
+        // 最小改动检查 (如果是修改而非新建)
+        if (oldContent !== null) {
+          const changeCheck = checkMinimalChange(oldContent, args.content);
+          if (!changeCheck.isMinimal) {
+            msg += `\n⚠️ ${changeCheck.suggestion}`;
+          }
+        }
+      } catch { /* 智能核心加载失败不影响 */ }
+      
       return { success: true, output: msg, data: { oldContent: oldContentForDiff, newContent: args.content } };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
@@ -1891,6 +1943,18 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       child.on('exit', () => { const j = bgJobs.get(id); if (j) { j.running = false; j.output = output; } });
       return { success: true, output: `Job ${id} started, pid ${child.pid}`, data: { jobId: id } };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+  // P1 修复: run_command — 同步执行, 等待完成后返回输出 (供自动化任务使用)
+  run_command: async (args, ctx?) => {
+    try {
+      const { execSync } = await import('child_process');
+      const cwd = args.cwd || ctx?.workspace || process.cwd();
+      const timeout = Math.min(args.timeout_ms || 30000, 120_000);
+      const output = execSync(args.command, { cwd, timeout, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+      return { success: true, output: (output || '').slice(0, 5000) || '(ok, no output)' };
+    } catch (e: any) {
+      return { success: false, output: `Error: ${e.message || e}` };
+    }
   },
   job_output: async (args) => { const j = bgJobs.get(args.jobId); return { success: !!j, output: j ? (j.output || '').slice(-(args.tailLines || 80) * 80) : 'Not found' }; },
   wait_for_job: async (args) => { const j = bgJobs.get(args.jobId); if (!j) return { success: false, output: 'Not found' }; const start = Date.now(); while (j.running && Date.now() - start < (args.timeoutMs || 5000)) await new Promise(r => setTimeout(r, 200)); return { success: !j.running, output: j.output || '' }; },
@@ -1971,17 +2035,106 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
           priority: t.priority || 'medium',
           status: 'pending' as string,
           summary: '' as string,
+          dependencies: t.dependencies || [],
         })),
         created_at: Date.now(),
       };
+
+      // ═══ 智能核心: 依赖分析 + 拓扑排序 + 并行分组 ═══
+      let topoOrder: string[] = [];
+      let parallelGroups: string[][] = [];
+      let criticalPath: string[] = [];
+      let risks: string[] = [];
+      try {
+        const { analyzeComplexity } = await import('./intelligent-core.js');
+        // 构建子任务列表用于分析
+        const analysisInput = subtasks.map((t: any) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description || t.title,
+          dependencies: t.dependencies || [],
+          difficulty: t.difficulty || 'medium',
+          estimatedSteps: t.estimatedSteps || 3,
+          requiredTools: t.requiredTools || [],
+          parallelizable: t.parallelizable !== false,
+        }));
+        // 简单的拓扑排序
+        const sorted: string[] = [];
+        const visited = new Set<string>();
+        const visit = (id: string) => {
+          if (visited.has(id)) return;
+          visited.add(id);
+          const task = analysisInput.find(s => s.id === id);
+          if (task) for (const dep of task.dependencies) visit(dep);
+          sorted.push(id);
+        };
+        analysisInput.forEach(s => visit(s.id));
+        topoOrder = sorted;
+
+        // 并行分组
+        const completed = new Set<string>();
+        while (completed.size < analysisInput.length) {
+          const ready = analysisInput
+            .filter(s => !completed.has(s.id))
+            .filter(s => s.dependencies.every(d => completed.has(d)))
+            .map(s => s.id);
+          if (ready.length === 0) break;
+          parallelGroups.push(ready);
+          ready.forEach(id => completed.add(id));
+        }
+
+        // 关键路径 (最长依赖链)
+        const memo = new Map<string, { len: number; path: string[] }>();
+        const longest = (id: string): { len: number; path: string[] } => {
+          if (memo.has(id)) return memo.get(id)!;
+          const task = analysisInput.find(s => s.id === id);
+          if (!task || task.dependencies.length === 0) {
+            const r = { len: 1, path: [id] };
+            memo.set(id, r);
+            return r;
+          }
+          let best = { len: 0, path: [] as string[] };
+          for (const dep of task.dependencies) {
+            const c = longest(dep);
+            if (c.len > best.len) best = c;
+          }
+          const r = { len: best.len + 1, path: [...best.path, id] };
+          memo.set(id, r);
+          return r;
+        };
+        analysisInput.forEach(s => {
+          const c = longest(s.id);
+          if (c.len > criticalPath.length) criticalPath = c.path;
+        });
+
+        // 风险检测
+        if (parallelGroups.length === 0 && analysisInput.length > 1) {
+          risks.push('检测到循环依赖, 任务无法排序');
+        }
+        const noDeps = analysisInput.filter(s => s.dependencies.length === 0);
+        if (noDeps.length > 3) risks.push(`${noDeps.length} 个任务无依赖关系, 可考虑并行执行`);
+        if (criticalPath.length > 5) risks.push(`关键路径过长 (${criticalPath.length} 步), 考虑拆分`);
+
+      } catch { /* 智能核心加载失败不影响 */ }
+
       _active_plan = plan;
-      const list = plan.subtasks.map((t: any, i: number) =>
-        `${i + 1}. [${t.priority}] ${t.title}`
-      ).join('\n');
+      const list = plan.subtasks.map((t: any, i: number) => {
+        const deps = t.dependencies.length > 0 ? ` [依赖: ${t.dependencies.join(',')}]` : '';
+        return `${i + 1}. [${t.priority}] ${t.title}${deps}`;
+      }).join('\n');
+
+      const analysisBlock = topoOrder.length > 0 ? `
+📊 **依赖分析** (智能核心):
+  拓扑序: ${topoOrder.join(' → ')}
+  ${parallelGroups.length > 0 ? `并行组: ${parallelGroups.map((g, i) => `第${i+1}波[${g.join(',')}]`).join(' → ')}` : ''}
+  关键路径: ${criticalPath.join(' → ')} (${criticalPath.length} 步)
+  ${risks.length > 0 ? `⚠️ 风险: ${risks.join('; ')}` : ''}
+` : '';
+
       return {
         success: true,
-        output: `📋 计划已创建: ${goal}\n${list}\n\n请开始执行第 1 个子任务。完成后用 update_plan 更新状态。`,
-        data: { action: 'plan_created', plan },
+        output: `📋 计划已创建: ${goal}\n${list}${analysisBlock}\n请按拓扑序执行, 可并行的任务同时执行。完成后用 update_plan 更新状态。`,
+        data: { action: 'plan_created', plan, topoOrder, parallelGroups, criticalPath, risks },
       };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
@@ -2516,10 +2669,23 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
   search_codebase: async (args: any, ctx?: any) => {
     try {
       const { searchCodebase, formatSearchResults } = await import('./code-intel/search.js');
+      const { semanticSearch } = await import('./intelligent-core.js');
       const workspace = wm().projectDir;
       const hits = searchCodebase(args.question, workspace);
+      // 语义搜索: 对结果用语义同义词扩展重新排序
+      const allFiles = hits.map(h => h.file);
+      const semanticRanked = semanticSearch(args.question, allFiles);
+      // 如果语义搜索找到了更好的结果, 把它们排到前面
+      if (semanticRanked.length > 0) {
+        const rankedSet = new Set(semanticRanked);
+        hits.sort((a, b) => {
+          const aRanked = rankedSet.has(a.file) ? semanticRanked.indexOf(a.file) : 999;
+          const bRanked = rankedSet.has(b.file) ? semanticRanked.indexOf(b.file) : 999;
+          return aRanked - bRanked;
+        });
+      }
       const formatted = formatSearchResults(hits);
-      return { success: true, output: formatted, data: { hits: hits.length, results: hits.map(h => h.file) } };
+      return { success: true, output: formatted, data: { hits: hits.length, results: hits.map(h => h.file), semanticEnhanced: semanticRanked.length > 0 } };
     } catch (e: any) { return { success: false, output: `search_codebase error: ${e.message}` }; }
   },
   auto_project_doc: async (args: any, ctx?: any) => {
@@ -2839,6 +3005,19 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
         return { success: false, output: `无法访问 ${url}, 且前端浏览器未连接。请先打开浏览器标签页。`, _show_browser: false };
       }
     } catch (e: any) { return { success: false, output: `browser_navigate error: ${e.message}`, _show_browser: false }; }
+  },
+
+  browser_close: async (args: any, ctx?: any) => {
+    try {
+      const reason = args?.reason || '任务已完成';
+      // 通知前端关闭浏览器
+      const { getBrowserBridge } = await import('./browser-bridge.js');
+      const bridge = getBrowserBridge();
+      if (bridge.isConnected()) {
+        bridge.broadcast({ type: 'browser_close', reason });
+      }
+      return { success: true, output: `✅ 浏览器已关闭 (${reason})`, _show_browser: false, _browser_action: 'close' };
+    } catch (e: any) { return { success: false, output: `browser_close error: ${e.message}`, _show_browser: false }; }
   },
 
   browser_click: async (args: any, ctx?: any) => {
@@ -6357,6 +6536,34 @@ return { success: true, output: `已记住: ${key} = ${value}` };
       output.push(`\n⏱️ 耗时: ${result.durationMs}ms | 退出码: ${result.exitCode}`);
       return { success: result.success && result.exitCode === 0, output: output.join('') };
     } catch (e: any) { return { success: false, output: `run_shell_command_remote error: ${e.message}` }; }
+  },
+
+  run_shell_command: async (args: any) => {
+    try {
+      const { execSync } = await import('child_process');
+      const timeout = (args.timeout || 30) * 1000;
+      const cwd = args.cwd || process.cwd();
+      const result = execSync(args.command, {
+        cwd,
+        timeout,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        maxBuffer: 1024 * 1024 * 5, // 5MB
+      });
+      return {
+        success: true,
+        output: `$ ${args.command}\n${result || '(无输出)'}`,
+      };
+    } catch (e: any) {
+      // execSync 在非零退出码时抛出, stdout/stderr 在 e 对象上
+      const stdout = e.stdout ? `\n📤 STDOUT:\n${e.stdout}` : '';
+      const stderr = e.stderr ? `\n📥 STDERR:\n${e.stderr}` : '';
+      const exitCode = e.status !== undefined ? `\n退出码: ${e.status}` : '';
+      return {
+        success: false,
+        output: `$ ${args.command}\n${stdout}${stderr}${exitCode}\n错误: ${e.message}`,
+      };
+    }
   },
 
   search_content_remote: async (args: any) => {

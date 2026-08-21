@@ -15,7 +15,7 @@ beforeAll(() => {
   process.env.AGENTAI_API_KEY = 'test-agentai-key';
   process.env.DEEPSEEK_API_KEY = 'test-deepseek-key';
   process.env.ZHIPU_API_KEY = 'test-zhipu-key';
-  process.env.SUPERAPI_API_KEY = 'test-superapi-key';
+  process.env.ALRC_API_KEY = 'test-alrc-key';
   process.env.OPENAI_API_KEY = 'test-openai-key';
 });
 
@@ -71,10 +71,10 @@ describe('model-selector', () => {
       expect(result.requested).toBe('agentai');
     });
 
-    it('应支持 SuperAPI 模型', () => {
-      const result = modelSelector.selectAvailableModel('superapi-deepseek-v4-flash');
-      expect(result.provider).toBe('superapi');
-      expect(result.subModel).toBe('deepseek-v4-flash');
+    it('应支持 ALRC 模型', () => {
+      const result = modelSelector.selectAvailableModel('alrc-gpt-5.4');
+      expect(result.provider).toBe('alrc');
+      expect(result.subModel).toBe('gpt-5.4');
     });
   });
 

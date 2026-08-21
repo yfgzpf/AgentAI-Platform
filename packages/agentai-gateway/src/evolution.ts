@@ -340,9 +340,15 @@ export function recallEvolution(criteria: {
       return false;
     }
     
-    // 6. 工作空间匹配
-    if (criteria.workspace && e.workspace && e.workspace !== criteria.workspace) {
-      return false;
+    // 6. 工作空间匹配 (严格隔离)
+    // 如果查询指定了 workspace，只返回：
+    // - 同一 workspace 的 entry
+    // - 明确标记为全局共享的 entry (workspace === '*')
+    // - 没有 workspace 字段的 legacy entry (兼容旧数据)
+    if (criteria.workspace) {
+      if (e.workspace && e.workspace !== criteria.workspace && e.workspace !== '*') {
+        return false;
+      }
     }
     
     return true;

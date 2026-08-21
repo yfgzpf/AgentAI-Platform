@@ -43,16 +43,20 @@ import { createBrowserEngineRouter, registerBrowserStreamSocket } from './routes
 import { parseFileRouter } from './routes/parse-file.js';
 import { createCleanerRouter } from './routes/cleaner.js';
 import { createKnowledgeRouter } from './routes/knowledge.js';
+import { createMaterialsRouter } from './routes/materials.js';
 import { createGoalRouter } from './routes/goal.js';
 import { createTaskSchedulerRouter } from './routes/task-scheduler.js';
 import { createImageRouter } from './routes/image.js';
 import { createVideoRouter } from './routes/video.js';
+import { createSubscriptionRouter } from './routes/subscription.js';
+import { createAuthRouter } from './routes/auth.js';
 import { register3DRoutes } from './routes/3d-generate.js';
 import { commercialModelsRouter } from './routes/commercial-models.js';
 import { musicProxyRouter } from './routes/music-proxy.js';
 import suggestionsRouter from './routes/suggestions.js';
 import { createXuanjiRouter } from './routes/xuanji.js';
 import { createTasksRouter } from './routes/tasks.js';
+import { startTaskCleanupLoop } from './task-snapshot.js';
 import { createSkillsRouter } from './routes/skills.js';
 import { startSkillWatcher } from './skills/watcher.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
@@ -161,6 +165,8 @@ app.use(cors({
   });
   app.use(createImageRouter());
   app.use(createVideoRouter());
+  app.use('/v1/subscription', createSubscriptionRouter());
+  app.use('/v1/auth', createAuthRouter());
   register3DRoutes(app);
   if (deps.router) {
     app.use(createAdminRouter({ ...deps }));
@@ -618,6 +624,7 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
   app.use('/v1/models', createModelsRouter(deps.router));
   app.use(createAutomationRouter(process.cwd(), deps.registry));  // 自动化引擎 API (注入 registry 让 cron 能找到工具)
   app.use('/v1/knowledge', createKnowledgeRouter());
+  app.use('/v1/materials', createMaterialsRouter());
   app.use(musicProxyRouter);
   app.use('/v1/suggestions', suggestionsRouter);
   app.use(createXuanjiRouter());  // PulseFlow Xuanji 核心认知框架
@@ -768,7 +775,11 @@ export interface ServerHandle {
 }
 
 export function createServerHandle(app: express.Express): ServerHandle {
-  const httpServer = createServer(app);
+const httpServer = createServer(app);
+// P1 修复: SO_REUSEADDR — Windows TIME_WAIT 状态下也能 bind, 避免端口占用启动失败
+try { httpServer.on('listening', () => { (httpServer as any)._handle?.setsockopt?.('SO_REUSEADDR', 1); }); } catch {}
+// Node.js >= 16: 直接在 listen 前设置 reuseAddr
+try { (httpServer as any).reuseAddr = true; } catch {}
   const io = new IOServer(httpServer, {
     cors: {
       origin: CORS_ORIGINS.length === 1 && CORS_ORIGINS[0] === '*' ? '*' : CORS_ORIGINS,
@@ -837,6 +848,7 @@ export function startBackgroundJobs(skillsDir: string, io?: IOServer) {
   }
 
   startEvolutionCleanupLoop();
+  startTaskCleanupLoop();
   getSessionManager();
 
   // P0-2: 真定时反思 + 自进化触发器

@@ -108,6 +108,14 @@ export function scanProjectSkills(): SkillMeta[] {
 }
 
 /**
+ * 扫描项目本地技能 (.agentai/skills)
+ * 项目级 .agentai/skills/ 目录, 优先级高于用户目录
+ */
+export function scanProjectLocalSkills(): SkillMeta[] {
+  return scanDir(path.join(process.cwd(), '.agentai', 'skills'), 'project');
+}
+
+/**
  * 扫描用户自定义技能 (~/.agentai/skills)
  */
 export function scanUserSkills(): SkillMeta[] {

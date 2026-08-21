@@ -351,6 +351,22 @@ export class PersistentMemory {
     this.flushDirty();
   }
 
+  // P1 修复: 启动后注册定期清理旧 checkpoint (每 6 小时)
+  private static cleanupRegistered = false;
+  static registerPeriodicCleanup(): void {
+    if (PersistentMemory.cleanupRegistered) return;
+    PersistentMemory.cleanupRegistered = true;
+    const SIX_HOURS = 6 * 60 * 60 * 1000;
+    const timer = setInterval(() => {
+      try {
+        const inst = getPersistentMemory();
+        const n = inst.cleanupOldCheckpoints(3); // 清理 3 天前的
+        if (n > 0) console.log(`[persistent-memory] 🧹 定期清理: 删除 ${n} 个 >3天 的旧 checkpoint`);
+      } catch { /* ignore */ }
+    }, SIX_HOURS);
+    timer.unref?.();
+  }
+
   /**
    * 列出所有 checkpoint
    */

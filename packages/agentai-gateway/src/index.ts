@@ -13,7 +13,7 @@ import { createApp, createServerHandle, startBackgroundJobs } from './app.js';
 import { AgentAIRouter } from './llm-router.js';
 import { ToolRegistry } from './tool-registry.js';
 import { initGlobalSandbox, getGlobalSandbox } from './sandbox/index.js';
-import { scanProjectSkills, scanUserSkills } from './skills/loader.js';
+import { scanProjectSkills, scanUserSkills, scanProjectLocalSkills } from './skills/loader.js';
 import { EXTRA_TOOLS, EXTRA_HANDLERS } from './tools.js';
 import { startSkillWatcher } from './skills/watcher.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
@@ -23,7 +23,7 @@ import { MCP_HOSTS } from './mcp/config.js';
 import { MCPHost } from './mcp/host.js';
 import { mcpManager } from './mcp-client.js';
 import { getSessionManager } from './session-manager.js';
-import { getPersistentMemory } from './persistent-memory.js';
+import { getPersistentMemory, PersistentMemory } from './persistent-memory.js';
 import { getPromptEngine } from './prompts/engine.js';
 
 // v3.2 修复: ESM 下 __dirname/__filename 不存在, 必须用 import.meta.url 推导
@@ -204,6 +204,14 @@ const sessionManager = getSessionManager();
 const persistentMemory = getPersistentMemory();
 console.log('[persistent-memory] 持久记忆系统已初始化');
 
+// P1 修复: 启动时清理 7 天前的旧 PM checkpoint (只保留最新, 新替代旧)
+const cleaned = persistentMemory.cleanupOldCheckpoints(7);
+if (cleaned > 0) {
+  console.log(`[persistent-memory] 🧹 启动清理: 删除 ${cleaned} 个 >7天 的旧 checkpoint`);
+}
+// 注册定期清理 (每 6 小时清理 3 天前的)
+PersistentMemory.registerPeriodicCleanup();
+
 // ===== Sprint 1: Prompt 模板引擎 + 知识缓存 =====
 const promptEngine = getPromptEngine();
 const knowledgeCache = getKnowledgeCache();
@@ -259,18 +267,20 @@ if (traeSkills.length > 0) {
   }
 }
 
-// ===== 技能自动发现 (项目 + 用户) =====
+// ===== 技能自动发现 (项目包 + 项目本地 + 用户) =====
 try {
   const projectSkills = scanProjectSkills();
+  const projectLocalSkills = scanProjectLocalSkills();
   const userSkills = scanUserSkills();
-  const totalSkills = projectSkills.length + userSkills.length;
+  const totalSkills = projectSkills.length + projectLocalSkills.length + userSkills.length;
   if (totalSkills > 0) {
-    console.log(`[skills] discovered ${totalSkills} skills (${projectSkills.length} project, ${userSkills.length} user)`);
+    console.log(`[skills] discovered ${totalSkills} skills (${projectSkills.length} project, ${projectLocalSkills.length} project-local, ${userSkills.length} user)`);
   }
 
   const skillsPaths = [
     path.join(process.cwd(), 'packages', 'agentai-skills'),
     path.join(process.cwd(), 'packages', 'agentai-gateway', 'src', 'skills', 'built-in'),
+    path.join(process.cwd(), '.agentai', 'skills'),
     path.join(process.env.USERPROFILE || process.cwd(), '.agentai', 'skills'),
   ].filter(p => fs.existsSync(p));
   startSkillWatcher(skillsPaths);
@@ -745,6 +755,8 @@ console.log('[user-model] loaded', userModel.get().identity.name, `(${userModel.
 // 初始化通用技能调度器 — 扫描多个可能的技能目录
 try {
   const possiblePaths = [
+    // 项目本地 .agentai/skills (最高优先级)
+    path.join(process.cwd(), '.agentai', 'skills'),
     // 开发环境路径
     path.join(import.meta.dirname || '', '..', '..', '..', 'skills'),
     path.join(process.cwd(), 'skills'),
@@ -803,9 +815,19 @@ httpServer.on('error', (err: NodeJS.ErrnoException) => {
     }
     eaddrRetryCount++;
     if (eaddrRetryCount < EADDR_MAX_RETRY) {
-      // 重试间隔递增: 3s, 5s, 8s, 12s — 给操作系统充分时间释放 TIME_WAIT
-      const delay = 3000 + eaddrRetryCount * 3000;
-      console.log(`[agentai-gateway] retry ${eaddrRetryCount}/${EADDR_MAX_RETRY} in ${delay / 1000}s...`);
+      // P1 修复: 如果 netstat 没找到 PID (纯 TIME_WAIT), 用更短的间隔重试
+      const hasPid = (() => {
+        try {
+          const out = execSync(`netstat -ano | findstr :${PORT}`, { encoding: 'utf8', timeout: 3000 });
+          return out.trim().split('\n').some(l => {
+            const p = l.trim().split(/\s+/);
+            const pid = p[p.length - 1];
+            return pid && pid !== '0' && pid !== String(process.pid);
+          });
+        } catch { return false; }
+      })();
+      const delay = hasPid ? 3000 + eaddrRetryCount * 3000 : 500 + eaddrRetryCount * 500;
+      console.log(`[agentai-gateway] retry ${eaddrRetryCount}/${EADDR_MAX_RETRY} in ${delay / 1000}s...${hasPid ? '' : ' (TIME_WAIT, fast retry)'}`);
       setTimeout(() => tryListenWithRetry(), delay);
     } else {
       logCrash(`port ${PORT} still in use after ${EADDR_MAX_RETRY} retries, exiting`);
@@ -818,9 +840,10 @@ httpServer.on('error', (err: NodeJS.ErrnoException) => {
 
 // 端口占用重试机制: 精确杀掉占用进程 (不误杀自身/守护进程), 失败则重试 listen
 let eaddrRetryCount = 0;
-const EADDR_MAX_RETRY = 8; // 修复: 从5增加到8, 递增间隔总计约2分钟, 覆盖Windows TIME_WAIT周期
+const EADDR_MAX_RETRY = 12; // P1 修复: 从8增加到12, 覆盖Windows TIME_WAIT周期(最长120秒)
 function tryListenWithRetry(): void {
-  httpServer.listen(PORT, HOST, async () => {
+  // P1 修复: exclusive=false 允许地址复用 (Node.js >= 18)
+  httpServer.listen({ port: PORT, host: HOST, exclusive: false } as any, async () => {
     console.log(`[agentai-gateway] listening on http://${HOST}:${PORT}`);
     console.log(`[agentai-gateway] ${registry.list().length} tools registered`);
     eaddrRetryCount = 0; // 重置计数

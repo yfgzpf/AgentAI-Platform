@@ -100,6 +100,24 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderProtocolConfig> = {
     supportsImages: true,
     supportsStreamToolCalls: true,
   },
+  // ALRC 聚合平台 (OpenAI 兼容协议)
+  alrc: {
+    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools'],
+    extensionFields: ['tool_choice', 'parallel_tool_calls', 'response_format'],
+    supportsTools: true,
+    supportsThinking: false,
+    supportsImages: true,
+    supportsStreamToolCalls: true,
+  },
+  // 模型工厂 (与 alrc 同一平台, 分组密钥模式)
+  factory: {
+    standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools'],
+    extensionFields: ['tool_choice', 'parallel_tool_calls', 'response_format'],
+    supportsTools: true,
+    supportsThinking: false,
+    supportsImages: true,
+    supportsStreamToolCalls: true,
+  },
   // DXNT (聚合代理, 兼容 OpenAI 协议)
   dxnt: {
     standardFields: ['model', 'messages', 'temperature', 'max_tokens', 'stream', 'tools'],

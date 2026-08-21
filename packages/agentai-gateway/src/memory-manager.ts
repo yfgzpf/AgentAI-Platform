@@ -40,6 +40,17 @@ export interface MemoryQuery {
   query?: string;          // 语义搜索
   scope?: 'session' | 'project' | 'user' | 'global';
   limit?: number;
+  /** P2 优化: 任务上下文 — 用于增强召回精度 (来自 task-snapshot) */
+  taskContext?: {
+    /** 当前任务目标 */
+    goal?: string;
+    /** 当前任务已接触的文件 */
+    filesTouched?: string[];
+    /** 当前任务的关键决策 */
+    keyDecisions?: string[];
+    /** 当前任务涉及的关键词 */
+    keywords?: string[];
+  };
 }
 
 // ===== MemoryManager =====
@@ -143,15 +154,51 @@ export class MemoryManager {
   }
 
   /** 查询记忆 */
-  async recall(query: MemoryQuery): Promise<MemoryFact[]> {
-    let results = [...this.facts.values()];
+async recall(query: MemoryQuery): Promise<MemoryFact[]> {
+  let results = [...this.facts.values()];
 
-    // 按 scope 过滤
-    if (query.scope) {
-      results = results.filter(f => f.scope === query.scope);
-    }
+  // 按 scope 过滤
+  if (query.scope) {
+    results = results.filter(f => f.scope === query.scope);
+  }
 
-    // 精确 key 匹配
+  // P0 修复: KV 结果过少时, 回退到 memory.ts 高级 JSONL 系统补充
+  // 整个数据流: self-memory-updater → writeMemory() → memory.jsonl
+  // 但 buildContext() 只查 KV → 永远读不到 JSONL 数据 → AI 失忆
+  // P1 修复: 只回退最近 7 天 + 最多 10 条, 避免陈旧记忆污染上下文
+  const MIN_KV_RESULTS = 3;
+  const MAX_JSONL_RESULTS = 10;
+  const MAX_JSONL_AGE_DAYS = 7;
+  if (results.length < MIN_KV_RESULTS) {
+    try {
+      const { readMemory } = await import('./memory.js');
+      const jsonlEntries = await readMemory({
+        userId: 'default',
+        workspace: this.workspace,
+        limit: 50, // 多取一些, 过滤后保留最多 10 条
+      });
+      const cutoffTs = Date.now() - MAX_JSONL_AGE_DAYS * 24 * 60 * 60 * 1000;
+      const existingKeys = new Set(results.map(f => f.key));
+      for (const entry of jsonlEntries) {
+        if (entry.ts < cutoffTs) continue; // 跳过陈旧记忆
+        const key = entry.entityId || entry.metadata?.title || entry.content?.slice(0, 50) || `mem:${entry.ts}`;
+        if (!existingKeys.has(key)) {
+          existingKeys.add(key);
+          results.push({
+            key,
+            value: (entry.content || '').slice(0, 200),
+            scope: (entry.metadata?.kvScope as any) || 'project',
+            metadata: entry.metadata,
+            createdAt: entry.ts,
+            updatedAt: entry.ts,
+          });
+          if (results.length >= MIN_KV_RESULTS + MAX_JSONL_RESULTS) break;
+        }
+      }
+    } catch { /* JSONL 回退失败不影响 KV 结果 */ }
+  }
+
+  // 精确 key 匹配
     if (query.key) {
       results = results.filter(f => f.key === query.key);
     }
@@ -186,7 +233,33 @@ export class MemoryManager {
     }
 
     // 限制数量 + 按时间排序
-    results.sort((a, b) => b.updatedAt - a.updatedAt);
+    // P2 优化: 任务上下文增强 — 与当前任务相关的记忆排前面
+    if (query.taskContext && (query.taskContext.goal || query.taskContext.filesTouched?.length || query.taskContext.keywords?.length)) {
+      const ctx = query.taskContext;
+      const taskKeywords = new Set<string>();
+      // 从 goal 提取关键词
+      if (ctx.goal) ctx.goal.toLowerCase().split(/\s+/).forEach(w => w.length > 2 && taskKeywords.add(w));
+      // 从 filesTouched 提取文件名关键词
+      (ctx.filesTouched || []).forEach(f => {
+        const parts = f.split(/[\\/._-]/);
+        parts.forEach(p => p.length > 2 && taskKeywords.add(p.toLowerCase()));
+      });
+      // 从 keywords 直接添加
+      (ctx.keywords || []).forEach(k => taskKeywords.add(k.toLowerCase()));
+
+      results.sort((a, b) => {
+        const taskScoreA = [...taskKeywords].filter(w =>
+          a.key.toLowerCase().includes(w) || a.value.toLowerCase().includes(w)
+        ).length;
+        const taskScoreB = [...taskKeywords].filter(w =>
+          b.key.toLowerCase().includes(w) || b.value.toLowerCase().includes(w)
+        ).length;
+        if (taskScoreB !== taskScoreA) return taskScoreB - taskScoreA; // 任务相关排前面
+        return b.updatedAt - a.updatedAt; // 同等相关时新旧优先
+      });
+    } else {
+      results.sort((a, b) => b.updatedAt - a.updatedAt);
+    }
     if (query.limit) results = results.slice(0, query.limit);
 
     return results;
@@ -210,9 +283,9 @@ export class MemoryManager {
   }
 
   /** 获取项目记忆上下文 (用于 AI 注入) */
-  async buildContext(): Promise<string> {
-    const projectFacts = await this.recall({ scope: 'project', limit: 20 });
-    const userFacts = await this.recall({ scope: 'user', limit: 5 });
+  async buildContext(taskCtx?: MemoryQuery['taskContext']): Promise<string> {
+    const projectFacts = await this.recall({ scope: 'project', limit: 20, taskContext: taskCtx });
+    const userFacts = await this.recall({ scope: 'user', limit: 5, taskContext: taskCtx });
 
     if (projectFacts.length === 0 && userFacts.length === 0) return '';
 

@@ -7,6 +7,7 @@
  */
 
 import { AgentAIRouter } from '../llm-router.js';
+import { analyzeGapsByRules, generateClarificationQuestions } from './gap-analyzer.js';
 
 export interface GapAnalysisResult {
   /** 是否有缺口 */
@@ -104,50 +105,23 @@ export async function analyzeGapsWithLLM(
 
 /**
  * 规则降级分析（无成本）
+ * 使用 gap-analyzer.ts 的完整模式库 (替代内联简化版)
  */
 function analyzeGapsWithRules(message: string): GapAnalysisResult {
-  const gaps: GapAnalysisResult['gaps'] = [];
-  const questions: string[] = [];
+  // 调用 gap-analyzer.ts 的完整规则模式库
+  const detectedGaps = analyzeGapsByRules(message, 'general' as any, 'medium' as any);
 
-  // 模糊动词
-  if (/(?:帮我|请|能).{0,5}(?:搞一下|弄一下|处理一下|看一下|改一下|优化一下)/i.test(message)) {
-    gaps.push({
-      type: 'ambiguous_requirement',
-      description: '使用了模糊的动词描述',
-      severity: 'medium',
-    });
-    questions.push('您希望具体达到什么效果？');
-  }
+  // 适配为 GapAnalysisResult 格式
+  const gaps: GapAnalysisResult['gaps'] = detectedGaps.map(g => ({
+    type: (g.type in { missing_context: 1, ambiguous_requirement: 1, unclear_scope: 1, technical_unknown: 1 }
+      ? g.type
+      : 'ambiguous_requirement') as GapAnalysisResult['gaps'][number]['type'],
+    description: g.description,
+    severity: g.severity,
+  }));
 
-  // 指代不明
-  if (/(?:这个|那个|它|这|那)(?:文件|代码|页面|功能)?/i.test(message)) {
-    gaps.push({
-      type: 'missing_context',
-      description: '指代不明确',
-      severity: 'medium',
-    });
-    questions.push('您指的是哪个具体的文件或功能？');
-  }
-
-  // 未决选择
-  if (/(?:用|选|采用).{0,10}(?:还是|或者|或)/i.test(message)) {
-    gaps.push({
-      type: 'unclear_scope',
-      description: '技术方案未确定',
-      severity: 'medium',
-    });
-    questions.push('您倾向于选择哪一个方案？');
-  }
-
-  // 缺少关键信息
-  if (/(?:写|实现|做).{0,5}(?:个|一个)/i.test(message) && message.length < 50) {
-    gaps.push({
-      type: 'ambiguous_requirement',
-      description: '缺少具体需求描述',
-      severity: 'high',
-    });
-    questions.push('请提供更多细节要求，比如功能点、输入输出等');
-  }
+  // 使用 gap-analyzer.ts 的问题生成器
+  const questions = generateClarificationQuestions(detectedGaps, 3);
 
   return {
     hasGaps: gaps.length > 0,

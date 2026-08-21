@@ -58,11 +58,11 @@ export function createProfileRouter(): Router {
         });
       }
 
-      // 行业切换时激活行业引擎
-      if (industry && _industryEngine) {
-        _industryEngine.activate(industry);
-        console.log(`[profile] industry switched to: ${industry}`);
-      }
+      // ★ 修复: 不再在此处 activate 单例. 行业激活统一由 chat.ts tryActivateIndustry 在请求时按需处理.
+      // 此处只持久化用户身份到 userModel, chat 请求时从 profile.industry 读取并传给 LoopOptions
+      // if (industry && _industryEngine) {
+      //   _industryEngine.activate(industry);  // 已移除: 避免跨请求污染
+      // }
 
       // 问卷答案独立持久化到 ~/.agentai/questionnaire.json
       if (questionnaire && typeof questionnaire === 'object' && Object.keys(questionnaire).length > 0) {

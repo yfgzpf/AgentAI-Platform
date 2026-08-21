@@ -121,7 +121,7 @@ export interface IndustryConfig {
 export interface IndustrySkillDef {
   name: string;
   description: string;
-  category: 'format' | 'knowledge' | 'workflow';
+  category: 'format' | 'knowledge' | 'workflow' | 'tcm-diagnostic' | 'tcm-classic' | 'tcm-case' | 'tcm-herb' | 'tcm-wellness';
   parameters?: Record<string, any>;
   handler: (args: any, ctx?: any) => Promise<{ success: boolean; output: string; data?: any }>;
 }
@@ -553,10 +553,15 @@ const INDUSTRY_CONFIGS: Record<string, IndustryConfig> = {
   // ==================== 医疗 ====================
   medical: {
     id: 'medical',
-    label: '医疗健康',
+    label: '中医问诊',
     theme: INDUSTRY_THEMES.medical!,
     supportedFormats: ['.pdf', '.docx', '.doc', '.xlsx', '.csv', '.jpg', '.jpeg', '.dcm'],
-    knowledgeFiles: ['medical/常见病症.md', 'medical/药品目录.md'],
+    knowledgeFiles: [
+      'tcm_classics/常见证型索引.md',
+      'tcm_herbs/常用药材性味归经.md',
+      'tcm_cases/经典医案精选.md',
+      'tcm_wellness/体质辨识与养生.md',
+    ],
     skills: [
       {
         name: 'analyze_symptom',
@@ -580,6 +585,47 @@ const INDUSTRY_CONFIGS: Record<string, IndustryConfig> = {
         category: 'knowledge',
         handler: async (args) => {
           return { success: true, output: '[药品查询] 请输入药品名称，我将提供: 主要成分、适应症、用法用量、禁忌人群、不良反应、药物相互作用', data: {} };
+        },
+      },
+      // ===== 中医专业技能 (2026-08-07) =====
+      {
+        name: 'tcm_diagnose',
+        description: '中医完整问诊→辨证→开方: 按十问歌收集症状, 四诊合参, 八纲+脏腑+气血津液三步辨证, 输出证型+治则+处方(君臣佐使+剂量)+煎服法+医嘱',
+        category: 'tcm-diagnostic',
+        handler: async (args) => {
+          return { success: true, output: `[中医问诊] 请描述您的不适:\n\n我将按以下流程为您诊疗:\n1️⃣ 问诊 — 按中医十问歌(寒热/汗/头身/便溲/饮食/胸脘/耳聋/旧史)收集信息\n2️⃣ 舌诊 — 请描述舌质颜色、舌苔、舌体状态\n3️⃣ 辨证 — 八纲辨证 + 脏腑辨证 + 气血津液辨证\n4️⃣ 开方 — 经方/时方, 君臣佐使结构, 精确剂量\n5️⃣ 医嘱 — 煎服法 + 忌口 + 复诊建议\n\n⚠️ 仅供参考学习, 不替代线下医师面诊。`, data: {} };
+        },
+      },
+      {
+        name: 'tcm_classic_search',
+        description: '检索中医经典原文 (伤寒论/金匮要略/黄帝内经/温病条辨)，含白话翻译和临床解读',
+        category: 'tcm-classic',
+        handler: async (args) => {
+          return { success: true, output: '[古籍检索] 请输入关键词或病症名，我将从《伤寒论》《金匮要略》《黄帝内经》《温病条辨》等经典中检索相关条文，提供原文引用和白话解读。', data: {} };
+        },
+      },
+      {
+        name: 'tcm_case_match',
+        description: '根据当前症状/证型匹配历史医案库中的相似案例，参考名老中医诊疗思路',
+        category: 'tcm-case',
+        handler: async (args) => {
+          return { success: true, output: '[医案匹配] 请提供当前的症状和证型信息，我将从历史医案库中匹配相似案例，展示名老中医的辨证逻辑和用药规律作为参考。', data: {} };
+        },
+      },
+      {
+        name: 'tcm_herb_query',
+        description: '查询中药材性味归经/功效主治/方剂君臣佐使/十八反十九畏配伍禁忌',
+        category: 'tcm-herb',
+        handler: async (args) => {
+          return { success: true, output: '[药材/方剂查询] 请输入:\n- 药材名称 → 查询性味归经、功效主治、用法用量\n- 方剂名称 → 分析君臣佐使结构、加减变化\n⚠️ 含配伍禁忌检查(十八反/十九畏)', data: {} };
+        },
+      },
+      {
+        name: 'tcm_wellness_plan',
+        description: '根据体质类型(王琦九分法)制定个性化养生方案: 饮食/起居/功法/季节养生',
+        category: 'tcm-wellness',
+        handler: async (args) => {
+          return { success: true, output: '[养生调理] 请描述您的身体状况(易疲乏/怕冷/口干/体胖/情绪等)，我将根据王琦九分法辨识体质，制定个性化方案: 饮食调理、起居作息、功法推荐、季节养生要点。⚠️ 急性病症请及时就医。', data: {} };
         },
       },
     ],
@@ -684,7 +730,9 @@ export class IndustryEngine {
   private activeIndustry: string | null = null;
   private loadedSkills: Map<string, IndustrySkillDef> = new Map();
 
-  activate(industryId: string): IndustryConfig | null {
+  async activate(industryId: string): Promise<IndustryConfig | null> {
+    // ★ 修复: 切换行业前清理旧技能, 防止跨行业污染
+    this.loadedSkills.clear();
     this.activeIndustry = industryId;
     const config = INDUSTRY_CONFIGS[industryId];
     if (!config) return null;
@@ -701,16 +749,30 @@ export class IndustryEngine {
       console.warn('[industry-engine:activate] knowledge dir creation failed:', kbDirErr?.message);
     }
 
-    // 创建知识库模板
+    // 创建知识库模板 + 自动加载到 RAG 引擎
     for (const kf of config.knowledgeFiles) {
       try {
         const fp = path.join(AGENTAI_DIR, 'knowledge', kf);
         const dir = path.dirname(fp);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         if (!fs.existsSync(fp)) {
+          // 创建空模板
           const tmpl = kf.endsWith('.json') ? '{}' : kf.endsWith('.md') ? `# ${path.basename(kf, path.extname(kf))}\n` : '';
           try { fs.writeFileSync(fp, tmpl, 'utf-8'); } catch (tmplErr: any) {
             console.warn('[industry-engine:activate] template write failed for', fp, tmplErr?.message);
+          }
+        } else {
+          // ★ 文件已存在 → 自动加载到 BM25 RAG 引擎 (2026-08-07 修复)
+          try {
+            const { getKnowledgeBase } = await import('./industry-knowledge-base.js');
+            const kb = getKnowledgeBase();
+            const content = fs.readFileSync(fp, 'utf-8');
+            if (content && content.length > 10) {  // 跳过空模板
+              kb.addTextDocument(path.basename(kf), content, industryId, 'auto_discover', `行业知识库: ${kf}`);
+              console.log(`[industry] RAG loaded: ${kf} (${content.length} chars)`);
+            }
+          } catch (ragErr: any) {
+            console.warn('[industry-engine:activate] RAG load failed for', kf, ragErr?.message);
           }
         }
       } catch (kfErr: any) {
@@ -741,8 +803,14 @@ export class IndustryEngine {
     return INDUSTRY_THEMES[industryId] || null;
   }
 
-  buildSystemPromptFragment(): string {
-    const config = this.getActive();
+  /** 无状态查询: 按行业 ID 获取配置 (不改单例状态) */
+  getConfig(industryId: string): IndustryConfig | null {
+    return INDUSTRY_CONFIGS[industryId] || null;
+  }
+
+  /** 无状态查询: 按行业 ID 构建 system prompt 片段 (不改单例状态) */
+  buildSystemPromptFragmentFor(industryId: string): string {
+    const config = INDUSTRY_CONFIGS[industryId];
     if (!config) return '';
 
     const skillList = config.skills.map(s => `- **${s.name}**: ${s.description}`).join('\n');
@@ -763,6 +831,7 @@ ${skillList}
 `;
   }
 
+  /** @deprecated 死代码, 保留兼容. 请使用 getConfig() 替代. */
   activateFromProfile(profile: { industry?: string }) {
     if (profile.industry && profile.industry !== 'general') {
       return this.activate(profile.industry);

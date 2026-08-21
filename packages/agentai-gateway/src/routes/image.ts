@@ -89,6 +89,85 @@ export function createImageRouter() {
         effectiveModel = 'agnes';
       }
 
+      // ---- 引擎 1.5: ALRC 图像模型 (gpt-image-2 / nano-banana) ----
+      // 注意：如果用户明确选择了付费模型，但调用失败，应该报错而不是静默降级
+      const isAlrcModel = effectiveModel?.startsWith('alrc-');
+      const alrcKey = process.env['ALRC_API_KEY'];
+      
+      if (isAlrcModel) {
+        if (!alrcKey) {
+          return res.status(400).json({ 
+            error: `模型 ${effectiveModel} 需要 ALRC_API_KEY，请联系管理员配置`, 
+            code: 'MISSING_API_KEY',
+            requestedModel: effectiveModel 
+          });
+        }
+        
+        try {
+          const resp = await fetch('https://alro.huazhiweilai.com/v1/images/generations', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${alrcKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: effectiveModel.replace('alrc-', ''),
+              prompt: finalPrompt,
+              size,
+            }),
+            signal: AbortSignal.timeout(60000),
+          });
+          
+          if (!resp.ok) {
+            const errText = await resp.text().catch(() => '');
+            console.error('[alrc-image] failed:', resp.status, errText);
+            return res.status(resp.status).json({ 
+              error: `${effectiveModel} 生成失败: ${errText.slice(0, 200)}`, 
+              code: 'MODEL_FAILED',
+              requestedModel: effectiveModel,
+              status: resp.status
+            });
+          }
+          
+          const data: any = await resp.json();
+          const imageUrl = data.data?.[0]?.url || data.url;
+          if (imageUrl) {
+            const localPath = await downloadToTempFile(imageUrl);
+            if (localPath) {
+              return res.json({ 
+                url: `/api/files/download?path=${encodeURIComponent(localPath)}`, 
+                localPath, 
+                originalUrl: imageUrl, 
+                prompt, 
+                size, 
+                provider: effectiveModel,
+                requestedModel: effectiveModel,
+                actualModel: effectiveModel
+              });
+            }
+            return res.json({ 
+              url: imageUrl, 
+              prompt, 
+              size, 
+              provider: effectiveModel,
+              requestedModel: effectiveModel,
+              actualModel: effectiveModel
+            });
+          }
+          
+          return res.status(500).json({ 
+            error: `${effectiveModel} 返回数据异常`, 
+            code: 'INVALID_RESPONSE',
+            requestedModel: effectiveModel 
+          });
+          
+        } catch (e: any) {
+          console.error('[alrc-image] error:', e.message);
+          return res.status(500).json({ 
+            error: `${effectiveModel} 调用异常: ${e.message}`, 
+            code: 'REQUEST_FAILED',
+            requestedModel: effectiveModel 
+          });
+        }
+      }
+
       // ---- 引擎 1: Cogview-3-Flash (智谱免费) ----
       if (effectiveModel === 'cogview' || effectiveModel === 'zhipu') {
         const zhipuKey = process.env['ZHIPU_API_KEY'];

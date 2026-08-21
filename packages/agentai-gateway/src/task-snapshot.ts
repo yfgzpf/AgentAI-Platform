@@ -309,9 +309,16 @@ export class TaskSnapshotManager {
     try {
       if (!fs.existsSync(filePath)) return null;
       const raw = fs.readFileSync(filePath, 'utf-8');
+      if (!raw || !raw.trim()) {
+        // 空文件 — 删除并返回 null
+        try { fs.unlinkSync(filePath); } catch {}
+        return null;
+      }
       return JSON.parse(raw);
     } catch (err) {
       console.warn('[task-snapshot] load failed:', err);
+      // 损坏的文件 — 删除避免反复报错
+      try { fs.unlinkSync(filePath); } catch {}
       return null;
     }
   }
@@ -594,19 +601,26 @@ export function getOrCreateSnapshot(taskId: string, init?: {
 
 /** 列出所有任务 (用于恢复检测) */
 export function listAllTasks(opts: {
-  status?: TaskStatus;
-  userId?: string;
-  /** 最后更新时间早于该值的视为"超时未响应" (ms) */
-  staleThresholdMs?: number;
+status?: TaskStatus;
+userId?: string;
+/** 工作区路径: 只返回该工作区的任务 (工作区隔离) */
+workspace?: string;
+/** 最后更新时间早于该值的视为"超时未响应" (ms) */
+staleThresholdMs?: number;
+/** 是否过滤掉无效任务 (trivial goal), 默认 true */
+filterTrivial?: boolean;
 } = {}): TaskMeta[] {
   if (!fs.existsSync(TASKS_ROOT)) return [];
   const now = Date.now();
   const stale = opts.staleThresholdMs ?? 30 * 60 * 1000; // 默认 30 分钟
+  const filterTrivial = opts.filterTrivial ?? true;
   const result: TaskMeta[] = [];
 
   for (const taskId of fs.readdirSync(TASKS_ROOT)) {
     const taskDir = path.join(TASKS_ROOT, taskId);
-    if (!fs.statSync(taskDir).isDirectory()) continue;
+    try {
+      if (!fs.statSync(taskDir).isDirectory()) continue;
+    } catch { continue; }
     const metaPath = path.join(taskDir, 'meta.json');
     if (!fs.existsSync(metaPath)) continue;
     try {
@@ -614,6 +628,10 @@ export function listAllTasks(opts: {
       // 过滤状态
       if (opts.status && meta.status !== opts.status) continue;
       if (opts.userId && meta.userId !== opts.userId) continue;
+      // 工作区隔离: 只返回当前工作区的任务
+      if (opts.workspace && meta.workspace !== opts.workspace) continue;
+      // 智能筛选: 过滤掉无效任务 (goal 为 "继续"/"好的" 等琐碎消息)
+      if (filterTrivial && !isWorthSnapshotting(meta.goal || '')) continue;
       // 自动标记超时未响应为 abandoned
       if (meta.status === 'running' && (now - meta.lastUpdatedAt) > stale) {
         meta.status = 'abandoned';
@@ -629,11 +647,12 @@ export function listAllTasks(opts: {
   return result;
 }
 
-/** 查找可恢复的任务 (运行中/暂停/超时) */
-export function findResumableTasks(userId?: string): TaskMeta[] {
+/** 查找可恢复的任务 (运行中/暂停/超时) — 按工作区隔离 */
+export function findResumableTasks(userId?: string, workspace?: string): TaskMeta[] {
   return listAllTasks({
     status: 'running',
     userId,
+    workspace,
     staleThresholdMs: 30 * 60 * 1000,
   }).filter(t => t.status === 'running' || t.status === 'abandoned');
 }
@@ -733,40 +752,279 @@ export function formatResumeContext(snap: TaskSnapshot): string {
   return lines.join('\n');
 }
 
-// ===== 定期清理: 删除过老的已完成任务 =====
+// ===== 智能筛选: 判断消息是否值得创建任务快照 =====
 
-export function cleanupOldTasks(maxAgeDays: number = 30): number {
-  if (!fs.existsSync(TASKS_ROOT)) return 0;
-  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-  let removed = 0;
+/**
+ * 无效消息模式 — 这些消息不值得创建任务快照
+ * 分类:
+ *   1. 闲聊/确认词: 继续/好的/嗯/ok/yes/no/对/谢谢...
+ *   2. 恢复关键词单独出现: 上次/恢复/接着/resume/continue
+ *   3. 问候语: 你好/hello/hi/在吗...
+ *   4. 单标点/表情: ?/!/👍/...
+ */
+const TRIVIAL_PATTERNS: RegExp[] = [
+  // 纯标点/表情 (无实质文字)
+  /^[\s\p{P}\p{S}\u1F000-\u1FFFF]+$/u,
+  // 纯数字
+  /^\d+$/,
+];
+
+/** 无效消息关键词 (精确匹配, 大小写不敏感) */
+const TRIVIAL_KEYWORDS = new Set([
+  // 闲聊确认
+  '继续', '好的', '好啊', '好吧', '行', '可以', '嗯', '嗯嗯', '哦', '哦哦', '噢', '哈', '哈哈', '哈哈哈',
+  '对', '不对', '不是', '是的', '没问题', 'OK', 'ok', 'Okay', 'okay', 'Ok',
+  'yes', 'no', 'No', 'Yes', 'Y', 'N', 'y', 'n',
+  '谢谢', '感谢', 'thanks', 'thank', 'thx', 'ty',
+  'done', 'Done', 'DONE', '完成', '已完成', 'finished', '完了',
+  '明白', '了解', '收到', '懂了', '知道了', '理解',
+  '好', '不好', '行吧', '算了', '没事', '没关系',
+  // 恢复关键词单独出现 (无额外上下文)
+  '上次', '恢复', '接着', 'resume', 'continue', '上次那个', '还没完成', '未完成',
+  // 问候
+  '你好', '您好', 'hi', 'Hi', 'HI', 'hello', 'Hello', 'HELLO', '嘿', 'hey', 'Hey',
+  '在吗', '在不在', '有人吗', '在么',
+  '早上好', '下午好', '晚上好', '早安', '晚安',
+  // 指令性短词
+  '继续吧', '说吧', '请讲', '请说', '讲', '说',
+]);
+
+/**
+ * 判断用户消息是否值得创建任务快照
+ * 规则:
+ *   1. 空消息 → 不值得
+ *   2. 纯标点/表情/数字 → 不值得
+ *   3. 精确匹配无效关键词 → 不值得
+ *   4. 中文 < 3 字 → 不值得
+ *   5. 英文 < 6 字符 → 不值得
+ *   6. / 开头的指令 (非任务) → 不值得
+ *   其余 → 值得
+ */
+export function isWorthSnapshotting(goal: string): boolean {
+  if (!goal || typeof goal !== 'string') return false;
+  const trimmed = goal.trim();
+  if (!trimmed) return false;
+
+  // / 开头的斜杠指令 (如 /help /clear) 不创建任务
+  if (trimmed.startsWith('/')) return false;
+
+  // 纯标点/表情/数字
+  for (const pat of TRIVIAL_PATTERNS) {
+    if (pat.test(trimmed)) return false;
+  }
+
+  // 精确匹配无效关键词 (大小写不敏感)
+  const lower = trimmed.toLowerCase();
+  if (TRIVIAL_KEYWORDS.has(lower) || TRIVIAL_KEYWORDS.has(trimmed)) return false;
+
+  // 提取纯文字内容 (去掉标点和空格)
+  const textOnly = trimmed.replace(/[\s\p{P}\p{S}]/gu, '');
+
+  // 中文消息: 去掉标点后 < 3 字 → 太短
+  if (textOnly.length > 0 && /[\u4e00-\u9fff]/.test(textOnly)) {
+    if (textOnly.length < 3) return false;
+  } else {
+    // 纯英文/数字消息: < 6 字符 → 太短
+    if (trimmed.length < 6) return false;
+  }
+
+  return true;
+}
+
+// ===== 定期清理: 删除过老/无效/超量的任务 =====
+
+/** 默认保留天数 */
+const DEFAULT_MAX_AGE_DAYS = 7;
+/** 默认最大任务数 (超过则删除最老的) */
+const DEFAULT_MAX_TASK_COUNT = 50;
+/** running 任务超过该天数视为僵死, 自动标记 abandoned */
+const STALE_RUNNING_DAYS = 3;
+
+interface CleanupOptions {
+  /** 最大保留天数 (默认 7) */
+  maxAgeDays?: number;
+  /** 最大任务数 (默认 50, 超出则删最老的) */
+  maxTaskCount?: number;
+  /** 是否同时清理无效任务 (trivial goal), 默认 true */
+  removeTrivial?: boolean;
+}
+
+interface CleanupResult {
+  /** 删除的任务总数 */
+  removed: number;
+  /** 按原因分类 */
+  byReason: {
+    expired: number;      // 超龄
+    trivial: number;      // 无效/琐碎
+    overLimit: number;    // 超量
+    staleRunning: number; // 僵死 running
+    corrupt: number;      // 损坏 (meta.json 无效)
+  };
+}
+
+/**
+ * 清理任务快照 (增强版)
+ * 1. 超龄任务删除 (已完成/失败/废弃, 超过 maxAgeDays)
+ * 2. 无效任务删除 (goal 不值得快照, 无论状态)
+ * 3. 僵死 running 任务标记 abandoned (超过 staleRunningDays)
+ * 4. 超量任务删除 (超过 maxTaskCount, 删最老的已完成任务)
+ */
+export function cleanupOldTasks(maxAgeDays: number = DEFAULT_MAX_AGE_DAYS): number {
+  return cleanupTasks({ maxAgeDays }).removed;
+}
+
+/** 完整清理 (返回详细结果) */
+export function cleanupTasks(opts: CleanupOptions = {}): CleanupResult {
+  const maxAgeDays = opts.maxAgeDays ?? DEFAULT_MAX_AGE_DAYS;
+  const maxTaskCount = opts.maxTaskCount ?? DEFAULT_MAX_TASK_COUNT;
+  const removeTrivial = opts.removeTrivial ?? true;
+
+  const result: CleanupResult = {
+    removed: 0,
+    byReason: { expired: 0, trivial: 0, overLimit: 0, staleRunning: 0, corrupt: 0 },
+  };
+
+  if (!fs.existsSync(TASKS_ROOT)) return result;
+
+  const now = Date.now();
+  const ageCutoff = now - maxAgeDays * 24 * 60 * 60 * 1000;
+  const staleCutoff = now - STALE_RUNNING_DAYS * 24 * 60 * 60 * 1000;
+
+  // 先收集所有任务的 meta
+  const allMeta: Array<{ taskId: string; taskDir: string; meta: TaskMeta }> = [];
+  const corruptDirs: string[] = [];
+
   for (const taskId of fs.readdirSync(TASKS_ROOT)) {
     const taskDir = path.join(TASKS_ROOT, taskId);
-    if (!fs.statSync(taskDir).isDirectory()) continue;
+    try {
+      if (!fs.statSync(taskDir).isDirectory()) continue;
+    } catch { continue; }
     const metaPath = path.join(taskDir, 'meta.json');
-    if (!fs.existsSync(metaPath)) continue;
+    if (!fs.existsSync(metaPath)) {
+      // 无 meta.json 的孤立目录, 直接删
+      corruptDirs.push(taskDir);
+      continue;
+    }
     try {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as TaskMeta;
-      // 只清理已完成/失败/废弃的任务
-      const statusOk = ['completed', 'failed', 'abandoned'].includes(meta.status);
-      const ageOk = meta.lastUpdatedAt < cutoff;
-      if (statusOk && ageOk) {
-        // 跨平台可靠删除 (Windows 沙箱下 fs.rmSync 可能无效, 退回 cmd rmdir)
-        const result = deleteDirReliable(taskDir);
-        if (result.ok) {
-          removed++;
-          console.log(`[task-snapshot] cleanup removed ${taskId} (status=${meta.status}, lastUpdatedAt=${meta.lastUpdatedAt}, method=${result.method})`);
-        } else {
-          console.warn(`[task-snapshot] cleanup FAILED to remove ${taskDir} (method=${result.method}, error=${result.error})`);
-        }
-      } else {
-        // 减少噪音: 只在 debug 模式下打印 skipped
-        // console.log(`[task-snapshot] cleanup skipped ${taskId} ...`);
-      }
+      allMeta.push({ taskId, taskDir, meta });
     } catch (err) {
-      console.warn(`[task-snapshot] cleanup error for ${taskId}:`, err);
+      console.warn('[task-snapshot] cleanup: corrupt meta.json for', taskId, err);
+      corruptDirs.push(taskDir);
     }
   }
-  return removed;
+
+  // 删除损坏的目录
+  for (const dir of corruptDirs) {
+    const r = deleteDirReliable(dir);
+    if (r.ok) {
+      result.removed++;
+      result.byReason.corrupt++;
+    }
+  }
+
+  // 按最后更新时间倒序 (最新在前)
+  allMeta.sort((a, b) => b.meta.lastUpdatedAt - a.meta.lastUpdatedAt);
+
+  // 标记需要删除的任务
+  const toDelete = new Set<string>();
+
+  for (const { taskId, taskDir, meta } of allMeta) {
+    let shouldDelete = false;
+    let reason = '';
+
+    // 1. 僵死 running 任务 → 标记 abandoned (不直接删, 留待后续规则处理)
+    if (meta.status === 'running' && meta.lastUpdatedAt < staleCutoff) {
+      meta.status = 'abandoned';
+      try {
+        fs.writeFileSync(
+          path.join(taskDir, 'meta.json'),
+          JSON.stringify(meta, null, 2)
+        );
+      } catch { /* ignore */ }
+      result.byReason.staleRunning++;
+      console.log(`[task-snapshot] cleanup: stale running → abandoned: ${taskId}`);
+    }
+
+    const isFinished = ['completed', 'failed', 'abandoned'].includes(meta.status);
+
+    // 2. 无效任务 (trivial goal) — 无论状态直接删
+    if (removeTrivial && !isWorthSnapshotting(meta.goal || '')) {
+      shouldDelete = true;
+      reason = 'trivial';
+    }
+
+    // 3. 超龄已完成任务
+    if (!shouldDelete && isFinished && meta.lastUpdatedAt < ageCutoff) {
+      shouldDelete = true;
+      reason = 'expired';
+    }
+
+    if (shouldDelete) {
+      toDelete.add(taskId);
+      if (reason === 'trivial') result.byReason.trivial++;
+      else if (reason === 'expired') result.byReason.expired++;
+    }
+  }
+
+  // 4. 超量: 已完成任务超过 maxTaskCount → 删最老的
+  const survivingFinished = allMeta
+    .filter(m => !toDelete.has(m.taskId) && ['completed', 'failed', 'abandoned'].includes(m.meta.status))
+    .sort((a, b) => a.meta.lastUpdatedAt - b.meta.lastUpdatedAt); // 最老在前
+
+  if (survivingFinished.length > maxTaskCount) {
+    const excess = survivingFinished.slice(0, survivingFinished.length - maxTaskCount);
+    for (const { taskId } of excess) {
+      toDelete.add(taskId);
+      result.byReason.overLimit++;
+    }
+  }
+
+  // 执行删除
+  for (const { taskId, taskDir, meta } of allMeta) {
+    if (!toDelete.has(taskId)) continue;
+    const r = deleteDirReliable(taskDir);
+    if (r.ok) {
+      result.removed++;
+      console.log(`[task-snapshot] cleanup removed ${taskId} (status=${meta.status}, goal="${(meta.goal || '').slice(0, 40)}", method=${r.method})`);
+    } else {
+      console.warn(`[task-snapshot] cleanup FAILED to remove ${taskDir} (method=${r.method}, error=${r.error})`);
+    }
+  }
+
+  return result;
+}
+
+// ===== 定时清理循环 =====
+
+let cleanupTimer: NodeJS.Timeout | null = null;
+
+/** 启动定时清理 (每 6 小时执行一次, 启动时立即执行一次) */
+export function startTaskCleanupLoop(): void {
+  if (cleanupTimer) return;
+  // 启动时立即清理一次
+  try {
+    const r = cleanupTasks({});
+    if (r.removed > 0) {
+      console.log(`[task-snapshot] initial cleanup: removed ${r.removed} tasks (expired=${r.byReason.expired}, trivial=${r.byReason.trivial}, overLimit=${r.byReason.overLimit}, stale=${r.byReason.staleRunning}, corrupt=${r.byReason.corrupt})`);
+    }
+  } catch (e: any) {
+    console.warn('[task-snapshot] initial cleanup failed:', e?.message);
+  }
+  // 每 6 小时清理一次
+  cleanupTimer = setInterval(() => {
+    try { cleanupTasks({}); } catch (e: any) {
+      console.warn('[task-snapshot] scheduled cleanup failed:', e?.message);
+    }
+  }, 6 * 60 * 60 * 1000);
+}
+
+/** 停止定时清理 */
+export function stopTaskCleanupLoop(): void {
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+  }
 }
 
 export { TASKS_ROOT };

@@ -6,7 +6,7 @@
  * Skills Router: REST API 技能发现
  */
 
-export { scanSkills, scanProjectSkills, scanUserSkills, matchSkills, getSkill, getAllSkills, getUserSkillsDir } from './loader.js';
+export { scanSkills, scanProjectSkills, scanProjectLocalSkills, scanUserSkills, matchSkills, getSkill, getAllSkills, getUserSkillsDir } from './loader.js';
 export type { SkillMeta } from './loader.js';
 
 export { executeSkill, executeSkillsConcurrently, discoverAndRecommend, listAvailableSkills } from './spawner.js';

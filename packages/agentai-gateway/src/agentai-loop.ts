@@ -31,7 +31,7 @@ import { recommendModel, getProModelKeyInfo, MODELS } from './model-classifier.j
 import { WorkflowOrchestrator, BUILTIN_WORKFLOWS } from './workflow-orchestrator.js';
 import { getIntentClarifier, Clarification, ResolvedIntent } from './meta/intent-clarifier.js';
 import { ProactiveSuggestionEngine } from './proactive-suggestion-engine.js';
-import { getOrCreateSnapshot, formatResumeContext, findResumableTasks, type TaskSnapshotManager } from './task-snapshot.js';
+import { getOrCreateSnapshot, formatResumeContext, findResumableTasks, isWorthSnapshotting, type TaskSnapshotManager } from './task-snapshot.js';
 import { buildIdeContext } from './ide-state.js';
 import { buildMemoryContext, initProjectMemory, readProjectMemory } from './project-memory.js';
 import { MemoryManager } from './memory-manager.js';
@@ -346,6 +346,8 @@ export interface LoopOptions {
   activeFile?: string;
   /** 长任务快照 ID (跨会话恢复任务时由前端传入) */
   taskId?: string;
+  /** ★ 行业 ID (逐请求传递, 不再从单例读取. 'general' 或空 = 无行业) */
+  industryId?: string;
 }
 
 /**
@@ -402,6 +404,9 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   
   /** 强制调用的技能 (由 skillAutoInvoker 设置) */
   private _forceSkill: string | null = null;
+
+/** P0 修复: 连续空回复计数器 (防止死循环) */
+private _emptyResponseCount: number = 0;
 
   /** 模型能力分层: autonomous(自主) / guided(引导) / supervised(监督) */
   private _capabilityTier: 'autonomous' | 'guided' | 'supervised' = 'supervised';
@@ -517,15 +522,22 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   }
 
   /**
-   * 等待用户审批（超时自动拒绝）
-   * @returns true=批准, false=拒绝/超时
+   * 等待用户审批（超时自动推荐进行）
+   * v2: 超时不再自动拒绝, 而是自动批准 (避免阻塞用户任务)
+   * @returns true=批准, false=拒绝
    */
-  waitForApproval(id: string, timeoutMs = 60_000): Promise<boolean> {
+  waitForApproval(id: string, timeoutMs = 90_000): Promise<boolean> {
     return new Promise<boolean>((resolve, reject) => {
+      // 50% 时段发出预警, 前端可显示倒计时
+      const warningTimer = setTimeout(() => {
+        this.emit('approval:warning', { id, message: '审批即将超时, 系统将自动推荐进行', remainingMs: timeoutMs / 2 });
+      }, timeoutMs * 0.5);
       const timer = setTimeout(() => {
+        clearTimeout(warningTimer);
         this.pendingApprovals.delete(id);
-        logger.warn(`approval ${id} 超时, 自动拒绝`);
-        resolve(false);
+        logger.warn(`approval ${id} 超时, 自动推荐进行`);
+        this.emit('approval:timeout', { id, autoApproved: true });
+        resolve(true); // 超时自动批准, 不再阻塞任务
       }, timeoutMs);
       this.pendingApprovals.set(id, { resolve, reject, timer });
     });
@@ -552,22 +564,34 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
    * 等待用户澄清（超时自动返回空答案）
    * @returns 用户澄清答案
    */
-  waitForClarification(id: string, questions: any[], timeoutMs = 60_000): Promise<Record<string, string>> {
+  waitForClarification(id: string, questions: any[], timeoutMs = 90_000): Promise<Record<string, string>> {
     return new Promise<Record<string, string>>((resolve, reject) => {
       let settled = false;
       const settle = (val: Record<string, string>) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearTimeout(warningTimer);
         if (abortHandler) {
           this.opts?.abortSignal?.removeEventListener('abort', abortHandler);
         }
         this.pendingClarifications.delete(id);
         resolve(val);
       };
+      // 50% 时段发出预警
+      const warningTimer = setTimeout(() => {
+        this.emit('clarify:warning', { id, message: '追问即将超时, 系统将按推荐方案继续', remainingMs: timeoutMs / 2 });
+      }, timeoutMs * 0.5);
       const timer = setTimeout(() => {
-        logger.warn(`clarification ${id} 超时, 继续执行`);
-        settle({}); // 超时返回空答案，继续执行
+        logger.warn(`clarification ${id} 超时, 按推荐方案继续`);
+        // 超时不返回空答案, 而是返回推荐方案 (让 AI 知道用户未回应, 自主选择推荐路径)
+        const autoAnswer: Record<string, string> = {};
+        for (const q of questions) {
+          const qKey = q.question || q.id || 'default';
+          autoAnswer[qKey] = '请按推荐方案继续执行';
+        }
+        this.emit('clarify:timeout', { id, autoAnswer });
+        settle(autoAnswer);
       }, timeoutMs);
       // 安全: 监听 abort 信号，会话被压制时立即结束等待
       let abortHandler: (() => void) | null = null;
@@ -637,6 +661,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       modelConfig: opts.modelConfig ?? { baseURL: '', modelName: '', provider: '' },
       activeFile: opts.activeFile ?? '',
       taskId: opts.taskId ?? '',  // 长任务快照 ID (跨会话恢复)
+      industryId: opts.industryId ?? '',  // ★ 逐请求行业隔离
       _autoResumed: false,
     };
 
@@ -714,22 +739,41 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       const { skillManager } = await import('./skill-manager.js');
       const skillMatch = skillManager.matchIntent(typeof userMessage === 'string' ? userMessage : '');
       
-      if (skillMatch && skillMatch.confidence >= 0.6) {
+      if (skillMatch && skillMatch.confidence >= 0.5) {
         skillInvocationBlock = skillManager.generateInvocationPrompt(skillMatch);
         logger.info(`🎯 检测到技能匹配: ${skillMatch.skill.name} (置信度: ${(skillMatch.confidence * 100).toFixed(0)}%)`);
         
-        // 高置信度时强制调用（>=0.8）
-        if (skillMatch.confidence >= 0.8) {
+        // 高置信度时强制调用（>=0.7）
+        if (skillMatch.confidence >= 0.7) {
           this._forceSkill = skillMatch.skill.name;
           forcedSkillMatch = skillMatch;
           logger.info(`🔒 强制技能调用: ${skillMatch.skill.name}`);
         }
       }
       
-      // 注入可用技能列表
+      // 注入可用技能列表 (按消息相关性排序, 展示最相关的 10 个)
       const stats = skillManager.getStats();
       if (stats.total > 0) {
-        const skillList = skillManager.list().slice(0, 10).map(s => `- ${s.name}: ${s.description}`).join('\n');
+        // 按相关性排序: 匹配 trigger 关键词的优先
+        const userMsg = typeof userMessage === 'string' ? userMessage.toLowerCase() : '';
+        const allSkills = skillManager.list();
+        const scored = allSkills.map(s => {
+          let score = 0;
+          if (s.tags) for (const tag of s.tags) {
+            if (userMsg.includes(tag.toLowerCase())) score += 3;
+          }
+          if (s.description) {
+            const descWords = s.description.toLowerCase().split(/\s+/);
+            for (const word of descWords) {
+              if (word.length > 3 && userMsg.includes(word)) score += 1;
+            }
+          }
+          return { skill: s, score };
+        });
+        const topSkills = scored.sort((a, b) => b.score - a.score).slice(0, 10);
+        const skillList = topSkills.map(({ skill, score }) =>
+          `- ${skill.name}: ${skill.description}${score > 0 ? ' ⭐' : ''}`
+        ).join('\n');
         skillInvocationBlock += `\n\n【可用技能】\n${skillList}\n\n**重要**: 当用户需求匹配技能时，立即调用该技能完成！`;
       }
     } catch (e) {
@@ -827,14 +871,14 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
       systemMsgs.push({ role: 'system', content: ideCtx });
     }
 
-    // === 1.7 项目记忆 (统一 MemoryManager, 合并 5→1) ===
-    const mm = MemoryManager.getInstance(this.opts.workspace || process.cwd());
-    const memCtx = await mm.buildContext();
-    if (memCtx) {
-      systemMsgs.push({ role: 'system', content: memCtx });
-    }
+// === 1.7 项目记忆 (统一 MemoryManager, 合并 5→1) ===
+const mm = MemoryManager.getInstance(this.opts.workspace || process.cwd());
+const memCtx = await mm.buildContext();
+if (memCtx) {
+  systemMsgs.push({ role: 'system', content: memCtx });
+}
 
-    // === 1.76 Agent 任务板上下文 (对标 Trae TodoWrite: 跨会话任务连续性) ===
+    // === 1.76 Agent 任务板上下文
     // 读取最近任务 + 当前活跃任务 + 下一步推荐, 注入 system prompt
     try {
       const { AgentTaskStore } = await import('./agent-task-store.js');
@@ -1010,73 +1054,83 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
 
     // === 3. 用户行业 + 身份 + knowledge base + 行业洞察 ===
     try {
-      // 优先从 industryEngine 读取当前活跃行业 (支持动态切换)
-      let industryId = '';
+      // ★ 修复: 行业 ID 从请求参数读取, 不再从全局单例读取
+      let industryId = this.opts.industryId || '';
       let industrySkillsStr = '';
-      try {
-        const { industryEngine } = await import('./industry-engine.js');
-        industryId = (industryEngine as any).activeIndustry || '';
 
-        // ★ 自动行业识别: 从用户最新消息中检测行业, 自动激活
-        if (!industryId || industryId === 'general') {
-          try {
-            const { insightAccumulator } = await import('./insight-accumulator.js');
-            const latestUserMsg = messages.filter(m => m.role === 'user' && typeof m.content === 'string').pop();
-            if (latestUserMsg) {
-              const detected = insightAccumulator.detectIndustry(latestUserMsg.content as string);
-              if (detected && detected.confidence > 0.6) {
-                // 将 InsightAccumulator ID 映射到 IndustryEngine ID
-                const idMap: Record<string, string> = {
-                  software_dev: 'developer', healthcare: 'medical',
-                  decoration: 'decoration', ecommerce: 'ecommerce', education: 'education',
-                  comic: 'comic', real_estate: 'real_estate', legal: 'legal', manufacturing: 'manufacturing',
-                };
-                const mappedId = idMap[detected.industryId] || detected.industryId;
-                const config = industryEngine.activate(mappedId);
+      // auto-detect 仅在无显式行业时触发, 且不再写入单例
+      if (!industryId || industryId === 'general') {
+        try {
+          const { insightAccumulator } = await import('./insight-accumulator.js');
+          const latestUserMsg = messages.filter(m => m.role === 'user' && typeof m.content === 'string').pop();
+          if (latestUserMsg) {
+            const detected = insightAccumulator.detectIndustry(latestUserMsg.content as string);
+            if (detected && detected.confidence > 0.6) {
+              const idMap: Record<string, string> = {
+                software_dev: 'developer', healthcare: 'medical',
+                decoration: 'decoration', ecommerce: 'ecommerce', education: 'education',
+                comic: 'comic', real_estate: 'real_estate', legal: 'legal', manufacturing: 'manufacturing',
+              };
+              const mappedId = idMap[detected.industryId] || detected.industryId;
+              industryId = mappedId;  // 仅赋值局部变量, 不调 activate()
+              logger.info(`[industry] auto-detected: ${detected.industryId} → ${mappedId} (confidence: ${(detected.confidence * 100).toFixed(0)}%)`);
+              // 动态注册行业技能到 ToolRegistry (无状态, 不改单例)
+              try {
+                const { industryEngine } = await import('./industry-engine.js');
+                const config = industryEngine.getConfig(mappedId);
                 if (config) {
-                  industryId = mappedId;
-                  logger.info(`[industry] auto-detected: ${detected.industryId} → ${mappedId} (confidence: ${(detected.confidence * 100).toFixed(0)}%)`);
-                  // 动态注册行业技能到 ToolRegistry
-                  try {
-                    for (const skill of config.skills) {
-                      if (!this.registry.get(skill.name)) {
-                        this.registry.register({
-                          name: skill.name,
-                          description: skill.description,
-                          parameters: { type: 'object', properties: { args: { type: 'object', description: skill.description } }, additionalProperties: true },
-                          parallelSafe: true,
-                          riskLevel: 'low',
-                          handler: skill.handler,
-                        });
-                      }
+                  for (const skill of config.skills) {
+                    if (!this.registry.get(skill.name)) {
+                      this.registry.register({
+                        name: skill.name,
+                        description: skill.description,
+                        parameters: { type: 'object', properties: { args: { type: 'object', description: skill.description } }, additionalProperties: true },
+                        parallelSafe: true,
+                        riskLevel: 'low',
+                        handler: skill.handler,
+                      });
                     }
-                    logger.info(`[industry] auto-registered ${config.skills.length} industry tools for ${mappedId}`);
-                  } catch {}
+                  }
+                  logger.info(`[industry] auto-registered ${config.skills.length} industry tools for ${mappedId}`);
                 }
-              }
+                // ★ 高置信度检测 → 主动建议用户切换行业 (2026-08-07)
+                if (detected.confidence > 0.7 && this.opts.industryId !== mappedId) {
+                  const profile = insightAccumulator.getIndustryProfile(detected.industryId);
+                  const industryName = profile?.industryName || config?.label || mappedId;
+                  systemMsgs.push({
+                    role: 'system',
+                    content: `[行业建议] 检测到您的问题可能与「${industryName}」行业高度相关(置信度${Math.round(detected.confidence * 100)}%)。\n当前行业模式为"通用", 建议切换到「${industryName}」模式以获得更专业的工具和知识支持。\n您可以通过以下方式之一:\n1. 直接回复 "切换到${industryName}" \n2. 在设置中更改行业偏好\n3. 忽略此建议继续使用通用模式\n\n已自动为您加载 ${industryName} 行业的专用工具。`,
+                  });
+                  this.emit('industry:suggested', { suggestedIndustry: mappedId, confidence: detected.confidence, industryName });
+                }
+              } catch {}
             }
-          } catch {}
-        }
+          }
+        } catch {}
+      }
 
-        // 注入 IndustryEngine 的 System Prompt 片段
-        const frag = industryEngine.buildSystemPromptFragment();
-        if (frag) systemMsgs.push({ role: 'system', content: frag });
-      } catch (e: any) { logger.warn('industry engine optional failed:', e?.message || e); }
       // 回退到环境变量
       if (!industryId) {
         industryId = process.env['AGENTAI_INDUSTRY'] || '';
         industrySkillsStr = process.env['AGENTAI_INDUSTRY_SKILLS'] || '';
       }
+
+      // 注入行业 system prompt (使用无状态方法, 不读单例)
       if (industryId && industryId !== 'general') {
+        try {
+          const { industryEngine } = await import('./industry-engine.js');
+          const frag = (industryEngine as any).buildSystemPromptFragmentFor(industryId);
+          if (frag) systemMsgs.push({ role: 'system', content: frag });
+        } catch {}
+
         systemMsgs.push({
           role: 'system',
           content: `# 当前行业: ${industryId}\n用户处于「${industryId}」行业模式。优先使用该行业的专业术语和框架。${industrySkillsStr ? `\n行业技能: ${industrySkillsStr}` : ''}`,
         });
 
-        // ★ 注入行业洞察 prompt (将积累的洞察回灌给 AI)
+        // ★ 注入行业洞察 prompt
         try {
           const { insightAccumulator } = await import('./insight-accumulator.js');
-          // IndustryEngine ID → InsightAccumulator ID 映射
           const reverseIdMap: Record<string, string> = {
             developer: 'software_dev', medical: 'healthcare',
             decoration: 'decoration', ecommerce: 'ecommerce', education: 'education',
@@ -1088,17 +1142,16 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
             systemMsgs.push({ role: 'system', content: insightFrag });
           }
         } catch (e: any) { /* insight prompt optional */ }
-      } else if (industryId === 'general' || !industryId) {
+      } else {
+        // 无显式行业: 从 userModel 回退
         let userModelIndustry = '';
         try { userModelIndustry = userModel.get(this.opts.userId).identity.industry || ''; } catch {}
         const effectiveIndustry = userModelIndustry || '未知';
-        if (effectiveIndustry !== '未知') {
+        if (effectiveIndustry !== '未知' && effectiveIndustry !== 'general') {
           systemMsgs.push({
             role: 'system',
             content: `# 当前行业: ${effectiveIndustry}\n用户处于「${effectiveIndustry}」行业模式。优先使用该行业的专业框架。`,
           });
-
-          // ★ 同样注入行业洞察
           try {
             const { insightAccumulator } = await import('./insight-accumulator.js');
             const reverseIdMap: Record<string, string> = {
@@ -1597,22 +1650,35 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
     // ═══ 修复: 代际计数器 — 新 run() 分配新代际, 旧 run() 恢复后发现自己被取代 → 退出 ═══
     this._runGeneration++;
     this._aborted = false;
+    this._emptyResponseCount = 0; // P0 修复: 重置空回复计数器
     const myGeneration = this._runGeneration;
     if (this._abortedGeneration > 0 && this._abortedGeneration < myGeneration - 1) {
       logger.info(`🔄 检测到上次中断 (gen ${this._abortedGeneration}), 新任务开始 (gen ${myGeneration})`);
     }
 
     // ═══ 关键修复: 清理上一轮对话残留, 避免旧消息堆积导致 AI 回复旧消息 ═══
-    // 每次新 run() 调用时: 保留上轮的 assistant 回复 + tool 结果, 清除所有旧 user 消息
+    // 每次新 run() 调用时: 保留上轮的 assistant 回复, 清除所有旧 user 消息和旧 tool 结果
+    // P1 修复: 切换话题时彻底清理旧 tool 结果, 避免 AI 误以为需要继续旧任务
     if (this.context.appendOnlyLog.length > 4) {
       const oldMsgs = this.context.appendOnlyLog.slice(0, -2);
       const recentMsgs = this.context.appendOnlyLog.slice(-2); // 最近 2 条 (上轮 user+assistant)
-      // 旧消息中只保留 tool 结果 (供上下文参考), 清除旧的 user/assistant/system 对话
-      const retainedOld = oldMsgs.filter(m =>
-        m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')
-      ).slice(-3); // 最多保留 3 条旧 tool 结果
+      // P1 修复: 不再保留旧 tool 结果 — 它们包含旧任务文件路径, 会误导 AI
+      // 只在新任务和上一轮任务相同时才保留 (通过比较关键词)
+      const lastUserMsg = recentMsgs.find(m => m.role === 'user');
+      const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const prevUserMsg = oldMsgs.filter(m => m.role === 'user').pop();
+      const prevUserText = typeof prevUserMsg?.content === 'string' ? prevUserMsg.content : '';
+      // P0 修复: 话题连续性判断 — "继续/接着/上次" 等关键词视为同一话题
+      const CONTINUATION_KEYWORDS = ['继续', '接着', '上次', '之前', '刚才', '那个', '继续任务', '好的', '是的', '对', '嗯', 'ok', 'yes'];
+      const isContinuation = CONTINUATION_KEYWORDS.some(kw => lastUserText.toLowerCase().includes(kw.toLowerCase()));
+      // 如果用户说"继续", 保留旧上下文 (AI 需要知道之前做了什么)
+      const isSameTopic = isContinuation || (lastUserText && prevUserText &&
+        lastUserText.slice(0, 30) === prevUserText.slice(0, 30));
+      const retainedOld = isSameTopic
+        ? oldMsgs.filter(m => m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')).slice(-3)
+        : []; // 不同话题: 清除所有旧 tool 结果
       this.context.appendOnlyLog = [...retainedOld, ...recentMsgs];
-      logger.info(`🧹 清理旧对话: ${oldMsgs.length} 条 → 保留 ${retainedOld.length} 条 tool 结果 + ${recentMsgs.length} 条最近消息`);
+      logger.info(`🧹 清理旧对话: ${oldMsgs.length} 条 → 保留 ${retainedOld.length} 条 tool 结果 + ${recentMsgs.length} 条最近消息${isSameTopic ? '' : ' (话题切换, 清除旧 tool)'}`);
     }
 
     // ═══ 2026-06-27 新增: 情绪历史追踪 ═══
@@ -1641,22 +1707,26 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
     // ═══ 2026-07-15 新增: 长任务快照 (task-snapshot) ═══
     // 每次新任务/新会话 → 初始化 task-snapshot, 用于跨会话恢复
     // 任务超时/异常时自动持久化进度, 启动时可恢复
+    // 智能筛选: 跳过无效消息 (继续/好的/嗯/问候等), 只为核心用户任务创建快照
     let taskSnap: TaskSnapshotManager | null = null;
     const taskId = (this.opts as any).taskId || `task-${this.opts.sessionId || 'anon'}-${Date.now()}`;
+    const _shouldSnapshot = isWorthSnapshotting(messageText);
     try {
-      taskSnap = getOrCreateSnapshot(taskId, {
-        sessionId: this.opts.sessionId || 'unknown',
-        userId: this.opts.userId || 'anonymous',
-        workspace: this.opts.workspace || process.cwd(),
-        goal: messageText.slice(0, 500),
-      });
+      if (_shouldSnapshot) {
+        taskSnap = getOrCreateSnapshot(taskId, {
+          sessionId: this.opts.sessionId || 'unknown',
+          userId: this.opts.userId || 'anonymous',
+          workspace: this.opts.workspace || process.cwd(),
+          goal: messageText.slice(0, 500),
+        });
+      }
       // 启动时检测可恢复任务 — 仅当用户明确表达恢复意图时才注入, 避免每次对话都干扰
       // 关键词触发: "继续"/"上次"/"恢复"/"resume"/"continue" 等
       const _resumeKeywords = ['继续', '上次', '恢复', '接着', 'resume', 'continue', '上次那个', '还没完成', '未完成'];
       const _wantsResume = _resumeKeywords.some(kw => messageText.toLowerCase().includes(kw.toLowerCase()));
       if (_wantsResume && messageText && !messageText.startsWith('/') && this.iteration === 0) {
-        const resumable = findResumableTasks(this.opts.userId);
-        const mine = resumable.filter(t => t.userId === (this.opts.userId || 'anonymous'));
+        const resumable = findResumableTasks(this.opts.userId, this.opts.workspace);
+        const mine = resumable.filter(t => t.userId === (this.opts.userId || 'anonymous') && (!this.opts.workspace || t.workspace === this.opts.workspace));
         if (mine.length > 0) {
           // 注入恢复提示 (不强制, 给 AI 决定是否提示用户)
           const ctxSnaps = mine.slice(0, 3).map(t => formatResumeContext({
@@ -1950,7 +2020,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           { name: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY', signupUrl: 'https://platform.deepseek.com/api-keys' },
           { name: 'OpenAI', envVar: 'OPENAI_API_KEY', signupUrl: 'https://platform.openai.com/api-keys' },
           { name: '智谱GLM', envVar: 'ZHIPU_API_KEY', signupUrl: 'https://open.bigmodel.cn/usercenter/apikeys' },
-          { name: 'SuperAPI', envVar: 'SUPERAPI_API_KEY', signupUrl: 'https://superapi.vanguard.dpdns.org/' },
+          { name: 'ALRC聚合', envVar: 'ALRC_API_KEY', signupUrl: 'https://alro.huazhiweilai.com' },
         ];
         const configuredKeys = commercialProviders.filter(p => process.env[p.envVar]);
         const missingKeys = commercialProviders.filter(p => !process.env[p.envVar]);
@@ -2045,6 +2115,174 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         ].filter(Boolean).join('\n');
         this.context.appendOnlyLog.push({ role: 'system', content: intentBlock });
         this.emit('intent:analyzed', { surfaceGoal, deepGoal, implicitConstraints });
+      }
+    }
+
+    // ═══ 智能核心注入: 复杂度分析 + 智能上下文 + MVP建议 + 工作区Agent ═══
+    // P0 优化: 注入预算控制 — 总系统消息不超过 3000 字符, 低优先级的被截断
+    const injectionBudget: { name: string; content: string; priority: number; category: string }[] = [];
+    const MAX_INJECTION_BUDGET = 3000; // 字符
+    const MAX_INJECTION_COUNT = 7; // 最多 7 条系统消息
+    
+    if (!isSimpleChat && messageText.length > 5 && this.iteration === 0) {
+      try {
+        const { analyzeComplexity, buildIntelligentContext, shouldStartWithMVP, buildLearningInjection } = await import('./intelligent-core.js');
+        // 工作区常驻 Agent: 注入项目结构上下文 (首次对话自动索引)
+        try {
+          const { buildWorkspaceContext } = await import('./workspace-agent.js');
+          const wsCtx = buildWorkspaceContext(this.opts.workspace || '');
+          if (wsCtx) {
+            this.context.appendOnlyLog.push({ role: 'system', content: wsCtx });
+          }
+        } catch { /* workspace-agent 加载失败不影响主流程 */ }
+        
+        // 认知前沿: 认知全景图 + 自我分析
+        try {
+          const { buildCognitiveMapContext, buildSelfAnalysisContext } = await import('./cognitive-frontier.js');
+          const cogMap = buildCognitiveMapContext(this.opts.workspace || '');
+          if (cogMap) {
+            this.context.appendOnlyLog.push({ role: 'system', content: cogMap });
+          }
+          if (messageText.length > 50) {
+            const selfAnalysis = buildSelfAnalysisContext(this.opts.workspace || '');
+            if (selfAnalysis) {
+              this.context.appendOnlyLog.push({ role: 'system', content: selfAnalysis });
+            }
+          }
+        } catch { /* 认知前沿加载失败不影响主流程 */ }
+        
+        // 质疑模式: 高风险操作自动启动质疑
+        try {
+          const { DoubtDetector } = await import('./skills/doubt-driven-development.js');
+          const risk = DoubtDetector.detectRisk(messageText);
+          if (risk.isHighRisk) {
+            this.directives.add('doubt', `[SYSTEM] ⚠️ 高风险操作检测: ${risk.reasons.join(', ')}。请先确认: 1) 操作是否必要 2) 是否有备份 3) 影响范围 4) 是否可回滚。如果不确定, 先问用户。`, 'high');
+          }
+        } catch { /* 质疑模式加载失败不影响 */ }
+        
+        // PRD 生成: 需求模糊时自动生成结构化需求
+        try {
+          const { isVagueRequest, generatePRD } = await import('./skills/spec-driven-development.js');
+          if (isVagueRequest(messageText) && messageText.length > 10) {
+            const prd = generatePRD(messageText);
+            const prdSummary = `[PRD] 需求结构化:\n  目标: ${prd.goal.primary}\n  包含: ${prd.scope.inScope.slice(0, 3).join(', ')}\n  不包含: ${prd.scope.outOfScope.slice(0, 2).join(', ')}\n  验收: ${prd.acceptanceCriteria.mustHave.slice(0, 2).join('; ')}`;
+            this.context.appendOnlyLog.push({ role: 'system', content: prdSummary });
+          }
+        } catch { /* PRD 生成加载失败不影响 */ }
+        
+        // 诊断引擎: 望闻问切 — 任务感知 + 置信度评估
+        try {
+          const { perceiveTask } = await import('./diagnosis/task-perception.js');
+          const { diagnoseTask } = await import('./diagnosis/diagnosis-engine.js');
+          const perception = await perceiveTask(
+            [{ role: 'user', content: messageText }],
+            { userId: this.opts.userId, workspace: this.opts.workspace } as any
+          );
+          const diagnosis = await diagnoseTask(perception, { userId: this.opts.userId, workspace: this.opts.workspace } as any) as any;
+          if (diagnosis.riskLevel === 'high' || diagnosis.confidence < 0.5) {
+            this.directives.add('diagnosis', `[SYSTEM] 诊断: 置信度${(diagnosis.confidence * 100).toFixed(0)}% 风险${diagnosis.riskLevel}。治法: ${diagnosis.recommendedApproach}。${diagnosis.potentialBlockers?.length > 0 ? '阻塞点: ' + diagnosis.potentialBlockers.slice(0, 2).join(', ') : ''}`, 'high');
+          }
+        } catch { /* 诊断引擎加载失败不影响 */ }
+        
+        // 元认知: 策略选择器 — 根据任务类型选择最优执行策略
+        try {
+          const { StrategySelector } = await import('./meta/strategy-selector.js');
+          const selector = new StrategySelector();
+          const taskType = messageText.match(/代码|code|函数|bug/i) ? 'coding' 
+            : messageText.match(/搜索|研究|调研|research/i) ? 'research'
+            : messageText.match(/调试|debug|排查|诊断/i) ? 'debugging'
+            : messageText.match(/写|文案|文章|创作/i) ? 'creative'
+            : 'general';
+          const strategy = selector.select({ taskType, description: messageText.slice(0, 100), complexity: messageText.length > 200 ? 'high' : messageText.length > 50 ? 'medium' : 'low' } as any);
+          this.directives.add('strategy', `[SYSTEM] 执行策略: ${strategy.primary} (工具上限${strategy.maxToolCalls}, 自检${strategy.selfCheckRound}轮)`, 'low');
+        } catch { /* 策略选择器加载失败不影响 */ }
+        
+        // 行业知识图谱: 检测行业并注入专业知识
+        try {
+          const { buildIndustryContext } = await import('./intelligent-core.js');
+          const industryCtx = buildIndustryContext(messageText, this.opts.workspace || '');
+          if (industryCtx) {
+            this.context.appendOnlyLog.push({ role: 'system', content: industryCtx });
+          }
+        } catch { /* 行业知识加载失败不影响主流程 */ }
+        
+        // 多智能体智能调度: 检测是否需要团队协作
+        try {
+          const { dispatchTeam } = await import('./intelligent-core.js');
+          const dispatch = dispatchTeam(messageText);
+          if (dispatch.needsTeam && dispatch.confidence > 0.6) {
+            this.directives.add('team-dispatch', `[SYSTEM] ${dispatch.reason}。可调用 spawn_subagent 启动 ${dispatch.teamName}。`, 'medium');
+          }
+        } catch { /* 多智能体调度加载失败不影响主流程 */ }
+        
+        // AI 自我改进: 从历史反馈中提取教训
+        try {
+          const { buildSelfImprovementContext } = await import('./intelligent-core.js');
+          const improvement = buildSelfImprovementContext(this.opts.workspace || undefined);
+          if (improvement) {
+            this.context.appendOnlyLog.push({ role: 'system', content: improvement });
+          }
+        } catch { /* 自我改进加载失败不影响主流程 */ }
+        
+        const complexity = analyzeComplexity(messageText);
+        if (complexity.isComplex) {
+          const intelCtx = buildIntelligentContext(this.opts.workspace || '', messageText);
+          this.context.appendOnlyLog.push({ role: 'system', content: intelCtx });
+          if (complexity.suggestion === 'plan_first') {
+            this.directives.add('planning', `[SYSTEM] 检测到复杂任务 (复杂度 ${complexity.score}/10, 原因: ${complexity.reasons.join(', ')})。建议先分解为子任务再执行: 1) 列出子任务 2) 标注依赖关系 3) 按顺序执行。但不要只说不做 — 立即开始第一步。`, 'high');
+          }
+        }
+        // MVP 建议
+        const mvp = shouldStartWithMVP(messageText);
+        if (mvp.shouldMVP) {
+          this.directives.add('mvp', `[SYSTEM] ${mvp.reason}. ${mvp.mvpScope}`, 'medium');
+        }
+        // 实时学习注入
+        const learning = buildLearningInjection(this.opts.workspace || undefined);
+        if (learning) {
+          this.context.appendOnlyLog.push({ role: 'system', content: learning });
+        }
+      } catch (e) {
+        // 智能核心加载失败不影响主流程
+      }
+    }
+
+    // ═══ P0 优化: 注入预算控制 — 合并系统消息, 控制总量 ═══
+    // 统计本次 iteration 0 注入的所有系统消息
+    const recentSystemMsgs = this.context.appendOnlyLog
+      .filter(m => m.role === 'system' && typeof m.content === 'string')
+      .slice(-15); // 最近 15 条系统消息
+    const totalSystemChars = recentSystemMsgs.reduce((sum, m) => 
+      sum + (typeof m.content === 'string' ? m.content.length : 0), 0
+    );
+    // 如果系统消息总量超过预算, 合并为一条精简消息
+    if (totalSystemChars > MAX_INJECTION_BUDGET && recentSystemMsgs.length > MAX_INJECTION_COUNT) {
+      // 按优先级提取关键信息 (保留每条消息的前 100 字符)
+      const compressed = recentSystemMsgs.map(m => {
+        const content = typeof m.content === 'string' ? m.content : '';
+        // 提取关键行 (以 [SYSTEM] 或 [开头的行)
+        const keyLine = content.split('\n').find(l => l.match(/^\[|^⚠️|^SYSTEM/) || l.length > 20);
+        return keyLine || content.slice(0, 120);
+      }).join('\n');
+      
+      // 删除旧系统消息, 替换为合并后的
+      const systemMsgCount = this.context.appendOnlyLog.filter(m => m.role === 'system').length;
+      if (systemMsgCount > 3) {
+        // 保留最后 2 条系统消息, 其余合并
+        const toMerge = this.context.appendOnlyLog
+          .filter(m => m.role === 'system')
+          .slice(0, -2);
+        // 从 log 中移除待合并的消息
+        this.context.appendOnlyLog = this.context.appendOnlyLog.filter(m => 
+          !(m.role === 'system' && toMerge.includes(m))
+        );
+        // 在开头插入合并后的消息
+        const firstNonSystem = this.context.appendOnlyLog.findIndex(m => m.role !== 'system');
+        this.context.appendOnlyLog.splice(firstNonSystem >= 0 ? firstNonSystem : 0, 0, {
+          role: 'system',
+          content: `[系统上下文] ${compressed.slice(0, MAX_INJECTION_BUDGET)}`,
+        });
+        console.log(`[injection-arbiter] 合并 ${toMerge.length} 条系统消息 (${totalSystemChars} → ${Math.min(compressed.length, MAX_INJECTION_BUDGET)} 字符)`);
       }
     }
 
@@ -2298,6 +2536,14 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         }
       }
 
+      // P1 修复: 任务完成时清理过时记忆 — 循环更新, 不堆积
+      if (this.iteration > 0 && this.iteration % 5 === 0) {
+        try {
+          const { cleanupStaleMemories } = await import('./self-memory-updater.js');
+          cleanupStaleMemories(this.opts.workspace || process.cwd()).catch(() => {});
+        } catch { /* 清理失败不影响 */ }
+      }
+
       // 智能超时: 有工具活动时重置, 只在长时间无活动或绝对上限时退出
       const idleTime = Date.now() - lastToolActivityAt;
       const totalTime = Date.now() - startedAt;
@@ -2433,12 +2679,35 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           }
 
           const summary = parts.join('\n\n');
-          const summaryContent = `# 对话历史摘要 (${old.length} 条消息已压缩)\n${summary.slice(0, 4000)}`;
-          messages = [
-            ...systemMsgs,
-            { role: 'system' as const, content: summaryContent },
-            ...recent,
-          ];
+          // ═══ 智能核心: 用 compressContext 补充关键决策和工具使用记录 ═══
+          try {
+            const { compressContext } = await import('./intelligent-core.js');
+            const compressed = compressContext(old.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '') })));
+            if (compressed.summary) {
+              const summaryParts = [summary, '', compressed.summary];
+              const summaryContent = `# 对话历史摘要 (${old.length} 条消息已压缩)\n${summaryParts.join('\n').slice(0, 4000)}`;
+              messages = [
+                ...systemMsgs,
+                { role: 'system' as const, content: summaryContent },
+                ...recent,
+              ];
+            } else {
+              const summaryContent = `# 对话历史摘要 (${old.length} 条消息已压缩)\n${summary.slice(0, 4000)}`;
+              messages = [
+                ...systemMsgs,
+                { role: 'system' as const, content: summaryContent },
+                ...recent,
+              ];
+            }
+          } catch {
+            // 智能核心加载失败, 降级到原有逻辑
+            const summaryContent = `# 对话历史摘要 (${old.length} 条消息已压缩)\n${summary.slice(0, 4000)}`;
+            messages = [
+              ...systemMsgs,
+              { role: 'system' as const, content: summaryContent },
+              ...recent,
+            ];
+          }
           // ═══ 2026-06-27 修复: 压缩结果同步到 appendOnlyLog ═══
           // 之前只影响本次发送的 messages, 不写回 log,
           // 导致换模型/新session后旧消息全部再次出现
@@ -2680,6 +2949,15 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         };
         
         // Level 1: 同模型 + SYSTEM 提示重试 (重建消息, 不复用旧 req)
+        // P1 修复: 连续空回复超过 3 次直接终止, 不无限循环
+        if (!this._emptyResponseCount) this._emptyResponseCount = 0;
+        this._emptyResponseCount++;
+        if (this._emptyResponseCount > 3) {
+          console.warn(`[loop] 🛑 连续 ${this._emptyResponseCount} 次空/废回复, 终止循环`);
+          this.directives.add('dead_loop_done', '[SYSTEM] 已根据死循环保护策略终止循环。请直接给出最终回答。', 'high');
+          // 不 continue, 走完当前轮后正常结束
+          break;
+        }
         this.directives.add('empty_response', '[SYSTEM] 上一轮回复为空，请重新回复。', 'high');
         req.messages = rebuildMessages();
         let retryRes = await this.router.chat(req);
@@ -2804,7 +3082,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             this._lastSwitchTime = now;
             this.opts.model = decision.targetProvider;
             const switchModelMap: Record<string, string> = {
-              superapi: 'deepseek-v4-flash',
+              alrc: 'gpt-5.4',
               deepseek: 'deepseek-v4-flash',
               openai: 'gpt-4o-mini',
               zhipu: 'glm-4.7-flash',
@@ -2948,6 +3226,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
                     model: this.opts.model,
                     modelName: this.opts.modelName,
                     userPickedModel: this.opts.userPickedModel,
+                    industryId: this.opts.industryId,  // ★ 继承父级行业, 不读单例
                   });
                   const subResult = await subLoop.run(tc.args?.task || '');
                   this.emit('subagent:done', { id: subId, result: subResult.content?.slice(0, 200) });
@@ -3371,6 +3650,18 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
               keywords: currentKeywords,
               failureCategory: classifyFail({ errorMessage: errorLine, errorType: errorType as any, toolName: r.name }),
             });
+            // ═══ 自编程进化: skill_defect 类型失败时触发自修改提案 ═══
+            try {
+              const { shouldTriggerSelfModify, getSelfModifyEvolution } = await import('./workers/self-modify-integration.js');
+              const lastEvo = (await import('./evolution.js')).readEvolution(1).pop();
+              if (lastEvo && shouldTriggerSelfModify(lastEvo as any)) {
+                const sourceCode = r.output?.slice(0, 2000) || '';
+                const integration = getSelfModifyEvolution(this.opts.workspace);
+                const result = await integration.triggerFromFailure(lastEvo as any, sourceCode, errorLine.slice(0, 500));
+                console.log(`[self-modify] 📝 提案已生成: ${result.proposalId} (needsApproval=${result.needsApproval})`);
+                this.emit('self-modify:proposal', result);
+              }
+            } catch { /* self-modify optional */ }
             break;
           }
           // 5.5) undefined 属性访问 (slice/length/push等) → 自动注入空值检查修复
@@ -3410,15 +3701,20 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             });
             break;
           }
-          // 7) 工具不存在 → 自动用 run_code 替代
-          if (out.match(/Unknown tool|tool not found|no tool named|Function\s+\w+\s+does not exist/i)) {
-            const toolMatch = out.match(/(?:Unknown tool|tool not found|no tool named|Function\s+)(\w+)/i);
-            const missingTool = toolMatch ? toolMatch[1] : 'unknown';
-            this.directives.add('auto_fix_tool', `[SYSTEM 自主修复] 工具 "${missingTool}" 不存在。请用 run_code 自己实现该功能。`, 'high');
-            this.emit('auto:fix', { type: 'missing_tool', tool: missingTool });
-            this.emit('reasoning', { text: `[自主修复] 工具 "${missingTool}" 不存在, 自动用代码实现替代...` });
-            break;
-          }
+            // 7) 工具不存在 → 自动用 run_code 替代
+            if (out.match(/Unknown tool|tool not found|no tool named|Function\s+\w+\s+does not exist/i)) {
+              const toolMatch = out.match(/(?:Unknown tool|tool not found|no tool named|Function\s+)(\w+)/i);
+              const missingTool = toolMatch ? toolMatch[1] : 'unknown';
+              // P0 修复: 如果 AI 用了 XML 格式调用工具 (<invoke>/<parameter>), 提示用 JSON function_call
+              if (out.includes('<parameter') || out.includes('<invoke') || out.includes('</invoke')) {
+                this.directives.add('auto_fix_tool', `[SYSTEM] ⚠️ 你使用了 XML 格式调用工具, 但本系统只支持 JSON function_call。请用标准格式: {"name":"工具名","arguments":{"参数":"值"}}。不要用 <invoke> 或 <parameter> 标签。`, 'high');
+              } else {
+                this.directives.add('auto_fix_tool', `[SYSTEM 自主修复] 工具 "${missingTool}" 不存在。请用 run_code 自己实现该功能。`, 'high');
+                this.emit('auto:fix', { type: 'missing_tool', tool: missingTool });
+                this.emit('reasoning', { text: `[自主修复] 工具 "${missingTool}" 不存在, 自动用代码实现替代...` });
+              }
+              break;
+            }
           // 8) Excel/文件解析失败 → 自动换解析方式
           if (out.match(/Excel解析失败|xlsx.*failed|pdf.*failed|doc.*failed|文件解析失败/i)) {
             this.directives.add('auto_fix_parse', `[SYSTEM 自主修复] 文件解析失败。请用 run_code 执行 Python 脚本解析 (openpyxl/pandas/pdfplumber)。`, 'high');
@@ -3478,7 +3774,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
               }
               const repeated = [...toolCounts.entries()].filter(([_, c]) => c >= 3);
               if (repeated.length > 0) {
-                this.directives.add('op_awareness', `[SYSTEM] 重复操作: ${repeated.map(([n, c]) => `${n}(${c}次)`).join(', ')} — 如果已完成请直接总结, 不要重复执行。`, 'high');
+                this.directives.add('op_awareness', `[SYSTEM] 重复操作: ${repeated.map(([n, c]) => `${n}(${c}次)`).join(', ')} — 如果已完成请直接总结, 不要重复执行。`, 'medium');
               }
               // 操作感知只在有重复时注入, 不每轮注入摘要
             }
@@ -4166,6 +4462,59 @@ if (this._capabilityTier !== 'autonomous') {
     } catch (e: any) {
       console.warn('[tool-analytics] finalize failed:', e?.message);
     }
+
+    // ═══ 智能核心: 技能自进化 2.0 — 任务完成后提取工作流模式 ═══
+    if (this.iteration > 3 && this.opts.workspace) {
+      try {
+        const { recordSuccess } = await import('./intelligent-core.js');
+        // 提取本次任务的工作流模式
+        const toolCalls: string[] = [];
+        const filesTouched: string[] = [];
+        for (const msg of this.context.appendOnlyLog) {
+          const content = typeof msg.content === 'string' ? msg.content : '';
+          const toolMatch = content.match(/(?:执行|调用|running)\s+(\w+)/);
+          if (toolMatch) toolCalls.push(toolMatch[1]);
+          const fileMatch = content.match(/(?:file_path|path|file)[:：]?\s*([^\s\n,]+)/);
+          if (fileMatch) filesTouched.push(fileMatch[1]);
+        }
+        if (toolCalls.length >= 3) {
+          const pattern = `${this.opts.userId}: ${toolCalls.slice(0, 5).join('→')}`;
+          const approach = `工具链: ${[...new Set(toolCalls)].slice(0, 5).join(' → ')}, 文件: ${[...new Set(filesTouched)].slice(0, 3).join(', ')}`;
+          recordSuccess(pattern, approach, this.opts.workspace || undefined);
+        }
+        // 记忆网络: 记录工作模式 (跨会话共享, 隐私保护)
+        try {
+          const { recordWorkPattern } = await import('./memory-network.js');
+          const lastUserMsg = [...this.context.appendOnlyLog].reverse().find(m => m.role === 'user');
+          const taskDesc = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content.slice(0, 200) : '';
+          recordWorkPattern(taskDesc, toolCalls, filesTouched.length, true);
+        } catch { /* 记忆网络记录失败不影响 */ }
+        // 改动复查: 提醒 AI 重新读一遍改动确认逻辑
+        try {
+          const { buildReviewDirective } = await import('./intelligent-core.js');
+          const reviewDirective = buildReviewDirective([...new Set(filesTouched)]);
+          if (reviewDirective) {
+            this.context.appendOnlyLog.push({ role: 'system', content: reviewDirective });
+          }
+        } catch { /* 改动复查加载失败不影响 */ }
+        // 技能进化: 记录本次技能使用数据
+        if (this._forceSkill) {
+          try {
+            const { getSkillEvolver } = await import('./skill-evolver.js');
+            const evolver = getSkillEvolver();
+            evolver.recordUsage({
+              skill_id: this._forceSkill,
+              skill_name: this._forceSkill,
+              category: 'general',
+              score: this.iteration > 0 && this.iteration < 10 ? 4 : 3, // 根据迭代次数评分
+              latency_ms: Date.now() - startedAt,
+              success: true,
+              timestamp: Date.now(),
+            } as any);
+          } catch { /* 技能进化记录失败不影响 */ }
+        }
+      } catch { /* 技能自进化失败不影响主流程 */ }
+    }
     
     // ═══ 2026-06-24 新增: 透明进度推送 ═══
     // 任务完成时发射进度事件
@@ -4830,6 +5179,35 @@ if (this._capabilityTier !== 'autonomous') {
         duration: r?.result?.durationMs || 0,
         retryCount: 0, // 重试次数在上方逻辑中统计
       });
+
+      // ═══ 智能核心: 工具失败时注入错误分析和修复建议 ═══
+      if (r?.result?.success === false) {
+        try {
+          const { buildErrorRecoverySuggestion, reflectOnResult, buildReflectionInjection } = await import('./intelligent-core.js');
+          const errorOutput = typeof r.result.output === 'string' ? r.result.output : String(r.result.output || '');
+          const suggestion = buildErrorRecoverySuggestion(errorOutput, c.name, c.args?.path || c.args?.file);
+          this.context.appendOnlyLog.push({ role: 'system', content: suggestion });
+          // 反思引擎: 检查是否需要调整策略
+          const reflection = reflectOnResult(c.name, c.args, { success: false, output: errorOutput }, this.iteration, 0);
+          const reflectionInjection = buildReflectionInjection(reflection, c.name);
+          if (reflectionInjection) {
+            this.context.appendOnlyLog.push({ role: 'system', content: reflectionInjection });
+          }
+        } catch { /* 智能核心加载失败不影响主流程 */ }
+      } else if (r?.result?.success === true) {
+        // ═══ 智能核心: 工具成功时也反思 — 检测隐性失败 ═══
+        try {
+          const { reflectOnResult, buildReflectionInjection } = await import('./intelligent-core.js');
+          const output = typeof r.result.output === 'string' ? r.result.output : String(r.result.output || '');
+          const reflection = reflectOnResult(c.name, c.args, { success: true, output }, this.iteration, 0);
+          if (reflection.needsAdjustment) {
+            const reflectionInjection = buildReflectionInjection(reflection, c.name);
+            if (reflectionInjection) {
+              this.context.appendOnlyLog.push({ role: 'system', content: reflectionInjection });
+            }
+          }
+        } catch { /* 智能核心加载失败不影响主流程 */ }
+      }
 
       // ═══ 2026-06-27 修复: widget 渲染通道 ═══
       // render_widget 工具返回的 data 中带有 __type: 'widget'，
