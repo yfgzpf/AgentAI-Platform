@@ -1286,17 +1286,22 @@ if (memCtx) {
           const lastSession = pm.getLastSessionSummary(this.opts.workspace);
           if (lastSession) {
             const ageMin = Math.round((Date.now() - lastSession.timestamp) / 60000);
-            const ageStr = ageMin < 60 ? `${ageMin}分钟前` : `${Math.round(ageMin / 60)}小时前`;
-            const tools = lastSession.toolsUsed.length > 0
-              ? lastSession.toolsUsed.slice(0, 8).join(', ')
-              : '无';
-            const files = lastSession.filesModified.length > 0
-              ? lastSession.filesModified.slice(0, 5).join(', ')
-              : '无';
-            systemMsgs.push({
-              role: 'system',
-              content: `# 上次会话 (${ageStr})\n用户目标: ${lastSession.userGoal}\n使用工具: ${tools}\n修改文件: ${files}\n结果摘要: ${lastSession.summary}\n\n如果用户说"继续上次"或"接着做"，参考以上信息。`,
-            });
+            // P1 修复: last-session.json 也需要 60 分钟 TTL, 与 PM 注入一致
+            if (ageMin > 60) {
+              console.log(`[loop] last-session.json ${ageMin} 分钟前, 跳过注入`);
+            } else {
+              const ageStr = ageMin < 60 ? `${ageMin}分钟前` : `${Math.round(ageMin / 60)}小时前`;
+              const tools = lastSession.toolsUsed.length > 0
+                ? lastSession.toolsUsed.slice(0, 8).join(', ')
+                : '无';
+              const files = lastSession.filesModified.length > 0
+                ? lastSession.filesModified.slice(0, 5).join(', ')
+                : '无';
+              systemMsgs.push({
+                role: 'system',
+                content: `# 上次会话 (${ageStr})\n用户目标: ${lastSession.userGoal}\n使用工具: ${tools}\n修改文件: ${files}\n结果摘要: ${lastSession.summary}\n\n如果用户说"继续上次"或"接着做"，参考以上信息。`,
+              });
+            }
           }
         }
       } catch { /* last session summary optional */ }
