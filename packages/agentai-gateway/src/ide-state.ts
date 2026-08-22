@@ -43,9 +43,20 @@ let currentState: IdeState = {
   updatedAt: 0,
   isEditing: false,
 };
+/** P0 修复: 记录 IDE 状态所属的 workspace, 切换 workspace 时自动清理 */
+let ideStateWorkspace: string = '';
 
 /** 更新 IDE 状态 (由 GUI 推送) */
-export function updateIdeState(partial: Partial<IdeState>): void {
+export function updateIdeState(partial: Partial<IdeState>, workspace?: string): void {
+  // P0 修复: 如果 workspace 变了, 清空旧状态 (否则旧文件信息泄漏到新工作区)
+  if (workspace && workspace !== ideStateWorkspace) {
+    currentState = {
+      openFiles: [],
+      updatedAt: 0,
+      isEditing: false,
+    };
+    ideStateWorkspace = workspace;
+  }
   currentState = {
     ...currentState,
     ...partial,

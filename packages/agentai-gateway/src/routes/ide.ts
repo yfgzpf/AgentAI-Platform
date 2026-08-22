@@ -20,7 +20,7 @@ ideRouter.post('/ide-state', (req: Request, res: Response) => {
       activeFile: body.activeFile,
       diagnostics: body.diagnostics,
       isEditing: body.isEditing,
-    });
+    }, body.workspace || (req.headers['x-workspace'] as string));
 
     res.json({ ok: true, timestamp: Date.now() });
   } catch (e: any) {

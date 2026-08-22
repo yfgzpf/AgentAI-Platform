@@ -452,7 +452,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'backup',
     defaultExpression: '0 2 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'git add . && git commit -m "auto backup $(date)" && git push' },
+    defaultParams: { command: 'git add . && git commit -m "auto backup" && git push' },
     guide: '确保当前目录是 Git 仓库，且已配置远程仓库地址。',
   },
   {
@@ -462,7 +462,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'backup',
     defaultExpression: '0 */6 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'mkdir -p backups && find . -name "*.db" -mtime -1 -exec cp {} backups/ \\; 2>/dev/null; find . -name "*.json" -path "*/data/*" -exec cp {} backups/ \\; 2>/dev/null' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');fs.mkdirSync(\'backups\',{recursive:true});function scan(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.isDirectory()&&!e.name.startsWith(\'.\')){scan(p.join(d,e.name));}else if(e.name.endsWith(\'.db\')||e.name.endsWith(\'.json\')){fs.copyFileSync(p.join(d,e.name),p.join(\'backups\',e.name));}}}scan(\'.\');console.log(\'backup done\')"' },
     guide: '备份 .db 和 data/ 目录下的 .json 文件到 backups/。',
   },
   {
@@ -472,7 +472,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'backup',
     defaultExpression: '0 3 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'mkdir -p backups/config && find . -name ".env*" -o -name "*.config.json" -o -name "settings.json" | head -10 | xargs -I{} cp {} backups/config/ 2>/dev/null' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');fs.mkdirSync(\'backups/config\',{recursive:true});function scan(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.isDirectory()&&!e.name.startsWith(\'.\')){scan(p.join(d,e.name));}else if(e.name.startsWith(\'.env\')||e.name===\'settings.json\'||e.name.endsWith(\'.config.json\')){fs.copyFileSync(p.join(d,e.name),p.join(\'backups/config\',e.name));}}}scan(\'.\');console.log(\'config backup done\')"' },
     guide: '备份根目录下 .env 和 config 文件到 backups/config/。',
   },
   // ===== Cleanup =====
@@ -483,7 +483,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'cleanup',
     defaultExpression: '0 3 * * 0',
     defaultAction: 'run_command',
-    defaultParams: { command: 'rm -rf .agentai/truncated-results/* node_modules/.cache __pycache__ 2>/dev/null' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');for(const d of [\'.agentai/truncated-results\',\'node_modules/.cache\',\'__pycache__\']){try{fs.rmSync(d,{recursive:true,force:true});}catch{}}console.log(\'cache cleaned\')"' },
     guide: '删除截断结果缓存、npm 缓存和 Python 缓存，不影响源代码。',
   },
   {
@@ -493,7 +493,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'cleanup',
     defaultExpression: '0 4 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'find . -name "*.log" -mtime +7 -delete 2>/dev/null; find . -name "*.gw-dev.log" -mtime +3 -delete 2>/dev/null' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');function scan(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.isDirectory()&&!e.name.startsWith(\'.\')){scan(p.join(d,e.name));}else if(e.name.endsWith(\'.log\')){const f=p.join(d,e.name);const s=fs.statSync(f);if(Date.now()-s.mtimeMs>604800000)fs.unlinkSync(f);}}}scan(\'.\');console.log(\'log cleanup done\')"' },
     guide: '安全清理超过 7 天的 .log 文件，最近日志会保留。',
   },
   {
@@ -503,7 +503,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'cleanup',
     defaultExpression: '0 5 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'find . -name "dist" -o -name "build" -o -name ".next" | head -10 | xargs rm -rf 2>/dev/null' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');function scan(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.isDirectory()&&!e.name.startsWith(\'.\')){const sd=p.join(d,e.name);if([\'dist\',\'build\',\'.next\'].includes(e.name)){fs.rmSync(sd,{recursive:true,force:true});}else{scan(sd);}}}}scan(\'.\');console.log(\'build artifacts cleaned\')"' },
     guide: '清理 dist/ build/ .next/ 等构建产物，下次需要时重新构建即可。',
   },
   {
@@ -513,7 +513,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'cleanup',
     defaultExpression: '0 4 * * 0',
     defaultAction: 'run_command',
-    defaultParams: { command: 'find . -name "*.swp" -o -name "*.tmp" -o -name "*.sst" -o -name ".DS_Store" -o -name "*.orig" | xargs rm -f 2>/dev/null' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');function scan(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.isDirectory()&&!e.name.startsWith(\'.\')){scan(p.join(d,e.name));}else if([\'.swp\',\'.tmp\',\'.sst\',\'.orig\',\'.DS_Store\'].some(x=>e.name.endsWith(x))){fs.unlinkSync(p.join(d,e.name));}}}scan(\'.\');console.log(\'temp files cleaned\')"' },
     guide: '清理 vim swap、临时文件、macOS DS_Store 等，不影响项目。',
   },
   // ===== Report =====
@@ -545,7 +545,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'quality',
     defaultExpression: '0 9 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npx tsc --noEmit 2>&1 | head -30' },
+    defaultParams: { command: 'npx tsc --noEmit' },
     guide: '运行 TypeScript 类型检查，发现编译错误。不修改代码。',
   },
   {
@@ -555,7 +555,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'test',
     defaultExpression: '0 3 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npm test -- --passWithNoTests 2>&1 | tail -40' },
+    defaultParams: { command: 'npm test -- --passWithNoTests' },
     guide: '运行 npm test，自动过滤掉无测试的情况。发现失败时会自动记录。',
   },
   {
@@ -678,7 +678,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'dev',
     defaultExpression: '0 4 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npm run build 2>&1 | tail -20' },
+    defaultParams: { command: 'npm run build' },
     guide: '运行 npm run build 验证项目可正常构建，发现编译错误及时修复。',
   },
   {
@@ -699,7 +699,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'security',
     defaultExpression: '0 22 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'grep -rn --include="*.ts" --include="*.js" --include="*.tsx" -E "api[_-]?key|secret|password|token" src/ 2>/dev/null | head -10 || echo "未发现硬编码密钥"' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');function scan(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.isDirectory()&&!e.name.startsWith(\'.\')){scan(p.join(d,e.name));}else if(/\.(ts|js|tsx)$/.test(e.name)){const f=p.join(d,e.name);const c=fs.readFileSync(f,\'utf8\');if(/api[_-]?key|secret|password|token/i.test(c)){console.log(f+\': possible secret\');}}}}scan(\'src\');console.log(\'secret scan done\')"' },
     guide: '扫描 src/ 目录下是否有硬编码密钥，发现后应立即移入 .env。',
   },
   {
