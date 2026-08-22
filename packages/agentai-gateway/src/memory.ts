@@ -170,6 +170,11 @@ function sanitizeUserId(userId: string): string {
 const COMPRESS_THRESHOLD = 50;  // 阈值提高，给重要性评估更多空间
 const KEEP_RECENT = 20;
 const KEEP_HIGH_VALUE = 15;     // 保留高价值记忆数量
+// P0 修复: 压缩后如果仍 > 阈值, 需要进一步压缩, 否则死循环
+// 51 条 → 压缩 → 22 条 → 新写入 → 51 条 → 压缩 → 22 条 ... (无限循环)
+// 修复: 压缩后如果 < 阈值, 标记文件为"已压缩", 短期内不再触发
+const COMPRESS_COOLDOWN_MS = 5 * 60 * 1000; // 5 分钟冷却
+const compressedCooldowns = new Map<string, number>(); // filePath → lastCompressedTs
 
 // P0 修复: 压缩防重入锁 — 避免并发写入导致 EPERM 死循环
 const compressingFiles = new Set<string>();
@@ -177,6 +182,9 @@ const compressingFiles = new Set<string>();
 async function compressMemoryFile(filePath: string): Promise<void> {
   // 防重入: 如果该文件正在压缩, 跳过
   if (compressingFiles.has(filePath)) return;
+  // P0 修复: 冷却期检查 — 5 分钟内已压缩过的文件不再触发
+  const lastCompressed = compressedCooldowns.get(filePath);
+  if (lastCompressed && Date.now() - lastCompressed < COMPRESS_COOLDOWN_MS) return;
   compressingFiles.add(filePath);
   try {
     const { evaluateBatch, generateSummary } = await import('./memory-importance.js');
@@ -272,6 +280,8 @@ async function compressMemoryFile(filePath: string): Promise<void> {
     }
 
     console.log(`[memory] 智能压缩: ${entries.length} → ${compressed.length} entries (高价值: ${highValue.length}, 摘要: ${archiveLowValue.length})`);
+    // P0 修复: 记录冷却时间, 5 分钟内不再重复压缩同一文件
+    compressedCooldowns.set(filePath, Date.now());
   } catch (e: any) {
     console.warn('[memory] compression failed:', e?.message);
   } finally {
