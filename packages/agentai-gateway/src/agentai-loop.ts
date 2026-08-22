@@ -2883,8 +2883,9 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
     };
     
     // 确保 hookSessionId 在第一次 LLM 调用前就初始化
+    // P1 修复: 每次 run() 复用已有 hookSessionId, 不重新生成 (否则旧 session 丢失 → "Session not found")
     if (!this.hookSessionId) {
-      this.hookSessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      this.hookSessionId = this.opts.sessionId || `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       try {
         await hookCapture.onSessionStart(this.opts.userId, this.opts.workspace, modelCtx, this.hookSessionId);
       } catch { /* hook optional */ }
@@ -4989,7 +4990,7 @@ if (this._capabilityTier !== 'autonomous') {
 
     // Hook: SessionStart（如果尚未开始会话，则在第一次工具调用时开始）
     if (!this.hookSessionId) {
-      this.hookSessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      this.hookSessionId = this.opts.sessionId || `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       // 传入已生成的 sessionId, 确保 hookCapture 中的 session 与 loop 中的一致
       await hookCapture.onSessionStart(this.opts.userId, this.opts.workspace, ctx, this.hookSessionId);
     }
