@@ -299,13 +299,26 @@ const SEMANTIC_MAP: Record<string, string[]> = {
   '测试': ['test', 'spec', 'mock', 'stub', 'fixture'],
   '工具': ['tool', 'util', 'helper', 'common', 'shared'],
   '类型': ['type', 'interface', 'enum', 'schema', 'model'],
-  '错误': ['error', 'error', 'exception', 'catch', 'throw', 'fail'],
+  '错误': ['error', 'exception', 'catch', 'throw', 'fail'],
   '日志': ['log', 'logger', 'console', 'debug', 'trace'],
   '状态': ['state', 'store', 'context', 'reducer', 'action'],
   '样式': ['style', 'css', 'theme', 'color', 'layout'],
   '文档': ['doc', 'readme', 'md', 'documentation'],
   '构建': ['build', 'compile', 'bundle', 'webpack', 'vite', 'rollup'],
   '部署': ['deploy', 'ci', 'cd', 'docker', 'release', 'publish'],
+  // ═══ 新增语义映射 ═══
+  '安全': ['security', 'vulnerability', 'inject', 'xss', 'csrf', 'sanitize', 'validate'],
+  '性能': ['performance', 'optimize', 'cache', 'lazy', 'memo', 'speed', 'fast'],
+  '异步': ['async', 'await', 'promise', 'then', 'callback', 'resolve', 'reject'],
+  '钩子': ['hook', 'useeffect', 'usestate', 'usememo', 'lifecycle', 'mount', 'unmount'],
+  '中间件': ['middleware', 'interceptor', 'filter', 'guard', 'pipe'],
+  '模型': ['model', 'llm', 'gpt', 'claude', 'gemini', 'embedding', 'vector', 'ai'],
+  '消息': ['message', 'event', 'emit', 'listen', 'subscribe', 'publish', 'queue'],
+  '会话': ['session', 'conversation', 'chat', 'dialog', 'message'],
+  '记忆': ['memory', 'remember', 'recall', 'forget', 'persist', 'storage'],
+  '进化': ['evolve', 'learn', 'adapt', 'self-modify', 'optimize', 'improve'],
+  '网关': ['gateway', 'proxy', 'forward', 'route', 'upstream'],
+  '流式': ['stream', 'sse', 'chunk', 'delta', 'partial', 'incremental'],
 };
 
 export function semanticSearch(query: string, files: string[]): string[] {
@@ -383,7 +396,71 @@ export function analyzeError(errorMsg: string, context?: { file?: string; tool?:
       confidence: 0.95,
     };
   }
-  
+
+  // PowerShell 命令不支持 (新增 — Windows 最常见错误)
+  if (msg.match(/is not recognized as|term '.*' is not recognized|&&|not a valid command/i)) {
+    const cmdMatch = msg.match(/term\s+'([^']+)'/);
+    const cmd = cmdMatch?.[1] || '';
+    return {
+      type: 'syntax',
+      rootCause: `PowerShell 不支持该命令或语法: ${cmd}`,
+      suggestedFix: cmd
+        ? `用 node -e "..." 替代 ${cmd}, 或用 npx ${cmd}, 或检查 PATH`
+        : 'PowerShell 不支持 && 连接命令, 用分号 ; 或分行执行',
+      relatedFiles: [],
+      confidence: 0.92,
+    };
+  }
+
+  // 端口被占用 (新增 — 更精确的修复建议)
+  if (msg.match(/eaddrinuse|port.*in.*use|already in use/i)) {
+    const portMatch = msg.match(/port\s+(\d+)/i);
+    const port = portMatch?.[1] || '';
+    return {
+      type: 'runtime',
+      rootCause: `端口 ${port} 被占用`,
+      suggestedFix: port
+        ? `Windows: netstat -ano | findstr :${port} → taskkill /PID <pid> /F; 或换端口`
+        : '杀掉占用端口的进程, 或换一个端口',
+      relatedFiles: [],
+      confidence: 0.95,
+    };
+  }
+
+  // 模块导入路径错误 (新增)
+  if (msg.match(/cannot find module|err_module_not_found|import.*not.*found/i)) {
+    const modMatch = msg.match(/cannot find module\s+['"]([^'"]+)['"]/i);
+    const mod = modMatch?.[1] || '';
+    return {
+      type: 'syntax',
+      rootCause: `模块路径错误: ${mod}`,
+      suggestedFix: mod.endsWith('.js')
+        ? `检查 ${mod} 是否存在, 可能需要去掉 .js 后缀 (ESM) 或改为 .ts`
+        : `检查 ${mod} 是否安装 (npm install ${mod}), 或路径是否正确`,
+      relatedFiles: context?.file ? [context.file] : [],
+      confidence: 0.88,
+    };
+  }
+
+  // 编译错误 (新增 — TS 类型错误增强)
+  if (msg.match(/ts\d+|type.*not assignable|argument.*not assignable|does not exist on type/i)) {
+    const tsMatch = msg.match(/(ts\d+)/i);
+    const tsCode = tsMatch?.[1] || '';
+    return {
+      type: 'syntax',
+      rootCause: `TypeScript 编译错误 ${tsCode}`,
+      suggestedFix: tsCode === 'ts2304'
+        ? '变量/函数未定义 → 检查是否 import 了, 或拼写错误'
+        : tsCode === 'ts2307'
+        ? '模块未找到 → 检查路径或 npm install'
+        : tsCode === 'ts2322'
+        ? '类型不匹配 → 检查变量类型声明'
+        : '检查 TypeScript 类型声明, 确保类型匹配',
+      relatedFiles: context?.file ? [context.file] : [],
+      confidence: 0.87,
+    };
+  }
+
   // 类型错误
   if (msg.match(/typeerror|is not a function|is not defined|is undefined|is null|cannot read prop/i)) {
     return {
@@ -484,6 +561,8 @@ export function compressContext(messages: Array<{ role: string; content: any }>)
   const keyInfo: string[] = [];
   const seenTools = new Set<string>();
   const seenFiles = new Set<string>();
+  const seenErrors: string[] = [];
+  const seenDecisions: string[] = [];
   
   for (const msg of old) {
     const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
@@ -491,24 +570,47 @@ export function compressContext(messages: Array<{ role: string; content: any }>)
     const toolMatches = content.matchAll(/(?:调用|执行|running)\s+(\w+)\s*[\(\(]/g);
     for (const m of toolMatches) seenTools.add(m[1]);
     
-    // 提取文件路径
-    const fileMatches = content.matchAll(/(?:文件|路径|file|path)[:：]?\s*([^\s\n,]+)/gi);
-    for (const m of fileMatches) seenFiles.add(m[1]);
+    // 提取文件路径 (改进: 匹配更多路径格式)
+    const fileMatches = content.matchAll(/(?:文件|路径|file|path|modified|created|edited)[:：]?\s*([^\s\n,}"\)]+\.\w{1,5})/gi);
+    for (const m of fileMatches) {
+      const p = m[1].replace(/['"`]/g, '');
+      if (p.length > 3 && p.length < 200) seenFiles.add(p);
+    }
     
-    // 提取关键决策
-    if (msg.role === 'assistant' && content.match(/决定|选择|方案|策略/i)) {
-      const lines = content.split('\n').filter(l => l.match(/决定|选择|方案|策略/i));
-      keyInfo.push(...lines.slice(0, 2));
+    // 提取错误信息 (新增: 保留错误教训)
+    if (content.match(/\[ERROR\]|Error:|失败|failed|cannot|unable/i)) {
+      const errLines = content.split('\n').filter(l => l.match(/\[ERROR\]|Error:|失败|failed/i)).slice(0, 2);
+      seenErrors.push(...errLines.map(l => l.slice(0, 120)));
+    }
+
+    // 提取关键决策 (改进: 更精确)
+    if (msg.role === 'assistant') {
+      const lines = content.split('\n').filter(l => 
+        l.match(/决定|选择|方案|策略|使用了|已创建|已修改|已删除|已安装/i)
+      );
+      seenDecisions.push(...lines.slice(0, 2).map(l => l.slice(0, 150)));
+    }
+
+    // 提取用户需求 (新增: 保留原始需求)
+    if (msg.role === 'user' && content.length > 10 && content.length < 500) {
+      keyInfo.push(`用户: ${content.slice(0, 100)}`);
     }
   }
   
   const summaryParts: string[] = [];
-  if (seenTools.size > 0) summaryParts.push(`已用工具: ${[...seenTools].join(', ')}`);
-  if (seenFiles.size > 0) summaryParts.push(`涉及文件: ${[...seenFiles].slice(0, 5).join(', ')}`);
-  if (keyInfo.length > 0) summaryParts.push(`关键决策:\n${keyInfo.slice(0, 3).join('\n')}`);
+  // 用户需求 (最重要 — 不能丢)
+  if (keyInfo.length > 0) summaryParts.push(`## 用户需求\n${keyInfo.slice(-3).join('\n')}`);
+  // 已用工具
+  if (seenTools.size > 0) summaryParts.push(`## 已用工具\n${[...seenTools].join(', ')}`);
+  // 涉及文件 (扩展到 10 个)
+  if (seenFiles.size > 0) summaryParts.push(`## 涉及文件\n${[...seenFiles].slice(0, 10).join(', ')}`);
+  // 错误教训 (新增 — 避免重复犯错)
+  if (seenErrors.length > 0) summaryParts.push(`## 错误记录\n${seenErrors.slice(-3).join('\n')}`);
+  // 关键决策 (改进: 更多保留)
+  if (seenDecisions.length > 0) summaryParts.push(`## 关键决策\n${seenDecisions.slice(-4).join('\n')}`);
   
   const summary = summaryParts.length > 0 
-    ? `[上下文摘要 - 已压缩 ${old.length} 条历史消息]\n${summaryParts.join('\n')}`
+    ? `[上下文摘要 - 已压缩 ${old.length} 条历史消息]\n${summaryParts.join('\n\n')}`
     : `[上下文摘要 - 已压缩 ${old.length} 条历史消息]`;
   
   return {

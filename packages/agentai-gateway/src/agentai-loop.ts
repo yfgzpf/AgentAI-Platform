@@ -5021,6 +5021,21 @@ try {
       { pattern: /类型|typecheck|类型错误|ts.*错误|编译错误|类型检查/i, tools: ['typecheck', 'diff_preview'] },
       // 后台任务管理
       { pattern: /后台|进程|job|任务.*运行|长.*运行/i, tools: ['run_background', 'job_output', 'wait_for_job', 'stop_job', 'list_jobs'] },
+      // ═══ 新增: 高频但之前缺失的意图 ═══
+      // 安装/依赖管理 (用户常说"装一下""安装""依赖")
+      { pattern: /安装|装一下|依赖|install|npm.*i\b|pnpm.*add|yarn.*add|pip.*install/i, tools: ['npm_install', 'run_code'] },
+      // 编译/构建 (用户常说"编译""打包""build")
+      { pattern: /编译|打包|构建|build|tsc|webpack|vite.*build|rollup/i, tools: ['run_code', 'run_background'] },
+      // 部署/运行服务 (用户常说"启动""跑起来""部署")
+      { pattern: /启动服务|跑起来|部署|deploy|start.*server|run.*server|dev.*server/i, tools: ['run_background', 'job_output', 'run_code'] },
+      // 对比/Diff (用户常说"对比""差异""改了什么")
+      { pattern: /对比|差异|改了什么|diff|区别|变化/i, tools: ['git_diff', 'diff_preview', 'find_references'] },
+      // 重命名/移动 (用户常说"改名""重命名""移动")
+      { pattern: /改名|重命名|移动|rename|move|mv\b/i, tools: ['move_file', 'get_file_info'] },
+      // 删除 (用户常说"删掉""删除""清理")
+      { pattern: /删掉|删除|清理|remove|delete|rm\b/i, tools: ['delete_file', 'get_file_info'] },
+      // 文档/README (用户常说"写文档""README""说明")
+      { pattern: /写文档|文档|readme|说明|api.*doc|接口文档/i, tools: ['write_file', 'auto_project_doc'] },
     ];
 
     // 收集匹配的工具名
@@ -5301,6 +5316,16 @@ try {
           if (reflectionInjection) {
             this.context.appendOnlyLog.push({ role: 'system', content: reflectionInjection });
           }
+          // ═══ 灵魂层融合: 失败问题写入 CuriosityEngine (转化为实际任务改进) ═══
+          try {
+            const { getCuriosityEngine } = await import('./soul/index.js');
+            getCuriosityEngine().extractFromConversation(
+              `工具 ${c.name} 失败: ${errorOutput.slice(0, 100)}`,
+              [c.name],
+              1,
+              this.opts.sessionId,
+            );
+          } catch { /* curiosity best-effort */ }
         } catch { /* 智能核心加载失败不影响主流程 */ }
       } else if (r?.result?.success === true) {
         // ═══ 智能核心: 工具成功时也反思 — 检测隐性失败 ═══
