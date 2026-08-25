@@ -1335,9 +1335,31 @@ if (memCtx) {
     }
 
     // === 4.9 跨会话连续记忆: 注入上次会话摘要 (支持 AI 控制是否注入) ===
+    // P0 修复: 同会话内"继续"类消息 → 注入当前会话进度摘要 (429/空回复中断后恢复)
+    if (this.iteration === 0 && typeof userMessage === 'string' && /继续|接着|继续实现|继续完成|resume/i.test(userMessage)) {
+      const toolMsgs = this.context.appendOnlyLog.filter(m => m.role === 'tool');
+      const assistantMsgs = this.context.appendOnlyLog.filter(m => m.role === 'assistant' && m.content);
+      if (toolMsgs.length > 0 || assistantMsgs.length > 0) {
+        const toolNames = [...new Set(toolMsgs.map((m: any) => m.name || '').filter(Boolean))];
+        const failedTools = toolMsgs.filter((m: any) => typeof m.content === 'string' && m.content.startsWith('[ERROR]'));
+        const lastAssistant = assistantMsgs[assistantMsgs.length - 1];
+        const progressHint = `# 当前任务进度 (从中断处恢复)\n` +
+          `已执行工具: ${toolNames.length} 个 (${toolNames.slice(0, 8).join(', ')})\n` +
+          (failedTools.length > 0 ? `失败工具: ${failedTools.length} 个\n` : '') +
+          (lastAssistant ? `上次回复: ${typeof lastAssistant.content === 'string' ? lastAssistant.content.slice(0, 200) : ''}\n` : '') +
+          `\n用户说"继续", 请基于以上进度继续完成任务, 不要重复已完成的步骤。`;
+        systemMsgs.push({ role: 'system', content: progressHint });
+        console.log(`[loop] P0: 注入任务进度摘要 (${toolNames.length} 工具已执行, ${failedTools.length} 失败)`);
+      }
+    }
+
     if (!this._startupSessionInjected && this.opts.workspace) {
       this._startupSessionInjected = true;
       try {
+        // P0 修复: 同会话内"继续"类消息 → 注入当前会话进度摘要 (429/空回复中断后恢复)
+        // 注意: 这段逻辑不依赖 _startupSessionInjected, 每次 run() 都检查
+        // (上面的 if 只控制跨会话记忆注入, 这里的 continue 检测是独立的)
+
         // 检查 AI 是否设置了禁用跨会话记忆注入的偏好
         let skipInjection = false;
         try {
