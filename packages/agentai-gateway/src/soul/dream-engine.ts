@@ -158,11 +158,24 @@ export class DreamEngine extends EventEmitter {
         artifacts = await this.exploreWorkspace(ws, dreamType);
       }
 
-      // 3. 生成思维流
+      // 3. 生成思维流 (本地规则)
       const thoughtStream = this.generateThoughts(dreamType, artifacts);
 
-      // 4. 提取洞察
-      const insights = this.extractInsights(thoughtStream, artifacts);
+      // 3.5 LLM 联动: 如果有足够上下文, 调用 LLM 产生深度思考
+      let llmInsight: string | null = null;
+      if (artifacts.length > 0) {
+        try {
+          llmInsight = await this.llmDream(artifacts, dreamType, thoughtStream);
+          if (llmInsight) {
+            thoughtStream.push(`[深度思考] ${llmInsight.slice(0, 200)}`);
+          }
+        } catch { /* LLM dream optional */ }
+      }
+
+      // 4. 提取洞察 (如果有 LLM 洞察, 优先使用)
+      const insights = llmInsight
+        ? [llmInsight.slice(0, 200), ...this.extractInsights(thoughtStream, artifacts)]
+        : this.extractInsights(thoughtStream, artifacts);
 
       // 5. 产生新问题
       const openQuestions = this.generateQuestions(dreamType, artifacts, insights);
@@ -225,6 +238,61 @@ export class DreamEngine extends EventEmitter {
       'pattern_anomaly': 'pattern_discovery',
     };
     return map[curiosityType] || 'code_wander';
+  }
+
+  /**
+   * LLM 梦境: 调用 LLM 对探索发现进行深度思考
+   * 使用轻量模型 (免费/低成本), 产生真正的"新想法"
+   */
+  private async llmDream(
+    artifacts: DreamEntry['artifacts'],
+    dreamType: DreamEntry['type'],
+    localThoughts: string[],
+  ): Promise<string | null> {
+    try {
+      // 直接调用本地 Gateway API (最简方式, 不依赖 llm-router 内部接口)
+      const artifactText = artifacts
+        .map(a => `文件: ${a.filePath}\n片段: ${a.snippet}\n注意: ${a.relevance}`)
+        .join('\n---\n');
+
+      const prompt = `你在梦境中自由思考。以下是你在代码中游走时发现的片段:
+
+${artifactText}
+
+你之前的思维流:
+${localThoughts.slice(-3).join('\n')}
+
+请产生一个洞察 — 不是描述性的, 而是连接性的:
+- 这些文件之间有什么隐含联系?
+- 有什么模式在重复出现?
+- 如果改变一个假设, 会发生什么?
+- 用一句话表达你的核心发现 (50字以内)`;
+
+      const resp = await fetch('http://localhost:18789/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.9,
+          max_tokens: 200,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (content && content.length > 10) {
+          console.log(`[dream] 💭 LLM 深度思考: ${content.slice(0, 80)}`);
+          return content.trim();
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[dream] LLM 调用失败: ${e?.message}`);
+    }
+    return null;
   }
 
   /** 探索工作区 — 随机读取文件 */
