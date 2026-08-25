@@ -31,8 +31,36 @@ export interface CaptureWorkflow {
 export class HookCaptureEngine {
   private activeSessions = new Map<string, CaptureSession>();
   private activeWorkflows = new Map<string, CaptureWorkflow>();
-  
+  private lastCleanupTs = 0;
+  private static SESSION_TTL_MS = 30 * 60 * 1000; // 30 分钟无活动自动清理
+
   constructor() {}
+
+  /** P1 修复: 清理超时 session (防止内存泄漏) */
+  private cleanupStaleSessions(): void {
+    // 最多每 5 分钟清理一次 (不是每次都清理)
+    if (Date.now() - this.lastCleanupTs < 5 * 60 * 1000) return;
+    this.lastCleanupTs = Date.now();
+
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [id, session] of this.activeSessions) {
+      if (now - session.startTime > HookCaptureEngine.SESSION_TTL_MS) {
+        this.activeSessions.delete(id);
+        cleaned++;
+      }
+    }
+    // 清理超时 workflow
+    for (const [id, wf] of this.activeWorkflows) {
+      if (now - wf.startTime > HookCaptureEngine.SESSION_TTL_MS) {
+        this.activeWorkflows.delete(id);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) {
+      console.log(`[hook-capture] 🧹 清理 ${cleaned} 个超时 session/workflow (剩余 ${this.activeSessions.size})`);
+    }
+  }
 
   // ═══════════════════════════════════════════════════════
   // Session Lifecycle Hooks
@@ -57,6 +85,9 @@ export class HookCaptureEngine {
       startTime: Date.now(),
       context
     });
+
+    // P1 修复: 定期清理超时 session (防止内存泄漏)
+    this.cleanupStaleSessions();
 
     // 触发SessionStart Hook
     await hooksManager.trigger('SessionStart', {

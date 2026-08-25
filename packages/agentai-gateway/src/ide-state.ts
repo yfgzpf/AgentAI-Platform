@@ -72,10 +72,16 @@ export function getIdeState(): IdeState {
 /**
  * 生成 IDE 上下文文本，注入 AI 系统提示
  * 格式简洁，避免占用过多 token
+ * P0 修复: 接受 currentWorkspace 参数, 只返回属于该 workspace 的文件
  */
-export function buildIdeContext(): string {
+export function buildIdeContext(currentWorkspace?: string): string {
   const s = currentState;
   if (s.openFiles.length === 0) return '';
+
+  // P0 修复: 如果 IDE 状态属于不同 workspace, 不注入 (避免旧工作区文件泄漏)
+  if (currentWorkspace && ideStateWorkspace && ideStateWorkspace !== currentWorkspace) {
+    return ''; // workspace 不匹配, 不注入
+  }
 
   const lines: string[] = ['<ide-context>'];
 

@@ -212,6 +212,16 @@ if (cleaned > 0) {
 // 注册定期清理 (每 6 小时清理 3 天前的)
 PersistentMemory.registerPeriodicCleanup();
 
+// ===== 灵魂层: DreamEngine 启动 =====
+try {
+  const { getDreamEngine } = await import('./soul/index.js');
+  const dreamEngine = getDreamEngine();
+  dreamEngine.start();
+  console.log('[soul] 🧠 灵魂层已启动 (DreamEngine + InnerVoice + PainSense)');
+} catch (e: any) {
+  console.warn('[soul] 灵魂层启动失败 (不影响核心功能):', e?.message);
+}
+
 // ===== Sprint 1: Prompt 模板引擎 + 知识缓存 =====
 const promptEngine = getPromptEngine();
 const knowledgeCache = getKnowledgeCache();
@@ -868,6 +878,31 @@ function tryListenWithRetry(): void {
 
   // TTS 路由: MOSS-TTS-Nano (本地语音克隆) + OpenAI/Edge 后端
   app.use('/v1', createVoiceRouter());
+
+  // 灵魂层 API
+  const { soulRouter } = await import('./routes/soul.js');
+  app.use('/v1', soulRouter);
+  console.log('[soul] 🧠 灵魂层 API 已注册 (/v1/soul/*)');
+
+  // ===== 激活 WorkspaceAgent — 代码索引 + 依赖图 =====
+  try {
+    const { buildWorkspaceContext } = await import('./workspace-agent.js');
+    const ctx = buildWorkspaceContext(process.cwd());
+    if (ctx) {
+      console.log('[workspace-agent] 📊 代码索引已激活');
+      console.log(`[workspace-agent] ${ctx.split('\n').slice(0, 3).join(' | ')}`);
+    }
+  } catch (e: any) {
+    console.warn('[workspace-agent] 激活失败 (不影响核心功能):', e?.message);
+  }
+
+  // ===== 日志轮转 — 防止日志文件无限膨胀 =====
+  try {
+    const { startLogRotation } = await import('./log-rotate.js');
+    startLogRotation(path.join(__dirname, '..'));
+  } catch (e: any) {
+    console.warn('[log-rotate] 启动失败:', e?.message);
+  }
 
   // 记忆统计 API
   app.use('/api/memory', memoryRouter);

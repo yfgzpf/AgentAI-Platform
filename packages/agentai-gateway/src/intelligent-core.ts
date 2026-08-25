@@ -170,6 +170,30 @@ function findCriticalPath(subtasks: SubTask[], order: string[]): string[] {
   return best.path;
 }
 
+/**
+ * 构建任务计划 — 拓扑排序 + 并行分组 + 关键路径
+ * 供 plan_task 工具调用
+ */
+export function buildTaskPlan(goal: string, subtasks: SubTask[]): TaskPlan {
+  const executionOrder = topologicalSort(subtasks);
+  const parallelGroups = findParallelGroups(subtasks);
+  const criticalPath = findCriticalPath(subtasks, executionOrder);
+  
+  // 风险点: 循环依赖、无依赖的独立任务过多、关键路径过长
+  const risks: string[] = [];
+  if (executionOrder.length < subtasks.length) {
+    risks.push('存在循环依赖, 部分任务无法排序');
+  }
+  if (parallelGroups.length === subtasks.length) {
+    risks.push('所有任务相互独立, 可能需要明确执行顺序');
+  }
+  if (criticalPath.length > 5) {
+    risks.push(`关键路径过长 (${criticalPath.length} 步), 考虑简化依赖`);
+  }
+  
+  return { goal, subtasks, executionOrder, parallelGroups, criticalPath, risks };
+}
+
 // ============================================================
 // 2. 代码理解引擎 — 快速定位关键代码
 // ============================================================

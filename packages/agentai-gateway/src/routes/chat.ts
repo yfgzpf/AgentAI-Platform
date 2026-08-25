@@ -898,6 +898,43 @@ const tryActivateIndustry = async (reqBody: any) => {
           sendEvent('progress', info);
         });
 
+        // ═══ 灵魂层 SSE 事件: 实时推送 AI 内心状态到前端 ═══
+        try {
+          const { getPainSense, getInnerVoice, getCuriosityEngine, getInternalDebate } = await import('../soul/index.js');
+          const painSense = getPainSense();
+          const innerVoice = getInnerVoice();
+          const curiosity = getCuriosityEngine();
+          const debate = getInternalDebate();
+
+          // 痛觉/愉悦变化 → 推送 mood 事件
+          painSense.on('pain', (state: any) => {
+            sendEvent('mood', { mood: state.mood, intensity: state.intensity, pain: state.pain, consecutiveFailures: state.consecutiveFailures });
+          });
+          painSense.on('joy', (state: any) => {
+            sendEvent('mood', { mood: state.mood, intensity: state.intensity, joy: state.joy, consecutiveSuccesses: state.consecutiveSuccesses });
+          });
+
+          // 内心独白 → 推送 inner_voice 事件
+          innerVoice.on('thought', (thought: any) => {
+            if (thought.influencesReply) {
+              sendEvent('inner_voice', { text: thought.text, mood: thought.mood, context: thought.context });
+            }
+          });
+
+          // 好奇心新问题 → 推送 curiosity 事件
+          curiosity.on('question:added', (q: any) => {
+            sendEvent('curiosity', { question: q.question, type: q.type, priority: q.priority });
+          });
+          curiosity.on('insight', (insight: any) => {
+            sendEvent('curiosity', { text: insight.text, type: 'insight' });
+          });
+
+          // 内部辩论完成 → 推送 debate 事件
+          debate.on('debate:complete', (result: any) => {
+            sendEvent('debate', { topic: result.topic, recommendation: result.recommendation, contradictions: result.contradictions, confidence: result.confidence });
+          });
+        } catch { /* soul SSE events optional */ }
+
         // 2026-07-22 修复: plan:created 事件转发为 SSE plan_created (之前冒号/下划线不匹配)
         loop.on('plan:created', (info: any) => {
           sendEvent('plan_created', info);

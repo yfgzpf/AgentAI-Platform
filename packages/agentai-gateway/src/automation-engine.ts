@@ -534,7 +534,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'report',
     defaultExpression: '0 10 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'echo "=== 代码行数 ===" && find . -name "*.ts" -o -name "*.tsx" -o -name "*.js" | xargs wc -l 2>/dev/null | tail -1 && echo "=== 依赖 ===" && cat package.json | grep -c "dependencies" 2>/dev/null || echo "无 package.json"' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');function scan(d){let c=0;for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.isDirectory()&&!e.name.startsWith(\'.\')&&e.name!==\'node_modules\'){c+=scan(p.join(d,e.name));}else if(/\.(ts|tsx|js)$/.test(e.name)){const f=p.join(d,e.name);const l=fs.readFileSync(f,\'utf8\').split(\'\\n\').length;c+=l;}}return c;}console.log(\'代码行数: \'+scan(\'.\'));try{const pkg=JSON.parse(fs.readFileSync(\'package.json\',\'utf8\'));console.log(\'依赖数: \'+(Object.keys(pkg.dependencies||{}).length+Object.keys(pkg.devDependencies||{}).length));}catch{console.log(\'无 package.json\')}"'}, 
     guide: '统计项目代码行数和依赖数量。',
   },
   // ===== Quality =====
@@ -565,7 +565,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'security',
     defaultExpression: '0 10 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npm audit --audit-level=high 2>&1 | tail -30' },
+    defaultParams: { command: 'npm audit --audit-level=high' },
     guide: '运行 npm audit 检查高危依赖漏洞。仅报告，不自动修复。',
   },
   {
@@ -575,7 +575,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'quality',
     defaultExpression: '0 11 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npx ts-prune --no-strict 2>&1 | head -30' },
+    defaultParams: { command: 'npx ts-prune --no-strict' },
     guide: '扫描未使用的类型和导入，发现僵尸代码。不会自动删除。',
   },
   // ===== Monitor =====
@@ -586,7 +586,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'monitor',
     defaultExpression: '0 */4 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'echo "磁盘:" && df -h . 2>/dev/null | tail -1 && echo "内存:" && free -h 2>/dev/null | grep Mem || echo "Windows: tasklist | findstr node"' },
+    defaultParams: { command: 'node -e "const os=require(\'os\');const fs=require(\'fs\');const total=os.totalmem(),free=os.freemem();console.log(\'内存: \'+Math.round((total-free)/1024/1024/1024*10)/10+\'GB / \'+Math.round(total/1024/1024/1024*10)/10+\'GB (\'+Math.round((1-free/total)*100)+\'% 使用)\');try{const stats=fs.statSync(\'.\');console.log(\'磁盘检查完成\')}catch{console.log(\'磁盘检查跳过\')}"' },
     guide: '检查磁盘使用率和内存占用，仅检查不修改。',
   },
   {
@@ -606,7 +606,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'monitor',
     defaultExpression: '*/15 * * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'curl -sI --max-time 5 https://localhost:18789/v1/health 2>/dev/null | head -1 || echo "UNREACHABLE"' },
+    defaultParams: { command: 'node -e "fetch(\'http://localhost:18789/v1/health\',{signal:AbortSignal.timeout(5000)}).then(r=>console.log(\'HTTP \'+r.status+\' OK\')).catch(()=>console.log(\'UNREACHABLE\'))"' },
     guide: '检查 Gateway 本地服务健康状态，每 15 分钟一次。',
   },
   {
@@ -616,7 +616,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'monitor',
     defaultExpression: '0 */2 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'df -h . 2>/dev/null | tail -1' },
+    defaultParams: { command: 'node -e "const os=require(\'os\');console.log(\'内存使用: \'+Math.round((os.totalmem()-os.freemem())/1024/1024/1024*10)/10+\'GB / \'+Math.round(os.totalmem()/1024/1024/1024*10)/10+\'GB\')"' },
     guide: '检查当前目录磁盘使用率。',
   },
   {
@@ -626,7 +626,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'monitor',
     defaultExpression: '*/30 * * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'grep -c -E "ERROR|FATAL|CRITICAL" .agentai/*.log 2>/dev/null || echo "无错误日志"' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\'),p=require(\'path\');const d=\'.agentai\';if(!fs.existsSync(d)){console.log(\'无错误日志\');process.exit()}let c=0;for(const f of fs.readdirSync(d)){if(f.endsWith(\'.log\')){const lines=fs.readFileSync(p.join(d,f),\'utf8\').split(\'\\n\');c+=lines.filter(l=>/ERROR|FATAL|CRITICAL/.test(l)).length}}console.log(\'错误日志条数: \'+c)"' },
     guide: '统计日志中的错误行数，发现异常可及时告警。',
   },
   // ===== Sync =====
@@ -657,7 +657,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'sync',
     defaultExpression: '0 9 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npx npm-check-updates -u --packageFile package.json --format json --jsonAll 2>/dev/null | head -50 || npm outdated 2>/dev/null || echo "所有依赖已是最新"' },
+    defaultParams: { command: 'npm outdated' },
     guide: '检查 package.json 依赖是否有更新版本，仅报告不自动升级。',
   },
   // ===== Dev =====
@@ -668,7 +668,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'dev',
     defaultExpression: '0 18 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'git log --oneline -10 | grep -vE "^(fix|feat|docs|style|refactor|perf|test|build|ci|chore|revert):" | head -5 && echo "---" || echo "所有提交符合规范"' },
+    defaultParams: { command: 'git log --oneline -10' },
     guide: '检查最近 10 次提交是否使用 Conventional Commits 格式。',
   },
   {
@@ -688,7 +688,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'test',
     defaultExpression: '0 10 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npx jest --coverage 2>&1 | tail -20 || npx tsc --noEmit 2>&1 | tail -10 || echo "无测试框架"' },
+    defaultParams: { command: 'npx jest --coverage' },
     guide: '生成 Jest 覆盖率报告，如无测试框架则跳过。',
   },
   // ===== Security =====
@@ -709,7 +709,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'security',
     defaultExpression: '0 8 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'test -f .env && echo ".env 存在, $(wc -l < .env) 行" || echo "WARNING: .env 缺失"' },
+    defaultParams: { command: 'node -e "const fs=require(\'fs\');if(fs.existsSync(\'.env\')){const l=fs.readFileSync(\'.env\',\'utf8\').split(\'\\n\').filter(x=>x.trim()).length;console.log(\'.env 存在, \'+l+\' 行\')}else{console.log(\'WARNING: .env 缺失\')}"' },
     guide: '检查 .env 文件是否存在，确保环境变量配置完整。',
   },
 ];

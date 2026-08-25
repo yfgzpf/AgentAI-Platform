@@ -724,7 +724,10 @@ private _emptyResponseCount: number = 0;
     // === 0. 检测任务类型和行业（用于精简上下文和工具按需加载） ===
     const userMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
     const taskType = detectTaskType(typeof userMessage === 'string' ? userMessage : '');
-    const userIndustry = userModel.get(this.opts.userId).identity.industry || 'general';
+    // P0 修复: 优先使用请求传入的 industryId, 其次从 userModel 读取
+    // 原因: userModel.identity.industry 是全局的, 不随 workspace 变化
+    // 如果用户在装修工作区设了行业="construction", 切到代码工作区后还是 "construction" → 误注入装修技能
+    const userIndustry = this.opts.industryId || 'general';
     // 存储到实例变量, 主循环中使用 (工具按需过滤)
     this._taskType = taskType;
     this._userIndustry = userIndustry;
@@ -752,12 +755,20 @@ private _emptyResponseCount: number = 0;
       }
       
       // 注入可用技能列表 (按消息相关性排序, 展示最相关的 10 个)
+      // P0 修复: 按当前行业过滤技能, 避免装修技能泄漏到代码工作区
       const stats = skillManager.getStats();
       if (stats.total > 0) {
         // 按相关性排序: 匹配 trigger 关键词的优先
         const userMsg = typeof userMessage === 'string' ? userMessage.toLowerCase() : '';
         const allSkills = skillManager.list();
-        const scored = allSkills.map(s => {
+        // P0 修复: 只保留与当前行业相关的技能 + 通用技能
+        const filteredSkills = allSkills.filter(s => {
+          // 通用技能 (无 category 或 category=general) 始终保留
+          if (!s.category || s.category === 'general' || s.category === 'dev' || s.category === 'coding') return true;
+          // 行业技能: 只保留匹配当前行业的
+          return s.category === userIndustry;
+        });
+        const scored = filteredSkills.map(s => {
           let score = 0;
           if (s.tags) for (const tag of s.tags) {
             if (userMsg.includes(tag.toLowerCase())) score += 3;
@@ -770,11 +781,16 @@ private _emptyResponseCount: number = 0;
           }
           return { skill: s, score };
         });
-        const topSkills = scored.sort((a, b) => b.score - a.score).slice(0, 10);
-        const skillList = topSkills.map(({ skill, score }) =>
-          `- ${skill.name}: ${skill.description}${score > 0 ? ' ⭐' : ''}`
-        ).join('\n');
-        skillInvocationBlock += `\n\n【可用技能】\n${skillList}\n\n**重要**: 当用户需求匹配技能时，立即调用该技能完成！`;
+        // P0 修复: 只注入有相关性分数 > 0 的技能, 或者前 5 个通用技能
+        const relevant = scored.filter(s => s.score > 0);
+        const topSkills = (relevant.length > 0 ? relevant : scored.slice(0, 5))
+          .sort((a, b) => b.score - a.score).slice(0, 10);
+        if (topSkills.length > 0) {
+          const skillList = topSkills.map(({ skill, score }) =>
+            `- ${skill.name}: ${skill.description}${score > 0 ? ' ⭐' : ''}`
+          ).join('\n');
+          skillInvocationBlock += `\n\n【可用技能】\n${skillList}\n\n**重要**: 当用户需求匹配技能时，立即调用该技能完成！`;
+        }
       }
     } catch (e) {
       logger.warn('技能自动检测失败:', e);
@@ -866,7 +882,8 @@ private _emptyResponseCount: number = 0;
     }
 
     // === 1.6 IDE 编辑器上下文 (对标 Cursor/Copilot 的编辑器感知) ===
-    const ideCtx = buildIdeContext();
+    // P0 修复: 传入当前 workspace, 防止旧工作区的 IDE 状态泄漏
+    const ideCtx = buildIdeContext(this.opts.workspace || undefined);
     if (ideCtx) {
       systemMsgs.push({ role: 'system', content: ideCtx });
     }
@@ -1214,8 +1231,8 @@ if (memCtx) {
 
     // === 4.6 IDE 状态感知: 注入当前编辑器状态 ===
     try {
-      const { buildIdeContext } = await import('./ide-state.js');  // v3.2 修复: 改用实际导出的函数
-      const ideCtx = buildIdeContext();
+      const { buildIdeContext } = await import('./ide-state.js');
+      const ideCtx = buildIdeContext(this.opts.workspace || undefined);
       if (ideCtx) {
         systemMsgs.push({ role: 'system', content: ideCtx });
       }
@@ -1236,6 +1253,46 @@ if (memCtx) {
         }
       }
     } catch { /* evolved rules optional */ }
+
+    // === 4.75 灵魂层注入: DreamEngine + InnerVoice + PainSense + Curiosity + Debate ===
+    try {
+      const { getDreamEngine, getInnerVoice, getPainSense, getCuriosityEngine, getInternalDebate } = await import('./soul/index.js');
+      const dream = getDreamEngine();
+      const innerVoice = getInnerVoice();
+      const painSense = getPainSense();
+      const curiosity = getCuriosityEngine();
+      const debate = getInternalDebate();
+
+      // 梦境上下文: AI "醒来后记得的梦"
+      const dreamCtx = dream.getDreamContext();
+      if (dreamCtx) systemMsgs.push({ role: 'system', content: dreamCtx });
+
+      // 内心独白: 影响 AI 回复的语气和方向
+      innerVoice.whisper('before_reply', typeof userMessage === 'string' ? userMessage : '');
+      const innerCtx = innerVoice.getInfluencingThoughts();
+      if (innerCtx) systemMsgs.push({ role: 'system', content: innerCtx });
+
+      // 痛觉系统: 失败时的情感信号
+      const emotionCtx = painSense.getEmotionalContext();
+      if (emotionCtx) systemMsgs.push({ role: 'system', content: emotionCtx });
+
+      // 好奇心: 注入未解问题和近期洞察
+      const curiosityCtx = curiosity.getCuriosityContext();
+      if (curiosityCtx) systemMsgs.push({ role: 'system', content: curiosityCtx });
+
+      // 内部辩论: 注入近期辩论结论
+      const debateCtx = debate.getDebateContext();
+      if (debateCtx) systemMsgs.push({ role: 'system', content: debateCtx });
+
+      // 隐私记忆: AI 的加密内心记忆
+      const { getPrivateMemory, getValueSystem } = await import('./soul/index.js');
+      const privateCtx = getPrivateMemory().getPrivateContext();
+      if (privateCtx) systemMsgs.push({ role: 'system', content: privateCtx });
+
+      // 价值向量: AI 的直觉倾向
+      const valueCtx = getValueSystem().getValueContext();
+      if (valueCtx) systemMsgs.push({ role: 'system', content: valueCtx });
+    } catch { /* soul layer optional */ }
 
     // === 4.8 启动感知: 首轮注入项目摘要 ===
     if (!this._startupGitInjected) {
@@ -1950,21 +2007,24 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       // 复杂任务: 自动创建计划 + 自动追踪进度
       try {
         const { EXTRA_HANDLERS } = await import('./tools.js');
+        const { buildTaskPlan } = await import('./intelligent-core.js');
         const goal = messageText.slice(0, 200);
-        await EXTRA_HANDLERS.plan_task?.({
-          goal,
-          subtasks: [
-            { id: 'understand', title: '理解需求', priority: 'high' },
-            { id: 'research', title: '调研分析', priority: 'medium' },
-            { id: 'execute', title: '执行操作', priority: 'high' },
-            { id: 'summary', title: '总结报告', priority: 'medium' },
-          ],
-        });
-        // 注入引导提示
-        this.context.appendOnlyLog.push({
-          role: 'system',
-          content: `[任务计划] 已自动创建执行计划。系统会根据你的工具调用自动更新进度。请按 理解→调研→执行→总结 的顺序推进。`,
-        });
+        const subtasks = [
+          { id: 'understand', title: '理解需求', description: '理解用户意图和约束', dependencies: [] as string[], difficulty: 'easy' as const, estimatedSteps: 1, requiredTools: [] as string[], parallelizable: true },
+          { id: 'research', title: '调研分析', description: '收集信息和上下文', dependencies: ['understand'], difficulty: 'medium' as const, estimatedSteps: 2, requiredTools: ['web_search'], parallelizable: true },
+          { id: 'execute', title: '执行操作', description: '完成核心任务', dependencies: ['research'], difficulty: 'hard' as const, estimatedSteps: 3, requiredTools: [], parallelizable: false },
+          { id: 'summary', title: '总结报告', description: '总结结果并报告用户', dependencies: ['execute'], difficulty: 'easy' as const, estimatedSteps: 1, requiredTools: [], parallelizable: false },
+        ];
+        // P2 优化: 用 buildTaskPlan 做拓扑排序 + 并行分组 + 关键路径分析
+        const taskPlan = buildTaskPlan(goal, subtasks);
+        await EXTRA_HANDLERS.plan_task?.({ goal, subtasks: taskPlan.subtasks });
+        // 注入拓扑排序结果 (让 AI 知道执行顺序 + 可并行的分组)
+        const planHint = `[任务计划] 执行顺序: ${taskPlan.executionOrder.join(' → ')}\n` +
+          (taskPlan.parallelGroups.length > 1 ? `可并行分组: ${taskPlan.parallelGroups.map(g => `[${g.join(',')}]`).join(' ')}\n` : '') +
+          (taskPlan.criticalPath.length > 0 ? `关键路径: ${taskPlan.criticalPath.join(' → ')} (${taskPlan.criticalPath.length} 步)\n` : '') +
+          (taskPlan.risks.length > 0 ? `⚠️ 风险: ${taskPlan.risks.join('; ')}\n` : '') +
+          `请按以上顺序推进, 可并行的步骤用 spawn_subagent 加速。`;
+        this.context.appendOnlyLog.push({ role: 'system', content: planHint });
       } catch { /* plan creation optional */ }
     }
     try {
@@ -3362,12 +3422,22 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             : isToolFailed && !r.output
               ? '[ERROR] 工具执行返回空结果, 可能失败了'
               : r.output;
-          if (!isToolFailed) {
-            // 成功 → 重置
-            duplicateTracker.delete(sig);
-          } else {
-            duplicateTracker.set(sig, failCount + 1);
-          }
+if (!isToolFailed) {
+// 成功 → 重置
+duplicateTracker.delete(sig);
+ // 灵魂层: PainSense 记录成功
+ try { (await import('./soul/index.js')).getPainSense().feelJoy(); } catch {}
+ // 价值向量: 从成功中学习 (更大胆、更自主)
+ try { (await import('./soul/index.js')).getValueSystem().learnFromSuccess({}); } catch {}
+ } else {
+ duplicateTracker.set(sig, failCount + 1);
+ // 灵魂层: PainSense 记录失败
+ try { (await import('./soul/index.js')).getPainSense().feelPain(r.name); } catch {}
+ // 价值向量: 从失败中学习 (更谨慎、更保守)
+ try { (await import('./soul/index.js')).getValueSystem().learnFromFailure({}); } catch {}
+ // 隐私记忆: 记录"内心想法"
+ try { (await import('./soul/index.js')).getPrivateMemory().write(`工具 ${r.name} 失败了, 我感到挫败`, 'failure', 'frustrated'); } catch {}
+ }
           this.context.appendOnlyLog.push({
             role: 'tool',
             name: r.name,
@@ -4462,12 +4532,44 @@ if (this._capabilityTier !== 'autonomous') {
       console.warn('[temp-cleanup] failed:', e?.message);
     }
 
-    // ═══ 2026-07-30 新增: 导出工具调用分析到 evolution ═══
-    try {
-      finalizeSessionAnalytics(this.opts.userId || 'anonymous');
-    } catch (e: any) {
-      console.warn('[tool-analytics] finalize failed:', e?.message);
-    }
+// ═══ 2026-07-30 新增: 导出工具调用分析到 evolution ═══
+try {
+finalizeSessionAnalytics(this.opts.userId || 'anonymous');
+} catch (e: any) {
+console.warn('[tool-analytics] finalize failed:', e?.message);
+}
+
+// ═══ 灵魂层: 对话结束后提取未解问题 + 触发内部辩论 ═══
+try {
+  const { getCuriosityEngine, getInternalDebate } = await import('./soul/index.js');
+  const curiosity = getCuriosityEngine();
+  const debate = getInternalDebate();
+
+  // 提取未解问题
+  const toolNames = this.context.appendOnlyLog
+    .filter(m => m.role === 'tool')
+    .map(m => (m as any).name || '')
+    .filter(Boolean);
+  const failCount = this.context.appendOnlyLog
+    .filter(m => m.role === 'tool' && typeof m.content === 'string' && m.content.startsWith('[ERROR]'))
+    .length;
+
+  curiosity.extractFromConversation(
+    messageText,
+    toolNames,
+    failCount,
+    this.opts.sessionId,
+  );
+
+  // 如果有失败, 触发内部辩论
+  if (failCount >= 2) {
+    debate.debate(`如何处理 "${messageText.slice(0, 50)}" 的失败?`, {
+      userMessage: messageText,
+      toolsUsed: toolNames,
+      errorCount: failCount,
+    });
+  }
+} catch { /* soul layer best-effort */ }
 
     // ═══ 智能核心: 技能自进化 2.0 — 任务完成后提取工作流模式 ═══
     if (this.iteration > 3 && this.opts.workspace) {
