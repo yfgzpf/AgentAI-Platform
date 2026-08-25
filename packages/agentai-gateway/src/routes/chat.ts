@@ -485,33 +485,33 @@ const tryActivateIndustry = async (reqBody: any) => {
         console.log(`[chat] ✅ queue passed (supersede mode), starting model selection`);
 
         // ====== 模型映射: 前端 ID → provider + subModel ======
-        const MODEL_MAP: Record<string, { provider: string; subModel?: string; label: string; baseURL?: string }> = {
+        const MODEL_MAP: Record<string, { provider: string; subModel?: string; label: string; baseURL?: string; contextWindow?: number }> = {
           // ===== Agnes AI (首选) — provider 统一用 'agentai', 因为 providers Map 中注册的是 'agentai' =====
-          'agnes-2.5-flash': { provider: 'agentai', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (首选)' },
-          'agnes-2.0': { provider: 'agentai', subModel: 'agnes-2.0', label: 'Agnes 2.0 (备用)' },
+          'agnes-2.5-flash': { provider: 'agentai', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (首选)', contextWindow: 512000 },
+          'agnes-2.0': { provider: 'agentai', subModel: 'agnes-2.0', label: 'Agnes 2.0 (备用)', contextWindow: 256000 },
           // ===== 基础免费模型 =====
-          'agentai': { provider: 'agentai', label: '岐枢 Free (Flash)' },
-          'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
+          'agentai': { provider: 'agentai', label: '岐枢 Free (Flash)', contextWindow: 256000 },
+          'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash', contextWindow: 128000 },
           // ===== DeepSeek (前端 id + 旧兼容 id) =====
-          'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-          'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
-          'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-          'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+          'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', contextWindow: 1000000 },
+          'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', contextWindow: 1000000 },
+          'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', contextWindow: 1000000 },
+          'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', contextWindow: 1000000 },
           // ===== OpenAI =====
-          'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
-          'openai-gpt4o': { provider: 'openai', label: 'OpenAI GPT-4o' },
+          'openai': { provider: 'openai', label: 'OpenAI GPT-4o', contextWindow: 128000 },
+          'openai-gpt4o': { provider: 'openai', label: 'OpenAI GPT-4o', contextWindow: 128000 },
           // ===== 传统独立商业模型 (前端 id + 旧兼容 id) =====
-          'qwen': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 (阿里云)' },
-          'qwen-max': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 Qwen-Max' },
-          'moonshot': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Moonshot' },
-          'moonshot-kimi': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Kimi' },
-          'anthropic': { provider: 'anthropic', subModel: 'claude-sonnet-4-5-20250929', label: 'Anthropic Claude' },
-          'anthropic-claude': { provider: 'anthropic', subModel: 'claude-sonnet-4-5-20250929', label: 'Anthropic Claude' },
-          'minimax': { provider: 'minimax', subModel: 'MiniMax-M3', label: 'MiniMax' },
-          'minimax-hailuo': { provider: 'minimax', subModel: 'MiniMax-M3', label: 'MiniMax 海螺' },
+          'qwen': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 (阿里云)', contextWindow: 1000000 },
+          'qwen-max': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 Qwen-Max', contextWindow: 1000000 },
+          'moonshot': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Moonshot', contextWindow: 1000000 },
+          'moonshot-kimi': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Kimi', contextWindow: 1000000 },
+          'anthropic': { provider: 'anthropic', subModel: 'claude-sonnet-4-5-20250929', label: 'Anthropic Claude', contextWindow: 200000 },
+          'anthropic-claude': { provider: 'anthropic', subModel: 'claude-sonnet-4-5-20250929', label: 'Anthropic Claude', contextWindow: 200000 },
+          'minimax': { provider: 'minimax', subModel: 'MiniMax-M3', label: 'MiniMax', contextWindow: 245000 },
+          'minimax-hailuo': { provider: 'minimax', subModel: 'MiniMax-M3', label: 'MiniMax 海螺', contextWindow: 245000 },
           // ===== 豆包/火山引擎 (前端 id) =====
-          'doubao-seed-2.0-pro': { provider: 'doubao', subModel: 'doubao-seed-2.0-pro-250728', label: '豆包 Seed-2.0 Pro' },
-          'doubao-1.5-thinking': { provider: 'doubao', subModel: 'doubao-1.5-thinking-vision-pro', label: '豆包 1.5 视觉深度思考' },
+          'doubao-seed-2.0-pro': { provider: 'doubao', subModel: 'doubao-seed-2.0-pro-250728', label: '豆包 Seed-2.0 Pro', contextWindow: 256000 },
+          'doubao-1.5-thinking': { provider: 'doubao', subModel: 'doubao-1.5-thinking-vision-pro', label: '豆包 1.5 视觉深度思考', contextWindow: 256000 },
           // ===== 传统兼容 (已不再前端列表中列出, 但仍保留以支持旧持久化数据) =====
           'yi': { provider: 'yi', label: '零一万物 Yi' },
           'baichuan': { provider: 'baichuan', label: '百川智能' },
@@ -668,6 +668,7 @@ const tryActivateIndustry = async (reqBody: any) => {
             maxIterations: 30, userId, workspace, persistentMemory,
             model: selected.provider,
             modelName: selected.subModel || '',
+            contextWindow: contextWindow || selected.contextWindow,
             displayModelLabel: selected.label,
             userPickedModel,
             emotion,
@@ -1384,6 +1385,7 @@ req.on('close', () => {
             maxIterations: 30, userId, workspace, mode,
             model: mapped.provider,
             modelName: mapped.subModel || superApiModelName || '',
+            contextWindow: contextWindow || mapped.contextWindow,
             displayModelLabel: mapped.label,
             userPickedModel: true,
             persistentMemory,

@@ -323,6 +323,8 @@ export interface LoopOptions {
   includeSkillsIndex?: boolean;
   model?: string;
   modelName?: string;
+  /** 模型上下文窗口大小 (从前端模型配置传入, 如 128000/512000/1000000) */
+  contextWindow?: number;
   /** UI 显示的模型名称 (前端传给 done 事件) */
   displayModelLabel?: string;
   /** 持久记忆系统引用 (用于注入上下文) */
@@ -650,6 +652,7 @@ private _emptyResponseCount: number = 0;
       includeSkillsIndex: opts.includeSkillsIndex ?? true,
       model: opts.model ?? 'agentai',
       modelName: opts.modelName ?? '',
+      contextWindow: opts.contextWindow ?? 128000,
       displayModelLabel: opts.displayModelLabel ?? '',
       emotion: opts.emotion ?? { emotion: 'neutral', intensity: 0, label: '中性' },
       thinking: opts.thinking ?? false,
@@ -1320,6 +1323,15 @@ if (memCtx) {
           systemMsgs.push({ role: 'system', content: parts.join('\n') });
         }
       } catch { /* startup awareness optional */ }
+
+      // ═══ S2 优化: 注入 WorkspaceAgent 项目结构索引 (AI 第一轮就知道项目) ═══
+      try {
+        const { buildWorkspaceContext } = await import('./workspace-agent.js');
+        const wsCtx = buildWorkspaceContext(this.opts.workspace || process.cwd());
+        if (wsCtx) {
+          systemMsgs.push({ role: 'system', content: `# 项目结构索引 (预索引)\n${wsCtx}` });
+        }
+      } catch { /* workspace-agent optional */ }
     }
 
     // === 4.9 跨会话连续记忆: 注入上次会话摘要 (支持 AI 控制是否注入) ===
@@ -2407,8 +2419,15 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           ...(this.context?.appendOnlyLog || []),
         ];
         const used = allMessages.length > 0 ? await estimateMessagesTokens(allMessages) : 0;
-        const max = 128000; // 默认上下文上限, 实际可从模型元数据获取
+        // A2 优化: 根据模型动态获取上下文窗口大小
+        const max = this.getModelContextWindow();
         const pressure = contextPressure({ used, max, messageCount: allMessages.length, toolCallCount: 0 });
+        // A2 优化: 在 caution 级别就注入 token 预算 (让 AI 主动管理)
+        if (pressure.level === 'safe' || pressure.level === 'caution') {
+          this.directives.add('token_budget',
+            `[SYSTEM] Token 预算: ${used.toLocaleString()} / ${max.toLocaleString()} (${(pressure.pressure * 100).toFixed(0)}% ${pressure.label}). 还有 ${(max - used).toLocaleString()} token 可用。合理规划剩余操作。`,
+            'low');
+        }
         if (pressure.level === 'critical' || pressure.level === 'overflow') {
           // 紧急: 注入指令让 AI 立即总结
           this.directives.add('token_pressure',
@@ -2627,8 +2646,13 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             taskSnap?.appendLog('warn', 'timeout-reached', { reason, iteration: this.iteration, totalMs: totalTime });
           } catch (e) { /* best-effort */ }
         }
+        // B1 优化: 动态迭代上限 — 根据模型上下文窗口调整
+        // 1M 模型可以更多轮 (token 充裕), 32K 模型必须快速收尾
+        const ctxWindow = this.getModelContextWindow();
+        const dynamicMax = ctxWindow >= 500_000 ? 50 : ctxWindow >= 200_000 ? 40 : 30;
+        const effectiveMax = Math.min(dynamicMax, this.opts.maxIterations);
         // 再给 2 轮机会让 AI 决定
-        if (this.iteration > this.opts.maxIterations - 2) break;
+        if (this.iteration > effectiveMax - 2) break;
       }
 
       // 检查是否被中断 — 同时检查代际: 如果被新 run() 取代也要退出
@@ -3029,6 +3053,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         let retryRes = await this.router.chat(req);
         if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
           console.log(`[loop] ✓ L1 rescue (same model)`);
+          this._emptyResponseCount = 0; // P0 修复: rescue 成功后重置计数器
           lastResponse = retryRes; continue;
         }
 
@@ -3084,8 +3109,9 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           retryRes = await this.router.chat(req);
           req.tools = origTools;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
-            console.log(`[loop] ✓ L4 rescue (no tools)`);
-            lastResponse = retryRes; continue;
+          console.log(`[loop] ✓ L4 rescue (no tools)`);
+          this._emptyResponseCount = 0; // P0 修复: L4 成功后重置空回复计数器
+          lastResponse = retryRes; continue;
           }
         }
 
@@ -4916,6 +4942,20 @@ try {
     } catch (e) {
       console.warn('[reflector] import/exec failed:', (e as Error).message);
     }
+  }
+
+  /**
+   * A2 优化: 获取当前模型的上下文窗口大小
+   * 优先使用前端模型配置传入的 contextWindow (准确值)
+   * fallback: 默认 128000
+   */
+  private getModelContextWindow(): number {
+    // 优先: 前端模型配置传入的准确值 (来自 modelStore.ts 的 contextWindow 字段)
+    if (this.opts.contextWindow && this.opts.contextWindow > 0) {
+      return this.opts.contextWindow;
+    }
+    // fallback: 默认 128000
+    return 128000;
   }
 
   /**

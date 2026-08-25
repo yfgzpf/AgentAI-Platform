@@ -282,8 +282,8 @@ ${localThoughts.slice(-3).join('\n')}
       });
 
       if (resp.ok) {
-        const data = await resp.json();
-        const content = data.choices?.[0]?.message?.content;
+        const data: any = await resp.json();
+        const content: string | undefined = data?.choices?.[0]?.message?.content;
         if (content && content.length > 10) {
           console.log(`[dream] 💭 LLM 深度思考: ${content.slice(0, 80)}`);
           return content.trim();

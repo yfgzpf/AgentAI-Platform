@@ -557,6 +557,9 @@ export function compressContext(messages: Array<{ role: string; content: any }>)
   const recent = messages.slice(-4);
   const old = messages.slice(0, -4);
   
+  // B2 优化: 提取最近修改的文件内容摘要 (不只保留文件名)
+  const lastModifiedFiles = new Map<string, string>(); // file → content snippet
+
   // 从旧消息中提取关键信息
   const keyInfo: string[] = [];
   const seenTools = new Set<string>();
@@ -570,12 +573,27 @@ export function compressContext(messages: Array<{ role: string; content: any }>)
     const toolMatches = content.matchAll(/(?:调用|执行|running)\s+(\w+)\s*[\(\(]/g);
     for (const m of toolMatches) seenTools.add(m[1]);
     
-    // 提取文件路径 (改进: 匹配更多路径格式)
-    const fileMatches = content.matchAll(/(?:文件|路径|file|path|modified|created|edited)[:：]?\s*([^\s\n,}"\)]+\.\w{1,5})/gi);
-    for (const m of fileMatches) {
-      const p = m[1].replace(/['"`]/g, '');
-      if (p.length > 3 && p.length < 200) seenFiles.add(p);
-    }
+      // 提取文件路径 (改进: 匹配更多路径格式)
+      const fileMatches = content.matchAll(/(?:文件|路径|file|path|modified|created|edited)[:：]?\s*([^\s\n,}"\)]+\.\w{1,5})/gi);
+      for (const m of fileMatches) {
+        const p = m[1].replace(/['"`]/g, '');
+        if (p.length > 3 && p.length < 200) seenFiles.add(p);
+      }
+
+      // B2 优化: 从 write_file/multi_edit 的工具结果中提取代码内容摘要
+      if (msg.role === 'tool' && seenFiles.size > 0) {
+        // 找到这个工具调用对应的文件
+        for (const file of seenFiles) {
+          if (!lastModifiedFiles.has(file) && content.length > 50) {
+            // 保留最后 20 行代码内容 (关键结构不丢)
+            const lines = content.split('\n').filter(l => l.trim());
+            const snippet = lines.slice(-20).join('\n').slice(0, 500);
+            if (snippet.length > 50) {
+              lastModifiedFiles.set(file, snippet);
+            }
+          }
+        }
+      }
     
     // 提取错误信息 (新增: 保留错误教训)
     if (content.match(/\[ERROR\]|Error:|失败|failed|cannot|unable/i)) {
@@ -608,6 +626,16 @@ export function compressContext(messages: Array<{ role: string; content: any }>)
   if (seenErrors.length > 0) summaryParts.push(`## 错误记录\n${seenErrors.slice(-3).join('\n')}`);
   // 关键决策 (改进: 更多保留)
   if (seenDecisions.length > 0) summaryParts.push(`## 关键决策\n${seenDecisions.slice(-4).join('\n')}`);
+  // B2 优化: 代码内容摘要 (保留最后修改的文件内容片段, 不只文件名)
+  if (lastModifiedFiles.size > 0) {
+    const codeSnippets: string[] = [];
+    for (const [file, snippet] of lastModifiedFiles) {
+      codeSnippets.push(`### ${file}\n\`\`\`\n${snippet.slice(0, 300)}\n\`\`\``);
+    }
+    if (codeSnippets.length > 0) {
+      summaryParts.push(`## 代码摘要 (最近修改)\n${codeSnippets.slice(-3).join('\n\n')}`);
+    }
+  }
   
   const summary = summaryParts.length > 0 
     ? `[上下文摘要 - 已压缩 ${old.length} 条历史消息]\n${summaryParts.join('\n\n')}`
