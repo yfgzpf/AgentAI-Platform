@@ -727,6 +727,10 @@ private _emptyResponseCount: number = 0;
     // === 0. 检测任务类型和行业（用于精简上下文和工具按需加载） ===
     const userMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
     const taskType = detectTaskType(typeof userMessage === 'string' ? userMessage : '');
+    // P0 修复: 任务隔离 — 每轮重新检测 _taskType, 不固化在 immutable prefix 里
+    // 之前: _taskType 在 buildImmutablePrefix 中设置一次后就不再更新 → "报价表"任务串味到后续所有对话
+    // 现在: 每次 run() 开始时更新 _taskType (主循环中使用最新值)
+    this._taskType = taskType;
     // P0 修复: 优先使用请求传入的 industryId, 其次从 userModel 读取
     // 原因: userModel.identity.industry 是全局的, 不随 workspace 变化
     // 如果用户在装修工作区设了行业="construction", 切到代码工作区后还是 "construction" → 误注入装修技能
@@ -1690,6 +1694,15 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
   this.context.volatileScratch = '';
   // 安全守护: H5 修复 — 每次 run() 重置 metaLoop，防止 stepCount 跨消息累积导致元认知失效
   this.metaLoop = null;
+
+  // ═══ P0 修复: 任务隔离 — 每次 run() 重新检测任务类型, 清除上轮强制的技能 ═══
+  // 之前: _taskType 和 _forceSkill 在 buildImmutablePrefix 中设置一次后不再更新
+  //       → "报价表"任务串味到后续所有对话 (用户说"发布方案"也被匹配到报价技能)
+  // 现在: 每次新消息都重新检测, 清除旧任务上下文
+  const msgText = typeof userMessage === 'string' ? userMessage : '';
+  this._taskType = detectTaskType(msgText);
+  this._forceSkill = null; // 清除上轮强制技能, 让 skillManager 重新匹配
+  console.log(`[loop] task isolation: _taskType=${this._taskType}, _forceSkill cleared`);
 
   // ═══ 任务自监督系统: 启动计时器 + 重置统计 ═══
   const supervisor = getTaskSupervisor();

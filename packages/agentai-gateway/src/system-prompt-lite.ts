@@ -120,7 +120,13 @@ export function detectTaskType(userMessage: string): 'coding' | 'research' | 'ge
     if (lower.match(/搜索|查找|研究|分析|文档|资料|api|教程|学习|了解|查询/)) {
         return 'research';
     }
-    if (lower.match(/报价|预算|方案|设计|施工|装修|建材|房地产|楼盘|客户/)) {
+    // P0 修复: 缩小 industry 匹配范围 — "方案"太泛了, "发布方案""演示方案"都被误判
+    // 只有同时包含行业关键词+行业动词时才判定为 industry
+    if (lower.match(/报价表|预算表|施工图|建材清单|楼盘分析|客户管理|装修报价|房地产/)) {
+        return 'industry';
+    }
+    // 单独的"报价""预算""方案""设计"需要配合行业上下文才匹配
+    if (lower.match(/报价|预算/) && lower.match(/装修|建材|施工|楼盘|房地产/)) {
         return 'industry';
     }
     return 'general';
