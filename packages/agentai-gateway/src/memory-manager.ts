@@ -117,6 +117,11 @@ export class MemoryManager {
     }
 
     // ═══ 2026-08-03: 镜像写入 memory.ts 高级 JSONL 系统 (统一数据层) ═══
+    // 避免循环镜像: 如果 metadata 中有 mirroredFromJSONL 标记, 跳过
+    // 否则 memory.ts → KV → memory.ts → KV → ... 无限循环
+    if (entry.metadata?.mirroredFromJSONL) {
+      return; // 来自 memory.ts 的镜像, 不再反向写入, 避免循环
+    }
     // 异步写入, 不阻塞 KV 接口; 失败不影响主流程
     this.mirrorToAdvancedMemory(fact).catch(() => {
       // 静默失败 — KV 存储已经成功, 高级系统失败不影响数据完整性

@@ -1,0 +1,8 @@
+{
+  "rooms": [
+    {"name": "客厅", "function": "living_room", "x": 0, "y": 0, "width": 4.5, "height": 4.2},
+    {"name": "主卧", "function": "bedroom", "x": 4.5, "y": 0, "width": 3.6, "height": 4.2},
+    {"name": "厨房", "function": "kitchen", "x": 0, "y": 4.2, "width": 2.5, "height": 2.8},
+    {"name": "卫生间", "function": "bathroom", "x": 2.5, "y": 4.2, "width": 2.0, "height": 2.8}
+  ]
+}

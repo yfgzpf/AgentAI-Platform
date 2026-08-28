@@ -4,6 +4,8 @@ description: 装修施工监理助手。提供施工标准、验收清单、进�
 description_zh: "装修施工监理助手，提供标准、验收、进度、质量诊断全流程指导"
 description_en: "Construction supervision assistant for decoration projects"
 version: 1.0.0
+status: deprecated
+deprecated_reason: "if-else关键词匹配，无真实监理逻辑。降级为知识库参考。"
 metadata:
   category: decoration
   tags:

@@ -13,6 +13,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+/** 进化记录有效期 (天) */
+const EVOLUTION_TTL_DAYS = 30;
+/** 自动清理间隔 (ms) */
+const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 小时
+/** 上次清理时间 */
+let _lastCleanup = 0;
+
 /** 扩展错误类型 */
 export type ErrorType =
   // 基础类型
@@ -47,7 +54,7 @@ export interface EvolutionEntry {
   /** 关联的工作空间 */
   workspace?: string;
   /** 2026-06-24 新增: 任务类型（用于智能召回） */
-  taskType?: 'coding' | 'research' | 'general' | 'industry';
+  taskType?: 'coding' | 'research' | 'media' | 'industry' | 'general';
   /** 2026-06-24 新增: 行业（用于智能召回） */
   industry?: string;
   /** 2026-06-24 新增: 错误类型（用于智能召回） */
@@ -74,6 +81,12 @@ export interface EvolutionEntry {
     duration: number;
     retryCount: number;
   };
+  /** 【P0-4】有效性追踪字段 */
+  triggerCount?: number;       // 被触发的次数
+  effectCount?: number;        // 生效/成功的次数
+  lastTriggered?: number;      // 上次触发时间戳
+  /** 有效性 = effectCount / triggerCount (0-1) */
+  effectiveness?: number;
 }
 
 /**
@@ -301,19 +314,26 @@ export function readEvolutionForContext(opts: { userId?: string; workspace?: str
 /**
  * 2026-06-24 新增: 智能召回进化记忆
  * 按任务类型、行业、错误类型、关键词智能召回相关记忆
+ * 2026-08-28 增强: 支持有效性过滤 — 优先召回已验证有效的规则，过滤低效噪声
  */
 export function recallEvolution(criteria: {
-  taskType?: 'coding' | 'research' | 'general' | 'industry';
+  taskType?: 'coding' | 'research' | 'media' | 'industry' | 'general';
   industry?: string;
   errorType?: 'TypeError' | 'ReferenceError' | 'SyntaxError' | 'NetworkError' | 'FileSystemError' | 'PermissionError' | 'TimeoutError' | 'UnknownError';
   keywords?: string[];
   userId?: string;
   workspace?: string;
   limit?: number;
+  /** 【P0-4】最低有效性阈值 (0-1, 默认 0). 设为 0.3 可过滤低效噪声 */
+  minEffectiveness?: number;
+  /** 【P0-4】是否优先展示已验证有效的规则 */
+  prioritizeEffective?: boolean;
 }): EvolutionEntry[] {
   const all = readEvolution(200);
+  const minEff = criteria.minEffectiveness ?? 0;
   
-  return all.filter(e => {
+  // 先按条件过滤
+  let filtered = all.filter(e => {
     // 1. 任务类型匹配
     if (criteria.taskType && e.taskType && e.taskType !== criteria.taskType) {
       return false;
@@ -341,91 +361,159 @@ export function recallEvolution(criteria: {
     }
     
     // 6. 工作空间匹配 (严格隔离)
-    // 如果查询指定了 workspace，只返回：
-    // - 同一 workspace 的 entry
-    // - 明确标记为全局共享的 entry (workspace === '*')
-    // - 没有 workspace 字段的 legacy entry (兼容旧数据)
     if (criteria.workspace) {
       if (e.workspace && e.workspace !== criteria.workspace && e.workspace !== '*') {
         return false;
       }
     }
+
+    // 7. 【P0-4】有效性过滤: 只有已触发的记录才检查有效性
+    //    从未触发的记录 (triggerCount=0) 保留 (可能是新规则)
+    //    已触发的记录需要达到最低有效性阈值
+    if (minEff > 0 && (e.triggerCount || 0) > 0) {
+      const tc = e.triggerCount || 0;
+      const ec = e.effectCount || 0;
+      const effectiveness = tc > 0 ? ec / tc : 0;
+      if (effectiveness < minEff) return false;
+    }
     
     return true;
-  }).slice(0, criteria.limit || 10);
+  });
+
+  // 8. 【P0-4】按有效性排序: 已验证有效的优先
+  if (criteria.prioritizeEffective) {
+    filtered.sort((a, b) => {
+      const aEff = (a.triggerCount || 0) > 0 ? ((a.effectCount || 0) / (a.triggerCount || 1)) : 0;
+      const bEff = (b.triggerCount || 0) > 0 ? ((b.effectCount || 0) / (b.triggerCount || 1)) : 0;
+      // 有效性降序
+      if (bEff !== aEff) return bEff - aEff;
+      // 同等有效性: 有触发记录优先
+      const aHas = (a.triggerCount || 0) > 0 ? 1 : 0;
+      const bHas = (b.triggerCount || 0) > 0 ? 1 : 0;
+      if (bHas !== aHas) return bHas - aHas;
+      // 最后按时间降序
+      return (b.ts || 0) - (a.ts || 0);
+    });
+  }
+
+  return filtered.slice(0, criteria.limit || 10);
 }
 
 /**
  * 2026-06-24 新增: 提取进化记忆规律
  * 从历史记忆中提取规律，用于注入system prompt
+ * 2026-08-28 增强: 按有效性权重排序，无效规则降权
  */
 export function extractPatterns(entries: EvolutionEntry[]): string[] {
   const patterns: string[] = [];
   
+  // 0. 辅助函数: 计算条目的有效性权重
+  const getEffWeight = (e: EvolutionEntry): number => {
+    if ((e.triggerCount || 0) > 0) {
+      const tc = e.triggerCount || 0;
+      const ec = e.effectCount || 0;
+      return tc > 0 ? ec / tc : 0;
+    }
+    return 0.5; // 未触发的中性权重
+  };
+
   // 0. 提取 CSSL 元指令（教练建议）— 最高优先级
   const metaInstructions = entries.filter(e => e.type === 'meta_instruction');
-  const instructionPatterns = new Map<string, number>();
+  const instructionPatterns = new Map<string, { count: number; totalWeight: number }>();
   for (const m of metaInstructions) {
     const key = (m.content || '').slice(0, 80);
-    instructionPatterns.set(key, (instructionPatterns.get(key) || 0) + 1);
+    const cur = instructionPatterns.get(key) || { count: 0, totalWeight: 0 };
+    cur.count++;
+    cur.totalWeight += getEffWeight(m);
+    instructionPatterns.set(key, cur);
   }
   // 元指令出现 2 次以上即提取（比失败模式的 3 次阈值更低，因为元指令更有价值）
-  for (const [pattern, count] of instructionPatterns.entries()) {
-    if (count >= 2) {
-      patterns.push(`教练建议: ${pattern} (验证${count}次)`);
+  for (const [pattern, info] of instructionPatterns.entries()) {
+    if (info.count >= 2) {
+      const avgEff = info.totalWeight / info.count;
+      const effLabel = avgEff >= 0.7 ? ' ✅已验证' : avgEff >= 0.3 ? ' ⚡部分验证' : '';
+      patterns.push(`教练建议: ${pattern} (验证${info.count}次${effLabel})`);
     }
   }
   // 即使只出现 1 次的元指令，如果带有诊断类型也提取（覆盖面更广）
   for (const m of metaInstructions.slice(-3)) {
     const content = (m.content || '').slice(0, 80);
-    if (!instructionPatterns.has(content) || (instructionPatterns.get(content) || 0) < 2) {
-      patterns.push(`教练建议: ${content}`);
+    if (!instructionPatterns.has(content) || (instructionPatterns.get(content) || { count: 0 }).count < 2) {
+      const w = getEffWeight(m);
+      const effLabel = w >= 0.7 ? ' ✅已验证' : '';
+      patterns.push(`教练建议: ${content}${effLabel}`);
     }
   }
 
   // 1. 提取失败模式 — 按失因分类分组 (学 EmbodiSkill)
   const failures = entries.filter(e => e.type === 'failure');
-  const failurePatterns = new Map<string, number>();
-  const skillDefects = new Map<string, number>(); // 技能缺陷单独统计
+  const failurePatterns = new Map<string, { count: number; totalWeight: number }>();
+  const skillDefects = new Map<string, { count: number; totalWeight: number }>(); // 技能缺陷单独统计
   for (const f of failures) {
     const pattern = (f.content || '').slice(0, 50);
-    failurePatterns.set(pattern, (failurePatterns.get(pattern) || 0) + 1);
+    const cur = failurePatterns.get(pattern) || { count: 0, totalWeight: 0 };
+    cur.count++;
+    cur.totalWeight += getEffWeight(f);
+    failurePatterns.set(pattern, cur);
     // 技能缺陷单独标记 — 这些是需要修改技能/规则的模式
     if (f.failureCategory === 'skill_defect') {
-      skillDefects.set(pattern, (skillDefects.get(pattern) || 0) + 1);
+      const sd = skillDefects.get(pattern) || { count: 0, totalWeight: 0 };
+      sd.count++;
+      sd.totalWeight += getEffWeight(f);
+      skillDefects.set(pattern, sd);
     }
   }
   
-  // 2. 提取高频失败模式（出现3次以上）
-  for (const [pattern, count] of failurePatterns.entries()) {
-    if (count >= 3) {
-      const isSkillDefect = (skillDefects.get(pattern) || 0) >= 2;
+  // 2. 提取高频失败模式（出现3次以上，或有效性>=0.5的低频模式）
+  for (const [pattern, info] of failurePatterns.entries()) {
+    const avgEff = info.totalWeight / info.count;
+    const isSkillDefect = (skillDefects.get(pattern)?.count || 0) >= 2;
+    // 高频 (3次以上) 或 已验证有效 (avgEff>=0.5)
+    if (info.count >= 3 || (avgEff >= 0.5 && info.count >= 1)) {
       const tag = isSkillDefect ? '⚠️ 技能缺陷' : '避免';
-      patterns.push(`${tag}: ${pattern} (出现${count}次${isSkillDefect ? ', 建议修改技能' : ''})`);
+      const effLabel = avgEff >= 0.5 ? ` (验证${info.count}次, 有效${Math.round(avgEff * 100)}%)` : ` (出现${info.count}次${isSkillDefect ? ', 建议修改技能' : ''})`;
+      patterns.push(`${tag}: ${pattern}${effLabel}`);
     }
   }
   
-  // 3. 提取偏好模式
+  // 3. 提取偏好模式 (按有效性排序)
   const preferences = entries.filter(e => e.type === 'preference');
+  // 按有效性权重排序，高优先
+  preferences.sort((a, b) => getEffWeight(b) - getEffWeight(a));
   for (const p of preferences.slice(0, 5)) {
-    patterns.push(`偏好: ${p.content || ''}`);
+    const w = getEffWeight(p);
+    const effLabel = w >= 0.7 ? ' ✅' : w >= 0.3 ? ' ⚡' : '';
+    patterns.push(`偏好: ${p.content || ''}${effLabel}`);
   }
   
   // 4. 提取成功模式
   const successes = entries.filter(e => e.type === 'success');
-  const successPatterns = new Map<string, number>();
+  const successPatterns = new Map<string, { count: number; totalWeight: number }>();
   for (const s of successes) {
     const pattern = (s.content || '').slice(0, 50);
-    successPatterns.set(pattern, (successPatterns.get(pattern) || 0) + 1);
+    const cur = successPatterns.get(pattern) || { count: 0, totalWeight: 0 };
+    cur.count++;
+    cur.totalWeight += getEffWeight(s);
+    successPatterns.set(pattern, cur);
   }
   
-  // 5. 提取高频成功模式（出现3次以上）
-  for (const [pattern, count] of successPatterns.entries()) {
-    if (count >= 3) {
-      patterns.push(`推荐: ${pattern} (成功${count}次)`);
+  // 5. 提取高频成功模式（出现3次以上，或有效性>=0.5）
+  for (const [pattern, info] of successPatterns.entries()) {
+    const avgEff = info.totalWeight / info.count;
+    if (info.count >= 3 || (avgEff >= 0.5 && info.count >= 1)) {
+      const effLabel = avgEff >= 0.5 ? ` (有效${Math.round(avgEff * 100)}%)` : '';
+      patterns.push(`推荐: ${pattern} (成功${info.count}次${effLabel})`);
     }
   }
   
+  // 6. 最终排序: 带有 ✅ 标签的优先展示
+  patterns.sort((a, b) => {
+    const aHasEff = a.includes('✅') ? 1 : 0;
+    const bHasEff = b.includes('✅') ? 1 : 0;
+    if (bHasEff !== aHasEff) return bHasEff - aHasEff;
+    return 0;
+  });
+
   return patterns.slice(0, 10);
 }
 
@@ -438,6 +526,106 @@ export function extractPatterns(entries: EvolutionEntry[]): string[] {
 const MAX_ENTRIES = 1000;
 const RETENTION_DAYS = 7;
 
+/**
+ * 更新进化记录的有效性追踪
+ * 当一条进化记录被触发时，调用此函数更新 triggerCount/lastTriggered
+ * 当记录生效时，调用此函数更新 effectCount
+ */
+export function updateEvolutionEffectiveness(
+  targetContent: string,
+  type: 'trigger' | 'effect'
+): void {
+  try {
+    if (!fs.existsSync(EVOLUTION_FILE)) return;
+    const content = fs.readFileSync(EVOLUTION_FILE, 'utf-8');
+    const lines = content.split('\n').filter(l => l.trim());
+    let updated = false;
+
+    const newLines = lines.map(line => {
+      try {
+        const entry = JSON.parse(line) as EvolutionEntry;
+        // 匹配内容（精确匹配前 100 字符）
+        if (entry.content && targetContent.startsWith(entry.content.slice(0, 100))) {
+          if (type === 'trigger') {
+            entry.triggerCount = (entry.triggerCount || 0) + 1;
+            entry.lastTriggered = Date.now();
+          } else {
+            entry.effectCount = (entry.effectCount || 0) + 1;
+          }
+          // 计算有效性
+          const tc = entry.triggerCount || 0;
+          const ec = entry.effectCount || 0;
+          entry.effectiveness = tc > 0 ? ec / tc : 0;
+          updated = true;
+          return JSON.stringify(entry);
+        }
+        return line;
+      } catch {
+        return line;
+      }
+    });
+
+    if (updated) {
+      fs.writeFileSync(EVOLUTION_FILE, newLines.join('\n') + '\n', 'utf-8');
+    }
+  } catch (e: any) {
+    console.warn('[evolution:updateEffectiveness] failed:', e?.message);
+  }
+}
+
+/**
+ * 获取进化记录有效性摘要
+ */
+export function getEvolutionSummary(): {
+  totalEntries: number;
+  staleEntries: number;
+  effectiveEntries: number;
+  ineffectiveEntries: number;
+  entries: Array<{
+    ts: number;
+    type: string;
+    content: string;
+    triggerCount: number;
+    effectCount: number;
+    effectiveness: number;
+    lastTriggered: number | null;
+    stale: boolean;
+  }>;
+} {
+  const entries = readEvolution(500);
+  const now = Date.now();
+  const staleThreshold = 7 * 24 * 60 * 60 * 1000; // 7 天
+
+  const result = entries.map(e => {
+    const tc = e.triggerCount || 0;
+    const ec = e.effectCount || 0;
+    const effectiveness = tc > 0 ? ec / tc : 0;
+    const stale = (!e.lastTriggered || (now - e.lastTriggered) > staleThreshold);
+    return {
+      ts: e.ts,
+      type: e.type,
+      content: (e.content || '').slice(0, 100),
+      triggerCount: tc,
+      effectCount: ec,
+      effectiveness,
+      lastTriggered: e.lastTriggered || null,
+      stale,
+    };
+  });
+
+  return {
+    totalEntries: result.length,
+    staleEntries: result.filter(r => r.stale).length,
+    effectiveEntries: result.filter(r => r.effectiveness >= 0.5).length,
+    ineffectiveEntries: result.filter(r => r.effectiveness > 0 && r.effectiveness < 0.5).length,
+    entries: result,
+  };
+}
+
+/**
+ * 清理进化记录 (增强版)
+ * 考虑有效性: 无效记录 (7天未触发且 triggerCount=0) 优先删除
+ */
 export async function cleanupEvolution(): Promise<{ deleted: number; kept: number }> {
   let deleted = 0;
   try {
@@ -445,6 +633,7 @@ export async function cleanupEvolution(): Promise<{ deleted: number; kept: numbe
     const content = await fs.promises.readFile(EVOLUTION_FILE, 'utf-8');
     const lines = content.split('\n').filter(l => l.trim());
     const cutoff = Date.now() - RETENTION_DAYS * 86400_000;
+    const staleThreshold = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
     const kept: string[] = [];
     for (const line of lines) {
@@ -452,23 +641,42 @@ export async function cleanupEvolution(): Promise<{ deleted: number; kept: numbe
         const entry = JSON.parse(line) as EvolutionEntry;
         const isImportant = entry.type === 'failure' || entry.type === 'preference' || entry.type === 'meta_instruction';
         const isFresh = entry.ts >= cutoff;
+        const hasBeenTriggered = (entry.triggerCount || 0) > 0;
+        const recentlyTriggered = entry.lastTriggered && entry.lastTriggered >= staleThreshold;
 
-        if (isImportant || isFresh) {
+        // 【P0-4】有效性规则:
+        // - 重要记录 (failure/preference/meta_instruction) 永远保留
+        // - 新鲜记录 (7天内) 保留
+        // - 曾触发过的记录保留
+        // - 最近触发过的记录保留
+        // - 其余删除 (从未触发且不重要的记录是噪声)
+        if (isImportant || isFresh || hasBeenTriggered || recentlyTriggered) {
           kept.push(line);
         } else {
           deleted++;
         }
       } catch {
-        kept.push(line); // 坏行保留 — JSON parse per line expected
+        kept.push(line); // 坏行保留
       }
     }
 
-    // 限制最大条数 (只保留最新的)
+    // 限制最大条数
     let finalKept = kept;
     if (kept.length > MAX_ENTRIES) {
-      const trimmed = kept.slice(kept.length - MAX_ENTRIES);
-      deleted += kept.length - trimmed.length;
-      finalKept = trimmed;
+      // 保留重要的，删除最旧的
+      const sorted = kept.sort((a, b) => {
+        try {
+          const ea = JSON.parse(a) as EvolutionEntry;
+          const eb = JSON.parse(b) as EvolutionEntry;
+          // 有效性优先，然后按时间新→旧
+          const aEff = (ea.triggerCount || 0) > 0 ? 1 : 0;
+          const bEff = (eb.triggerCount || 0) > 0 ? 1 : 0;
+          if (aEff !== bEff) return bEff - aEff;
+          return (eb.ts || 0) - (ea.ts || 0);
+        } catch { return 0; }
+      });
+      finalKept = sorted.slice(0, MAX_ENTRIES);
+      deleted += kept.length - finalKept.length;
     }
 
     await fs.promises.writeFile(EVOLUTION_FILE, finalKept.join('\n') + '\n', 'utf-8');

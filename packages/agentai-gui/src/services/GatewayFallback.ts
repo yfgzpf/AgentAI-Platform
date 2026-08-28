@@ -14,13 +14,24 @@ const FAST_CHECK_INTERVAL = 2000;   // 启动时2秒检查一次
 type GatewayStatus = 'online' | 'offline' | 'starting';
 
 /**
- * 判断是否开发模式 - 基于窗口位置判断，不依赖 import.meta.env.DEV
+ * 判断是否 Tauri 桌面端环境
+ */
+function isTauriEnv(): boolean {
+  if (typeof window === 'undefined') return false;
+  return !!(window as any).__TAURI_INTERNALS__ ||
+         !!(window as any).__TAURI__ ||
+         window.location?.protocol === 'tauri:' ||
+         window.location?.hostname === 'tauri.localhost';
+}
+
+/**
+ * 判断是否开发模式 - 仅 Vite dev server 运行时为 true
  */
 function isDevMode(): boolean {
   if (typeof window === 'undefined') return false;
+  if (isTauriEnv()) return false; // Tauri 环境绝不是 dev 模式
   const host = window.location?.hostname || '';
   const port = window.location?.port || '';
-  // 开发服务器通常在 localhost 或 127.0.0.1 的特定端口上
   return host === 'localhost' || 
          host === '127.0.0.1' || 
          port === '5173' || 
@@ -62,18 +73,16 @@ class GatewayFallbackImpl {
   async start() {
     if (this.timer) return; // 防止重复启动
     
-    console.log('[GatewayFallback] Starting...');
-    console.log('[GatewayFallback] isDevMode:', isDevMode());
-    console.log('[GatewayFallback] location:', window.location?.href);
-    
     // 初始状态为 starting
     this.status = 'starting';
     this.notify();
 
-    // 非开发模式下，尝试启动 Tauri 网关
-    if (!isDevMode() && !this.startAttempted) {
-      this.startAttempted = true;
-      this.tryStartTauriGateway();
+    // Tauri 环境下, Rust 端已在 setup 中自动启动 gateway
+    // 前端只需等待并检查健康状态
+    // 但如果 Rust 端启动失败, 前端也可以尝试 invoke 作为 fallback
+    if (isTauriEnv()) {
+      // startAttempted 标记用于 tryStartTauriGateway fallback
+      // 初始为 false, 在 fallback 调用时设为 true
     }
 
     // 立即执行首次检查
@@ -84,20 +93,18 @@ class GatewayFallbackImpl {
   }
 
   private async tryStartTauriGateway() {
+    if (!isTauriEnv()) return;
+    
     try {
-      // 检测是否在 Tauri 环境
-      const hasTauri = !!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__;
-      if (!hasTauri) return;
-      
-      console.log('[GatewayFallback] Detected Tauri, attempting to spawn gateway...');
       const { invoke } = await import('@tauri-apps/api/core');
+      console.log('[GatewayFallback] Fallback: invoking spawn_gateway...');
       const result = await invoke<string>('spawn_gateway');
-      console.log('[GatewayFallback] Gateway spawn result:', result);
+      console.log('[GatewayFallback] spawn_gateway result:', result);
       
-      // 等待网关启动
+      // 等待网关启动 (给 Node.js 进程足够时间初始化)
       await new Promise(resolve => setTimeout(resolve, 3000));
-    } catch (e) {
-      console.warn('[GatewayFallback] Failed to spawn gateway (may already be running):', e);
+    } catch (e: any) {
+      console.warn('[GatewayFallback] spawn_gateway failed:', e?.message || e);
     }
   }
 
@@ -109,7 +116,6 @@ class GatewayFallbackImpl {
         ? '/v1/health'  // 走 Vite 代理，避免跨域和连接限制
         : 'http://127.0.0.1:18789/v1/health';  // 直连网关
 
-      console.log('[GatewayFallback] Fetching:', healthUrl, '(devMode:', isDevMode() + ')');
 
       // 使用 Promise.race 实现超时
       const timeoutPromise = new Promise<Response>((_, reject) => {
@@ -124,10 +130,8 @@ class GatewayFallbackImpl {
 
       const resp = await Promise.race([fetchPromise, timeoutPromise]);
       
-      console.log('[GatewayFallback] Response status:', resp.status); 
       
       if (resp.ok) {
-        console.log('[GatewayFallback] ✅ Health check OK');
         this.failures = 0;
         
         if (this.status !== 'online') {
@@ -155,7 +159,12 @@ class GatewayFallbackImpl {
 
     // 处理失败
     this.failures++;
-    console.log(`[GatewayFallback] Failures: ${this.failures}/3, current status: ${this.status}`);
+    
+    // Tauri 环境: 如果多次检查失败, 尝试 fallback 启动
+    if (isTauriEnv() && this.failures === 2 && !this.startAttempted) {
+      this.startAttempted = true;
+      this.tryStartTauriGateway();
+    }
     
     // 失败3次后标记为离线（无论当前状态是什么）
     if (this.failures >= 3 && this.status !== 'offline') {
@@ -178,7 +187,6 @@ class GatewayFallbackImpl {
   }
 
   private notify() {
-    console.log(`[GatewayFallback] Status changed → ${this.status}`);
     for (const fn of this.listeners) {
       try {
         fn(this.status);

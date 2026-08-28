@@ -3,6 +3,23 @@
  * 这里只放一些全局微调 + 旧组件兼容
  */
 
+/* ═══ 基础重置 (替代 antd/dist/reset.css) ═══
+ * 使用 :where() 确保低优先级, 不覆盖 antd CSS-in-JS 样式
+ * antd v5 的 CSS-in-JS 已经内置了组件级重置, 这里只处理全局元素
+ */
+:where(*), ::before, ::after {
+  box-sizing: border-box;
+}
+:where(body) {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+:where(input, textarea, button, select) {
+  font: inherit;
+}
+
 /* ═══ CSS 变量回退保护 ═══
  * 如果任何 CSS 变量未定义，使用 var() 的 fallback 值
  * 语法: var(--variable, fallback-value)

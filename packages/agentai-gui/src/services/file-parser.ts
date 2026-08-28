@@ -10,18 +10,20 @@
  */
 
 export interface ParsedAttachment {
-  /** 文件名 */
-  name: string;
-  /** MIME类型 */
-  mimetype: string;
-  /** 文件大小 (bytes) */
-  size: number;
-  /** 解析后的内容 */
-  content: string;
-  /** 图片base64 (仅图片类型) */
-  dataUrl?: string;
-  /** 内容类型标记 */
-  kind: 'image' | 'text' | 'table' | 'binary';
+/** 文件名 */
+name: string;
+/** MIME类型 */
+mimetype: string;
+/** 文件大小 (bytes) */
+size: number;
+/** 解析后的内容 */
+content: string;
+/** 图片base64 (仅图片类型) */
+dataUrl?: string;
+/** 内容类型标记 */
+kind: 'image' | 'text' | 'table' | 'binary';
+/** 后端保存的磁盘路径 (供 LLM 工具访问) */
+filePath?: string;
 }
 
 /**
@@ -100,6 +102,7 @@ async function parseFileViaBackend(file: File): Promise<ParsedAttachment> {
     size: data.size || file.size,
     content: data.content || '',
     kind: data.kind || 'text',
+    filePath: data.savedPath || '',
   };
 }
 

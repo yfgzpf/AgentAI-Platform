@@ -16,7 +16,7 @@ import {
 } from './types.js';
 import { SystemDirectiveManager } from './directive-manager.js';
 import { isTrustedCommand } from './trust-commands.js';
-import { filterToolsByIntent } from './tool-filter.js';
+import { filterToolsByIntent, CORE_TOOLS } from './tool-filter.js';
 import { buildImmutablePrefix, getDirectivesContent } from './context-builder.js';
 import { reflectSession, recordSessionSummary, extractModifiedFiles } from './reflection.js';
 
@@ -249,12 +249,28 @@ export class AgentAILoopCore extends EventEmitter {
     const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
 
     const allTools = this.registry.toLLMTools();
-    const requestTools = filterToolsByIntent(userText, allTools, {
+    let requestTools = filterToolsByIntent(userText, allTools, {
       mode: this.opts.mode,
       capabilityTier: this._capabilityTier,
       taskType: this._taskType,
       message: userText,
     });
+
+    // 【P0-2】死工具过滤: 移除 7 天未调用的非核心工具
+    // 因为是 async 导入，放在 try-catch 保证主流程不中断
+    try {
+      const { toolUsageStats } = await import('../tool-usage-stats.js');
+      const activeNames = toolUsageStats.getActiveToolNamesOrNull();
+      if (activeNames !== null) {
+        requestTools = requestTools.filter(tool => {
+          const name = tool.name || tool.function?.name || '';
+          if (CORE_TOOLS.has(name)) return true;
+          return activeNames.has(name);
+        });
+      }
+    } catch {
+      // 过滤模块不可用不影响主流程
+    }
 
     // 调用 LLM
     const response = await this.router.chat({

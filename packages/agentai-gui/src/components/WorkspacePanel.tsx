@@ -16,7 +16,7 @@ import {
   EyeOutlined, CopyOutlined, LinkOutlined, EditOutlined,
   CheckCircleOutlined
 } from '@ant-design/icons';
-import { useContextStore } from '../store/contextStore';
+import { useChatStore } from '../store/chatStore';
 
 const { Text } = Typography;
 
@@ -43,7 +43,7 @@ export const WorkspacePanel: React.FC<{
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [contextMenuFile, setContextMenuFile] = useState<BackendNode | null>(null);
   
-  const { addInjectedFile, removeInjectedFile, isFileInjected, injectedFiles } = useContextStore();
+  const { addInjectedFile, removeInjectedFile, isFileInjected, injectedFiles } = useChatStore();
   const fileTreeRef = useRef<HTMLDivElement>(null);
 
   /* ---- 加载根目录树 ---- */

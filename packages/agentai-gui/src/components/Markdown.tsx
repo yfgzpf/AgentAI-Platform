@@ -28,8 +28,8 @@ const CollapsibleCodeBlock: React.FC<{
   // 提取代码文本
   const codeText = typeof children === 'string' ? children : String(children || '');
   const lineCount = codeText.split('\n').length;
-  // 超过 8 行的代码块默认折叠
-  const shouldCollapse = lineCount > 8;
+  // 智能折叠: 15 行以下不折叠 (用户能快速浏览), 超过 15 行折叠
+  const shouldCollapse = lineCount > 15;
   const isCollapsed = shouldCollapse && !expanded;
 
   // 语言标签
@@ -68,7 +68,10 @@ const CollapsibleCodeBlock: React.FC<{
             fontWeight: 600,
           }}>{langLabel}</span>
           {shouldCollapse && (
-            <span style={{ fontSize: 9 }}>{lineCount} 行</span>
+            <span style={{ fontSize: 9, opacity: 0.6 }}>{lineCount} 行 · 点击{isCollapsed ? '展开' : '折叠'}</span>
+          )}
+          {!shouldCollapse && lineCount > 3 && (
+            <span style={{ fontSize: 9, opacity: 0.4 }}>{lineCount} 行</span>
           )}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -124,8 +127,9 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
     const href = props.href || '';
     // agentai:// 协议: 打开文件
     if (href.startsWith('agentai://open')) {
-      const url = new URL(href);
-      const filePath = decodeURIComponent(url.searchParams.get('path') || '');
+      // 安全解析: 不用 URL() (某些环境不支持自定义协议)
+      const pathMatch = href.match(/[?&]path=([^&]*)/);
+      const filePath = pathMatch ? decodeURIComponent(pathMatch[1]) : '';
       const ext = filePath.split('.').pop()?.toLowerCase() || '';
       const binaryExts = ['xlsx', 'xls', 'docx', 'doc', 'pdf', 'pptx', 'ppt', 'zip', 'rar', '7z', 'exe', 'dmg', 'mp3', 'mp4', 'avi', 'mov'];
       const isBinary = binaryExts.includes(ext);
@@ -203,6 +207,8 @@ const MARKDOWN_PROPS = {
   remarkPlugins: [remarkGfm, remarkMath] as any,
   rehypePlugins: [rehypeHighlight] as any,
   components: REACT_MARKDOWN_COMPONENTS,
+  // 允许 agentai:// 自定义协议 (ReactMarkdown 默认可能过滤非标准协议)
+  urlTransform: (url: string) => url,
 };
 
 // ===== SVG 分割与渲染 =====
@@ -373,6 +379,54 @@ function cleanToolCalls(text: string): string {
 }
 
 /**
+ * 自动检测文本中的文件路径，转为可点击的 agentai://open 链接
+ */
+function linkifyFilePaths(text: string): string {
+  // 不处理代码块中的内容
+  const codeBlocks: string[] = [];
+  let processed = text.replace(/```[\s\S]*?```/g, (m) => {
+    codeBlocks.push(m);
+    return `__CODEBLOCK_${codeBlocks.length - 1}__`;
+  });
+
+  // 文件扩展名 (常见)
+  const extPattern = '(?:tsx?|jsx?|py|rs|go|java|css|scss|sass|less|html?|json|ya?ml|toml|md|txt|csv|sql|sh|bash|zsh|vue|svelte|swift|kt|dart|c|cpp|cs|php|rb|lua|xlsx?|docx?|pptx?|pdf|zip|rar|7z|tar|gz|bz2|mp3|mp4|avi|mov|webm|wav|flac|ogg|bmp|jpe?g|png|gif|svg|webp|ico|psd|fig)';
+
+  // 1. 绝对路径 Windows: F:\path\to\file.ts — 用简单字符集避免范围问题
+  //    匹配: 盘符冒号反斜杠 + 非空白字符 + .扩展名
+  const winPathRe = new RegExp('([A-Za-z]:\\\\[^\\s<>|"\'*|?\\n\\r]+\\.' + extPattern + ')', 'gi');
+  processed = processed.replace(winPathRe, (match) => {
+    const clean = match.replace(/[)\]},;:>]+$/, '');
+    return `[${clean}](${'agentai://open?path=' + encodeURIComponent(clean)})`;
+  });
+
+  // 2. 绝对路径 Unix: /home/user/file.py
+  const unixPathRe = new RegExp('(/(?:home|Users|opt|var|tmp|root|etc)/[^\\s<>|"\'*|?\\n\\r]+\\.' + extPattern + ')', 'gi');
+  processed = processed.replace(unixPathRe, (match) => {
+    const clean = match.replace(/[)\]},;:>]+$/, '');
+    return `[${clean}](${'agentai://open?path=' + encodeURIComponent(clean)})`;
+  });
+
+  // 3. 相对路径带关键词: "已生成 xxx.ts" / "文件: xxx.js"
+  const keywordRe = new RegExp('(已生成|已创建|已保存|文件[:：]?|路径[:：]?|生成[:：]?|创建[:：]?|保存[:：]?)\\s*[`"\']?([^\\s`"\'\\n\\r<>]+\\.' + extPattern + ')[`"\']?', 'gi');
+  processed = processed.replace(keywordRe, (_match, prefix, file) => {
+    return `${prefix} [\`${file}\`](${'agentai://open?path=' + encodeURIComponent(file)})`;
+  });
+
+  // 4. 反引号文件名: `xxx.ts` → 可点击 (但不动已有链接中的)
+  const backtickRe = new RegExp('`([^`\\n\\r<>]+\\.' + extPattern + ')`', 'gi');
+  processed = processed.replace(backtickRe, (match, file) => {
+    // 如果已经在 agentai:// 链接中, 跳过 (检测前后的 ]( 标记)
+    return `[\`${file}\`](${'agentai://open?path=' + encodeURIComponent(file)})`;
+  });
+
+  // 恢复代码块
+  processed = processed.replace(/__CODEBLOCK_(\d+)__/g, (_, i) => codeBlocks[parseInt(i)] || '');
+
+  return processed;
+}
+
+/**
  * Markdown — Markdown 渲染组件，支持内嵌 SVG 图表
  */
 export const Markdown: React.FC<Props> = ({ content, streaming }) => {
@@ -382,7 +436,9 @@ export const Markdown: React.FC<Props> = ({ content, streaming }) => {
 
   // 清理工具调用标记
   const cleanedContent = cleanToolCalls(content);
-  const text = streaming ? cleanedContent + '▍' : cleanedContent;
+  // 自动将文本中的文件路径转为可点击链接
+  const linkedContent = linkifyFilePaths(cleanedContent);
+  const text = streaming ? linkedContent + '▍' : linkedContent;
 
   // 检测 SVG 代码块并分段渲染
   const parts = splitSvgBlocks(text);

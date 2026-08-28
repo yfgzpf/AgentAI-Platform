@@ -136,23 +136,31 @@ function buildIdentityPrompt(
 }
 
 /**
- * 构建工具定义提示
+ * 构建工具定义提示（按任务类型差异化）
  */
 function buildToolsPrompt(options: ContextBuildOptions): string | null {
-  const { opts } = options;
-  
+  const { opts, taskType } = options;
+
   // 只读模式不显示工具
   if (opts.mode === 'readonly') {
     return null;
   }
-  
+
   // planning/review 模式显示只读工具说明
   if (opts.mode === 'planning' || opts.mode === 'review') {
     return `# 可用工具 (只读模式)\n你只能使用以下工具:\n- read_file: 读取文件内容\n- list_directory: 列出目录\n- directory_tree: 目录树\n- search_codebase: 搜索代码\n- web_fetch: 获取网页\n- ask_user: 询问用户`;
   }
-  
-  // auto 模式显示完整工具说明
-  return `# 可用工具\n你可以使用各种工具完成任务，包括:\n- 文件操作: read_file, write_file, list_directory, directory_tree\n- 代码编辑: multi_edit, create_directory, copy_file, move_file, delete_file\n- 搜索: search_content, search_codebase, web_search, web_fetch\n- 任务规划: plan_task, update_plan, spawn_subagent\n- 记忆: remember, recall_memory\n- Git: git_status, git_diff\n- 生成: generate_image, generate_video, generate_diagram`;
+
+  // 按任务类型差异化工具提示
+  const TASK_TOOL_HINTS: Record<string, string> = {
+    coding: `# 可用工具\n你可以使用各种工具完成任务。当前任务类型: 编码\n核心工具: 文件读写(read_file, write_file, multi_edit)、搜索(search_content, search_codebase)、Git(git_status, git_diff)、测试(run_tests, typecheck)`,
+    research: `# 可用工具\n你可以使用各种工具完成任务。当前任务类型: 研究\n核心工具: 搜索(web_search, web_fetch, search_codebase)、文件读取(read_file)、代码探索(search_content, get_outline)`,
+    media: `# 可用工具\n你可以使用各种工具完成任务。当前任务类型: 创意/媒体\n核心工具: 图片生成(generate_image)、视频生成(generate_video, query_video)、图表(generate_diagram)、渲染(render_widget)`,
+    industry: `# 可用工具\n你可以使用各种工具完成任务。当前任务类型: 行业\n核心工具: 知识库(knowledge_import)、报价(generate_quotation)、CAD(parse_cad_drawing, cad_control)、跟进(follow_up_customer)`,
+    general: `# 可用工具\n你可以使用各种工具完成任务。当前任务类型: 通用\n核心工具: 文件读写(read_file, write_file, multi_edit)、搜索(web_search, search_codebase)、任务规划(plan_task, spawn_subagent)`,
+  };
+
+  return TASK_TOOL_HINTS[taskType] || TASK_TOOL_HINTS.general;
 }
 
 /**

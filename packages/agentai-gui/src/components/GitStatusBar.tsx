@@ -57,7 +57,6 @@ export const GitStatusBar: React.FC<GitStatusBarProps> = ({ onClick }) => {
   // 监听工作区变更，自动刷新 Git 状态
   useEffect(() => {
     const handleWorkspaceChange = () => {
-      console.log('[GitStatusBar] 工作区变更，刷新 Git 状态');
       loadStatus();
     };
     window.addEventListener('agentai:workspace-changed', handleWorkspaceChange);

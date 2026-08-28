@@ -20,7 +20,8 @@ import {
 } from '@ant-design/icons';
 import { useChatStore } from '../store/chatStore';
 import { useProfileStore } from '../store';
-import { useSessionStore } from '../store/sessionStore';
+import { useSessionStore, Session } from '../store/sessionStore';
+import { FolderOutlined } from '@ant-design/icons';
 
 export const SessionSidebar: React.FC<{
   onGuideClick?: () => void;
@@ -54,24 +55,58 @@ export const SessionSidebar: React.FC<{
     fetchStats();
   }, []);
 
-  /* ---- 过滤 + 搜索 ---- */
+  // 获取当前工作目录
+  const currentWorkspace = profile?.workspace || '未指定工作区';
+
+  /* ---- 过滤 + 搜索 + 按工作区分组 ---- */
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
-    if (!q) return [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
-    return [...sessions]
-      .filter(s =>
+    let result = [...sessions];
+    if (q) {
+      result = result.filter(s =>
         (s.title || '').toLowerCase().includes(q) ||
         s.messages.some(m => m.content.toLowerCase().includes(q))
-      )
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      );
+    }
+    return result.sort((a, b) => b.updatedAt - a.updatedAt);
   }, [query, sessions]);
+
+  // 按工作区分组
+  const groupedSessions = useMemo(() => {
+    const groups: Record<string, Session[]> = {};
+    // 当前工作区放最前面
+    const current = currentWorkspace;
+    groups[current] = [];
+    
+    filtered.forEach(s => {
+      const ws = s.workspace || '未指定工作区';
+      if (!groups[ws]) groups[ws] = [];
+      groups[ws].push(s);
+    });
+    
+    // 移除空组（除了当前工作区）
+    Object.keys(groups).forEach(key => {
+      if (key !== current && groups[key].length === 0) {
+        delete groups[key];
+      }
+    });
+    
+    // 排序：当前工作区第一，其他按字母序
+    const sortedKeys = Object.keys(groups).sort((a, b) => {
+      if (a === current) return -1;
+      if (b === current) return 1;
+      return a.localeCompare(b);
+    });
+    
+    return { groups, keys: sortedKeys };
+  }, [filtered, currentWorkspace]);
 
   /* ---- 新建对话 ---- */
   const handleNew = useCallback(() => {
-    const id = createSession('新对话');
+    const id = createSession('新对话', undefined, 'chat', currentWorkspace);
     clearMessages();
     setActive(id);
-  }, [createSession, clearMessages, setActive]);
+  }, [createSession, clearMessages, setActive, currentWorkspace]);
 
   /* ---- 切换对话 ---- */
   const handleSelect = useCallback((id: string) => {
@@ -306,15 +341,38 @@ export const SessionSidebar: React.FC<{
         </div>
       </div>
 
-      {/* 会话列表 */}
+      {/* 会话列表 - 按工作区分组 */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 6px 8px' }}>
         {filtered.length === 0 ? (
           <div style={{ padding: '24px 12px', fontSize: 12, color: 'var(--muted-2)', textAlign: 'center' }}>
             {query ? '未找到匹配的对话' : '暂无对话，点击上方「新建对话」开始'}
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {filtered.map(s => <SessionItem key={s.id} s={s} />)}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {groupedSessions.keys.map(ws => (
+              <div key={ws} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {/* 工作区标题 */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '4px 8px', fontSize: 11, fontWeight: 600,
+                  color: ws === currentWorkspace ? 'var(--accent)' : 'var(--muted)',
+                  background: ws === currentWorkspace ? 'var(--accent-soft)' : 'transparent',
+                  borderRadius: 4,
+                }}>
+                  <FolderOutlined style={{ fontSize: 12 }} />
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {ws === currentWorkspace ? `📍 ${ws}` : ws}
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+                    {groupedSessions.groups[ws]?.length || 0}
+                  </span>
+                </div>
+                {/* 该工作区的会话 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: 4 }}>
+                  {groupedSessions.groups[ws]?.map(s => <SessionItem key={s.id} s={s} />)}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

@@ -160,6 +160,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
                 placeholder="请输入您的回答..."
                 value={answers[q.id] === '__custom__' ? '' : answers[q.id]}
                 onChange={e => handleAnswer(q.id, e.target.value)}
+                onPressEnter={() => { if (allAnswered) handleSubmit(); }}
                 rows={2}
                 style={{
                   marginTop: 8,
@@ -175,6 +176,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
 
       {/* 提交按钮 */}
       <div style={{ marginTop: 20, textAlign: 'right' }}>
+        <span style={{ fontSize: 11, color: 'var(--muted)', marginRight: 12 }}>按 Enter 快速发送</span>
         <Button
           type="primary"
           icon={<CheckOutlined />}

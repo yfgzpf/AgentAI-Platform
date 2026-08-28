@@ -1,8 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 
-// ═══ 第1层: Ant Design 基础样式 (必须在最前面) ═══
-import 'antd/dist/reset.css';
+// ═══ 第1层: Ant Design 基础样式 ═══
+// 注意: antd v5 使用 CSS-in-JS, reset.css 不再需要
+// reset.css 中的全局选择器 (如 input[type=text], textarea) 优先级高于
+// CSS-in-JS 的 :where() 选择器, 会导致打包后输入框样式被覆盖
+// 如果需要全局重置, 在 global.css 中用低优先级选择器实现
+// import 'antd/dist/reset.css';  // ← 已移除, 见上方注释
 
 // ═══ 第2层: 主题变量 (必须在组件样式之前) ═══
 import './styles/agentai-theme.css';

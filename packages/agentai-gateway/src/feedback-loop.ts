@@ -241,7 +241,7 @@ class FeedbackLoop {
    * 转换为进化记忆
    */
   private async convertToEvolution(entry: FeedbackEntry): Promise<void> {
-    const taskType = entry.context.taskType as 'coding' | 'research' | 'general' | 'industry' | undefined;
+    const taskType = entry.context.taskType as 'coding' | 'research' | 'media' | 'industry' | 'general' | undefined;
     const evolutionEntry: Omit<EvolutionEntry, 'ts'> = {
       type: 'feedback_negative',
       content: entry.comment || `User gave ${entry.type} feedback`,

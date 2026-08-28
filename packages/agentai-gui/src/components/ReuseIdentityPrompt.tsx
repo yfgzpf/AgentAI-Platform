@@ -42,7 +42,7 @@ const INDUSTRY_META: Record<string, { label: string; color: string; icon: React.
   ecommerce:    { label: '电商',   color: '#43e97b', icon: <ShopOutlined /> },
   education:    { label: '教育',   color: '#4facfe', icon: <ReadOutlined /> },
   realestate:   { label: '房产',   color: '#fa709a', icon: <HomeOutlined /> },
-  medical:      { label: '医疗',   color: '#f093fb', icon: <MedicineBoxOutlined /> },
+  medical:      { label: '中医问诊',   color: '#f093fb', icon: <MedicineBoxOutlined /> },
   legal:        { label: '法律',   color: '#667eea', icon: <BankOutlined /> },
   developer:    { label: '开发者', color: '#00f2fe', icon: <CodeOutlined /> },
 };

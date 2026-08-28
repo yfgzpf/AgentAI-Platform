@@ -1,6 +1,6 @@
 import type { ChatSegment } from '../store/chatStore';
 
-export type SSEType = 'thinking' | 'delta' | 'reasoning' | 'auto_fix' | 'tool_start' | 'tool_result' | 'plan' | 'usage' | 'iteration' | 'reflect' | 'done' | 'error' | 'widget';
+export type SSEType = 'thinking' | 'delta' | 'reasoning' | 'auto_fix' | 'tool_start' | 'tool_result' | 'plan' | 'usage' | 'iteration' | 'reflect' | 'done' | 'error' | 'widget' | 'mood' | 'dream' | 'inner_voice' | 'curiosity' | 'debate';
 
 export interface SSEEvent {
   type: SSEType;
@@ -13,6 +13,7 @@ export function parseSSE(raw: string): SSEEvent[] {
     thinking: 'thinking', delta: 'delta', reasoning: 'reasoning', auto_fix: 'auto_fix', tool_start: 'tool_start',
     tool_result: 'tool_result', plan: 'plan', usage: 'usage', iteration: 'iteration', reflect: 'reflect', done: 'done', error: 'error',
     widget: 'widget', // render_widget 工具返回的 widget 渲染事件
+    mood: 'mood', dream: 'dream', inner_voice: 'inner_voice', curiosity: 'curiosity', debate: 'debate',
   };
 
   // Split by double newline

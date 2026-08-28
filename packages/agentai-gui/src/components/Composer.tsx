@@ -10,7 +10,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback, useImperativeHandle, type KeyboardEvent, type RefObject, type DragEvent } from 'react';
 import { Tooltip, Select, Image, message, Dropdown } from 'antd';
-import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, BellOutlined, BulbOutlined, MoreOutlined, DesktopOutlined, ThunderboltOutlined, GithubOutlined } from '@ant-design/icons';
+import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, BellOutlined, BulbOutlined, MoreOutlined, DesktopOutlined, ThunderboltOutlined, GithubOutlined, StarOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { MessageOutlined as QQIcon } from '@ant-design/icons';
 import { useModeStore, MODE_CONFIG, MODE_ORDER } from '../store/modeStore';
 import { useModelStore } from '../store/modelStore';
@@ -81,6 +81,74 @@ const ComposerBase = ({
   const [recording, setRecording] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [parsing, setParsing] = useState(false); // 文件解析中
+
+  // ★ 行业感知: 检测是否为中医问诊模式 (2026-08-10)
+  const [currentIndustry, setCurrentIndustry] = useState('general');
+  useEffect(() => {
+    const updateIndustry = () => {
+      let extraProfile: any = {};
+      try { const raw = localStorage.getItem('agentai.profile'); if (raw) extraProfile = JSON.parse(raw); } catch {}
+      let zustandProfile: any = {};
+      try { const raw = localStorage.getItem('agentai-user-profile'); if (raw) zustandProfile = JSON.parse(raw)?.state?.profile || {}; } catch {}
+      setCurrentIndustry(extraProfile?.industry || zustandProfile?.industry || 'general');
+    };
+    updateIndustry();
+    // 监听 storage 变化 (跨 tab 同步)
+    window.addEventListener('storage', updateIndustry);
+    return () => window.removeEventListener('storage', updateIndustry);
+  }, []);
+  const isMedicalMode = currentIndustry === 'medical';
+
+  // ★ 舌诊摄像头状态
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+
+  // ★ 舌诊拍照: 打开摄像头
+  const openTongueCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setCameraOpen(true);
+    } catch (err: any) {
+      message.error('无法访问摄像头: ' + (err.message || '请检查权限设置'));
+    }
+  };
+
+  // ★ 舌诊拍照: 截图并作为附件发送
+  const captureTongueImage = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d')?.drawImage(video, 0, 0);
+    const base64 = canvas.toDataURL('image/jpeg', 0.85);
+    closeTongueCamera();
+    // 作为图片附件加入
+    onAttachmentsChange?.([...attachments, {
+      kind: 'image' as const,
+      name: `舌象_${new Date().toLocaleTimeString('zh-CN').replace(/:/g, '-')}.jpg`,
+      mimetype: 'image/jpeg',
+      size: Math.round(base64.length * 0.75),
+      content: '[舌象照片]',
+      dataUrl: base64,
+    }]);
+    message.success('舌象照片已捕获，可输入"请分析舌象"后发送');
+  };
+
+  // ★ 舌诊拍照: 关闭摄像头
+  const closeTongueCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setCameraOpen(false);
+  };
 
   // URL 检测: 从 draft 中提取链接, 显示为链接卡片
   const detectedUrls = useMemo(() => {
@@ -583,6 +651,75 @@ setActiveModel(modelId);
             </button>
           </Tooltip>
 
+          {/* ★ 舌诊拍照 (仅中医行业显示) */}
+          {isMedicalMode && (
+            <Tooltip title="舌诊拍照">
+              <button
+                className="icon-btn-sm"
+                onClick={openTongueCamera}
+                style={{ color: '#1abc9c', border: '1px solid #1abc9c40' }}
+              >
+                👅
+              </button>
+            </Tooltip>
+          )}
+
+          {/* ★ 舌诊摄像头弹窗 */}
+          {cameraOpen && (
+            <div style={{
+              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+              background: 'rgba(0,0,0,0.7)', zIndex: 10000,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }} onClick={(e) => { if (e.target === e.currentTarget) closeTongueCamera(); }}>
+              <div style={{
+                width: 480, borderRadius: 12, overflow: 'hidden',
+                background: '#000', boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+              }}>
+                <div style={{
+                  padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  background: 'linear-gradient(135deg, #1abc9c, #16a085)',
+                  color: '#fff',
+                }}>
+                  <span style={{ fontWeight: 600 }}>👅 中医舌诊 — 拍摄舌象</span>
+                  <button onClick={closeTongueCamera} style={{ color: '#fff', cursor: 'pointer', fontSize: 18, background: 'none', border: 'none' }}>✕</button>
+                </div>
+                {/* 摄像头预览 */}
+                <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', display: 'block' }} />
+                {/* 隐藏的 canvas 用于截图 */}
+                <canvas ref={canvasRef} style={{ display: 'none' }} />
+                {/* 提示 + 按钮 */}
+                <div style={{ padding: 12, textAlign: 'center', background: '#111' }}>
+                  <p style={{ color: '#aaa', fontSize: 12, margin: '0 0 10px' }}>
+                    请将舌头伸出对准镜头，保持自然光线，点击下方按钮拍摄
+                  </p>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                    <button
+                      onClick={captureTongueImage}
+                      style={{
+                        padding: '8px 24px', borderRadius: 20, fontSize: 14, fontWeight: 600,
+                        background: '#1abc9c', color: '#fff', border: 'none', cursor: 'pointer',
+                        transition: 'transform 0.15s',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.05)'}
+                      onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+                    >
+                      📸 拍摄舌象
+                    </button>
+                    <button
+                      onClick={closeTongueCamera}
+                      style={{
+                        padding: '8px 16px', borderRadius: 20, fontSize: 13,
+                        background: 'transparent', color: '#999', border: '1px solid #444', cursor: 'pointer',
+                      }}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ── 更多菜单 (收给低频控件) ── */}
           <Dropdown
             trigger={['click']}
@@ -733,6 +870,51 @@ setActiveModel(modelId);
 
           <span className="ui-divider" />
 
+          {/* ── 对话改图模式切换 (移入对话框内) ── */}
+          <Tooltip title={chatMode === 'image_edit' ? '切换回普通对话' : '🎨 对话改图模式'}>
+            <button
+              onClick={() => {
+                const newMode = chatMode === 'image_edit' ? 'chat' : 'image_edit';
+                useModelStore.getState().setChatMode(newMode);
+                // 切换到图片模式时，自动选择支持图片的模型
+                if (newMode === 'image_edit') {
+                  const imageModels = models.filter(m =>
+                    m.capabilities?.includes('image') ||
+                    m.capabilities?.includes('multimodal') ||
+                    ['zhipu', 'doubao-chat', 'qwen-chat', 'longcat-2.0', 'factory-gpt-image-2', 'factory-nano-banana-2'].includes(m.id)
+                  );
+                  if (imageModels.length > 0 && !imageModels.find(m => m.id === activeModelId)) {
+                    setActiveModel(imageModels[0].id);
+                  }
+                }
+              }}
+              className="icon-btn-sm"
+              style={{
+                color: chatMode === 'image_edit' ? 'var(--accent)' : 'var(--muted-2)',
+                background: chatMode === 'image_edit' ? 'var(--accent-soft)' : 'transparent',
+              }}
+            >
+              <ExperimentOutlined style={{ fontSize: 12 }} />
+            </button>
+          </Tooltip>
+
+          {/* ── 提示词优化 (直接显示在对话框内，不折叠) ── */}
+          <Tooltip title="✨ 优化提示词">
+            <button
+              onClick={() => setOptimizeOpen(true)}
+              disabled={optimizeDisabled || !draft.trim()}
+              className="icon-btn-sm"
+              style={{
+                color: draft.trim() && !optimizeDisabled ? '#a855f7' : 'var(--muted-3)',
+                cursor: draft.trim() && !optimizeDisabled ? 'pointer' : 'not-allowed',
+              }}
+            >
+              <StarOutlined style={{ fontSize: 12 }} />
+            </button>
+          </Tooltip>
+
+          <span className="ui-divider" />
+
           {/* ── 连接器下拉菜单 (类似 Claude Connectors) ── */}
           <ConnectorsDropdown />
 
@@ -775,11 +957,12 @@ setActiveModel(modelId);
         </div>
       </div>
 
-      {/* ── PromptOptimizer 浮窗 ── */}
+      {/* ── PromptOptimizer 浮窗 (挂载即自动触发 LLM 优化) ── */}
       {optimizeOpen && (
         <PromptOptimizer
           draft={draft}
-          onApply={(text) => { setDraft(text); setOptimizeOpen(false); }}
+          onApply={(text) => setDraft(text)}
+          onClose={() => setOptimizeOpen(false)}
           disabled={optimizeDisabled}
         />
       )}

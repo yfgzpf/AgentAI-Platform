@@ -98,15 +98,15 @@ export const INDUSTRY_TEMPLATES: IndustryTemplate[] = [
     ],
   },
   {
-    id: 'medical', label: '医疗健康', icon: '🏥', description: '医学影像/健康咨询/病历管理',
-    imageSuffix: 'medical illustration, anatomical accuracy, clean professional',
-    videoSuffix: 'medical animation, educational, clear visualization',
-    requiredSkills: ['医学知识库', '影像分析', '隐私保护', '合规审查'],
+  id: 'medical', label: '中医问诊', icon: '🏥', description: '中医辨证/古籍检索/医案匹配/药材查询/养生调理',
+    imageSuffix: 'TCM traditional chinese medicine, herbal medicine, ancient style, ink painting aesthetic',
+    videoSuffix: 'TCM animation, traditional Chinese style, educational wellness',
+    requiredSkills: ['中医辨证', '古籍检索', '医案匹配', '药材查询', '养生调理'],
     knowledgeQuestions: [
-      '您的医疗领域是什么? (临床/医美/康复/中医)',
-      '您是否需要医学影像分析功能?',
-      '您的合规要求是什么? (HIPAA/个人信息保护法)',
-      '您是否需要患者管理系统?',
+      '您主要关注哪些中医领域? (辨证论治/古籍研究/药材方剂/养生保健)',
+      '是否需要接入经典条文检索? (伤寒论/金匮要略/黄帝内经/温病条辨)',
+      '是否需要名老中医医案库匹配?',
+      '是否需要体质辨识和养生方案生成?',
     ],
   },
   {

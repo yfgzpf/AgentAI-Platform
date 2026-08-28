@@ -138,7 +138,6 @@ export const ProactiveSuggestionsPanel: React.FC = () => {
 
   // 执行建议动作
   const executeAction = (suggestion: Suggestion) => {
-    console.log('执行建议:', suggestion.action);
     // 根据action类型执行不同操作
   };
 

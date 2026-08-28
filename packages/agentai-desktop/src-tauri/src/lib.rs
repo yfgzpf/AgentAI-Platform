@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use tauri::{
     Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder,
 };
-// use tauri_plugin_notification::NotificationExt; // 暂时禁用，API 变更待修复
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
 static NODE_MIN_SIZE: u64 = 100_000;
@@ -221,10 +221,13 @@ async fn spawn_gateway(app: tauri::AppHandle) -> Result<String, String> {
     let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
 
     // 按优先级查找 gateway 目录
+    // ⚠️ 重要：优先检查 dist/index.js（正确入口），而非根目录 index.js（错误入口）
+    // 根目录 index.js 的 import 路径是 ./app.js，但 app.js 只在 dist/ 子目录存在
     let candidates = [
-        ("gateway-dist-v2/dist", "index.js"),
-        ("gateway-dist", "index.js"),
-        ("gateway-dist-v2", "dist/index.js"),
+        ("gateway-dist", "dist/index.js"),      // 正确入口（优先）
+        ("gateway-dist-v2", "dist/index.js"),   // 正确入口
+        ("gateway-dist", "index.js"),           // 错误入口（fallback）
+        ("gateway-dist-v2", "index.js"),        // 错误入口（fallback）
     ];
 
     let mut gw_dir: Option<PathBuf> = None;
@@ -401,7 +404,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
-        // .plugin(tauri_plugin_notification::init()) // 暂时禁用，API 变更待修复
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(GatewayProcess(Mutex::new(None)))
         .manage(AppState{
@@ -475,9 +478,25 @@ pub fn run() {
 
             if let Ok(mut g) = app.state::<AppState>().tray.lock() { *g = Some(tray); }
 
-            // Gateway 启动完全由前端 GatewayFallback 控制 (避免双重启动竞态)
-            // Rust 端仅提供 spawn_gateway 命令供前端调用, 和 gateway:status 事件转发
-            log::info!("[desktop] Gateway startup delegated to frontend GatewayFallback");
+    // Gateway 启动: Rust 端自动启动 + 前端可调用
+    // 之前完全依赖前端 invoke, 但前端 JS 加载有延迟, 导致网关启动慢
+    // 现在在 setup 中直接启动, 前端只需检查状态
+    log::info!("[Setup] Auto-starting Gateway...");
+    let app_handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        // 延迟 500ms 让窗口先渲染
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        match spawn_gateway(app_handle.clone()).await {
+            Ok(msg) => log::info!("[Setup] Gateway auto-started: {}", msg),
+            Err(e) => {
+                log::error!("[Setup] Gateway auto-start failed: {}", e);
+                let _ = app_handle.emit("gateway:status", GatewayEventPayload {
+                    status: "failed".into(),
+                    message: e.clone(),
+                });
+            }
+        }
+    });
 
             Ok(())
         })

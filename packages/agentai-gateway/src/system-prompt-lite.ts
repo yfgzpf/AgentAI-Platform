@@ -9,7 +9,7 @@ export interface LitePromptContext {
     userName?: string;
     industry?: string;
     role?: string;
-    taskType?: 'coding' | 'research' | 'general' | 'industry';
+    taskType?: 'coding' | 'research' | 'media' | 'industry' | 'general';
     workspace?: string;
     evolutionPatterns?: string[];
 }
@@ -112,13 +112,17 @@ ${ctx.evolutionPatterns.slice(0, 3).map(p => `- ${p}`).join('\n')}
     return parts.join('\n');
 }
 
-export function detectTaskType(userMessage: string): 'coding' | 'research' | 'general' | 'industry' {
+export function detectTaskType(userMessage: string): 'coding' | 'research' | 'media' | 'industry' | 'general' {
     const lower = userMessage.toLowerCase();
     if (lower.match(/代码|编程|修改|重构|调试|bug|error|fix|修复|写|创建|删除|文件|目录|git|npm|pip/)) {
         return 'coding';
     }
     if (lower.match(/搜索|查找|研究|分析|文档|资料|api|教程|学习|了解|查询/)) {
         return 'research';
+    }
+    // 媒体/创意任务检测
+    if (lower.match(/图片|生成图|画图|海报|视频|动画|短片|小说|写作|写文章|漫画|脚本|音乐|设计|图片生成|视频生成/)) {
+        return 'media';
     }
     // P0 修复: 缩小 industry 匹配范围 — "方案"太泛了, "发布方案""演示方案"都被误判
     // 只有同时包含行业关键词+行业动词时才判定为 industry

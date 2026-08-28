@@ -4,6 +4,8 @@ description: 装修需求结构化访谈助手。通过智能问答收集客户�
 description_zh: "装修需求结构化访谈助手，智能收集客户需求并生成标准文档"
 description_en: "Structured requirement interview assistant for decoration projects"
 version: 1.0.0
+status: deprecated
+deprecated_reason: "固定问卷模板，无智能追问。降级为知识库参考。"
 metadata:
   category: decoration
   tags:

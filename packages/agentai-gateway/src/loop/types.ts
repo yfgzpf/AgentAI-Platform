@@ -13,7 +13,7 @@ export type RunMode = 'auto' | 'planning' | 'review' | 'readonly';
 export type CapabilityTier = 'autonomous' | 'guided' | 'supervised';
 
 /** 任务类型 */
-export type TaskType = 'coding' | 'research' | 'general' | 'industry';
+export type TaskType = 'coding' | 'research' | 'media' | 'industry' | 'general';
 
 /**
  * Loop 配置选项

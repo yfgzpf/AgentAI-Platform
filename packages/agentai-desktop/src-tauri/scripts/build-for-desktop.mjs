@@ -43,25 +43,30 @@ log('Step 1: 编译 Gateway...');
 const gwDir = resolve(ROOT, 'packages', 'agentai-gateway');
 const gwDist = resolve(gwDir, 'dist', 'index.js');
 
-if (existsSync(gwDist)) {
-  logOk('Gateway dist 已存在, 跳过编译');
-} else {
-  // 直接调 tsc（不走 pnpm build，避免触发 workspace root postinstall）
+// 每次都重新编译, 确保打包的是最新代码 (不跳过)
+{
   const tscPath = resolve(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
   if (existsSync(tscPath)) {
-    // tsc 失败不影响后续（build.mjs 会 copy 资源文件并 exit 1）
-    spawnSync(process.execPath, [tscPath, '-p', gwDir], {
+    log('运行 tsc 编译 Gateway...');
+    const tscResult = spawnSync(process.execPath, [tscPath, '-p', gwDir], {
       cwd: gwDir, stdio: 'inherit', shell: false,
     });
+    if (tscResult.status !== 0 && tscResult.status !== undefined) {
+      logWarn(`tsc 编译失败 (exit ${tscResult.status})，继续...`);
+    } else {
+      logOk('Gateway tsc 编译完成');
+    }
   } else {
-    logWarn('tsc 未找到, 跳过编译');
+    logWarn('tsc 未找到, 尝试 npm run build');
+    run('npm run build', gwDir);
   }
-  // 复制 rules.json（build.mjs 中的 copy 步骤）
+  // 复制 rules.json
   const rulesSrc = resolve(gwDir, 'src', 'cleaner', 'rules.json');
   const rulesDst = resolve(gwDir, 'dist', 'cleaner', 'rules.json');
   if (existsSync(rulesSrc)) {
     mkdirSync(resolve(rulesDst, '..'), { recursive: true });
     cpSync(rulesSrc, rulesDst);
+    logOk('rules.json 已复制');
   }
 }
 
@@ -70,17 +75,26 @@ log('Step 2: 编译 GUI...');
 const guiDir = resolve(ROOT, 'packages', 'agentai-gui');
 const guiDist = resolve(guiDir, 'dist', 'index.html');
 
-if (existsSync(guiDist)) {
-  logOk('GUI dist 已存在, 跳过编译');
-} else {
-  // 直接调 vite build（不走 pnpm build）
-  const vitePath = resolve(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
-  if (existsSync(vitePath)) {
-    spawnSync(process.execPath, [vitePath, 'build'], {
+// 每次都重新编译 GUI, 确保打包的是最新代码 (不跳过)
+{
+  const viteCandidates = [
+    resolve(guiDir, 'node_modules', 'vite', 'bin', 'vite.js'),
+    resolve(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'),
+  ];
+  const vitePath = viteCandidates.find(p => existsSync(p));
+  if (vitePath) {
+    log('运行 vite build 编译 GUI...');
+    const viteResult = spawnSync(process.execPath, [vitePath, 'build'], {
       cwd: guiDir, stdio: 'inherit', shell: false,
     });
+    if (viteResult.status !== 0 && viteResult.status !== undefined) {
+      logWarn(`vite build 失败 (exit ${viteResult.status})，继续...`);
+    } else {
+      logOk('GUI vite build 完成');
+    }
   } else {
     // 兜底: npx vite build
+    log('使用 npx vite build...');
     run('npx vite build', guiDir);
   }
 }
@@ -90,9 +104,8 @@ log('Step 3: 准备 gateway-dist-v2...');
 const resourcesDir = resolve(SRC_TAUDI, 'resources');
 const gwDistV2 = resolve(resourcesDir, 'gateway-dist-v2');
 
-if (existsSync(resolve(gwDistV2, 'node_modules', 'express', 'package.json'))) {
-  logOk('gateway-dist-v2 已完整, 跳过打包');
-} else {
+// 每次都重新打包 gateway-dist-v2, 确保最新代码 (不跳过)
+{
   const distSrc = resolve(gwDir, 'dist');
   if (!existsSync(distSrc)) {
     logWarn(`Gateway dist 不存在: ${distSrc}，跳过 node_modules 安装`);
@@ -136,6 +149,32 @@ if (existsSync(resolve(gwDistV2, 'node_modules', 'express', 'package.json'))) {
       logWarn('部分依赖缺失, 首次启动会自动补装');
     }
   }
+}
+
+// ── 3.5 同步 gateway-dist-v2 → gateway-dist (tauri.conf.json 打包用的是 gateway-dist) ──
+log('Step 3.5: 同步 gateway-dist-v2 → gateway-dist...');
+const gwDistFinal = resolve(resourcesDir, 'gateway-dist');
+if (existsSync(gwDistV2) && existsSync(resolve(gwDistV2, 'dist', 'index.js'))) {
+  // 备份旧 gateway-dist
+  if (existsSync(gwDistFinal)) {
+    const backupName = `${gwDistFinal}-backup-${Date.now()}`;
+    try { rmSync(backupName, { recursive: true, force: true }); } catch {}
+    try { renameSync(gwDistFinal, backupName); } catch {}
+  }
+  // 复制 gateway-dist-v2 → gateway-dist
+  cpSync(gwDistV2, gwDistFinal, { recursive: true, force: true });
+  logOk('gateway-dist 已同步 (tauri.conf.json 打包用此目录)');
+  // 清理旧备份 (只保留最近一个)
+  if (existsSync(resourcesDir)) {
+    const backups = require('fs').readdirSync(resourcesDir)
+      .filter(e => e.startsWith('gateway-dist-backup-'))
+      .sort().reverse();
+    backups.slice(1).forEach(b => {
+      try { rmSync(resolve(resourcesDir, b), { recursive: true, force: true }); } catch {}
+    });
+  }
+} else {
+  logWarn('gateway-dist-v2 不完整, 保持现有 gateway-dist');
 }
 
 // ── 4. 生成 lite.html ───────────────────────────────────────────

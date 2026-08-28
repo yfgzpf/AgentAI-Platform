@@ -38,11 +38,27 @@ export function makeChatHandlers(
 ) {
   return {
     onDelta: (text: string) => {
+      // P1 修复: 重复回复去重 — 如果追加后文本末尾出现重复段落, 截断
       updateMessage(botId, (m: any) => {
         const segs = [...m.segments];
         const lt = segs.filter((s: any) => s.kind === 'text').pop();
-        if (lt && lt.kind === 'text') lt.text += text;
-        else segs.push({ kind: 'text', text });
+        let newText = '';
+        if (lt && lt.kind === 'text') {
+          newText = lt.text + text;
+          // 去重: 检查最后 50 字符是否在前面已出现过
+          if (newText.length > 100) {
+            const tail = newText.slice(-50);
+            const body = newText.slice(0, -50);
+            if (body.includes(tail)) {
+              // 重复了, 不追加
+              newText = lt.text;
+            }
+          }
+          lt.text = newText;
+        } else {
+          newText = text;
+          segs.push({ kind: 'text', text: newText });
+        }
         return { ...m, segments: segs, streaming: true };
       });
     },
@@ -110,9 +126,41 @@ export function makeChatHandlers(
       updateMessage(botId, (m: any) => {
         const segs = m.segments.map((s: any) =>
           s.kind === 'tool' && s.callId === info.callId
-            ? { ...s, state: info.ok ? 'success' : 'error', result: info.result, ok: info.ok, durationMs: info.durationMs }
+            ? { ...s, state: info.ok ? 'success' : 'error', result: info.result, ok: info.ok, durationMs: info.durationMs, data: info.data }
             : s,
         );
+        // P0 修复: generate_image / browser_screenshot 等工具返回的图片 → 提取 URL 创建 image segment
+        if (info.ok && info.name && /^(generate_image|create_image|draw|paint|browser_screenshot|capture_screen|capture_and_read)$/i.test(info.name)) {
+          const result = info.result || '';
+          const data = info.data;
+          // 从 data 中提取图片 URL/base64
+          let imgUrl: string | undefined;
+          let imgBase64: string | undefined;
+          let imgAlt = info.name === 'generate_image' ? 'AI 生成图片' : '截图';
+
+          if (data?.url) imgUrl = data.url;
+          else if (data?.image_url) imgUrl = data.image_url;
+          else if (data?.base64) imgBase64 = data.base64;
+          else if (data?.image_base64) imgBase64 = data.image_base64;
+          // 从 result 文本中提取 URL
+          if (!imgUrl && !imgBase64) {
+            const urlMatch = result.match(/(https?:\/\/[^\s"'\)]+\.(?:png|jpg|jpeg|webp|gif))/i);
+            if (urlMatch) imgUrl = urlMatch[1];
+          }
+          // 从 result 文本中提取本地文件路径
+          let filePath: string | undefined;
+          if (!imgUrl && !imgBase64) {
+            const pathMatch = result.match(/([A-Za-z]:[\\\/][^\s"'<>|]+\.(?:png|jpg|jpeg|webp))/i);
+            if (pathMatch) {
+              filePath = pathMatch[1];
+              imgAlt = `本地图片: ${filePath.split(/[\\\/]/).pop()}`;
+            }
+          }
+
+          if (imgUrl || imgBase64 || filePath) {
+            segs.push({ kind: 'image', url: imgUrl, base64: imgBase64, alt: imgAlt, filePath } as any);
+          }
+        }
         return { ...m, segments: segs };
       });
     },
@@ -130,6 +178,14 @@ export function makeChatHandlers(
           usage: info.usage, // { prompt_tokens, completion_tokens, cost?, ... }
         };
       });
+      // 追踪用量统计
+      if (info.usage) {
+        const tokens = info.usage.total_tokens || info.usage.prompt_tokens || 0;
+        const cost = info.usage.cost || 0;
+        window.dispatchEvent(new CustomEvent('agentai:usage-update', {
+          detail: { tokens, cost, isImage: false },
+        }));
+      }
     },
     onError: (err: string) => {
       updateMessage(botId, (m: any) => ({ ...m, streaming: false, status: 'error', segments: [...m.segments, { kind: 'text', text: `\n\n❌ ${err}` }] }));
@@ -140,6 +196,7 @@ export function makeChatHandlers(
 export async function apiStream(url: string, body: any, handlers: ApiStreamHandlers, signal?: AbortSignal): Promise<void> {
   const MAX_RETRIES = 3;
   let retries = 0;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
   while (retries <= MAX_RETRIES) {
     try {
@@ -152,7 +209,7 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
       if (!resp.ok) { handlers.onError?.(`HTTP ${resp.status}`); return; }
       if (!resp.body) { handlers.onError?.('No response body'); return; }
 
-      const reader = resp.body.getReader();
+      reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
 
@@ -200,9 +257,17 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
               case 'subagent_start': handlers.onSubagentStart?.(data); break;
               case 'subagent_done': handlers.onSubagentDone?.(data); break;
               case 'subagent_error': handlers.onSubagentError?.(data); break;
-              case 'tool_stuck': handlers.onToolStuck?.(data); break;
-              case 'widget_show': handlers.onWidgetShow?.(data); break;
-              case 'progress': handlers.onProgress?.(data); break;
+case 'tool_stuck': handlers.onToolStuck?.(data); break;
+case 'widget_show': handlers.onWidgetShow?.(data); break;
+case 'progress': handlers.onProgress?.(data); break;
+// 灵魂层事件: 注入为特殊 segment + dispatch 全局事件
+case 'mood':
+  window.dispatchEvent(new CustomEvent('agentai:mood', { detail: data }));
+  break;
+case 'inner_voice': updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'reasoning', text: `[内心独白] ${data.text || ''}` }] })); break;
+case 'curiosity': updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'reasoning', text: `[好奇心] ${data.question || data.text || ''}` }] })); break;
+case 'debate': updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'reasoning', text: `[内部辩论] ${data.recommendation || data.synthesis || ''}` }] })); break;
+case 'dream': updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'reasoning', text: `[梦境记忆] ${data.summary || ''}` }] })); break;
               case 'done': handlers.onDone?.({ provider: data.provider, content: data.content, usage: data.usage, displayModel: data.displayModel }); return;
               case 'error': handlers.onError?.(data.error || data.text || 'Unknown error'); return;
             }
@@ -212,6 +277,8 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
       // 正常结束 (SSE 流关闭, 但没有 done 事件)
       return;
     } catch (e: any) {
+      // 确保 reader 被释放, 防止光标/缓冲残留
+      if (reader) { try { reader.cancel(); } catch {} reader = null; }
       if (e.name === 'AbortError') return; // 用户主动取消, 不重试
       retries++;
       if (retries > MAX_RETRIES) {
@@ -233,15 +300,16 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
 import { GATEWAY_HTTP } from './config';
 import { gatewayFallback } from './GatewayFallback';
 
-/** 判断是否开发模式 */
+/** 判断是否开发模式 (非 Tauri + Vite dev server) */
 function isDevMode(): boolean {
-  return typeof window !== 'undefined' && (
-    window.location?.hostname === 'localhost' || 
-    window.location?.hostname === '127.0.0.1' || 
-    window.location?.port === '5173' ||
-    window.location?.port === '5174' ||
-    window.location?.port === '5176'
-  );
+  if (typeof window === 'undefined') return false;
+  // Tauri 环境绝不是 dev 模式
+  if ((window as any).__TAURI_INTERNALS__ || window.location?.protocol === 'tauri:') return false;
+  return window.location?.hostname === 'localhost' || 
+         window.location?.hostname === '127.0.0.1' ||
+         window.location?.port === '5173' ||
+         window.location?.port === '5174' ||
+         window.location?.port === '5176';
 }
 
 /** 拼接完整 URL: 始终使用 gatewayFallback.url 获取正确地址 */
@@ -264,6 +332,27 @@ export async function apiGet<T = any>(url: string): Promise<T> {
   const resp = await fetch(apiUrl(url));
   return resp.json() as T;
 }
+
+/**
+ * 统一 api 对象 — 提供 chat / post / get 等便捷方法
+ * 供 DecorAI 等组件以 api.chat(...) / api.post(...) 方式调用
+ */
+export const api = {
+  /** 非流式 chat 调用 */
+  async chat(body: { model: string; messages: any[]; temperature?: number }): Promise<{ content: string }> {
+    const resp = await fetch(apiUrl('/v1/chat/completions'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, stream: false }),
+    });
+    const data = await resp.json();
+    const content = data?.choices?.[0]?.message?.content || data?.content || '';
+    return { content };
+  },
+
+  post: apiPost,
+  get: apiGet,
+};
 
 export async function apiWriteMemory(data: { userId: string; workspace: string; role: string; content: string; source?: string }): Promise<void> {
   try { await apiPost('/v1/memory', data); } catch {}

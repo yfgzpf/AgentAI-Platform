@@ -72,15 +72,36 @@ class TaskNotifierImpl {
 
   // ========== private ==========
 
-  private doDesktopNotify(title?: string, body?: string) {
+  private async doDesktopNotify(title?: string, body?: string) {
+    // Bug4 修复: Tauri 环境下用原生通知插件, 浏览器环境下用 Web Notification API
+    const isTauri = !!(window as any).__TAURI__;
+    const notifyTitle = title || '✅ 任务完成';
+    const notifyBody = body || 'AI 已完成任务, 回到岐枢查看结果';
+
+    if (isTauri) {
+      // Tauri 2.x: 用原生通知插件
+      try {
+        const { isPermissionGranted, requestPermission, sendNotification } = await import('@tauri-apps/plugin-notification');
+        let permission = await isPermissionGranted();
+        if (!permission) permission = (await requestPermission()) === 'granted';
+        if (permission) {
+          await sendNotification({ title: notifyTitle, body: notifyBody });
+          return;
+        }
+      } catch {
+        // Tauri 插件不可用时 fallback 到 Web API
+      }
+    }
+
+    // 浏览器环境: Web Notification API
     if (!('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
     // 前台时不弹
     if (document.visibilityState === 'visible') return;
 
     try {
-      new Notification(title || '✅ 任务完成', {
-        body: body || 'AI 已完成任务, 回到岐枢查看结果',
+      new Notification(notifyTitle, {
+        body: notifyBody,
         icon: '/favicon.svg',
         tag: 'agentai-task-done',
       });

@@ -1,39 +1,57 @@
 /**
- * Splash — 启动欢迎页 v2 (PulseFlow)
- * 设计: 多阶段动画 + 品牌核心能力展示
- *   Stage 1 (0-0.8s): LOGO 心跳脉冲
+ * Splash — 启动欢迎页 v3 (PulseFlow) (2026-08-10 视觉增强版)
+ * 
+ * 设计: 多阶段动画 + 品牌核心能力展示 + 震撼视觉冲击
+ *   Stage 1 (0-0.8s): LOGO 心跳脉冲 + 粒子爆发
  *   Stage 2 (0.8-1.6s): 品牌名 + 副标题淡入
- *   Stage 3 (1.6-2.4s): 能力标签浮动
- *   Stage 4 (2.4-3.2s): Slogan + 状态
- *   Stage 5 (3.2-3.6s): 整体淡出
+ *   Stage 3 (1.6-2.4s): 能力标签浮动弹出
+ *   Stage 4 (2.4-3.2s): Slogan + 定位语
+ *   Stage 5 (3.2-4.0s): 整体淡出
  *
- * 品牌: 岐枢智能体平台 | PulseFlow
- *   - 岐枢: 岐黄之术 + 枢纽核心，中医智慧 × AI 智能体
- *   - PulseFlow: Pulse (脉动/状态感知) + Flow (流动/智能演进)
- * 理念: 望闻问切 · 因证施治 · 越用越懂你的 AI 智能体
+ * v3 增强:
+ *   - 动态网格背景 + 流动光线
+ *   - 粒子系统 (多色浮动)
+ *   - 更大的 Logo 区域 + 光晕脉冲
+ *   - 更新数据 (8 Provider / 141+ 工具)
+ *   - 一句话品牌定位
+ *   - 可点击跳过 (提升交互感)
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 
 interface Props {
   onFinish?: () => void;
-  duration?: number;          // 总停留时间 (默认 3600ms)
+  duration?: number;          // 总停留时间 (默认 4000ms)
   minDuration?: number;       // 最少停留 (避免太快消失)
 }
 
 const CAPABILITY_TAGS = [
-  { label: '5+ 模型', color: '#CD7A3A' },
-  { label: '146+ 工具', color: '#43e97b' },
-  { label: '多 Agent', color: '#4facfe' },
-  { label: '自进化', color: '#f5576c' },
-  { label: '医案传承', color: '#f093fb' },  // 品牌：任务快照 → 医案传承
-  { label: '辨证施治', color: '#E89055' },  // 品牌：中医辨证 → 辨证施治
+  { label: '8 模型 Provider', color: '#CD7A3A' },
+  { label: '141+ AI 工具', color: '#43e97b' },
+  { label: '多 Agent 协作', color: '#4facfe' },
+  { label: '自进化引擎', color: '#f5576c' },
+  { label: '9 行业模板', color: '#f093fb' },
+  { label: '1M 上下文', color: '#E89055' },
+  { label: '中医辨证', color: '#1abc9c' },
+  { label: 'RAG 知识库', color: '#a78bfa' },
 ];
 
-export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration = 2400 }) => {
+export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration = 2800 }) => {
   const [visible, setVisible] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
+  const [skipped, setSkipped] = useState(false);
+
+  const handleSkip = useCallback(() => {
+    if (skipped) return;
+    setSkipped(true);
+    setFadeOut(true);
+    setTimeout(() => {
+      setVisible(false);
+      onFinish?.();
+    }, 300);
+  }, [skipped, onFinish]);
 
   useEffect(() => {
+    if (skipped) return;
     const finalDuration = Math.max(duration, minDuration);
     const fadeTimer = setTimeout(() => setFadeOut(true), finalDuration - 500);
     const hideTimer = setTimeout(() => {
@@ -44,7 +62,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
       clearTimeout(fadeTimer);
       clearTimeout(hideTimer);
     };
-  }, [duration, minDuration, onFinish]);
+  }, [duration, minDuration, onFinish, skipped]);
 
   if (!visible) return null;
 
@@ -53,7 +71,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'radial-gradient(ellipse at center, #1f1f28 0%, #131318 70%, #0a0a0e 100%)',
+        background: 'radial-gradient(ellipse at center, #1a1a24 0%, #12121a 60%, #08080c 100%)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -61,135 +79,198 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
         opacity: fadeOut ? 0 : 1,
         transition: 'opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
         overflow: 'hidden',
+        cursor: skipped ? 'wait' : 'pointer',
       }}
+      onClick={handleSkip}
     >
-      {/* 背景: 纯深色渐变 */}
+      {/* ★ 背景 1: 深色渐变基底 */}
       <div style={{
-        position: 'absolute',
-        inset: 0,
-        background: 'linear-gradient(180deg, #1a1a20 0%, #131318 50%, #0d0d12 100%)',
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(180deg, #16161e 0%, #0e0e14 50%, #09090c 100%)',
         pointerEvents: 'none',
       }} />
 
-      {/* 背景: 浮动光斑 */}
+      {/* ★ 背景 2: 动态网格 */}
       <div style={{
-        position: 'absolute',
-        top: '20%', left: '15%', width: 300, height: 300,
-        background: 'radial-gradient(circle, rgba(205,122,58,0.18) 0%, transparent 70%)',
-        borderRadius: '50%',
-        animation: 'pulseflow-float 8s ease-in-out infinite',
+        position: 'absolute', inset: 0,
+        backgroundImage: `
+          linear-gradient(rgba(205,122,58,0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(205,122,58,0.03) 1px, transparent 1px)
+        `,
+        backgroundSize: '60px 60px',
         pointerEvents: 'none',
+        animation: 'splash-grid-drift 20s linear infinite',
+      }} />
+
+      {/* ★ 背景 3: 流动光线 (对角线) */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        overflow: 'hidden', pointerEvents: 'none',
+      }}>
+        <div style={{
+          position: 'absolute', width: '200%', height: '200%',
+          top: '-50%', left: '-50%',
+          background: 'conic-gradient(from 0deg at 50% 50%, transparent 0deg, rgba(205,122,58,0.04) 60deg, transparent 120deg, rgba(139,92,246,0.03) 180deg, transparent 240deg, rgba(16,185,129,0.03) 300deg, transparent 360deg)',
+          animation: 'splash-rotate 30s linear infinite',
+        }} />
+      </div>
+
+      {/* ★ 背景 4: 浮动光斑 (增强到 4 个) */}
+      <div style={{
+        position: 'absolute', top: '15%', left: '10%', width: 350, height: 350,
+        background: 'radial-gradient(circle, rgba(205,122,58,0.2) 0%, transparent 70%)',
+        borderRadius: '50%', animation: 'splash-float-a 10s ease-in-out infinite', pointerEvents: 'none',
       }} />
       <div style={{
-        position: 'absolute',
-        bottom: '15%', right: '10%', width: 260, height: 260,
-        background: 'radial-gradient(circle, rgba(232,144,85,0.14) 0%, transparent 70%)',
-        borderRadius: '50%',
-        animation: 'pulseflow-float 10s ease-in-out infinite reverse',
-        pointerEvents: 'none',
+        position: 'absolute', bottom: '10%', right: '5%', width: 300, height: 300,
+        background: 'radial-gradient(circle, rgba(139,92,246,0.15) 0%, transparent 70%)',
+        borderRadius: '50%', animation: 'splash-float-b 12s ease-in-out infinite reverse', pointerEvents: 'none',
       }} />
+      <div style={{
+        position: 'absolute', top: '50%', right: '25%', width: 200, height: 200,
+        background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)',
+        borderRadius: '50%', animation: 'splash-float-c 8s ease-in-out infinite', pointerEvents: 'none',
+      }} />
+      <div style={{
+        position: 'absolute', bottom: '35%', left: '25%', width: 160, height: 160,
+        background: 'radial-gradient(circle, rgba(232,144,85,0.12) 0%, transparent 70%)',
+        borderRadius: '50%', animation: 'splash-float-d 14s ease-in-out infinite reverse', pointerEvents: 'none',
+      }} />
+
+      {/* ★ 粒子系统 (20 个多彩粒子) */}
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+        {[...Array(20)].map((_, i) => (
+          <div key={i} style={{
+            position: 'absolute',
+            width: `${2 + (i % 4)}px`, height: `${2 + (i % 4)}px`,
+            borderRadius: '50%',
+            background: ['#CD7A3A', '#8b5cf6', '#43e97b', '#E89055', '#1abc9c'][i % 5],
+            left: `${(i * 17 + 3) % 100}%`,
+            top: `${(i * 23 + 7) % 100}%`,
+            opacity: 0,
+            animation: `splash-particle ${4 + (i % 5)}s ease-in-out ${(i * 0.4) % 5}s infinite`,
+            boxShadow: `0 0 ${4 + (i % 3)}px currentColor`,
+          }} />
+        ))}
+      </div>
 
       {/* 主容器 */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', zIndex: 2 }}>
-        {/* ─── Stage 1: LOGO 心跳脉冲 ─── */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', zIndex: 2 }} onClick={e => e.stopPropagation()}>
+        
+        {/* ─── Stage 1: LOGO 心跳脉冲 (增强版) ─── */}
         <div
           style={{
             position: 'relative',
-            width: 140, height: 140,
+            width: 160, height: 160,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            animation: 'pulseflow-fade-in 0.5s ease-out both',
+            animation: 'splash-fade-in 0.6s ease-out both',
           }}
         >
+          {/* 外层光晕环 */}
+          <div style={{
+            position: 'absolute', inset: -20,
+            borderRadius: '50%',
+            border: '1px solid rgba(205,122,58,0.2)',
+            animation: 'splash-halo-outer 4s ease-in-out infinite',
+          }} />
           {/* 心跳声波环 1 */}
           <div style={{
             position: 'absolute', inset: 0,
             border: '2px solid #CD7A3A',
             borderRadius: '50%',
-            animation: 'pulseflow-heartbeat 2s ease-out infinite',
+            animation: 'splash-heartbeat 2.2s ease-out infinite',
           }} />
           {/* 心跳声波环 2 */}
           <div style={{
             position: 'absolute', inset: 0,
-            border: '1.5px solid #CD7A3A',
+            border: '1.5px solid rgba(205,122,58,0.7)',
             borderRadius: '50%',
-            animation: 'pulseflow-heartbeat 2s ease-out infinite',
-            animationDelay: '0.4s',
+            animation: 'splash-heartbeat 2.2s ease-out infinite',
+            animationDelay: '0.45s',
           }} />
           {/* 心跳声波环 3 */}
           <div style={{
             position: 'absolute', inset: 0,
-            border: '1px solid #CD7A3A',
+            border: '1px solid rgba(205,122,58,0.4)',
             borderRadius: '50%',
-            animation: 'pulseflow-heartbeat 2s ease-out infinite',
-            animationDelay: '0.8s',
+            animation: 'splash-heartbeat 2.2s ease-out infinite',
+            animationDelay: '0.9s',
           }} />
-          {/* LOGO 图标 - 使用品牌 logo.jpg */}
+          {/* LOGO 图片 */}
           <img
             src="./logo.jpg"
             alt="PulseFlow"
             style={{
-              width: 84,
-              height: 84,
-              animation: 'pulseflow-pulse 2s ease-in-out infinite',
+              width: 92, height: 92,
+              animation: 'splash-pulse 2.2s ease-in-out infinite',
               zIndex: 2,
-              borderRadius: 16,
+              borderRadius: 18,
               objectFit: 'cover',
-              boxShadow: '0 6px 24px rgba(205, 122, 58, 0.5)',
+              boxShadow: '0 8px 32px rgba(205, 122, 58, 0.55), 0 0 60px rgba(205, 122, 58, 0.2)',
             }}
           />
         </div>
 
-        {/* ─── Stage 2: 品牌名 + 副标题 ─── */}
+        {/* ─── Stage 2: 品牌名 + 副标题 (增强层次) ─── */}
         <div
           style={{
-            marginTop: 40, textAlign: 'center',
-            animation: 'pulseflow-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both',
+            marginTop: 44, textAlign: 'center',
+            animation: 'splash-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both',
           }}
         >
-          {/* 中文品牌名 (大字) - 草书风格 */}
+          {/* 中文品牌名 */}
           <div style={{
-            fontSize: 42, fontWeight: 700,
-            letterSpacing: 12, color: '#f0f0f4',
-            textShadow: '0 2px 24px rgba(205, 122, 58, 0.25), 0 0 60px rgba(205, 122, 58, 0.15)',
-            fontFamily: '"Ma Shan Zheng", "ZCOOL XiaoWei", "Noto Serif SC", cursive',
+            fontSize: 46, fontWeight: 800,
+            letterSpacing: 14, color: '#f0f0f4',
+            textShadow: '0 2px 32px rgba(205, 122, 58, 0.3), 0 0 80px rgba(205, 122, 58, 0.15)',
+            fontFamily: '"Ma Shan Zheng", "ZCOOL XiaoWei", "Noto Serif SC", "Microsoft YaHei", "PingFang SC", cursive',
             fontStyle: 'italic',
             transform: 'skewX(-5deg)',
             WebkitFontSmoothing: 'antialiased',
           }}>
             岐枢智能体
           </div>
-          {/* 英文副品牌名 - 艺术字体 */}
+          {/* 英文副品牌名 */}
           <div style={{
-            fontSize: 13, fontWeight: 600,
-            letterSpacing: 8, color: '#CD7A3A',
-            marginTop: 8,
-            fontFamily: '"Orbitron", "Exo 2", "Syncopate", sans-serif',
+            fontSize: 14, fontWeight: 700,
+            letterSpacing: 10, color: '#CD7A3A',
+            marginTop: 10,
+            fontFamily: '"Orbitron", "Exo 2", "Syncopate", "Segoe UI", sans-serif',
             textTransform: 'uppercase',
-            opacity: 0.9,
+            opacity: 0.95,
           }}>
-            PulseFlow
+            PulseFlow Studio
           </div>
-          {/* 分隔符 + 装饰点 */}
+          {/* 分隔装饰线 */}
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            gap: 14, margin: '14px 0',
+            gap: 12, margin: '16px 0',
           }}>
-            <div style={{ width: 50, height: 1, background: 'linear-gradient(90deg, transparent, #CD7A3A)' }} />
+            <div style={{ width: 60, height: 1, background: 'linear-gradient(90deg, transparent, #CD7A3A)' }} />
             <div style={{
-              width: 5, height: 5, borderRadius: '50%',
+              width: 6, height: 6, borderRadius: '50%',
               background: '#CD7A3A',
-              boxShadow: '0 0 12px #CD7A3A',
+              boxShadow: '0 0 16px #CD7A3A, 0 0 32px rgba(205,122,58,0.3)',
+              animation: 'splash-dot-pulse 2s ease-in-out infinite',
             }} />
-            <div style={{ width: 50, height: 1, background: 'linear-gradient(90deg, #CD7A3A, transparent)' }} />
+            <div style={{ width: 60, height: 1, background: 'linear-gradient(90deg, #CD7A3A, transparent)' }} />
+          </div>
+          {/* ★ 一句话品牌定位 (新增) */}
+          <div style={{
+            fontSize: 13, color: 'rgba(240,240,248,0.6)',
+            letterSpacing: 2, marginTop: 4,
+            fontWeight: 400,
+          }}>
+            越用越懂你的 AI 智能体平台 · 中医智慧 × 自进化引擎
           </div>
         </div>
 
-        {/* ─── Stage 3: 能力标签 ─── */}
+        {/* ─── Stage 3: 能力标签 (更新数据 + 增强动画) ─── */}
         <div
           style={{
-            display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center',
-            maxWidth: 520, marginTop: 4,
-            animation: 'pulseflow-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.0s both',
+            display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center',
+            maxWidth: 560, marginTop: 8,
+            animation: 'splash-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.0s both',
           }}
         >
           {CAPABILITY_TAGS.map((t, i) => (
@@ -197,11 +278,12 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
               key={t.label}
               style={{
                 fontSize: 11, color: t.color,
-                background: `${t.color}18`,
-                border: `1px solid ${t.color}44`,
-                padding: '4px 10px', borderRadius: 100,
-                fontWeight: 500, letterSpacing: 0.5,
-                animation: `pulseflow-tag-pop 0.4s ease-out ${1.2 + i * 0.08}s both`,
+                background: `${t.color}15`,
+                border: `1px solid ${t.color}40`,
+                padding: '5px 12px', borderRadius: 100,
+                fontWeight: 600, letterSpacing: 0.5,
+                animation: `splash-tag-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) ${1.2 + i * 0.07}s both`,
+                transition: 'all 0.2s ease',
               }}
             >
               {t.label}
@@ -212,123 +294,173 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 3600, minDuration
         {/* ─── Stage 4: Slogan ─── */}
         <div
           style={{
-            marginTop: 32, textAlign: 'center',
-            animation: 'pulseflow-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.4s both',
+            marginTop: 36, textAlign: 'center',
+            animation: 'splash-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.5s both',
           }}
         >
           <div style={{
-            fontSize: 16, color: '#CD7A3A',
-            fontFamily: '"ZCOOL XiaoWei", "Ma Shan Zheng", "Noto Serif SC", cursive',
-            letterSpacing: 8, fontWeight: 500,
+            fontSize: 18, color: '#CD7A3A',
+            fontFamily: '"ZCOOL XiaoWei", "Ma Shan Zheng", "Noto Serif SC", "Microsoft YaHei", "PingFang SC", cursive',
+            letterSpacing: 10, fontWeight: 600,
             opacity: 0.95,
           }}>
             望闻问切 · 因证施治
           </div>
           <div style={{
-            fontSize: 11, color: '#888892',
-            letterSpacing: 4, marginTop: 8,
-            fontFamily: '"Orbitron", sans-serif',
+            fontSize: 11, color: '#666670',
+            letterSpacing: 5, marginTop: 10,
+            fontFamily: '"Orbitron", "Segoe UI", monospace',
             textTransform: 'lowercase',
-            opacity: 0.7,
+            opacity: 0.6,
           }}>
-            evolving with you
+            evolving with you · self-improving AI agent platform
           </div>
         </div>
 
-        {/* ─── Stage 5: 加载状态 ─── */}
+        {/* ─── Stage 5: 加载状态 (增强) ─── */}
         <div
           style={{
-            marginTop: 40, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
-            animation: 'pulseflow-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.8s both',
+            marginTop: 44, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
+            animation: 'splash-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.9s both',
           }}
         >
-          {/* 进度条 (呼吸效果) */}
+          {/* 进度条 (渐变流动) */}
           <div style={{
-            width: 200, height: 2,
-            background: 'rgba(205, 122, 58, 0.18)',
-            borderRadius: 1, overflow: 'hidden',
+            width: 220, height: 2.5,
+            background: 'rgba(205, 122, 58, 0.12)',
+            borderRadius: 2, overflow: 'hidden',
           }}>
             <div style={{
               width: '100%', height: '100%',
-              background: 'linear-gradient(90deg, transparent, #CD7A3A, transparent)',
-              animation: 'pulseflow-progress 2.4s ease-out forwards',
+              background: 'linear-gradient(90deg, transparent 0%, #CD7A3A 40%, #8b5cf6 60%, #43e97b 80%, transparent 100%)',
+              backgroundSize: '200% 100%',
+              animation: 'splash-progress-flow 2s ease-out forwards',
             }} />
           </div>
-          {/* 状态文字 (3 个状态轮播) */}
+          {/* 状态文字轮播 */}
           <div style={{
-            fontSize: 11, color: '#888892',
-            fontFamily: 'monospace', letterSpacing: 1.5,
-            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: 11, color: '#777780',
+            fontFamily: 'monospace', letterSpacing: 2,
+            display: 'inline-flex', alignItems: 'center', gap: 8,
           }}>
             <span style={{
-              width: 6, height: 6, borderRadius: '50%',
+              width: 7, height: 7, borderRadius: '50%',
               background: '#43e97b',
-              animation: 'pulseflow-blink 1.2s ease-in-out infinite',
+              boxShadow: '0 0 8px #43e97b',
+              animation: 'splash-blink 1.2s ease-in-out infinite',
             }} />
             <SplashStatusText />
           </div>
+          
+          {/* ★ 跳过提示 (新增) */}
+          {!skipped && (
+            <div style={{
+              fontSize: 10, color: 'rgba(255,255,255,0.2)',
+              marginTop: 16, letterSpacing: 1,
+              animation: 'splash-fade-in 1s ease-out 2.5s both',
+            }}>
+              点击任意位置跳过 →
+            </div>
+          )}
         </div>
       </div>
 
-      {/* 动画关键帧 */}
+      {/* ═══════════ 动画关键帧 ═══════════ */}
       <style>{`
-        @keyframes pulseflow-pulse {
+        @keyframes splash-pulse {
           0%, 100% { transform: scale(1); }
           50% { transform: scale(1.06); }
         }
-        @keyframes pulseflow-heartbeat {
-          0% { transform: scale(0.7); opacity: 0.9; }
-          100% { transform: scale(2.6); opacity: 0; }
+        @keyframes splash-heartbeat {
+          0% { transform: scale(0.65); opacity: 0.9; }
+          100% { transform: scale(2.8); opacity: 0; }
         }
-        @keyframes pulseflow-fade-in {
-          from { opacity: 0; transform: scale(0.7); }
+        @keyframes splash-fade-in {
+          from { opacity: 0; transform: scale(0.85); }
           to { opacity: 1; transform: scale(1); }
         }
-        @keyframes pulseflow-rise {
-          from { opacity: 0; transform: translateY(18px); }
+        @keyframes splash-rise {
+          from { opacity: 0; transform: translateY(22px); }
           to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes pulseflow-tag-pop {
-          0% { opacity: 0; transform: scale(0.6) translateY(8px); }
-          60% { transform: scale(1.05) translateY(0); }
+        @keyframes splash-tag-pop {
+          0% { opacity: 0; transform: scale(0.5) translateY(12px); }
+          60% { transform: scale(1.06) translateY(-2px); }
           100% { opacity: 1; transform: scale(1) translateY(0); }
         }
-        @keyframes pulseflow-progress {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
+        @keyframes splash-progress-flow {
+          0% { transform: translateX(-100%); background-position: 0% 0%; }
+          100% { transform: translateX(100%); background-position: 200% 0%; }
         }
-        @keyframes pulseflow-blink {
+        @keyframes splash-blink {
           0%, 100% { opacity: 1; }
-          50% { opacity: 0.3; }
+          50% { opacity: 0.25; }
         }
-        @keyframes pulseflow-float {
+        @keyframes splash-float-a {
+          0%, 100% { transform: translate(0, 0) scale(1); }
+          33% { transform: translate(30px, -20px) scale(1.05); }
+          66% { transform: translate(-15px, 15px) scale(0.95); }
+        }
+        @keyframes splash-float-b {
+          0%, 100% { transform: translate(0, 0) scale(1); }
+          33% { transform: translate(-25px, 15px) scale(1.04); }
+          66% { transform: translate(20px, -10px) scale(0.97); }
+        }
+        @keyframes splash-float-c {
           0%, 100% { transform: translate(0, 0); }
-          50% { transform: translate(20px, -20px); }
+          50% { transform: translate(15px, -25px); }
+        }
+        @keyframes splash-float-d {
+          0%, 100% { transform: translate(0, 0); }
+          50% { transform: translate(-20px, 20px); }
+        }
+        @keyframes splash-particle {
+          0%, 100% { opacity: 0; transform: translateY(20px) scale(0); }
+          15% { opacity: 0.8; }
+          50% { opacity: 0.4; transform: translateY(-40px) scale(1); }
+          85% { opacity: 0.2; transform: translateY(-70px) scale(0.6); }
+        }
+        @keyframes splash-grid-drift {
+          0% { transform: translate(0, 0); }
+          100% { transform: translate(60px, 60px); }
+        }
+        @keyframes splash-rotate {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes splash-halo-outer {
+          0%, 100% { opacity: 0.3; transform: scale(1); }
+          50% { opacity: 0.6; transform: scale(1.05); }
+        }
+        @keyframes splash-dot-pulse {
+          0%, 100% { box-shadow: 0 0 16px #CD7A3A, 0 0 32px rgba(205,122,58,0.3); }
+          50% { box-shadow: 0 0 24px #CD7A3A, 0 0 48px rgba(205,122,58,0.5); }
         }
       `}</style>
     </div>
   );
 };
 
-/* 状态文字轮播: 5 个状态, 每 600ms 切换 */
+/* 状态文字轮播: 更新为实际数据 */
 const STATUS_LABELS = [
-  '正在唤醒智能体',
-  '加载 5+ 模型路由',
-  '同步 146+ 工具生态',
-  '回放上次任务快照',
+  '正在唤醒智能体核心...',
+  '连接 8 个模型 Provider',
+  '加载 141+ 工具生态',
+  '初始化行业知识库',
+  '同步工作记忆与进化规则',
   '准备就绪 · 就绪',
 ];
 
 const SplashStatusText: React.FC = () => {
   const [idx, setIdx] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setIdx(i => (i + 1) % STATUS_LABELS.length), 600);
+    const t = setInterval(() => setIdx(i => (i + 1) % STATUS_LABELS.length), 550);
     return () => clearInterval(t);
   }, []);
   return (
     <span style={{
-      animation: 'pulseflow-status-swap 0.3s ease-out',
-      display: 'inline-block', minWidth: 160, textAlign: 'left',
+      animation: 'splash-status-swap 0.3s ease-out',
+      display: 'inline-block', minWidth: 180, textAlign: 'left',
     }} key={idx}>
       {STATUS_LABELS[idx]}
     </span>

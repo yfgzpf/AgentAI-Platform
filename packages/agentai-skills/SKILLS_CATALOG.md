@@ -148,6 +148,11 @@
 - cad-ai-designer - CAD AI
 - construction-supervisor - 施工监理
 - material-selector - 材料选择
+- **tile-layout-generator** (新) - 瓷砖铺装图生成
+- **sketch-to-cad** (新) - 手绘图转CAD
+- **smart-quotation** (新) - 智能报价（学习用户习惯）
+- **plumbing-layout-generator** (新) - 水电管线布局
+- **hvac-designer** (新) - 暖通设计（地暖/新风）
 
 ### 🚀 营销获客 (marketing/)
 - lead-generation-automation - 获客自动化
@@ -185,11 +190,11 @@
 | 🎤 语音 | 2 | TTS/STT |
 | 💬 元技能 | 3 | 创建/演化 |
 | 🖥️ 桌面 | 2 | 自动化 |
-| 🏗️ 建筑 | 6 | 设计/施工 |
+| 🏗️ 建筑 | 12 | 设计/施工/水电/暖通 |
 | 🚀 营销获客 | 6 | 获客 |
 | 🍳 生活 | 2 | 旅游/美食 |
 
-**总计**: 90+ 技能
+**总计**: 95+ 技能
 
 ## 🏆 行业最佳实践
 

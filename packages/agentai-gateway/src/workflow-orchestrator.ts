@@ -132,17 +132,33 @@ export class WorkflowOrchestrator {
     for (const w of workflows) this.register(w);
   }
 
-  /** 根据用户消息匹配最匹配的工作流 */
+  /**
+   * 根据用户消息匹配最匹配的工作流 (P0 修复: 精确匹配, 防止误判)
+   * 之前: lower.includes(trigger) → 用户说"分析报告"就强制匹配 data-report 工作流
+   *       → 用户明明是代码分析任务, 却被强行走 read_excel → analyze_data → generate_word → generate_ppt 阶段
+   *       → python-bridge.js 缺失 → 崩溃
+   * 之后: 要求至少 2 个 trigger 关键词命中, 且用户消息明确包含"工作流"或"workflow"关键词才触发
+   *        如果只是包含某个关键词但上下文不匹配, 不触发工作流, 走正常 AI 对话流程
+   */
   matchWorkflow(userMessage: string): WorkflowTemplate | undefined {
     const lower = userMessage.toLowerCase();
-    
+
+    // P0 修复: 用户必须明确表达"工作流"意图才触发, 否则走正常 AI 对话
+    // 例外: 工作流名称直接出现在消息中 (用户主动调用)
+    const wantsWorkflow = lower.includes('工作流') || lower.includes('workflow') || lower.includes('自动化流程');
+
     for (const [, wf] of this.workflows) {
-      // 名称匹配
+      // 名称直接匹配 (用户明确调用工作流名称)
       if (lower.includes(wf.name.toLowerCase())) return wf;
-      // 触发关键词匹配
+
+      if (!wantsWorkflow) continue; // 没有明确工作流意图, 不做 trigger 匹配
+
+      // 关键词匹配: 要求至少 2 个 trigger 命中 (避免单关键词误判)
+      let hitCount = 0;
       for (const trigger of wf.triggers) {
-        if (lower.includes(trigger.toLowerCase())) return wf;
+        if (lower.includes(trigger.toLowerCase())) hitCount++;
       }
+      if (hitCount >= 2) return wf; // 至少 2 个关键词命中才触发
     }
     return undefined;
   }

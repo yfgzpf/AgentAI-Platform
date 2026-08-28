@@ -23,6 +23,18 @@ export interface ModelConfig {
   modelType?: ModelType;
   /** 兼容旧字段, 自动从 modelType 推导 */
   capabilities?: string[];
+  /** 是否需要订阅才能使用 (模型工厂付费模型) */
+  locked?: boolean;
+  /** 订阅档位 */
+  requiredPlan?: 'starter' | 'pro' | 'ultimate';
+}
+
+/** 自动模型选择分析结果 */
+interface AnalysisResult {
+  isComplex: boolean;
+  score: number;
+  suggestedTier?: { label: string; apiProvider: string; model: string; strength: number };
+  prompt?: string;
 }
 
 interface ModelState {
@@ -49,6 +61,19 @@ interface ModelState {
   /** AI上下文注入开关 */
   contextInject: { readme: boolean; packageJson: boolean; activeFile: boolean };
   setContextInject: (key: 'readme' | 'packageJson' | 'activeFile', value: boolean) => void;
+  // ===== [P1-2] 合并自 autoModelStore =====
+  /** 自动模型选择开关 */
+  autoModelEnabled: boolean;
+  /** 当前自动模型 */
+  autoModelCurrent: string;
+  /** 最近分析 */
+  autoModelLastAnalysis: AnalysisResult | null;
+  /** 切换自动模型开关 */
+  toggleAutoModel: () => void;
+  /** 设置分析结果 */
+  setAutoModelAnalysis: (a: AnalysisResult) => void;
+  /** 重置自动模型 */
+  resetAutoModel: () => void;
 }
 
 // ===== Agnes AI 模型 (首选) =====
@@ -125,6 +150,47 @@ const SUPERAPI_MODELS: ModelConfig[] = [
   { id: 'superapi-kimi-k2.7-code', label: 'Kimi K2.7 Code (SuperAPI)', baseURL: SUPERAPI_BASE, apiKeyEnv: 'SUPERAPI_API_KEY', color: '#6466F1', enabled: false, isBuiltIn: true, provider: 'superapi', models: ['kimi-k2.7-code'], contextWindow: 128000, isCommercial: true, groupLabel: 'SuperAPI 聚合', modelType: 'chat' },
 ];
 
+// ===== 模型工厂 (ALRO 聚合平台: https://alro.huazhiweilai.com) =====
+// 按令牌分组分类, 每个分组对应不同的密钥
+const FACTORY_BASE = 'https://alro.huazhiweilai.com/v1';
+
+// 模型工厂分组密钥定义
+export const FACTORY_KEY_GROUPS = [
+  { id: 'chat',   envVar: 'FACTORY_CHAT_KEY',   label: '对话密钥 (国内模型分组)', desc: '解锁 DeepSeek/GLM/Kimi/MiniMax 等14个国内模型', color: '#10B981' },
+  { id: 'gpt',    envVar: 'FACTORY_GPT_KEY',    label: 'GPT 密钥 (GPT官方分组)',   desc: '解锁 GPT-5.4/5.5/5.6 系列',                  color: '#10A37F' },
+  { id: 'claude', envVar: 'FACTORY_CLAUDE_KEY', label: 'Claude 密钥 (Claude分组)',  desc: '解锁 Claude Opus/Sonnet/Haiku 系列',          color: '#D97706' },
+  { id: 'grok',   envVar: 'FACTORY_GROK_KEY',   label: 'Grok 密钥 (Grok分组)',     desc: '解锁 Grok 4.5 / Composer 系列',               color: '#EC4899' },
+  { id: 'image',  envVar: 'FACTORY_IMAGE_KEY',  label: '生图密钥 (图像模型分组)',   desc: '解锁 Nano Banana / GPT Image 等生图模型',     color: '#F59E0B' },
+  { id: 'video',  envVar: 'FACTORY_VIDEO_KEY',  label: '视频密钥 (Seedance分组)',   desc: '解锁 Seedance 等视频生成模型',                color: '#7C3AED' },
+] as const;
+
+// 模型工厂对话模型 (实际可用, 2026-08-15 同步)
+const FACTORY_CHAT_MODELS: ModelConfig[] = [
+  { id: 'factory-deepseek-v4-flash', label: 'DeepSeek V4 Flash', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['deepseek-v4-flash'], contextWindow: 64000, isCommercial: true, groupLabel: '国内·DeepSeek', modelType: 'chat' },
+  { id: 'factory-deepseek-v4-pro', label: 'DeepSeek V4 Pro', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#059669', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['deepseek-v4-pro'], contextWindow: 64000, isCommercial: true, groupLabel: '国内·DeepSeek', modelType: 'chat' },
+  { id: 'factory-glm-4.7', label: 'GLM 4.7', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#3B82F6', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-4.7'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
+  { id: 'factory-glm-5', label: 'GLM 5', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#2563EB', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-5'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
+  { id: 'factory-glm-5.1', label: 'GLM 5.1', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#1D4ED8', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-5.1'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
+  { id: 'factory-glm-5.2', label: 'GLM 5.2', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#1E40AF', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-5.2'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
+  { id: 'factory-kimi-k2.5', label: 'Kimi K2.5', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#6366F1', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['kimi-k2.5'], contextWindow: 256000, isCommercial: true, groupLabel: '国内·Kimi', modelType: 'chat' },
+  { id: 'factory-kimi-k2.6', label: 'Kimi K2.6', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#4F46E5', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['kimi-k2.6'], contextWindow: 256000, isCommercial: true, groupLabel: '国内·Kimi', modelType: 'chat' },
+  { id: 'factory-kimi-k2.7-code', label: 'Kimi K2.7 Code', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#4338CA', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['kimi-k2.7-code'], contextWindow: 256000, isCommercial: true, groupLabel: '国内·Kimi', modelType: 'chat' },
+  { id: 'factory-kimi-k3', label: 'Kimi K3', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#3730A3', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['kimi-k3'], contextWindow: 256000, isCommercial: true, groupLabel: '国内·Kimi', modelType: 'chat' },
+  { id: 'factory-minimax-m2.5', label: 'MiniMax M2.5', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#8B5CF6', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['MiniMax-M2.5'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·MiniMax', modelType: 'chat' },
+  { id: 'factory-minimax-m2.7', label: 'MiniMax M2.7', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#7C3AED', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['MiniMax-M2.7'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·MiniMax', modelType: 'chat' },
+  { id: 'factory-minimax-m3', label: 'MiniMax M3', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#6D28D9', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['MiniMax/MiniMax-M3'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·MiniMax', modelType: 'chat' },
+  { id: 'factory-hy3', label: 'HY3', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['hy3'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·其他', modelType: 'chat' },
+];
+
+// 模型工厂生图模型
+const FACTORY_IMAGE_MODELS: ModelConfig[] = [
+  { id: 'factory-nano-banana', label: 'Nano Banana', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_IMAGE_KEY', color: '#FBBF24', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['nano-banana'], modelType: 'image', isCommercial: true, groupLabel: '模型工厂·生图' },
+  { id: 'factory-nano-banana-2', label: 'Nano Banana 2', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_IMAGE_KEY', color: '#F59E0B', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['nano-banana-2'], modelType: 'image', isCommercial: true, groupLabel: '模型工厂·生图' },
+  { id: 'factory-nano-banana-pro', label: 'Nano Banana Pro', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_IMAGE_KEY', color: '#D97706', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['nano-banana-pro'], modelType: 'image', isCommercial: true, groupLabel: '模型工厂·生图' },
+  { id: 'factory-gpt-image-2', label: 'GPT Image 2', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_IMAGE_KEY', color: '#3B82F6', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['gpt-image-2'], modelType: 'image', isCommercial: true, groupLabel: '模型工厂·生图' },
+  { id: 'factory-gpt-image-2-vip', label: 'GPT Image 2 VIP', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_IMAGE_KEY', color: '#1D4ED8', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['gpt-image-2-vip'], modelType: 'image', isCommercial: true, groupLabel: '模型工厂·生图' },
+];
+
 // ===== 第三方免费聚合 (SenseNova/LongCat/NVIDIA) =====
 const SENSENOVA_BASE = 'https://token.sensenova.cn/v1';
 const SENSENOVA_MODELS: ModelConfig[] = [
@@ -160,6 +226,8 @@ const DEFAULT_MODELS = [
   ...OFFICIAL_IMAGE_MODELS,
   ...OFFICIAL_VIDEO_MODELS,
   ...THIRD_PARTY_IMAGE_MODELS,
+  ...FACTORY_CHAT_MODELS,
+  ...FACTORY_IMAGE_MODELS,
   ...SUPERAPI_MODELS,
   ...SENSENOVA_MODELS,
   ...LONGCAT_MODELS,
@@ -169,6 +237,36 @@ const DEFAULT_MODELS = [
 /** 辅助: 判断是否为免费模型 (by id) */
 function isFreeModelById(id: string): boolean {
   return id === 'agentai' || id === 'zhipu';
+}
+
+// ===== [P1-2] 合并自 autoModelStore: 自动模型选择 Tier 定义 =====
+export const MODEL_TIERS = [
+  { label: 'Free (PulseFlow)', apiProvider: 'agentai', model: 'agnes-2.5-flash', strength: 3, keywords: [] },
+  { label: 'DeepSeek Flash', apiProvider: 'deepseek', model: 'deepseek-v4-flash', strength: 4, keywords: ['review', 'analyze', 'refactor', 'implement'] },
+  { label: 'DeepSeek Pro', apiProvider: 'deepseek', model: 'deepseek-v4-pro', strength: 8, keywords: ['architecture', 'security', 'optimization'] },
+];
+
+/** 分析消息复杂度，推荐合适模型层级 */
+export function analyzeComplexity(text: string): AnalysisResult {
+  const msg = text.toLowerCase();
+  const length = msg.length;
+  let score = 0;
+  if (length > 100) score += 2;
+  if (length > 500) score += 2;
+  if (/debug|refactor|implement|重构|实现|开发/.test(msg)) score += 2;
+  if (/架构|安全|并发|性能|architect|security|performance/.test(msg)) score += 3;
+  if (msg.includes('```') || msg.includes('代码')) score += 1;
+  if (/审查|分析|review|analyze|explain/.test(msg)) score += 1;
+
+  const isComplex = score >= 4;
+  const tier = score >= 7 ? MODEL_TIERS[2] : score >= 4 ? MODEL_TIERS[1] : MODEL_TIERS[0];
+
+  return {
+    isComplex,
+    score,
+    suggestedTier: isComplex ? tier : undefined,
+    prompt: isComplex ? `检测到复杂问题（评分 ${score}），建议使用 ${tier.label}` : undefined,
+  };
 }
 
 /** 辅助: 获取某种类型的所有模型 ID */
@@ -197,6 +295,13 @@ export const useModelStore = create<ModelState>()(
       _dynamicLoaded: false,
       contextInject: { readme: true, packageJson: true, activeFile: true },
       setContextInject: (key, value) => set((s) => ({ contextInject: { ...s.contextInject, [key]: value } })),
+      // ===== [P1-2] 合并自 autoModelStore =====
+      autoModelEnabled: true,
+      autoModelCurrent: 'agentai',
+      autoModelLastAnalysis: null,
+      toggleAutoModel: () => set((s) => ({ autoModelEnabled: !s.autoModelEnabled })),
+      setAutoModelAnalysis: (a) => set({ autoModelLastAnalysis: a }),
+      resetAutoModel: () => set({ autoModelCurrent: 'agentai', autoModelLastAnalysis: null }),
       setChatMode: (mode) => set({ chatMode: mode }),
       setActive: (id) => {
         set({ activeModelId: id });
@@ -286,11 +391,10 @@ export const useModelStore = create<ModelState>()(
     }),
     {
       name: 'agentai-models',
-      version: 11,
+      version: 12,
       migrate: (persisted: any, version: number) => {
-        // v11: 强制重建内置模型列表 — 引入 agnes-2.5-flash (512K 首选) 和 agnes-2.0 (256K 备用)
-        // 旧版本 (≤10) 的内置列表不含 agnes-2.5-flash, 必须用新 DEFAULT_MODELS 替换
-        if (version < 11 && persisted?.models) {
+        // v12: 引入模型工厂 + 工作区隔离
+        if (version < 12 && persisted?.models) {
           const oldEnabled: string[] = (persisted.models || [])
             .filter((m: any) => m.enabled).map((m: any) => m.id);
           const userCustomModels = (persisted.models || []).filter((m: any) => !m.isBuiltIn);

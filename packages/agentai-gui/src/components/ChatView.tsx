@@ -281,9 +281,8 @@ import { TaskChainCard, type StageStatus } from './TaskChainCard';
 import { SandboxStatusPanel } from './SandboxStatusPanel';
 import { SandboxResultPanel } from './SandboxResultPanel';
 import { buildTimelinePrompt } from '../services/AiRules';
-import { analyzeComplexity, useAutoModelStore } from '../store/autoModelStore';
-import { useTaskOrchestrator } from '../store/taskOrchestratorStore';
-import { useTaskResumeStore } from '../store/taskResumeStore';
+import { analyzeComplexity, useModelStore } from '../store/modelStore';
+import { useTaskStore, useTaskOrchestrator, useTaskResumeStore } from '../store/taskStore';
 
 /** 任务链阶段标识 (与 SSE plan_stage 事件的 stage 字段对齐) */
 type ChainStage = 'plan' | 'solve' | 'verify' | 'fix' | 'report';
@@ -323,13 +322,13 @@ export const ChatView: React.FC = () => {
   const [resumingId, setResumingId] = useState<string | null>(null);
 
   // 组件顶层: workspace 和 industry (供 ProactiveSuggestionCard 等使用)
-  const profileWs = useProfileStore.getState()?.profile?.workspace;
-  const currentWorkspace = profileWs || localStorage.getItem('agentai.workspace') || '';
-  let zustandProfile: any = {};
-  try { const raw = localStorage.getItem('agentai-user-profile'); if (raw) zustandProfile = JSON.parse(raw)?.state?.profile || {}; } catch { /* ignore */ }
+  // ★ 2026-08-14 修复: 改为响应式订阅, 行业切换后欢迎页自动更新
+  const zustandProfile = useProfileStore((s) => s?.profile) || {};
+  const profileWs = zustandProfile?.workspace || localStorage.getItem('agentai.workspace') || '';
+  const currentWorkspace = profileWs;
   let extraProfile: any = {};
   try { const raw = localStorage.getItem('agentai.profile'); if (raw) extraProfile = JSON.parse(raw); } catch { /* ignore */ }
-  const currentIndustry = extraProfile?.industry || zustandProfile?.industry || 'general';
+  const currentIndustry = zustandProfile?.industry || extraProfile?.industry || 'general';
 
   // 行业徽章主题色 (与后端 industry-engine.ts 同步)
   const INDUSTRY_BADGE_THEME: Record<string, { color: string; icon: string; bgColor: string; label: string }> = {
@@ -339,10 +338,24 @@ export const ChatView: React.FC = () => {
     education: { color: '#3498db', icon: '📚', bgColor: 'rgba(52,152,219,0.12)', label: '教育' },
     developer: { color: '#9b59b6', icon: '💻', bgColor: 'rgba(155,89,182,0.12)', label: '开发者' },
     comic: { color: '#f39c12', icon: '🎬', bgColor: 'rgba(243,156,18,0.12)', label: '漫剧创作' },
-    medical: { color: '#1abc9c', icon: '🏥', bgColor: 'rgba(26,188,156,0.12)', label: '医疗健康' },
+    medical: { color: '#1abc9c', icon: '🏥', bgColor: 'rgba(26,188,156,0.12)', label: '中医问诊' },
     legal: { color: '#34495e', icon: '⚖️', bgColor: 'rgba(52,73,94,0.12)', label: '法律' },
     manufacturing: { color: '#e67e22', icon: '🏭', bgColor: 'rgba(230,126,34,0.12)', label: '制造业' },
     general: { color: 'var(--muted)', icon: '💬', bgColor: 'transparent', label: '通用' },
+  };
+
+  // 行业专属欢迎语
+  const INDUSTRY_WELCOME: Record<string, { title: string; subtitle: string }> = {
+    decoration: { title: '装修建材智能助手', subtitle: '快速报价 · 材料算量 · 效果图生成 · 施工排期' },
+    real_estate: { title: '房地产智能助手', subtitle: '楼盘分析 · 客户管理 · 营销方案 · 市场洞察' },
+    ecommerce: { title: '电商营销智能助手', subtitle: '数据分析 · 商品文案 · 营销推广 · 库存管理' },
+    education: { title: '教育智能助手', subtitle: '教案生成 · 试卷出题 · 成绩分析 · 课程大纲' },
+    developer: { title: '开发者智能助手', subtitle: '代码审查 · 架构分析 · Bug 修复 · 性能优化' },
+    comic: { title: '漫剧创作智能助手', subtitle: '角色设计 · 分镜脚本 · 场景插画 · 剧情编排' },
+    medical: { title: '中医问诊智能助手', subtitle: '舌诊辨证 · 经方检索 · 养生方案 · 医案参考' },
+    legal: { title: '法律智能助手', subtitle: '合同审查 · 案例检索 · 法条解读 · 风险评估' },
+    manufacturing: { title: '制造业智能助手', subtitle: '生产排程 · 质量管控 · 供应链优化 · 设备维护' },
+    general: { title: '有什么可以帮你的？', subtitle: 'PulseFlow · 岐黄 · 10+ 免费模型 · 越用越懂你' },
   };
 
   // 行业快捷指令: 根据用户选择的行业返回对应的快捷操作
@@ -369,15 +382,41 @@ export const ChatView: React.FC = () => {
         { label: '📋 课程大纲', prompt: '帮我制定一份课程大纲' },
       ],
       developer: [
-        { label: '🔍 审查代码', prompt: '审查当前项目代码质量' },
-        { label: '🏗️ 项目架构', prompt: '帮我分析这个项目的架构' },
-        { label: '🐛 修复 Bug', prompt: '帮我排查和修复这个问题' },
-        { label: '⚡ 性能优化', prompt: '帮我分析和优化性能瓶颈' },
-      ],
+    { label: '🔍 审查代码', prompt: '审查当前项目代码质量' },
+    { label: '🏗️ 项目架构', prompt: '帮我分析这个项目的架构' },
+    { label: '🐛 修复 Bug', prompt: '帮我排查和修复这个问题' },
+    { label: '⚡ 性能优化', prompt: '帮我分析和优化性能瓶颈' },
+  ],
+  medical: [
+    { label: '👅 舌诊拍照', prompt: '我想做中医舌诊，请帮我分析舌象 (请先拍摄或上传舌象照片)' },
+    { label: '🔍 开始辨证', prompt: '我最近感觉不舒服，想做个中医辨证问诊' },
+    { label: '🌿 查药材', prompt: '查询一味中药材的性味归经和功效' },
+    { label: '📋 经方检索', prompt: '检索《伤寒论》中关于这个症状的经典条文和方剂' },
+    { label: '🧘 养生方案', prompt: '根据我的体质制定一个中医养生调理方案' },
+    { label: '📖 医案参考', prompt: '查找类似症状的历史名医医案作为参考' },
+  ],
       comic: [
         { label: '🎨 角色设计', prompt: '帮我设计一个漫画角色' },
         { label: '📖 分镜脚本', prompt: '帮我写一段漫画分镜脚本' },
         { label: '🖼️ 场景插画', prompt: '帮我生成一张场景插画' },
+      ],
+      real_estate: [
+        { label: '📊 楼盘分析', prompt: '帮我分析一个楼盘的优缺点和投资价值' },
+        { label: '📝 营销方案', prompt: '帮我制定一份房产营销推广方案' },
+        { label: '🏠 户型解读', prompt: '帮我解读一个户型的优缺点和装修建议' },
+        { label: '📈 市场报告', prompt: '帮我生成一份房地产市场分析报告' },
+      ],
+      legal: [
+        { label: '📋 合同审查', prompt: '帮我审查一份合同的法律风险' },
+        { label: '🔍 案例检索', prompt: '帮我检索类似案件的法律判例' },
+        { label: '📖 法条解读', prompt: '帮我解读一条法律条文的适用范围' },
+        { label: '⚠️ 风险评估', prompt: '帮我评估一个商业行为的法律风险' },
+      ],
+      manufacturing: [
+        { label: '📅 生产排程', prompt: '帮我制定一份生产排程计划' },
+        { label: '🔍 质量分析', prompt: '帮我分析产品质量问题的根因' },
+        { label: '📦 供应链优化', prompt: '帮我优化供应链管理流程' },
+        { label: '🔧 设备维护', prompt: '帮我制定设备预防性维护计划' },
       ],
     };
     // 通用行业只显示基础操作
@@ -644,7 +683,6 @@ export const ChatView: React.FC = () => {
     // WebSocket 重连成功提示 (只在真正重连后显示)
     sock.on('reconnect', (attemptNumber: number) => {
       // 不显示重连成功消息, 避免刷屏
-      console.log('[ChatView] WebSocket reconnected after', attemptNumber, 'attempts');
     });
 
     /* ═══ 统一执行结果推送: 工作流 / 自动化 / 定时任务完成时在对话窗口显示 ═══ */
@@ -778,12 +816,11 @@ export const ChatView: React.FC = () => {
     }
 
     // 自动模型推荐: 根据消息复杂度建议更合适的模型
-    const autoModel = useAutoModelStore.getState();
-    if (autoModel.enabled) {
+    const autoModel = useModelStore.getState();
+    if (autoModel.autoModelEnabled) {
       const analysis = analyzeComplexity(text);
-      autoModel.setAnalysis(analysis);
+      autoModel.setAutoModelAnalysis(analysis);
       if (analysis.suggestedTier && analysis.isComplex) {
-        console.log(`[autoModel] 复杂度 ${analysis.score}, 建议: ${analysis.suggestedTier.label}`);
       }
     }
 
@@ -843,6 +880,8 @@ export const ChatView: React.FC = () => {
 
     const userId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const botId = `bot-${Date.now()}`;
+    // 记录当前会话 ID — SSE 回调中检查是否还在同一会话
+    const sendSessionId = activeId;
 
     // 构建用户消息段: 文本 + 图片缩略图 + 文件标记
     const userSegments: any[] = [{ kind: 'text', text: messageText }];
@@ -902,7 +941,29 @@ export const ChatView: React.FC = () => {
       }
     }, 30000); // 每 30 秒检查一次
 
-    const baseHandlers = makeChatHandlers(botId, updateMessage);
+    const baseHandlers = makeChatHandlers(botId, (id: string, fn: (m: any) => any) => {
+  // 会话隔离: 如果用户已切换到其他会话, 将更新写入原会话而非当前显示
+  if (activeId !== sendSessionId) {
+    // 用户已切换会话 — 更新原会话的消息 (通过 sessionStore)
+    const sessionStore = useSessionStore.getState();
+    const session = sessionStore.sessions.find(s => s.id === sendSessionId);
+    if (session) {
+      const msgIdx = session.messages.findIndex(m => m.id === id);
+      if (msgIdx >= 0) {
+        const updatedMessages = [...session.messages];
+        updatedMessages[msgIdx] = fn(updatedMessages[msgIdx]);
+        useSessionStore.setState({
+          sessions: sessionStore.sessions.map(s =>
+            s.id === sendSessionId ? { ...s, messages: updatedMessages } : s
+          ),
+        });
+      }
+      return; // 不更新当前显示
+    }
+  }
+  // 同一会话 — 正常更新当前显示
+  updateMessage(id, fn);
+});
     const handlers = {
       ...baseHandlers,
       // 包装 onDelta: 重置超时计时器
@@ -959,6 +1020,12 @@ export const ChatView: React.FC = () => {
           if (result?._iframe_action) {
             window.dispatchEvent(new CustomEvent('agentai:browser-action', {
               detail: result._iframe_action,
+            }));
+          }
+          // 浏览器关闭: AI 调用 browser_close 时自动关闭浏览器面板
+          if (info.name === 'browser_close' || result?._browser_action === 'close') {
+            window.dispatchEvent(new CustomEvent('pulseflow:browser:close', {
+              detail: { reason: result?.output || '任务已完成' },
             }));
           }
           // 音乐控制: 如果工具返回 _music_action, 触发前端音乐播放器
@@ -1596,7 +1663,6 @@ export const ChatView: React.FC = () => {
   // ── 对话改图模式切换时自动填充最近生成的图片 ──
   useEffect(() => {
     if (chatMode === 'image_edit' && lastGeneratedImage && attachments.length === 0) {
-      console.log('[ChatView] 对话改图模式激活，自动填充最近生成的图片');
       setAttachments([lastGeneratedImage]);
     }
   }, [chatMode, lastGeneratedImage, attachments.length]);
@@ -1615,37 +1681,19 @@ export const ChatView: React.FC = () => {
     return () => window.removeEventListener('agentai:suggestion-accept', handler);
   }, [handleSend]);
 
-  /* ✨ 监听预置工作流触发事件 */
+  /* ✨ 监听预置工作流触发事件 — 仅填充输入框, 不自动发送, 用户确认后再发送 */
   useEffect(() => {
     const handler = (e: Event) => {
-      const ce = e as CustomEvent<{ workflow: string; message: string; parameters: any[] }>;
-      const { workflow, message, parameters } = ce.detail || {};
+      const ce = e as CustomEvent<{ workflow: string; message: string }>;
+      const { workflow, message } = ce.detail || {};
       if (workflow && message) {
-        // 构建工作流触发消息
-        let fullMessage = message;
-        
-        // 如果有参数，添加参数说明
-        if (parameters && parameters.length > 0) {
-          fullMessage += '\n\n参数说明:\n';
-          parameters.forEach((p: any) => {
-            const required = p.required ? ' (必填)' : ' (可选)';
-            fullMessage += `- ${p.label}: ${p.description || p.name}${required}\n`;
-          });
-          fullMessage += '\n请提供上述参数值，或直接告诉我你的具体需求。';
-        }
-        
-        // 设置到输入框并自动发送
-        setInputValue(fullMessage);
-        
-        // 延迟发送，让用户看到消息
-        setTimeout(() => {
-          handleSend(fullMessage);
-        }, 300);
+        composerRef.current?.setDraft(message);
+        composerRef.current?.focus();
       }
     };
     window.addEventListener('agentai:trigger-workflow', handler);
     return () => window.removeEventListener('agentai:trigger-workflow', handler);
-  }, [handleSend]);
+  }, []);
 
   /* ---- Drag-drop handler ---- */
   const [dragOver, setDragOver] = useState(false);
@@ -1870,91 +1918,146 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         {messages.length === 0 && (
           <div style={{
             display: 'flex', flexDirection: 'column', alignItems: 'center',
-            justifyContent: 'center', height: '100%', padding: 40,
-            textAlign: 'center',
+            justifyContent: 'center', height: '100%', padding: '60px 40px 40px',
+            textAlign: 'center', position: 'relative',
+            overflowY: 'auto',
           }}>
-            {/* ATLAS LOGO */}
-            <div style={{ marginBottom: 20 }}>
-              <svg width="64" height="64" viewBox="0 0 64 64">
+            {/* ★ 动态背景粒子 (2026-08-10 增强) */}
+            <div className="welcome-bg-particles">
+              {[...Array(12)].map((_, i) => (
+                <div
+                  key={i}
+                  className="welcome-particle"
+                  style={{
+                    left: `${8 + (i * 7.5) % 85}%`,
+                    bottom: `${10 + (i * 13) % 60}%`,
+                    animationDelay: `${i * 0.6}s`,
+                    animationDuration: `${6 + (i % 4)}s`,
+                    width: `${3 + (i % 3) * 2}px`,
+                    height: `${3 + (i % 3) * 2}px`,
+                    background: i % 3 === 0 ? 'var(--accent)' : i % 3 === 1 ? '#E89055' : '#1abc9c',
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* ★ Logo — 带浮动呼吸光晕动画 */}
+            <div className="welcome-logo" style={{ marginBottom: 20, position: 'relative', zIndex: 1 }}>
+              <div className="welcome-logo-glow">
+              <svg width="72" height="72" viewBox="0 0 64 64">
                 <defs>
                   <linearGradient id="chat-logo" x1="0%" y1="100%" x2="0%" y2="0%">
                     <stop offset="0%" stopColor="#CD7A3A" stopOpacity="0.4"/>
                     <stop offset="50%" stopColor="#CD7A3A" stopOpacity="0.7"/>
                     <stop offset="100%" stopColor="#E89055"/>
                   </linearGradient>
+                  <filter id="logoGlowFilter">
+                    <feGaussianBlur stdDeviation="2" result="blur"/>
+                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                  </filter>
                 </defs>
                 <rect width="64" height="64" rx="14" fill="#232328"/>
-                <path d="M32 10 L50 46 L42 46 L32 26 L22 46 L14 46 Z" fill="url(#chat-logo)"/>
+                <path d="M32 10 L50 46 L42 46 L32 26 L22 46 L14 46 Z" fill="url(#chat-logo)" filter="url(#logoGlowFilter)"/>
                 <path d="M32 24 L40 44 L32 38 L24 44 Z" fill="#CD7A3A"/>
                 <circle cx="32" cy="14" r="3" fill="#E89055"/>
               </svg>
+              </div>
             </div>
 
-            {/* 行业徽章 — 根据用户选择的行业动态显示 */}
+            {/* 行业徽章 — 带脉冲动画 */}
             {currentIndustry && currentIndustry !== 'general' && (
-              <div style={{
+              <div className="industry-badge-pulse" style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '3px 10px', borderRadius: 12,
-                fontSize: 'var(--ui-font-size)', fontWeight: 600, marginBottom: 12,
+                padding: '4px 14px', borderRadius: 20,
+                fontSize: 'var(--ui-font-size)', fontWeight: 600, marginBottom: 16,
                 background: (INDUSTRY_BADGE_THEME as any)[currentIndustry]?.bgColor || 'rgba(255,255,255,0.06)',
                 color: (INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--fg-2)',
-                border: `1px solid ${(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--border)'}40`,
+                border: `1px solid ${(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--border)'}60`,
+                position: 'relative', zIndex: 1,
               }}>
-                <span>{(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.icon || '🔧'}</span>
+                <span style={{ fontSize: 16 }}>{(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.icon || '🔧'}</span>
                 <span>{(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.label || currentIndustry}</span>
               </div>
             )}
-            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)', marginBottom: 6, lineHeight: 1.3 }}>
-              有什么可以帮你的？
+            {/* ★ 标题 — 行业专属欢迎语 */}
+            <div className="welcome-title" style={{
+              fontSize: 24, fontWeight: 800, marginBottom: 6, lineHeight: 1.3,
+              position: 'relative', zIndex: 1,
+            }}>
+              {(INDUSTRY_WELCOME as any)[currentIndustry]?.title || '有什么可以帮你的？'}
             </div>
-            <div style={{ fontSize: 'var(--ui-font-size)', color: 'var(--muted-2)', marginBottom: 20 }}>
-              {systemInfo || 'PulseFlow · 岐黄'} · 10+ 免费模型 · 越用越懂你
+            {/* ★ 次标题 — 行业专属能力描述 */}
+            <div className="welcome-subtitle" style={{
+              fontSize: 12, color: 'var(--muted-2)', marginBottom: 20,
+              position: 'relative', zIndex: 1,
+            }}>
+              {(INDUSTRY_WELCOME as any)[currentIndustry]?.subtitle || (systemInfo || 'PulseFlow · 岐黄') + ' · 10+ 免费模型 · 越用越懂你'}
             </div>
 
-            {/* 展示性 Demo — 点击即发送, 让用户 3 秒体验核心能力 */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, maxWidth: 460, width: '100%' }}>
+            {/* ★ 能力数据展示区 — 震撼数字 (2026-08-10 新增) */}
+            <div className="welcome-stats" style={{ position: 'relative', zIndex: 1 }}>
+              {[
+                { num: '141+', label: 'AI 工具' },
+                { num: '8', label: '模型 Provider' },
+                { num: '1M', label: '上下文窗口' },
+                { num: '9', label: '行业模板' },
+              ].map(stat => (
+                <div key={stat.label} className="welcome-stat-item">
+                  <div className="welcome-stat-number">{stat.num}</div>
+                  <div className="welcome-stat-label">{stat.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* ★ Demo 卡片 — 通用快捷入口 (非行业模式时显示) */}
+            {currentIndustry === 'general' && (
+            <div style={{ 
+              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, maxWidth: 460, width: '100%',
+              position: 'relative', zIndex: 1,
+            }}>
               {[
                 { icon: '📖', label: '读懂项目', prompt: '帮我读一下当前项目的 README，总结这个项目是做什么的', color: '#3B82F6' },
                 { icon: '🎨', label: '画一张图', prompt: '画一张赛博朋克风格的猫，霓虹灯光，高质量', color: '#EC4899' },
                 { icon: '🔍', label: '搜索最新', prompt: '搜索最新的 AI Agent 开源框架，对比它们的优缺点', color: '#10B981' },
-                { icon: '📄', label: '写文档', prompt: '帮我写一份项目技术文档模板，包含架构设计和 API 说明', color: '#F59E0B' },
+                { icon: '🤖', label: '智能体协作', prompt: '启动一个子智能体帮我分析代码质量并生成优化建议', color: '#8B5CF6' },
               ].map(demo => (
                 <button
                   key={demo.label}
                   onClick={() => handleSend(demo.prompt)}
                   className="demo-card"
                   style={{
-                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4,
-                    padding: '10px 14px', borderRadius: 8, fontSize: 12,
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5,
+                    padding: '12px 16px', borderRadius: 10, fontSize: 12,
                     background: 'var(--panel)', border: '1px solid var(--border)',
                     color: 'var(--fg-2)', cursor: 'pointer', textAlign: 'left',
-                    transition: 'all 0.15s ease',
+                    transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
                     ['--demo-color' as any]: demo.color,
                   }}
                 >
-                  <span style={{ fontSize: 18 }}>{demo.icon}</span>
-                  <span style={{ fontWeight: 600, color: 'var(--fg)' }}>{demo.label}</span>
-                  <span style={{ fontSize: 'var(--tool-font-size)', color: 'var(--muted-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                  <span className="demo-icon" style={{ fontSize: 22 }}>{demo.icon}</span>
+                  <span style={{ fontWeight: 700, color: 'var(--fg)', fontSize: 13 }}>{demo.label}</span>
+                  <span style={{ fontSize: 'var(--tool-font-size)', color: 'var(--muted-2)', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                     {demo.prompt}
                   </span>
                 </button>
               ))}
             </div>
+            )}
 
-            {/* 行业快捷指令 — 折叠在下方 */}
+            {/* 行业快捷指令 — 增强胶囊样式 */}
             {getIndustryQuickActions(currentIndustry).length > 0 && (
-              <div style={{ marginTop: 16, display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 480 }}>
-                {getIndustryQuickActions(currentIndustry).slice(0, 4).map(action => (
+              <div style={{ marginTop: 18, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 520, position: 'relative', zIndex: 1 }}>
+                {getIndustryQuickActions(currentIndustry).slice(0, 6).map(action => (
                   <button
                     key={action.label}
                     onClick={() => { composerRef.current?.setDraft(action.prompt); composerRef.current?.focus(); }}
+                    className="welcome-action-chip"
                     style={{
-                      padding: '3px 10px', borderRadius: 6, fontSize: 'var(--tool-font-size)',
+                      padding: '5px 14px',
                       background: 'transparent', border: '1px solid var(--border)',
-                      color: 'var(--muted-2)', cursor: 'pointer',
+                      color: 'var(--muted-2)', cursor: 'pointer', fontSize: 12,
+                      borderRadius: 20,
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; }}
                   >
                     {action.label}
                   </button>
@@ -1965,6 +2068,36 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         )}
 
         {/* Message list */}
+        {/* 对话摘要栏: 超过 15 条消息时显示, 帮助用户导航长对话 */}
+        {messages.length > 15 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '4px 12px', margin: '4px 0',
+            background: 'var(--panel)', borderRadius: 6,
+            border: '1px solid var(--border)',
+            fontSize: 10, color: 'var(--muted-2)',
+            overflowX: 'auto', whiteSpace: 'nowrap',
+          }}>
+            <span style={{ flexShrink: 0, fontWeight: 600, color: 'var(--muted)' }}>📑 对话摘要</span>
+            {messages.filter(m => m.role === 'user').slice(-5).map((m, idx) => {
+              const text = m.segments?.filter((s: any) => s.kind === 'text').map((s: any) => s.text).join('') || '';
+              const short = text.slice(0, 30) + (text.length > 30 ? '...' : '');
+              return (
+                <span key={idx} style={{
+                  flexShrink: 0, padding: '1px 6px',
+                  background: 'var(--bg-2)', borderRadius: 3,
+                  cursor: 'pointer',
+                }} onClick={() => {
+                  const el = msgRefs.current[m.id];
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }}>
+                  {short}
+                </span>
+              );
+            })}
+            <span style={{ flexShrink: 0, opacity: 0.5 }}>{messages.length} 条消息</span>
+          </div>
+        )}
         {messages.map((msg, i) => {
           if (msg.role === 'user') {
             const textSegs = msg.segments.filter(s => s.kind === 'text');

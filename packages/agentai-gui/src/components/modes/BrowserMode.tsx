@@ -72,7 +72,6 @@ export const BrowserMode: React.FC = () => {
   // ===== 元素扫描回调 =====
   const handleElementsDetected = useCallback((els: IdentifiedElement[], url: string) => {
     setElements(els);
-    console.log(`[BrowserMode] Scanned ${els.length} elements from ${url}`);
   }, []);
 
   // ===== 全屏切换 =====

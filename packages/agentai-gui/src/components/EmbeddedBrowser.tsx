@@ -70,6 +70,7 @@ interface Props {
   style?: React.CSSProperties;
   onElementsDetected?: (elements: IdentifiedElement[], url: string) => void;
   autoScan?: boolean;
+  zoom?: number;  // 页面缩放比例 (0.5-1.0)
 }
 
 const gatewayUrl = () => gatewayFallback.url || 'http://127.0.0.1:18789';
@@ -165,7 +166,7 @@ const SCAN_SCRIPT = `
 `;
 
 export const EmbeddedBrowser: React.FC<Props> = ({
-  initialUrl, compact = false, aiControlled = false, style, onElementsDetected, autoScan: autoScanProp,
+  initialUrl, compact = false, aiControlled = false, style, onElementsDetected, autoScan: autoScanProp, zoom = 1.0,
 }) => {
   const autoScan = autoScanProp ?? aiControlled;
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
@@ -785,7 +786,6 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
   useEffect(() => {
     const handleShowBrowser = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
-      console.log('[browser] AI 触发浏览器工具:', detail.name, detail.url);
       // 自动展开浏览器面板 (如有 URL 则导航)
       if (detail.url) {
         setUrlInput(detail.url);
@@ -1061,9 +1061,18 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
         )}
         {/* iframe 模式 (降级) */}
         {!playwrightMode && tabs.map(tab => (
-          <iframe key={tab.id} ref={el => { iframeRefs.current[tab.id] = el; }} src={tab.url ? buildIframeSrc(tab.url, tab.useProxy) : undefined} onLoad={() => handleLoad(tab.id)} title={`Browser-${tab.id}`}
-            style={{ width: widthClass, height: '100%', border: 'none', display: tab.id === activeTabId ? 'block' : 'none', ...(screenMode === 'mobile' ? { borderRadius: 12, boxShadow: '0 0 20px rgba(0,0,0,0.2)' } : {}) }}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" />
+          <div key={tab.id} style={{ width: '100%', height: '100%', display: tab.id === activeTabId ? 'block' : 'none', overflow: 'auto' }}>
+            <iframe ref={el => { iframeRefs.current[tab.id] = el; }} src={tab.url ? buildIframeSrc(tab.url, tab.useProxy) : undefined} onLoad={() => handleLoad(tab.id)} title={`Browser-${tab.id}`}
+              style={{
+                width: zoom < 1 ? `${100 / zoom}%` : widthClass,
+                height: zoom < 1 ? `${100 / zoom}%` : '100%',
+                border: 'none',
+                transform: zoom < 1 ? `scale(${zoom})` : undefined,
+                transformOrigin: 'top left',
+                ...(screenMode === 'mobile' ? { borderRadius: 12, boxShadow: '0 0 20px rgba(0,0,0,0.2)' } : {})
+              }}
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" />
+          </div>
         ))}
         {tabs.length === 0 || !activeTab?.url ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontSize: 13, flexDirection: 'column', gap: 8, position: 'absolute', inset: 0 }}>

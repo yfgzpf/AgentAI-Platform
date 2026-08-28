@@ -13,7 +13,7 @@ import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined,
   AudioOutlined, GlobalOutlined, RobotOutlined, CloseOutlined,
   AudioMutedOutlined, PlusOutlined,
 } from '@ant-design/icons';
-import { useEditorChatStore } from '../store/editorChatStore';
+import { useChatStore } from '../store/chatStore';
 import { useModelStore } from '../store/modelStore';
 import { UserMsg, AssistantMsg } from './Thread';
 import { apiStream, makeChatHandlers } from '../services/api';
@@ -29,7 +29,7 @@ interface Props {
 }
 
 export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
-  const { messages, appendMessage, updateMessage, clearMessages } = useEditorChatStore();
+  const { editorMessages: messages, appendEditorMessage: appendMessage, updateEditorMessage: updateMessage, clearEditorMessages: clearMessages } = useChatStore();
   const { activeModelId, setActive: setActiveModel, models } = useModelStore();
   const browserState = useBrowserState();
   const actionHistory = useBrowserActions();

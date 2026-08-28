@@ -1,0 +1,49 @@
+{
+  "template_id": "default",
+  "name": "默认报价模板",
+  "description": "内置标准报价模板，三档可选",
+  "column_mapping": {
+    "name": 0,
+    "spec": 1,
+    "unit": 2,
+    "quantity": 3,
+    "price": 4,
+    "subtotal": 5,
+    "remark": 6
+  },
+  "categories": [
+    "基础工程",
+    "泥工工程",
+    "木工工程",
+    "油漆工程",
+    "安装工程",
+    "其他"
+  ],
+  "price_tiers": {
+    "economy": {
+      "label": "经济型",
+      "range": "800-1200元/㎡",
+      "description": "基础硬装，国产主材，简约实用"
+    },
+    "standard": {
+      "label": "舒适型",
+      "range": "1500-2500元/㎡",
+      "description": "品牌主材，中等档次，舒适美观"
+    },
+    "luxury": {
+      "label": "豪华型",
+      "range": "3000元/㎡以上",
+      "description": "高端品牌，精工细作，品质生活"
+    }
+  },
+  "management_fee_rate": 0.06,
+  "design_fee_rate": 0.03,
+  "warranty": "2年质保",
+  "payment_terms": [
+    {"stage": "开工", "ratio": 0.30},
+    {"stage": "水电完工", "ratio": 0.30},
+    {"stage": "木工完工", "ratio": 0.20},
+    {"stage": "油漆完工", "ratio": 0.15},
+    {"stage": "验收", "ratio": 0.05}
+  ]
+}

@@ -158,7 +158,7 @@ export const TASK_TYPE_TOOL_MAP: Record<string, string[]> = {
  * 根据任务类型和行业获取相关工具列表
  */
 export function getRelevantTools(
-    taskType: 'coding' | 'research' | 'general' | 'industry',
+    taskType: 'coding' | 'research' | 'media' | 'industry' | 'general',
     industry?: string,
     registry?: ToolRegistry
 ): string[] {

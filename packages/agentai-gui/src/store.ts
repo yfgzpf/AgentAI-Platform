@@ -3,21 +3,22 @@ import { persist } from 'zustand/middleware';
 
 // 0. 用户档案 (首次启动收集, 持久化)
 export interface UserProfile {
-name: string;
-onboardedAt: number;
-workspace?: string;
-language: 'zh' | 'en';
-industry?: string;           // 行业 ID (decoration/comic/ecommerce/...)
-useCase?: string;            // 主要用例 (chat/image/code/auto)
-questionnaire?: Record<string, string>;  // 问卷答案
-industrySkills?: string[];   // 行业所需技能
-devPrefs?: {                 // 开发者偏好 (developer 行业)
-languages?: string[];
-frontend?: string[];
-backend?: string[];
-packageManager?: string[];
-css?: string[];
-};
+  name: string;
+  onboardedAt: number;
+  workspace?: string;
+  language: 'zh' | 'en';
+  industry?: string;           // 行业 ID (decoration/comic/ecommerce/...)
+  useCase?: string;            // 主要用例 (chat/image/code/auto)
+  questionnaire?: Record<string, string>;  // 问卷答案
+  industrySkills?: string[];   // 行业所需技能
+  avatar?: string;             // 用户头像 emoji
+  devPrefs?: {                 // 开发者偏好 (developer 行业)
+    languages?: string[];
+    frontend?: string[];
+    backend?: string[];
+    packageManager?: string[];
+    css?: string[];
+  };
 }
 interface ProfileState {
   profile: UserProfile | null;

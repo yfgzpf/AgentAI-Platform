@@ -4,6 +4,8 @@ description: 智能装修材料选型助手。根据预算、风格、空间、�
 description_zh: "智能装修材料选型助手，根据预算/风格/环保要求推荐最优材料组合"
 description_en: "Smart material selection assistant for decoration projects"
 version: 1.0.0
+status: deprecated
+deprecated_reason: "硬编码材料列表，无实时价格、无库存查询。降级为知识库参考。"
 metadata:
   category: decoration
   tags:

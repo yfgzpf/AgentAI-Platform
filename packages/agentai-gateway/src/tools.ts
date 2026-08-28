@@ -471,7 +471,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'evolve_prompt', description: '【AI 行为规则自进化 / 永久规则】修改 AI 自己的系统行为规则。\n\n⚠️ 关键区别:\n- remember = 存事实/上下文/用户偏好, 会话级记忆\n- evolve_prompt = 添加永久行为规则, 影响未来所有 AI 行为, 写入 .agentai/evolved-rules.json\n\n🔑 触发场景 (用户提到以下关键词时必须用此工具而非 remember):\n- "添加规则"/"写入规则"/"形成规则"/"系统约束"\n- "避免再犯"/"未来不要"/"以后都"/"永远不要"\n- "行为准则"/"操作规范"/"系统行为"/"AI 行为"\n- 发现低效/错误模式, 希望 AI 永久记住并避免\n\n💡 示例: "我发现 PowerShell 不支持 &&, 帮我添加这条规则避免再犯" → evolve_prompt(action:add, rule:...)\n"删除刚才那条规则" → evolve_prompt(action:remove, rule_id:N)\n"查看所有规则" → evolve_prompt(action:list)', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['add','remove','list'], description: 'add=添加新规则, remove=删除规则, list=查看所有规则' }, rule: { type: 'string', description: '规则内容 (add 时必填)。简洁明确, 1-2 句' }, reason: { type: 'string', description: '为什么要添加/删除这条规则' }, rule_id: { type: 'number', description: '要删除的规则编号 (remove 时必填)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'run_distillation', description: '【模型蒸馏 / 经验固化】从历史成功/失败案例中提取可复用模式，写入 implicit_rules 供后续任务参考。\n\n适用场景:\n- 想查看 AI 从过去任务中学到了什么经验\n- 希望系统从最近的成功/失败中提取规则\n- "巩固"/"固化"/"蒸馏"/"提炼经验"\n\n不适用: 简单记忆用 remember, 行为规则用 evolve_prompt', parameters: { type: 'object', properties: { force: { type: 'boolean', default: false, description: '是否强制完整蒸馏 (默认仅增量, 只蒸馏上次以来未处理的新记录)' } }, required: [] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'create_tool', description: '创建自定义工具。当发现经常需要某个操作但没有现成工具时使用。工具以脚本形式存储在 .agentai/custom-tools/ 目录下。', parameters: { type: 'object', properties: { name: { type: 'string', description: '工具名称 (小写+下划线)' }, description: { type: 'string' }, script: { type: 'string', description: 'Node.js 脚本内容。必须导出 async function run(args): Promise<string>' }, parameters: { type: 'object', description: '参数定义 (JSON Schema)' } }, required: ['name','description','script'] }, parallelSafe: false, riskLevel: 'high' },
-  { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除项目记忆', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆 (不传 key 或 key="*" 清空全部)\n- all: 一键清理所有跨会话数据 (项目记忆+上轮摘要+会话日志+AI记忆+对话历史)\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除单条项目记忆\n- forget({type:"project_memory"}) — 清空全部项目记忆\n- forget({type:"all"}) — 一键清理所有跨会话知识库 (全新开始)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory','all'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名 (不传或 "*" 清空全部)' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'remember_this', description: '【AI 主动结构化记忆 / 长期知识沉淀】\n主动将关键发现/决策/教训/项目事实写入项目记忆, 跨会话复用。比 remember 更结构化, 支持分类、重要性、去重。\n\n⚠️ 关键区别:\n- remember = 简单键值记忆 (key-value)\n- remember_this = 结构化记忆 (5 类分类 + 重要性 1-5 + entityId 去重)\n- evolve_prompt = 永久行为规则\n\n🔑 5 类记忆分类:\n- bug_fix: Bug 修复 (症状→根因→方案)\n- decision: 关键决策 (选择+理由)\n- pattern: 代码/架构模式\n- user_preference: 用户偏好\n- project_fact: 项目事实\n\n💡 触发场景:\n- 修复一个 bug → remember_this(category:bug_fix)\n- 做出技术选型 → remember_this(category:decision)\n- 发现项目规律 → remember_this(category:pattern)\n- 用户表达偏好 → remember_this(category:user_preference)\n- 确认项目约束 → remember_this(category:project_fact)\n\n📝 示例:\n- remember_this({category:"bug_fix", title:"PowerShell不支持&&", content:"...", entityId:"bug:ps:&&", importance:4})\n- remember_this({category:"decision", title:"使用BM25而非向量检索", content:"...", entityId:"decision:bm25", importance:5})', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['bug_fix','decision','pattern','user_preference','project_fact'], description: '记忆分类' }, title: { type: 'string', description: '简短标题 (展示用)' }, content: { type: 'string', description: '核心内容 (详细描述)' }, entityId: { type: 'string', description: '实体ID (用于去重, 如 "bug:llm-router:comments")' }, importance: { type: 'number', minimum: 1, maximum: 5, description: '重要性 1-5 (5=必须记住, <3 不写入)' }, tags: { type: 'array', items: { type: 'string' }, description: '标签 (可选)' } }, required: ['category','title','content','entityId','importance'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'session_manage', description: '【AI 自主管理对话会话】\n查看、删除、归档对话历史。AI 可以自主管理会话生命周期，避免记忆过载或清理无关历史。\n\n🔑 触发场景:\n- 用户说"删除某天的对话"/"清理旧会话"/"忘记上次"\n- AI 判断某些会话已无关，需要清理\n- 会话过多导致性能下降\n\n🛠️ 5 种 action:\n- list = 列出所有会话 (返回 session_id, 创建时间, 最后活跃, 消息数)\n- delete = 删除指定 session (完全删除，不可恢复)\n- archive = 归档 session (从活跃列表移除，但保留数据)\n- summary = 获取指定 session 的摘要\n- cleanup_old = 清理 N 天前的所有会话\n\n💡 示例:\n- session_manage({action:"list"}) — 查看所有会话\n- session_manage({action:"delete", session_id:"xxx"}) — 删除某会话\n- session_manage({action:"cleanup_old", older_than_days:7}) — 清理 7 天前的会话', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['list','delete','archive','summary','cleanup_old'], description: '操作类型' }, session_id: { type: 'string', description: 'delete/archive/summary 时需要' }, older_than_days: { type: 'number', description: 'cleanup_old 时指定天数' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'high' },
@@ -2334,12 +2334,86 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
         case 'project_memory': {
           const { readProjectMemory, initProjectMemory } = await import('./project-memory.js');
           const pm = readProjectMemory(ws);
+          // P0 修复: 支持 key="*" 或不传 key → 清空全部项目记忆
+          if (!args.key || args.key === '*' || args.key === 'all') {
+            const keys = Object.keys(pm);
+            if (keys.length === 0) return { success: true, output: '⚠️ 项目记忆已为空' };
+            // 保留结构, 清空数据
+            initProjectMemory(ws, {});
+            return { success: true, output: `✅ 已清空全部项目记忆 (${keys.length} 条): ${keys.join(', ')}` };
+          }
           if (args.key && pm[args.key]) {
             delete pm[args.key];
             initProjectMemory(ws, pm);
             return { success: true, output: `✅ 已删除项目记忆: ${args.key}` };
           }
           return { success: false, output: `未找到项目记忆: ${args.key}` };
+        }
+        // P0 新增: 一键清理所有记忆 (跨会话知识库)
+        case 'all': {
+          const results: string[] = [];
+          const fs = await import('fs');
+          const path = await import('path');
+          const agentaiDir = path.join(ws, '.agentai');
+
+          // 1. 清空项目记忆
+          try {
+            const { readProjectMemory, initProjectMemory } = await import('./project-memory.js');
+            const pm = readProjectMemory(ws);
+            const pmKeys = Object.keys(pm);
+            if (pmKeys.length > 0) {
+              initProjectMemory(ws, {});
+              results.push(`项目记忆: 清空 ${pmKeys.length} 条`);
+            }
+          } catch (e: any) { results.push(`项目记忆: 跳过 (${e.message})`); }
+
+          // 2. 清空 last-session 摘要
+          try {
+            const summaryPath = path.join(agentaiDir, 'last-session.json');
+            if (fs.existsSync(summaryPath)) {
+              fs.unlinkSync(summaryPath);
+              results.push('上轮摘要: 已清除');
+            }
+          } catch { /* ignore */ }
+
+          // 3. 清空 memory.jsonl (会话日志)
+          try {
+            const jsonlPath = path.join(agentaiDir, 'memory.jsonl');
+            if (fs.existsSync(jsonlPath)) {
+              const stats = fs.statSync(jsonlPath);
+              fs.writeFileSync(jsonlPath, '', 'utf-8');
+              results.push(`会话日志: 清空 ${(stats.size / 1024).toFixed(1)}KB`);
+            }
+          } catch { /* ignore */ }
+
+          // 4. 清空 memory.json (MemoryManager)
+          try {
+            const { MemoryManager } = await import('./memory-manager.js');
+            const mm = MemoryManager.getInstance(ws);
+            const allMemories = await mm.recall({ limit: 9999 });
+            if (allMemories.length > 0) {
+              for (const m of allMemories) {
+                if (m.key) await mm.forget(m.key);
+              }
+              results.push(`AI记忆: 清空 ${allMemories.length} 条`);
+            }
+          } catch (e: any) { results.push(`AI记忆: 跳过 (${e.message})`); }
+
+          // 5. 清空 sessions/ 目录 (对话历史)
+          try {
+            const sessionsDir = path.join(agentaiDir, 'sessions');
+            if (fs.existsSync(sessionsDir)) {
+              const dirs = fs.readdirSync(sessionsDir);
+              let count = 0;
+              for (const dir of dirs) {
+                fs.rmSync(path.join(sessionsDir, dir), { recursive: true, force: true });
+                count++;
+              }
+              results.push(`对话历史: 清空 ${count} 个 session`);
+            }
+          } catch { /* ignore */ }
+
+          return { success: true, output: `✅ 项目记忆清理完成:\n${results.map(r => `- ${r}`).join('\n')}\n\n下次对话将以全新状态开始。` };
         }
         default:
           return { success: false, output: `未知的删除类型: ${type}` };

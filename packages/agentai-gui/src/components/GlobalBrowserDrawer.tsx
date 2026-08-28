@@ -18,12 +18,11 @@
  *   - 移除右下角悬浮按钮 (用户反馈: 位置碍事, 不应悬浮)
  *   - 入口由 App.tsx 顶部导航控制 (与 ChatView/Settings 同一行)
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Drawer, message, Space, Tag, Badge, Button, Tooltip } from 'antd';
-import {
-  GlobalOutlined, CloseOutlined, FullscreenOutlined,
+import { GlobalOutlined, CloseOutlined, FullscreenOutlined,
   FullscreenExitOutlined, ReloadOutlined,
-  ThunderboltOutlined,
+  ThunderboltOutlined, ZoomInOutlined, ZoomOutOutlined,
 } from '@ant-design/icons';
 import { EmbeddedBrowser } from './EmbeddedBrowser';
 import { gatewayFallback } from '../services/GatewayFallback';
@@ -48,6 +47,8 @@ export const GlobalBrowserDrawer: React.FC = () => {
   const [fullscreen, setFullscreen] = useState(false);
   const [initialUrl, setInitialUrl] = useState<string>('');
   const [aiActive, setAiActive] = useState(false);
+  // 缩放控制: 默认 75% 大小，用户可调整 (25%-100%)
+  const [zoom, setZoom] = useState<number>(0.75);
 
   // 监听全局事件: AI/其他组件可触发唤起
   useEffect(() => {
@@ -94,6 +95,17 @@ export const GlobalBrowserDrawer: React.FC = () => {
     const onAiEnd = () => {
       setAiActive(false);
       if (timer) clearTimeout(timer);
+      // AI 任务结束后自动关闭浏览器 (3 秒延迟, 让用户看到最后结果)
+      setTimeout(() => {
+        setOpen(prev => {
+          // 只有 AI 打开的浏览器才自动关闭, 用户手动打开的不关
+          if (prev && aiOpenedRef.current) {
+            aiOpenedRef.current = false;
+            return false;
+          }
+          return prev;
+        });
+      }, 3000);
     };
     window.addEventListener('pulseflow:browser:ai-start', onAiStart);
     window.addEventListener('pulseflow:browser:ai-end', onAiEnd);
@@ -101,6 +113,21 @@ export const GlobalBrowserDrawer: React.FC = () => {
       window.removeEventListener('pulseflow:browser:ai-start', onAiStart);
       window.removeEventListener('pulseflow:browser:ai-end', onAiEnd);
       if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  // ===== 监听 browser_close 工具调用, 立即关闭浏览器 =====
+  const aiOpenedRef = useRef(false);
+  useEffect(() => {
+    const onBrowserClose = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      // 立即关闭浏览器
+      aiOpenedRef.current = false;
+      setOpen(false);
+    };
+    window.addEventListener('pulseflow:browser:close', onBrowserClose);
+    return () => {
+      window.removeEventListener('pulseflow:browser:close', onBrowserClose);
     };
   }, []);
 
@@ -113,8 +140,9 @@ export const GlobalBrowserDrawer: React.FC = () => {
      */
     const onShowBrowser = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
-      console.log('[GlobalBrowserDrawer] AI 请求显示浏览器:', detail);
       
+      // 标记为 AI 打开, 任务完成后自动关闭
+      aiOpenedRef.current = true;
       // 自动打开抽屉
       setOpen(true);
       
@@ -156,7 +184,9 @@ export const GlobalBrowserDrawer: React.FC = () => {
     };
   }, []);
 
-  const drawerWidth = fullscreen ? '100vw' : '75vw';
+  // 抽屉宽度: 根据缩放比例动态计算，默认 55vw (给对话窗口留更多空间)
+  // 缩放比例 0.25-1.0 对应宽度 35vw-75vw
+  const drawerWidth = fullscreen ? '100vw' : `${Math.min(75, Math.max(35, 35 + zoom * 40))}vw`;
 
   return (
     <>
@@ -206,6 +236,31 @@ export const GlobalBrowserDrawer: React.FC = () => {
             )}
           </Space>
           <Space size={6}>
+            {/* 缩放控制 */}
+            {!fullscreen && (
+              <>
+                <Tooltip title="缩小">
+                  <Button
+                    type="text" size="small" icon={<ZoomOutOutlined />}
+                    onClick={() => setZoom(z => {
+                      if (z <= 0.3) return Math.max(0.25, Math.round((z - 0.05) * 100) / 100);
+                      return Math.max(0.25, Math.round((z - 0.1) * 100) / 100);
+                    })}
+                    disabled={zoom <= 0.25}
+                  />
+                </Tooltip>
+                <Tag style={{ margin: 0, fontSize: 10, padding: '0 6px', lineHeight: '16px' }}>
+                  {Math.round(zoom * 100)}%
+                </Tag>
+                <Tooltip title="放大">
+                  <Button
+                    type="text" size="small" icon={<ZoomInOutlined />}
+                    onClick={() => setZoom(z => Math.min(1.0, Math.round((z + 0.1) * 100) / 100))}
+                    disabled={zoom >= 1.0}
+                  />
+                </Tooltip>
+              </>
+            )}
             <Tooltip title="重新加载浏览器">
               <Button
                 type="text" size="small" icon={<ReloadOutlined />}
@@ -238,6 +293,7 @@ export const GlobalBrowserDrawer: React.FC = () => {
             compact={true}
             aiControlled={true}
             autoScan={true}
+            zoom={zoom}
             style={{ height: '100%' }}
           />
         </div>

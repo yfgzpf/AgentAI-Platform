@@ -4,6 +4,8 @@ description: AI驱动的智能CAD设计助手。根据自然语言描述生成�
 description_zh: "AI驱动的智能CAD设计助手，支持装修/建筑行业的参数化建模"
 description_en: "AI-powered intelligent CAD design assistant for decoration/architecture"
 version: 1.0.0
+status: deprecated
+deprecated_reason: "固定参数填空，非AI生成。底层是build123d的模板代码，LLM只填参数。"
 metadata:
   category: decoration
   tags:

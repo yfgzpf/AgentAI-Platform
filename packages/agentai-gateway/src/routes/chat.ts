@@ -444,10 +444,14 @@ const tryActivateIndustry = async (reqBody: any) => {
         res.setHeader('X-Accel-Buffering', 'no');
         res.flushHeaders?.();
 
-        const sendEvent = (event: string, data: any) => {
-          res.write(`event: ${event}\n`);
-          res.write(`data: ${JSON.stringify(data)}\n\n`);
-        };
+const sendEvent = (event: string, data: any) => {
+  try {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  } catch (e: any) {
+    // SSE 连接已关闭, 静默忽略 — 防止 broken pipe 崩溃整个请求
+  }
+};
 
         // ====== SSE keep-alive ======
         // 5 秒心跳: 防止 Nginx/防火墙/浏览器在长 LLM 调用时断连
@@ -1872,6 +1876,63 @@ req.on('close', () => {
     }
   });
 
+  // ====== GET /v1/tools/stats — 工具使用率统计 (P0-2) ======
+  r.get('/v1/tools/stats', async (_req: Request, res: Response) => {
+    try {
+      const { toolUsageStats } = await import('../tool-usage-stats.js');
+      const allStats = toolUsageStats.getAllStats();
+      const staleCount = toolUsageStats.cleanupStale();
+      res.json({
+        ok: true,
+        data: {
+          summary: toolUsageStats.getSummary(),
+          tools: allStats.map(t => ({
+            name: t.toolName,
+            calls: t.callCount,
+            success: t.successCount,
+            fail: t.failCount,
+            successRate: t.callCount > 0 ? Math.round(t.successCount / t.callCount * 100) + '%' : '-',
+            lastCalled: new Date(t.lastCalled).toISOString(),
+            avgDurationMs: t.callCount > 0 ? Math.round(t.totalDurationMs / t.callCount) : 0,
+          })),
+          cleanedUp: staleCount,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message });
+  }
+});
+
+  // ====== GET /v1/evolution/stats — 自进化规则统计 (P0-4) ======
+  r.get('/v1/evolution/stats', async (_req: Request, res: Response) => {
+    try {
+      const { getEvolutionSummary, cleanupEvolution } = await import('../evolution.js');
+      const summary = getEvolutionSummary();
+      // 自动清理过期规则
+      const cleanup = await cleanupEvolution();
+      res.json({
+        ok: true,
+        data: {
+          ...summary,
+          cleanedUp: cleanup,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message });
+    }
+  });
+
+  // ====== POST /v1/evolution/cleanup — 手动触发清理 ======
+  r.post('/v1/evolution/cleanup', async (_req: Request, res: Response) => {
+    try {
+      const { cleanupEvolution } = await import('../evolution.js');
+      const result = await cleanupEvolution();
+      res.json({ ok: true, data: result });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message });
+    }
+  });
+
   // ====== POST /v1/prompt/optimize — 提示词优化专家 (接入真实 LLM) ======
   // 核心理念: 用户给中文就按中文复述, 只是把意图描述得更清楚、任务更完整、结构化更清晰
   // 支持 chat / image / video 三种模式
@@ -1884,34 +1945,52 @@ req.on('close', () => {
 
       // 统一指令: 保持原始语言, 补全意图, 结构化输出
       const typeHint: Record<string, string> = {
-        chat: '这是一条对话指令。请补全用户没说但AI需要知道的信息, 分解模糊指令为明确步骤。',
-        image: '这是一条生图描述。请补充画面细节(主体/背景/光影/构图/风格), 但保持用户原始语言。',
-        video: '这是一条生视频描述。请补充运动/镜头/时间线/环境, 但保持用户原始语言。',
+        chat: '这是一条对话指令。我需要补全用户没说但AI需要知道的信息, 将模糊指令分解为明确步骤。',
+        image: '这是一条生图描述。我需要补充画面细节(主体/背景/光影/构图/风格), 但保持用户原始语言。',
+        video: '这是一条生视频描述。我需要补充运动/镜头/时间线/环境, 但保持用户原始语言。',
       };
 
-      const instruction = `你是一个提示词优化专家。你的任务是帮用户把模糊的输入补全为清晰、完整、结构化的提示词。
+      const instruction = `我是提示词优化专家。我的职责是将用户的原始输入分解、补全、结构化为AI能最优理解的提示词。
 
-规则:
-1. 用户用什么语言, 你就用什么语言输出 (中文输入→中文输出, 英文输入→英文输出)
-2. 不要翻译, 只是在原始语言基础上补全和优化
-3. 补全用户没说但AI需要知道的上下文
-4. 把模糊指令分解为明确的、结构化的步骤
-5. 保留用户的原始意图, 不改变核心需求
-6. 如果包含多个任务, 用编号列表分解
-7. 让提示词更全面、更清晰, 让AI能更好地理解用户意图
+我的工作原则:
+1. 用户用什么语言, 我就用什么语言输出 (中文输入→中文输出, 英文输入→英文输出)
+2. 我不翻译, 只在原始语言基础上补全和优化
+3. 我补全用户没说但AI需要知道的上下文
+4. 我把模糊指令分解为明确的、结构化的步骤
+5. 我保留用户的原始意图, 不改变核心需求
+6. 如果包含多个任务, 我用编号列表分解
+7. 我让提示词更全面、更清晰, 让AI能更好地理解用户意图
+8. 我以第一人称视角输出优化结果, 让AI直接"接手执行", 而不是"回复用户问什么"
+
+绝对禁止:
+- ❌ 不要输出"我是xxx助手""我是一个xxx专家"等角色自我介绍 — 优化结果直接就是指令内容
+- ❌ 不要输出"请执行以下步骤""请回顾对话"等引导语 — 直接给出指令本身
+- ❌ 不要反问用户、不要要求用户补充信息 — 我作为专家自己补全
+- ❌ 不要输出"注意：我需要主动从上下文提取"等元描述 — 这些是我的内部思考, 不是输出
+
+输出格式:
+- 只输出优化后的提示词本身, 纯净的指令文本
+- 优化后的提示词应该是一条完整的、可直接发给AI执行的指令
+- 第一行就是指令内容, 没有任何前缀、角色介绍、引导语
+
+正确示例:
+输入: "经过这么多轮的打包配置问题你还是没有给我最终的处理"
+输出: "请回顾之前所有关于打包配置问题的讨论, 直接输出: 1. 发现的所有问题清单(每个问题的根本原因) 2. 最终处理方案(具体修复步骤) 3. 验证方法。不要要求用户重新提供信息, 从已有对话中提取。"
 
 ${typeHint[type] || typeHint.chat}
 
-请直接输出优化后的提示词, 不要加任何解释说明。`;
+只输出优化后的提示词文本, 不加任何角色介绍、引导语、解释说明。`;
 
       const contextHint = context ? `\n\n参考信息: ${context}` : '';
-      const userMessage = `${instruction}\n\n用户原始输入:\n"""\n${text}\n"""${contextHint}`;
 
-      // 直接调用 LLM 路由器
+      // P0 修复: instruction 放 system role, 用户输入放 user role — 防止 LLM 把角色设定泄漏到输出
+      // 之前: instruction + 用户输入全塞在 user message 里 → LLM 分不清指令和输入 → 输出"你是一个xxx助手"
+      // 之后: system role 传角色设定 + 规则, user role 只传纯用户输入 → LLM 输出纯净的优化结果
       const chatResp = await router.chat({
         model: 'agentai',
         messages: [
-          { role: 'user', content: userMessage },
+          { role: 'system', content: instruction },
+          { role: 'user', content: `${text}${contextHint}` },
         ],
         temperature: 0.3,
         maxTokens: 1000,

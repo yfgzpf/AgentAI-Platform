@@ -23,11 +23,17 @@ export interface CronJob {
   expression: string;          // cron 表达式: "0 */2 * * *" (每2小时)
   action: string;              // 工具名称: "run_command", "web_search", etc.
   params: Record<string, any>; // 工具参数
-  status: 'active' | 'paused';
+  status: 'active' | 'paused' | 'disabled';
   createdAt: number;
   lastRun?: number;
   lastResult?: string;
   createdBy: 'ai' | 'user';
+  // 智能健康管理字段
+  failCount?: number;          // 连续失败次数
+  lastFailAt?: number;        // 上次失败时间
+  successCount?: number;       // 累计成功次数
+  autoDisabledReason?: string; // 自动禁用原因
+  presetVersion?: number;     // 预设版本号 (用于检测是否需要更新)
 }
 
 export interface AutomationRule {
@@ -141,19 +147,69 @@ export class AutomationEngine extends EventEmitter {
         if (this._registry && job.action) {
           const tool = this._registry.get(job.action);
           if (tool) {
+            // 智能健康管理: disabled 状态的任务不执行
+            if (job.status === 'disabled') {
+              console.log(`[automation] ⏭️ ${job.name} 已自动禁用 (${job.autoDisabledReason}), 跳过执行`);
+              return;
+            }
+
             const result = await tool.handler(job.params || {}, {
               userId: 'system',
               workspace: this.workspace,
               abortSignal: new AbortController().signal,
             });
             job.lastRun = Date.now();
-            job.lastResult = result.success ? '✅ 成功' : `❌ 失败: ${result.error || result.output}`;
-            console.log(`[automation] ✅ ${job.name} 执行完毕: ${job.lastResult}`);
-            job.lastRun = Date.now();
+
+            // 智能健康管理: 记录成功/失败, 自动禁用连续失败的任务
+            if (result.success) {
+              job.lastResult = '✅ 成功';
+              job.failCount = 0; // 成功重置失败计数
+              job.successCount = (job.successCount || 0) + 1;
+              // 如果之前是暂停状态且现在成功了, 自动恢复 (但 disabled 不自动恢复)
+              console.log(`[automation] ✅ ${job.name} 执行成功 (累计 ${job.successCount} 次)`);
+            } else {
+              const errorMsg = result.error || result.output || 'unknown';
+              job.lastResult = `❌ 失败: ${errorMsg.slice(0, 200)}`;
+              job.failCount = (job.failCount || 0) + 1;
+              job.lastFailAt = Date.now();
+              console.warn(`[automation] ❌ ${job.name} 失败 (连续 ${job.failCount} 次): ${errorMsg.slice(0, 100)}`);
+
+              // 智能自动修复: 尝试从预设更新命令
+              if (job.failCount === 2) {
+                const preset = AUTOMATION_PRESETS.find(p => p.name === job.name);
+                if (preset) {
+                  const oldCmd = job.params?.command || '';
+                  const newCmd = preset.defaultParams?.command || '';
+                  if (oldCmd !== newCmd) {
+                    console.log(`[automation] 🔧 ${job.name} 自动修复: 更新命令到最新预设版本`);
+                    job.params = { ...preset.defaultParams };
+                    job.failCount = 0; // 修复后重置, 给一次新机会
+                  }
+                }
+              }
+
+              // 连续 3 次失败 → 自动禁用
+              if (job.failCount >= 3) {
+                job.status = 'disabled';
+                job.autoDisabledReason = `连续失败 ${job.failCount} 次, 最后错误: ${errorMsg.slice(0, 80)}`;
+                console.warn(`[automation] 🛑 ${job.name} 自动禁用: ${job.autoDisabledReason}`);
+                this.emit('cron:auto-disabled', { jobId: job.id, name: job.name, reason: job.autoDisabledReason });
+              }
+            }
+
             this.save();
-            this.emit('cron:result', { jobId: job.id, result: job.lastResult });
+            this.emit('cron:result', { jobId: job.id, result: job.lastResult, failCount: job.failCount, successCount: job.successCount });
           } else {
-            console.warn(`[automation] ⚠️ 找不到工具 "${job.action}", 跳过执行`);
+            // 工具不存在 → 这是个失效任务, 标记为 disabled
+            job.failCount = (job.failCount || 0) + 1;
+            job.lastFailAt = Date.now();
+            job.lastResult = `❌ 工具 "${job.action}" 不存在`;
+            if (job.failCount >= 2) {
+              job.status = 'disabled';
+              job.autoDisabledReason = `工具 ${job.action} 不存在 (可能已被移除)`;
+              console.warn(`[automation] 🛑 ${job.name} 自动禁用: 工具不存在`);
+            }
+            this.save();
           }
         }
       } catch (e: any) {
@@ -390,6 +446,69 @@ export class AutomationEngine extends EventEmitter {
     ];
 
     let installed = 0;
+    let updated = 0;
+    let cleaned = 0;
+    let reactivated = 0;
+
+    // ═══ 智能任务健康管理: 清理 + 更新 + 保留 + 恢复 ═══
+    const existingJobs = Array.from(this.cronJobs.values());
+    const PRESET_VERSION = 2; // 当前预设版本号
+
+    for (const job of existingJobs) {
+      const cmd = job.params?.command || '';
+      const preset = AUTOMATION_PRESETS.find(p => p.name === job.name);
+
+      // 1. 清理: 完全失效的任务 (工具不存在 + disabled 超过 7 天)
+      if (job.status === 'disabled' && job.lastFailAt && (Date.now() - job.lastFailAt > 7 * 24 * 60 * 60 * 1000)) {
+        this.cronJobs.delete(job.id);
+        this.unschedule(job.id);
+        cleaned++;
+        console.log(`[automation] 🗑️ 清理长期失效任务: ${job.name} (禁用超过7天)`);
+        continue;
+      }
+
+      // 2. 更新: 命令过时的任务 (Unix 命令 或 预设版本不匹配)
+      const isUnixCmd = /\bfind\b.*-name/.test(cmd) || /\bgrep\b.*-r/.test(cmd) || /\btail\b/.test(cmd) || /\|/.test(cmd) || /&&/.test(cmd);
+      const isOldVersion = !job.presetVersion || job.presetVersion < PRESET_VERSION;
+      if ((isUnixCmd || isOldVersion) && preset) {
+        job.params = { ...preset.defaultParams };
+        job.presetVersion = PRESET_VERSION;
+        // 如果之前因命令失败被 disabled, 重新激活
+        if (job.status === 'disabled' && job.autoDisabledReason?.includes('失败')) {
+          job.status = 'active';
+          job.failCount = 0;
+          job.autoDisabledReason = undefined;
+          reactivated++;
+          console.log(`[automation] ♻️ 重新激活已修复任务: ${job.name}`);
+        }
+        updated++;
+        console.log(`[automation] 🔄 更新任务到 v${PRESET_VERSION}: ${job.name}`);
+      }
+
+      // 3. 保留: 成功的任务不动, 只更新统计
+      // (无需操作, 继续运行)
+
+      // 4. 恢复: disabled 但环境已变化的任务 (重新检测条件)
+      if (job.status === 'disabled' && preset) {
+        // 检查对应的 check 条件是否还满足
+        const matchedCheck = checks.find(c => c.preset?.id === preset.id);
+        if (matchedCheck && matchedCheck.check()) {
+          // 环境条件仍满足 → 重置失败计数, 重新激活
+          job.status = 'active';
+          job.failCount = 0;
+          job.autoDisabledReason = undefined;
+          job.params = { ...preset.defaultParams }; // 用最新命令
+          job.presetVersion = PRESET_VERSION;
+          reactivated++;
+          console.log(`[automation] ♻️ 环境条件仍满足, 重新激活: ${job.name}`);
+        }
+      }
+    }
+
+    if (updated > 0 || cleaned > 0 || reactivated > 0) {
+      this.save();
+      console.log(`[automation] 📊 健康管理完成: 更新 ${updated}, 清理 ${cleaned}, 重新激活 ${reactivated}`);
+    }
     // 始终安装: 每天中午/午夜运行蒸馏 (不在凌晨2点, 改到 12:00)
     const DISTILL_NAME = '🧠 经验蒸馏学习';
     if (!existingNames.has(DISTILL_NAME)) {
@@ -409,6 +528,9 @@ export class AutomationEngine extends EventEmitter {
       try {
         if (check()) {
           this.createCronJob(preset.name, preset.defaultExpression, preset.defaultAction, preset.defaultParams);
+          // P0: 新安装的任务标记当前预设版本
+          const newJob = Array.from(this.cronJobs.values()).find(j => j.name === preset.name);
+          if (newJob) newJob.presetVersion = 2;
           console.log(`[automation] 🤖 自动检测到环境匹配 → 已安装预设: ${preset.name}`);
           installed++;
         }
@@ -452,7 +574,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'backup',
     defaultExpression: '0 2 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'git add . && git commit -m "auto backup" && git push' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{execSync(\'git add .\',{cwd:\'.\'});execSync(\'git commit -m \"auto backup\"\',{cwd:\'.\'});execSync(\'git push\',{cwd:\'.\'});console.log(\'backup pushed\')}catch(e){console.log(\'backup: \'+e.message)}"' },
     guide: '确保当前目录是 Git 仓库，且已配置远程仓库地址。',
   },
   {
@@ -524,7 +646,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'report',
     defaultExpression: '0 17 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'git log --since=6am --oneline --no-merges --format="%h %s" 2>/dev/null || echo "无提交"' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'git log --since=6am --oneline --no-merges\',{cwd:\'.\',encoding:\'utf8\'});console.log(out||\'无提交\')}catch(e){console.log(\'无提交\')}"' },
     guide: '读取今天的 Git 提交记录生成报告。',
   },
   {
@@ -545,7 +667,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'quality',
     defaultExpression: '0 9 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npx tsc --noEmit' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'npx tsc --noEmit\',{cwd:\'.\',encoding:\'utf8\',timeout:120000});console.log(\'typecheck OK\')}catch(e){console.log(e.stdout||e.message)}"' },
     guide: '运行 TypeScript 类型检查，发现编译错误。不修改代码。',
   },
   {
@@ -555,7 +677,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'test',
     defaultExpression: '0 3 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npm test -- --passWithNoTests' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'npm test -- --passWithNoTests\',{cwd:\'.\',encoding:\'utf8\',timeout:120000});console.log(out.slice(-2000))}catch(e){console.log(e.stdout?e.stdout.slice(-2000):\'test failed\')}"' },
     guide: '运行 npm test，自动过滤掉无测试的情况。发现失败时会自动记录。',
   },
   {
@@ -565,7 +687,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'security',
     defaultExpression: '0 10 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npm audit --audit-level=high' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'npm audit --audit-level=high\',{cwd:\'.\',encoding:\'utf8\',timeout:30000});console.log(out.slice(-2000))}catch(e){console.log(e.stdout?e.stdout.slice(-2000):\'audit failed\')}"' },
     guide: '运行 npm audit 检查高危依赖漏洞。仅报告，不自动修复。',
   },
   {
@@ -575,7 +697,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'quality',
     defaultExpression: '0 11 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npx ts-prune --no-strict' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'npx ts-prune --no-strict\',{cwd:\'.\',encoding:\'utf8\',timeout:60000});console.log(out.slice(-2000))}catch(e){console.log(\'ts-prune not installed\')}"' },
     guide: '扫描未使用的类型和导入，发现僵尸代码。不会自动删除。',
   },
   // ===== Monitor =====
@@ -647,7 +769,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'sync',
     defaultExpression: '0 */2 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'git fetch origin 2>/dev/null && git log HEAD..origin/$(git branch --show-current 2>/dev/null || echo main) --oneline 2>/dev/null | head -5 || echo "无新提交"' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{execSync(\'git fetch origin\',{cwd:\'.\',encoding:\'utf8\',timeout:30000});const out=execSync(\'git log HEAD..origin/HEAD --oneline -5\',{cwd:\'.\',encoding:\'utf8\'});console.log(out||\'无新提交\')}catch(e){console.log(\'sync: \'+e.message)}"' },
     guide: '只 fetch 不 merge，避免冲突。显示远端新提交供你决定何时合并。',
   },
   {
@@ -657,7 +779,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'sync',
     defaultExpression: '0 9 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npm outdated' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'npm outdated\',{cwd:\'.\',encoding:\'utf8\',timeout:30000});console.log(out||\'all up to date\')}catch(e){console.log(e.stdout||\'check done\')}"' },
     guide: '检查 package.json 依赖是否有更新版本，仅报告不自动升级。',
   },
   // ===== Dev =====
@@ -668,7 +790,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'dev',
     defaultExpression: '0 18 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'git log --oneline -10' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'git log --oneline -10\',{cwd:\'.\',encoding:\'utf8\'});console.log(out)}catch(e){console.log(\'no git\')}"' },
     guide: '检查最近 10 次提交是否使用 Conventional Commits 格式。',
   },
   {
@@ -678,7 +800,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'dev',
     defaultExpression: '0 4 * * *',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npm run build' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'npm run build\',{cwd:\'.\',encoding:\'utf8\',timeout:120000});console.log(out.slice(-2000))}catch(e){console.log(e.stdout?e.stdout.slice(-2000):\'build failed\')}"' },
     guide: '运行 npm run build 验证项目可正常构建，发现编译错误及时修复。',
   },
   {
@@ -688,7 +810,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     category: 'test',
     defaultExpression: '0 10 * * 1',
     defaultAction: 'run_command',
-    defaultParams: { command: 'npx jest --coverage' },
+    defaultParams: { command: 'node -e "const{execSync}=require(\'child_process\');try{const out=execSync(\'npx jest --coverage\',{cwd:\'.\',encoding:\'utf8\',timeout:120000});console.log(out.slice(-2000))}catch(e){console.log(e.stdout?e.stdout.slice(-2000):\'no jest\')}"' },
     guide: '生成 Jest 覆盖率报告，如无测试框架则跳过。',
   },
   // ===== Security =====

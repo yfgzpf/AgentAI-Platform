@@ -79,12 +79,21 @@ export const AskUserCard: React.FC<Props> = ({
     if (options.length > 0) {
       // 有选项的情况
       if (multiSelect) {
-        answer = selected as string[];
+        // P0 修复: 发送选项的 title (用户看到的文字) 而非 id (内部序号)
+        const selectedIds = selected as string[];
+        const selectedTitles = selectedIds.map(id => {
+          const opt = options.find(o => o.id === id);
+          return opt ? opt.title : id;
+        });
+        answer = selectedTitles;
         if (customInput.trim()) {
           answer = [...answer, customInput.trim()];
         }
       } else {
-        answer = selected as string;
+        // P0 修复: 发送选项的 title 而非 id
+        const selectedId = selected as string;
+        const selectedOpt = options.find(o => o.id === selectedId);
+        answer = selectedOpt ? selectedOpt.title : selectedId;
         // 修复: 选中选项 + 自定义输入时，合并发送
         if (customInput.trim()) {
           answer = answer ? `${answer}\n${customInput.trim()}` : customInput.trim();
@@ -284,13 +293,14 @@ export const AskUserCard: React.FC<Props> = ({
         {!isApiKeyQuestion && (
           <>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>
-              {options.length > 0 ? '补充说明 (可选):' : '请输入您的回答:'}
+              {options.length > 0 ? '补充说明 (可选, Enter 发送):' : '请输入您的回答 (Enter 发送):'}
             </div>
             <Input.TextArea
               value={customInput}
               onChange={(e) => setCustomInput(e.target.value)}
               placeholder={options.length > 0 ? '如有补充说明，请在此输入...' : '请输入答案...'}
               autoSize={{ minRows: 1, maxRows: 3 }}
+              onPressEnter={() => { if (selected || customInput.trim()) handleAnswer(); }}
               style={{
                 background: 'var(--bg)',
                 border: '1px solid var(--border)',
@@ -305,7 +315,7 @@ export const AskUserCard: React.FC<Props> = ({
       {/* 提示 */}
       <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 8 }}>
         <CheckOutlined style={{ marginRight: 4 }} />
-        选择后点击「回答」将答案发送给 AI，AI 会根据您的回答继续执行任务
+        选择后按 Enter 或点击「回答」发送给 AI
       </div>
     </Card>
   );

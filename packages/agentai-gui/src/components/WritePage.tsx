@@ -300,7 +300,7 @@ export const WritePage: React.FC = () => {
             placeholder={replaceMode ? '选中文字后点生成 → 替换选中' : `AI ${aiAction}: 输入指令或直接点生成...`}
             onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); aiComplete(); } }}
             autoSize={{ minRows: 1, maxRows: 3 }}
-            style={{ flex: 1, background: 'var(--bg)', borderColor: '#262626', color: 'var(--border)', fontSize: 12 }}
+            style={{ flex: 1, background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--border)', fontSize: 12 }}
           />
           <Button icon={<RobotOutlined />} onClick={aiComplete} loading={aiBusy} type="primary" ghost style={{ alignSelf: 'flex-end' }}>
             生成

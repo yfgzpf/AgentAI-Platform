@@ -17,7 +17,7 @@ import {
   EyeOutlined, DeleteOutlined, FileOutlined, LinkOutlined
 } from '@ant-design/icons';
 import { useModelStore } from '../store/modelStore';
-import { useContextStore } from '../store/contextStore';
+import { useChatStore } from '../store/chatStore';
 import ReactMarkdown from 'react-markdown';
 
 interface DocFileStatus {
@@ -39,7 +39,7 @@ export const AIInjectContextPanel: React.FC = () => {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<{ name: string; content: string } | null>(null);
   const { contextInject, setContextInject } = useModelStore();
-  const { injectedFiles, removeInjectedFile, clearInjectedFiles } = useContextStore();
+  const { injectedFiles, removeInjectedFile, clearInjectedFiles } = useChatStore();
 
   // 获取文档状态
   const fetchDocStatus = async () => {

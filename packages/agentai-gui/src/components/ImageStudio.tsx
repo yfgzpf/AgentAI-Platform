@@ -10,18 +10,21 @@
  *
  * 引擎: Cogview-3-Flash (免费) → Agnes Image 2.x (NVIDIA NIM 已移除)
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-    Input, Button, Select, Card, Space, Tag, Alert, Spin, message, Empty,
-    Tooltip, Modal, Progress, Tabs, Slider, Upload, Image, Badge,
+    Input, Button, Select, Card, Space, Tag, Alert, Spin, message,
+    Tooltip, Modal, Progress, Slider,
 } from 'antd';
 import {
     PictureOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined,
     DeleteOutlined, BulbOutlined, ThunderboltOutlined, SwapOutlined,
-    CameraOutlined, BgColorsOutlined, MessageOutlined, SkinOutlined,
-    UploadOutlined, PlusOutlined,
+    BgColorsOutlined, MessageOutlined, SkinOutlined,
+    UploadOutlined, PlusOutlined, ArrowRightOutlined, VideoCameraOutlined,
 } from '@ant-design/icons';
+import { Dropdown } from 'antd';
 import { GATEWAY_HTTP } from '../services/config';
+import { useModelStore } from '../store/modelStore';
+import { apiPost } from '../services/api';
 
 // ======================== 常量 ========================
 
@@ -83,6 +86,12 @@ const MODELS = [
     { value: 'openai-dalle3', label: 'DALL·E 3 (OpenAI)', desc: '需 OPENAI_API_KEY' },
     { value: 'stability-sdxl', label: 'Stable Diffusion XL', desc: '需 STABILITY_API_KEY' },
     { value: 'midjourney', label: 'Midjourney (代理)', desc: '通过 Gateway 代理调用' },
+    // ALRC 生图模型
+    { value: 'alrc-nano-banana', label: 'Nano Banana (ALRC ¥0.16)', desc: 'Google · 标准版' },
+    { value: 'alrc-nano-banana-2', label: 'Nano Banana 2 (ALRC ¥0.14)', desc: 'Google · 最新版' },
+    { value: 'alrc-nano-banana-pro', label: 'Nano Banana Pro (ALRC ¥0.21)', desc: 'Google · 旗舰版' },
+    { value: 'alrc-gpt-image-2', label: 'GPT Image 2 (ALRC ¥0.05)', desc: 'OpenAI · 标准版' },
+    { value: 'alrc-gpt-image-2-vip', label: 'GPT Image 2 VIP (ALRC ¥0.18)', desc: 'OpenAI · 高清版' },
 ];
 
 /** 自定义模型配置 */
@@ -117,9 +126,12 @@ const STORAGE_KEY = 'agentai-studio-history';
 export const ImageStudio: React.FC = () => {
     const [mode, setMode] = useState<StudioMode>('text2img');
     const [prompt, setPrompt] = useState('');
+    const [negativePrompt, setNegativePrompt] = useState('');
+    const [showNegative, setShowNegative] = useState(false);
     const [size, setSize] = useState('1024x1024');
     const [model, setModel] = useState('cogview');
     const [strength, setStrength] = useState(0.65);
+    const [batchCount, setBatchCount] = useState(1);
     const [busy, setBusy] = useState(false);
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [current, setCurrent] = useState<HistoryItem | null>(null);
@@ -143,13 +155,16 @@ export const ImageStudio: React.FC = () => {
     useEffect(() => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(0, 80))); } catch {} }, [history]);
     useEffect(() => { editEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [editMessages]);
 
+    // 合并内置模型和自定义模型
     const [customModels, setCustomModels] = useState<CustomModel[]>(getCustomModels());
     const [showAddModel, setShowAddModel] = useState(false);
     const [newModel, setNewModel] = useState<Partial<CustomModel>>({});
 
-    // 合并内置模型和自定义模型
+    // 从 modelStore 获取生图模型选项
+    const imageModels = useModelStore.getState().models.filter(m => m.modelType === 'image' && m.enabled);
     const allModelOptions = [
         ...MODELS.map(m => ({ value: m.value, label: m.label })),
+        ...imageModels.map(m => ({ value: m.id, label: `${m.label}${m.freeQuotaNote ? ' ' + m.freeQuotaNote : ''}` })),
         ...customModels.map(m => ({ value: `custom:${m.id}`, label: `🔑 ${m.name}`, isCustom: true })),
     ];
 
@@ -186,15 +201,51 @@ export const ImageStudio: React.FC = () => {
 
     const httpUrl = GATEWAY_HTTP;
 
+    /** 将图片发送到其他模式 */
+    const sendToMode = (targetMode: StudioMode, imageUrl: string) => {
+        setMode(targetMode);
+        setCurrent(null);
+        setSourceImage(imageUrl);
+        setRefImages([imageUrl]);
+        // ★ 风格迁移/换装需要清空旧 prompt, 因为旧 prompt 是内容描述而非风格/试穿描述
+        if (targetMode === 'style_transfer' || targetMode === 'tryon') {
+            setPrompt('');
+        }
+        if (targetMode === 'edit') {
+            setEditMessages([]);
+        }
+        // 滚动到顶部
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        message.success(`已发送到「${MODES.find(m => m.key === targetMode)?.label}」模式`);
+    };
+
+    /** 将图片发送到视频生成 (跨页面) */
+    const sendToVideo = (imageUrl: string) => {
+        // 存入 localStorage, VideoGen 读取后自动设为首帧
+        try {
+            localStorage.setItem('agentai-video-firstframe', imageUrl);
+            message.success('已设为视频首帧, 请切换到「AI 生视频」页查看');
+        } catch { message.error('图片太大, 无法传递'); }
+    };
+
     /** 通用图片生成 */
-    const gen = async () => {
-        if (!prompt.trim()) { message.warning('请输入描述'); return; }
+    const gen = async (overridePrompt?: string) => {
+        const actualPrompt = overridePrompt || prompt;
+        if (!actualPrompt.trim()) { message.warning('请输入描述'); return; }
         setBusy(true); setFakeProgress(0);
         const progressTimer = setInterval(() => {
             setFakeProgress((prev: number) => prev >= 95 ? prev : prev + Math.random() * 5 + 2);
         }, 500);
         try {
-            const body: any = { prompt, size, model, mode };
+            // ★ 风格迁移: 构建正确的组合 prompt
+            let finalPrompt = actualPrompt;
+            if (mode === 'style_transfer' && sourceImage) {
+                // 组合: 保持原图内容 + 应用目标风格
+                finalPrompt = `Transform the provided image into the following art style while preserving the original composition and subject: ${prompt}. Apply the style transformation to the entire image.`;
+            }
+
+            const body: any = { prompt: finalPrompt, size, model, mode, n: batchCount };
+            if (negativePrompt.trim()) body.negative_prompt = negativePrompt;
             if (mode !== 'text2img' && refImages.length > 0) body.image = refImages;
             if (mode === 'style_transfer' && sourceImage) body.image = [sourceImage];
             if (mode === 'edit' && sourceImage) body.image = [sourceImage];
@@ -212,7 +263,7 @@ export const ImageStudio: React.FC = () => {
             const data = await r.json();
             if (data.error) { message.error('生成失败: ' + data.error); return; }
             const item: HistoryItem = {
-                id: `${Date.now()}`, prompt, mode,
+                id: `${Date.now()}`, prompt: actualPrompt, mode,
                 url: data.url?.startsWith('/') ? httpUrl + data.url : data.url,
                 size, ts: Date.now(), provider: data.provider,
                 sourceUrl: sourceImage || undefined,
@@ -224,7 +275,7 @@ export const ImageStudio: React.FC = () => {
             if (mode === 'edit') {
                 setEditMessages(prev => [...prev, {
                     role: 'ai',
-                    content: `已根据你的指令修改图片: "${prompt}"`,
+                    content: `已根据你的指令修改图片: "${actualPrompt}"`,
                     imageUrl: item.url,
                 }]);
             }
@@ -255,14 +306,16 @@ export const ImageStudio: React.FC = () => {
     const sendEditMessage = () => {
         if (!editInput.trim()) return;
         if (!sourceImage && !current?.url) { message.warning('请先生成或上传一张图片'); return; }
-        setPrompt(editInput);
-        setEditMessages(prev => [...prev, { role: 'user', content: editInput }]);
+        const userMsg = editInput;
+        setPrompt(userMsg);
+        setEditMessages(prev => [...prev, { role: 'user', content: userMsg }]);
         if (!sourceImage && current?.url) {
             setSourceImage(current.url);
             setRefImages([current.url]);
         }
         setEditInput('');
-        gen();
+        // ★ 直接传 userMsg, 避免竞态条件 (setPrompt 是异步的)
+        gen(userMsg);
     };
 
     // =============== 渲染 ===============
@@ -294,6 +347,20 @@ export const ImageStudio: React.FC = () => {
 
     const renderResultCard = () => {
         if (!current) return null;
+        // ★ 跨模式跳转菜单
+        const sendToMenu = {
+            items: [
+                { key: 'img2img', label: '📐 图生图 — 以此图生成变体', icon: <SwapOutlined /> },
+                { key: 'style_transfer', label: '🎨 风格迁移 — 改变此图风格', icon: <BgColorsOutlined /> },
+                { key: 'edit', label: '✏️ 对话改图 — 对话式修改', icon: <MessageOutlined /> },
+                { type: 'divider' as const },
+                { key: 'video', label: '🎬 发送到视频首帧', icon: <VideoCameraOutlined /> },
+            ],
+            onClick: ({ key }: { key: string }) => {
+                if (key === 'video') sendToVideo(current.url);
+                else sendToMode(key as StudioMode, current.url);
+            },
+        };
         return (
             <Card size="small" style={{ marginTop: 16 }}
                 title={<Space><PictureOutlined />结果 <Tag>{current.provider || 'unknown'}</Tag> <Tag color="purple">{MODES.find(m => m.key === current.mode)?.label}</Tag></Space>}
@@ -304,7 +371,11 @@ export const ImageStudio: React.FC = () => {
                             onClick={() => { setSourceImage(current.url); setRefImages([current.url]); }}
                         >以此为底图</Button>
                     )}
-                    <Button size="small" icon={<ReloadOutlined />} onClick={gen}>再来一张</Button>
+                    {/* ★ 发送到其他模式 */}
+                    <Dropdown menu={sendToMenu} trigger={['click']}>
+                        <Button size="small" icon={<ArrowRightOutlined />} type="primary" ghost>发送到</Button>
+                    </Dropdown>
+                    <Button size="small" icon={<ReloadOutlined />} onClick={() => gen()}>再来一张</Button>
                 </Space>}
             >
                 <div style={{ textAlign: 'center', background: 'var(--panel)', padding: 12, borderRadius: 8 }}>
@@ -326,18 +397,38 @@ export const ImageStudio: React.FC = () => {
                 title={<Space><HistoryOutlined />历史记录 ({history.length})</Space>}
                 extra={<Button size="small" danger icon={<DeleteOutlined />} onClick={() => { setHistory([]); setCurrent(null); setEditMessages([]); }}>清空</Button>}
             >
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 6 }}>
                     {history.map(item => (
                         <div key={item.id}
-                            style={{ position: 'relative', cursor: 'pointer', border: current?.id === item.id ? '2px solid var(--accent)' : '1px solid var(--border)', borderRadius: 4, overflow: 'hidden', background: 'var(--panel)' }}
-                            onClick={() => setCurrent(item)}
+                            style={{ position: 'relative', cursor: 'pointer', border: current?.id === item.id ? '2px solid var(--accent)' : '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', background: 'var(--panel)' }}
+                            onClick={() => { setCurrent(item); setZoomUrl(item.url); }}
                             onContextMenu={e => { e.preventDefault(); downloadImg(item.url); }}
                         >
-                            <img src={item.url} alt={item.prompt} style={{ width: '100%', height: 140, objectFit: 'cover', display: 'block' }} />
-                            <div style={{ position: 'absolute', top: 4, left: 4 }}>
-                                <Tag color={item.mode === 'text2img' ? 'blue' : item.mode === 'style_transfer' ? 'purple' : item.mode === 'edit' ? 'green' : 'orange'} style={{ fontSize: 10, margin: 0 }}>
-                                    {MODES.find(m => m.key === item.mode)?.label}
-                                </Tag>
+                            <img src={item.url} alt={item.prompt}
+                                style={{ width: '100%', height: 90, objectFit: 'cover', display: 'block' }}
+                                title={item.prompt.slice(0, 40)}
+                            />
+                            {/* ★ 历史图片也加发送到按钮 */}
+                            <div style={{ position: 'absolute', top: 2, right: 2, opacity: 0, transition: 'opacity 0.2s' }}
+                                className="history-send-btn"
+                                onClick={(e) => { e.stopPropagation(); }}
+                            >
+                                <Dropdown menu={{ items: [
+                                    { key: 'img2img', label: '→ 图生图', icon: <SwapOutlined /> },
+                                    { key: 'style_transfer', label: '→ 风格迁移', icon: <BgColorsOutlined /> },
+                                    { key: 'edit', label: '→ 对话改图', icon: <MessageOutlined /> },
+                                    { key: 'video', label: '→ 视频首帧', icon: <VideoCameraOutlined /> },
+                                ], onClick: ({ key }: { key: string }) => {
+                                    if (key === 'video') sendToVideo(item.url);
+                                    else sendToMode(key as StudioMode, item.url);
+                                } }} trigger={['click']}>
+                                    <Button size="small" type="primary" ghost style={{ minWidth: 0, width: 24, height: 24, padding: 0, fontSize: 11 }}>→</Button>
+                                </Dropdown>
+                            </div>
+                            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '2px 4px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }}>
+                                <div style={{ fontSize: 9, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {MODES.find(m => m.key === item.mode || m.label.includes(item.provider || ''))?.label || item.provider || item.mode}
+                                </div>
                             </div>
                         </div>
                     ))}
@@ -348,18 +439,37 @@ export const ImageStudio: React.FC = () => {
 
 return (
 <div style={{ padding: '8px 12px', color: 'var(--fg)', height: '100%', overflow: 'auto' }}>
-            {/* ===== 模式 Tab ===== */}
-            <Tabs
-                activeKey={mode}
-                onChange={k => { setMode(k as StudioMode); setCurrent(null); setSourceImage(null); setRefImages([]); }}
-                items={MODES.map(m => ({
-                    key: m.key,
-                    label: <span>{m.icon} {m.label}</span>,
-                    children: null,
-                }))}
-                size="small"
-                style={{ marginBottom: 8 }}
-            />
+            {/* ===== 模式选择卡片 (重构为视觉化卡片) ===== */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 12 }}>
+                {MODES.map(m => {
+                    const active = mode === m.key;
+                    const modeColors: Record<string, string> = {
+                        text2img: '#3B82F6', img2img: '#EC4899', style_transfer: '#8B5CF6',
+                        edit: '#10B981', tryon: '#F59E0B',
+                    };
+                    const color = modeColors[m.key] || '#6366f1';
+                    return (
+                        <button key={m.key}
+                            onClick={() => { setMode(m.key); setCurrent(null); setSourceImage(null); setRefImages([]); }}
+                            style={{
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                                padding: '12px 8px', borderRadius: 12, cursor: 'pointer',
+                                background: active ? `${color}18` : 'var(--panel)',
+                                border: `2px solid ${active ? color : 'var(--border)'}`,
+                                transition: 'all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                transform: active ? 'scale(1.03) translateY(-2px)' : 'scale(1)',
+                                boxShadow: active ? `0 4px 16px ${color}30` : 'none',
+                                position: 'relative', overflow: 'hidden',
+                            }}
+                        >
+                            {active && <div style={{ position: 'absolute', top: 0, left: '20%', right: '20%', height: 2, background: color, borderRadius: 1 }} />}
+                            <span style={{ fontSize: 22, color: active ? color : 'var(--muted-2)', transition: 'all 0.2s' }}>{m.icon}</span>
+                            <span style={{ fontSize: 12, fontWeight: active ? 700 : 600, color: active ? color : 'var(--fg-2)' }}>{m.label}</span>
+                            <span style={{ fontSize: 10, color: 'var(--muted-2)', textAlign: 'center', lineHeight: 1.3 }}>{m.desc}</span>
+                        </button>
+                    );
+                })}
+            </div>
 
             {/* ===== 主控制卡 ===== */}
             <Card size="small"
@@ -405,17 +515,57 @@ return (
                         autoSize={{ minRows: 2, maxRows: 4 }} size="large" disabled={busy}
                     />
 
+                    {/* ★ 负面提示词 (可折叠) */}
+                    <div>
+                        <button onClick={() => setShowNegative(!showNegative)}
+                            style={{ background: 'none', border: 'none', color: 'var(--muted-2)', fontSize: 11, cursor: 'pointer', padding: 0 }}>
+                            {showNegative ? '▼' : '▶'} 负面提示词 (排除不想要的元素)
+                        </button>
+                        {showNegative && (
+                            <Input.TextArea
+                                value={negativePrompt}
+                                onChange={e => setNegativePrompt(e.target.value)}
+                                placeholder="如: blurry, low quality, distorted, watermark, text"
+                                autoSize={{ minRows: 1, maxRows: 2 }} size="small" disabled={busy}
+                                style={{ marginTop: 4, fontSize: 12 }}
+                            />
+                        )}
+                    </div>
+
                     {/* === 模式专属控件 === */}
 
-                    {/* 文生图 - 风格预设 */}
+                    {/* 文生图 - 风格预设 (卡片化) */}
                     {mode === 'text2img' && (
-                        <Space wrap>
-                            <span style={{ color: 'var(--muted)' }}>🎨 风格:</span>
-                            {TEXT2IMG_PRESETS.map(p => (
-                                <Tag key={p.label} color="blue" style={{ cursor: 'pointer', padding: '2px 8px' }}
-                                    onClick={() => setPrompt(p.prompt)}>{p.label}</Tag>
-                            ))}
-                        </Space>
+                        <div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>🎨 风格预设 — 点击应用</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 6 }}>
+                                {TEXT2IMG_PRESETS.map(p => {
+                                    const presetIcons: Record<string, string> = {
+                                        '写实摄影': '📷', '动漫插画': '🎴', '油画': '🎨', '3D 渲染': '🧊',
+                                        '水墨': '🖌️', '像素': '👾', '奇幻': '🐉', '赛博朋克': '🌃',
+                                        '室内设计': '🏠', '电影海报': '🎬', '国风插画': '🏮', '产品摄影': '📦',
+                                    };
+                                    const active = prompt === p.prompt;
+                                    return (
+                                        <button key={p.label}
+                                            onClick={() => setPrompt(p.prompt)}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 6,
+                                                padding: '8px 10px', borderRadius: 8, fontSize: 12,
+                                                background: active ? 'var(--accent-soft)' : 'var(--panel)',
+                                                border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                                                color: active ? 'var(--accent)' : 'var(--fg-2)',
+                                                cursor: 'pointer', textAlign: 'left',
+                                                transition: 'all 0.2s ease',
+                                            }}
+                                        >
+                                            <span style={{ fontSize: 16 }}>{presetIcons[p.label] || '🎨'}</span>
+                                            <span style={{ fontWeight: 600 }}>{p.label}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     )}
 
                     {/* 图生图 - 上传参考图 */}
@@ -437,17 +587,38 @@ return (
                         </div>
                     )}
 
-                    {/* 风格迁移 - 上传原图 + 风格选择 */}
+                    {/* 风格迁移 - 上传原图 + 风格选择 (卡片化) */}
                     {mode === 'style_transfer' && (
                         <div>
                             <div style={{ marginBottom: 8 }}>{renderImageUploader('上传原图', sourceImage, setSourceImage, sourceRef)}</div>
-                            <Space wrap>
-                                <span style={{ color: 'var(--muted)' }}>🎨 目标风格:</span>
-                                {STYLE_PRESETS.map(p => (
-                                    <Tag key={p.label} color="purple" style={{ cursor: 'pointer', padding: '2px 8px' }}
-                                        onClick={() => setPrompt(p.prompt)}>{p.label}</Tag>
-                                ))}
-                            </Space>
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>🎨 目标风格 — 点击应用</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 6 }}>
+                                {STYLE_PRESETS.map(p => {
+                                    const styleIcons: Record<string, string> = {
+                                        '梵高': '🌻', '莫奈': '🌸', '毕加索': '📐', '浮世绘': '🗻',
+                                        '赛博朋克': '🌃', '水墨画': '🖌️', '像素艺术': '👾', '素描': '✏️',
+                                        '水彩': '💧', '卡通': '🎈', '哥特': '🏰', '波普': '🥤',
+                                    };
+                                    const active = prompt === p.prompt;
+                                    return (
+                                        <button key={p.label}
+                                            onClick={() => setPrompt(p.prompt)}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 5,
+                                                padding: '7px 10px', borderRadius: 8, fontSize: 12,
+                                                background: active ? 'rgba(139,92,246,0.15)' : 'var(--panel)',
+                                                border: `1px solid ${active ? '#8b5cf6' : 'var(--border)'}`,
+                                                color: active ? '#8b5cf6' : 'var(--fg-2)',
+                                                cursor: 'pointer', textAlign: 'left',
+                                                transition: 'all 0.2s ease',
+                                            }}
+                                        >
+                                            <span style={{ fontSize: 15 }}>{styleIcons[p.label] || '🎨'}</span>
+                                            <span style={{ fontWeight: 600 }}>{p.label}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
                     )}
 
@@ -510,12 +681,40 @@ return (
                             </Space.Compact>
                         ) : (
                             <>
-                                <Tooltip title="AI 优化提示词"><Button size="small" icon={<BulbOutlined />}
-                                    onClick={() => setPrompt(`masterpiece, best quality, ${prompt}, 8k, ultra detailed, sharp focus`)}
-                                    disabled={busy}>优化</Button></Tooltip>
-                                <Button type="primary" size="large" icon={<ThunderboltOutlined />} loading={busy} onClick={gen}
-                                    disabled={mode === 'tryon' && (!personImage || !clothingImage)}>
-                                    {busy ? '生成中...' : '生成'}
+<Tooltip title="AI 优化提示词"><Button size="small" icon={<BulbOutlined />}
+onClick={async () => {
+  if (!prompt.trim()) { message.warning('请先输入描述'); return; }
+  setBusy(true);
+  try {
+    const data = await apiPost('/v1/prompt/optimize', { text: prompt, type: 'image' });
+    if (data.ok && data.enhanced) {
+      setPrompt(data.enhanced);
+      message.success('✨ AI 已优化提示词');
+    } else {
+      setPrompt(`masterpiece, best quality, ${prompt}, 8k, ultra detailed, sharp focus`);
+      message.warning('AI 优化失败, 已本地增强');
+    }
+  } catch (e: any) {
+    setPrompt(`masterpiece, best quality, ${prompt}, 8k, ultra detailed, sharp focus`);
+    message.warning('AI 优化失败, 已本地增强');
+  } finally { setBusy(false); }
+}}
+disabled={busy}>优化</Button></Tooltip>
+                                {/* ★ 批量生成选择 */}
+                                {mode === 'text2img' && (
+                                    <Select size="small" value={batchCount} onChange={setBatchCount} style={{ width: 90 }}
+                                        options={[{ value: 1, label: '1 张' }, { value: 2, label: '2 张' }, { value: 4, label: '4 张' }]}
+                                        disabled={busy}
+                                    />
+                                )}
+                                <Button type="primary" size="large" icon={<ThunderboltOutlined />} loading={busy} onClick={() => gen()}
+                                    disabled={mode === 'tryon' && (!personImage || !clothingImage)}
+                                    style={{
+                                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                                        border: 'none', borderRadius: 10, padding: '0 32px',
+                                        boxShadow: '0 4px 16px rgba(99,102,241,0.3)',
+                                    }}>
+                                    {busy ? '生成中...' : `生成${batchCount > 1 ? ` ×${batchCount}` : ''}`}
                                 </Button>
                             </>
                         )}
@@ -554,12 +753,63 @@ return (
             )}
 
             {/* 结果 + 历史 */}
-            {renderResultCard()}
+            {current && (
+                <div style={{ animation: 'imgResultIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
+                    {renderResultCard()}
+                </div>
+            )}
             {renderHistory()}
 
+            {/* ★ 空状态 — 示例画廊 (取代纯 Empty) */}
             {!current && !busy && history.length === 0 && (
-                <Empty description={<span style={{ color: 'var(--muted)' }}>选择模式, 输入描述, 开始创作 ~</span>} style={{ marginTop: 60 }} />
-            )}
+                <div style={{ textAlign: 'center', marginTop: 40, marginBottom: 40 }}>
+                    <div style={{ fontSize: 48, marginBottom: 12 }}>🎨</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--fg)', marginBottom: 6 }}>
+                        AI 图像工作室
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--muted-2)', marginBottom: 24 }}>
+                        选择上方模式，输入描述或点击预设风格，开始创作你的第一幅 AI 作品
+                    </div>
+                    {/* 灵感画廊 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, maxWidth: 600, margin: '0 auto' }}>
+                        {TEXT2IMG_PRESETS.slice(0, 6).map(p => {
+                            const presetIcons: Record<string, string> = {
+                                '写实摄影': '📷', '动漫插画': '🎴', '油画': '🎨', '3D 渲染': '🧊',
+                                '水墨': '🖌️', '像素': '👾',
+                            };
+                            return (
+                                <button key={p.label}
+                                    onClick={() => { setMode('text2img'); setPrompt(p.prompt); }}
+                                    style={{
+                                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                                        padding: '20px 12px', borderRadius: 12, cursor: 'pointer',
+                                        background: 'var(--panel)', border: '1px solid var(--border)',
+                                        transition: 'all 0.25s ease', textAlign: 'center',
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(99,102,241,0.1)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; }}
+                                >
+                                    <span style={{ fontSize: 32 }}>{presetIcons[p.label] || '🎨'}</span>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>{p.label}</span>
+                                    <span style={{ fontSize: 10, color: 'var(--muted-2)', lineHeight: 1.3 }}>点击试试 →</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            )
+            }
+
+            {/* ★ 结果动画 CSS */}
+            <style>{`
+                @keyframes imgResultIn {
+                    0% { opacity: 0; transform: scale(0.92) translateY(20px); }
+                    60% { transform: scale(1.02) translateY(-4px); }
+                    100% { opacity: 1; transform: scale(1) translateY(0); }
+                }
+                .history-send-btn { opacity: 0; transition: opacity 0.2s; }
+                div:hover > .history-send-btn { opacity: 1; }
+            `}</style>
 
             {/* 放大预览 */}
             <Modal open={!!zoomUrl} footer={null} onCancel={() => setZoomUrl(null)} width="90%" centered

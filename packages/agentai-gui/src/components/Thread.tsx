@@ -19,6 +19,7 @@ import { MsgActions } from './MsgActions';
 import { DiffViewer } from './DiffViewer';
 import { FileCard, FilesFromToolSegment } from './FileCard';
 import FileChangeTree from './FileChangeTree';
+import PrescriptionCard from './PrescriptionCard';
 
 /* ======================== CSS 动画已移至 agentai-theme.css ======================== */
 
@@ -151,6 +152,8 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = ({
       position: 'relative',
     }}>
       <Markdown content={text} />
+      {/* ★ 中医处方卡片自动渲染 (2026-08-10) */}
+      {!streaming && <PrescriptionCard content={text} />}
       {streaming && (
         <span style={{
           display: 'inline-block', width: 2, height: 16,
@@ -207,7 +210,7 @@ export const ToolCollapseSummary: React.FC<{
           if (s.name === 'run_command' || s.name === 'run_background' || s.name === 'Bash' || s.name === 'PowerShell' || s.name === 'execute_command' || s.name === 'run_code') {
             const cmd = extractCommand(s.args) || (s.name === 'run_code' ? '[代码执行]' : '');
             const state: ShellState = s.state === 'running' ? 'running' : s.ok ? 'done' : s.ok === false ? 'failed' : 'running';
-            return <ShellCard key={i} command={cmd || s.args || ''} output={s.result} state={state} durationMs={s.durationMs} />;
+            return <ShellCard key={i} command={cmd || String(s.args || '')} output={s.result} state={state} durationMs={s.durationMs} />;
           }
           return <ToolCard key={i} name={s.name} args={typeof s.args === 'string' ? s.args : JSON.stringify(s.args)} result={s.result} ok={s.ok} durationMs={s.durationMs} />;
         })}
@@ -624,7 +627,7 @@ export const ToolCard: React.FC<{
             whiteSpace: 'nowrap', maxWidth: 200, marginLeft: 4,
             opacity: 0.6,
           }}>
-            {result.replace(/^\[([^\]]+)\]\s*/, '').replace(/[\\n\\r]+/g, ' ').slice(0, 60)}
+            {result.replace(/^\[([^\]]+)\]\s*/, '').replace(/[\n\r]+/g, ' ').slice(0, 80)}
           </span>
         )}
         <span style={{ flex: 1 }} />
@@ -642,7 +645,7 @@ export const ToolCard: React.FC<{
           {args && (
             <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--muted-2)', borderBottom: '1px solid var(--border)' }}>
               <div style={{ marginBottom: 2, fontWeight: 600 }}>参数:</div>
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{(typeof args === 'string' ? args : JSON.stringify(args, null, 2)).slice(0, 300)}</pre>
+              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{(typeof args === 'string' ? args : JSON.stringify(args, null, 2)).slice(0, 200)}</pre>
             </div>
           )}
           {hasDiff && (
@@ -659,9 +662,14 @@ export const ToolCard: React.FC<{
           {result != null && (
             <div style={{ padding: '6px 10px', fontSize: 10, color: ok ? 'var(--muted)' : 'var(--danger)' }}>
               <div style={{ marginBottom: 2, fontWeight: 600 }}>结果:</div>
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: 150, overflowY: 'auto' }}>
-                {result.slice(0, 1000)}
+              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: 120, overflowY: 'auto' }}>
+                {result.slice(0, 500)}
               </pre>
+              {result.length > 500 && (
+                <div style={{ marginTop: 2, fontSize: 9, color: 'var(--muted-2)' }}>
+                  ··· 结果已截断 ({result.length} 字符, 显示前 500) ···
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -861,11 +869,25 @@ export const ActivityTimeline: React.FC<{
   if (totalDuration > 0) summaryParts.push(`${(totalDuration / 1000).toFixed(1)}s`);
   const summary = summaryParts.join(' · ') || '活动中..';
 
-  // 当前活动描述 (流式时)
+  // 当前活动描述 (流式时) — 根据工具类型显示不同状态
+  const runningTools = toolSegs.filter(s => s.state === 'running');
   const currentActivity = pending
-    ? (runningCount > 0
-        ? `${runningCount} 个工具执行中`
-        : progress?.description || '思考中...')
+    ? (runningTools.length > 0
+        ? (() => {
+            const t = runningTools[0];
+            const name = t.name || '';
+            // 按工具类型显示不同图标和描述
+            if (/search|grep|find/i.test(name)) return '🔍 搜索中...';
+            if (/read|cat|view/i.test(name)) return '📁 读取文件...';
+            if (/write|edit|str_replace|multi_edit/i.test(name)) return '✏️ 修改文件...';
+            if (/run|exec|bash|shell|command/i.test(name)) return '⚡ 执行命令...';
+            if (/browser|navigate|click|type/i.test(name)) return '🌐 浏览器操作...';
+            if (/generate|image|diagram/i.test(name)) return '🎨 生成内容...';
+            if (/plan|task/i.test(name)) return '📋 规划任务...';
+            if (/spawn|subagent/i.test(name)) return '🤖 子智能体执行...';
+            return `${runningTools.length} 个工具执行中`;
+          })()
+        : progress?.description || '💭 思考中...')
     : summary;
 
   return (
@@ -1324,13 +1346,10 @@ export const AssistantMsg: React.FC<{
         })}
 
         {/* 4. 非文本非工具段: 图片 / 错误卡片 / 视频 / widget (紧跟最终回复) */}
-        {nonTextSegments.filter(s => s.kind === 'image' || s.kind === 'error' || s.kind === 'video' || s.kind === 'widget').map((s, i) => {
-          if (s.kind === 'image') {
-            // ═══ 修复: 用 s.id 唯一 key 防重复渲染 ═══
-            const imgKey = (s as any).id || `img-${i}-${Date.now()}`;
-            return <ImageCard key={imgKey} url={(s as any).url}
-              base64={(s as any).base64} alt={(s as any).alt} filePath={(s as any).filePath} />;
-          }
+        {/* ═══ 图片画廊: 多个截图自动归类到可折叠容器 ═══ */}
+        <ImageGallery segments={nonTextSegments.filter(s => s.kind === 'image') as any} />
+        {/* 其他非文本段 */}
+        {nonTextSegments.filter(s => s.kind === 'error' || s.kind === 'video' || s.kind === 'widget').map((s, i) => {
           if (s.kind === 'error') {
             return <ErrorCard key={`nt-${i}`} error={(s as any).error} details={(s as any).details} fix={(s as any).fix} />;
           }
@@ -1400,6 +1419,207 @@ export const AssistantMsg: React.FC<{
         )}
       </div>
     </div>
+  );
+};
+
+/* ======================== Image Gallery (可折叠图片容器) ======================== */
+
+interface ImageSegment {
+  id?: string;
+  url?: string;
+  base64?: string;
+  alt?: string;
+  filePath?: string;
+}
+
+const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+
+  if (segments.length === 0) return null;
+
+  // 单张图片: 直接显示小图
+  if (segments.length === 1) {
+    return (
+      <div style={{ margin: '6px 0' }}>
+        <ImageCardSmall {...segments[0]} />
+      </div>
+    );
+  }
+
+  // 多张图片: 可折叠画廊
+  return (
+    <div className="bubble-enter" style={{
+      margin: '6px 0', borderRadius: 8, overflow: 'hidden',
+      border: '1px solid var(--border)', background: 'var(--panel)',
+    }}>
+      {/* 头部: 标题 + 展开/折叠按钮 */}
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8,
+          cursor: 'pointer', background: 'var(--bg-2)', borderBottom: expanded ? '1px solid var(--border)' : 'none',
+          userSelect: 'none',
+        }}
+      >
+        <span style={{ fontSize: 12 }}>{expanded ? '▼' : '▶'}</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        <span style={{ fontSize: 12, color: 'var(--fg-2)', flex: 1 }}>
+          浏览器截图 ({segments.length}张)
+        </span>
+        {!expanded && (
+          <div style={{ display: 'flex', gap: 4 }}>
+            {segments.slice(0, 3).map((img, i) => (
+              <img
+                key={i}
+                src={img.base64 ? `data:image/png;base64,${img.base64}` : img.url}
+                alt=""
+                style={{ width: 24, height: 24, borderRadius: 4, objectFit: 'cover', opacity: 0.7 }}
+              />
+            ))}
+            {segments.length > 3 && (
+              <span style={{ fontSize: 10, color: 'var(--muted-2)', marginLeft: 4 }}>+{segments.length - 3}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 展开内容: 缩略图网格 */}
+      {expanded && (
+        <div style={{ padding: 12 }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
+            gap: 8,
+          }}>
+            {segments.map((img, i) => (
+              <div
+                key={img.id || i}
+                onClick={() => setSelectedIndex(i)}
+                style={{
+                  position: 'relative', aspectRatio: '16/10', borderRadius: 6,
+                  overflow: 'hidden', cursor: 'pointer', border: '1px solid var(--border)',
+                  background: 'var(--bg)',
+                }}
+              >
+                <img
+                  src={img.base64 ? `data:image/png;base64,${img.base64}` : img.url}
+                  alt={img.alt || `截图 ${i + 1}`}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  loading="lazy"
+                />
+                <div style={{
+                  position: 'absolute', bottom: 0, left: 0, right: 0,
+                  padding: '2px 4px', fontSize: 9, color: '#fff',
+                  background: 'rgba(0,0,0,0.6)', textAlign: 'center',
+                }}>
+                  #{i + 1}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 大图预览 Modal */}
+      {selectedIndex !== null && (
+        <div
+          onClick={() => setSelectedIndex(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.9)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}
+        >
+          <img
+            src={segments[selectedIndex].base64
+              ? `data:image/png;base64,${segments[selectedIndex].base64}`
+              : segments[selectedIndex].url}
+            alt={segments[selectedIndex].alt || `截图 ${selectedIndex + 1}`}
+            style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 8, objectFit: 'contain' }}
+            onClick={e => e.stopPropagation()}
+          />
+          <div style={{
+            position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+            display: 'flex', gap: 12, alignItems: 'center',
+          }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); setSelectedIndex(i => i !== null && i > 0 ? i - 1 : segments.length - 1); }}
+              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}
+            >
+              ← 上一张
+            </button>
+            <span style={{ color: '#fff', fontSize: 14 }}>
+              {selectedIndex + 1} / {segments.length}
+            </span>
+            <button
+              onClick={(e) => { e.stopPropagation(); setSelectedIndex(i => i !== null && i < segments.length - 1 ? i + 1 : 0); }}
+              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}
+            >
+              下一张 →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ======================== Image Card Small (单张小图) ======================== */
+
+const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) => {
+  const [showLarge, setShowLarge] = useState(false);
+  const src = base64 ? `data:image/png;base64,${base64}` : url;
+
+  return (
+    <>
+      <div
+        onClick={() => setShowLarge(true)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+          background: 'var(--panel)', border: '1px solid var(--border)',
+          maxWidth: '100%',
+        }}
+      >
+        <img
+          src={src}
+          alt={alt || '截图'}
+          style={{ width: 60, height: 40, borderRadius: 4, objectFit: 'cover' }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {alt || '图片'}
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--muted-2)' }}>
+            点击查看大图
+          </div>
+        </div>
+      </div>
+
+      {/* 大图预览 */}
+      {showLarge && (
+        <div
+          onClick={() => setShowLarge(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.9)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}
+        >
+          <img
+            src={src}
+            alt={alt || '截图'}
+            style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 8, objectFit: 'contain' }}
+            onClick={e => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
   );
 };
 

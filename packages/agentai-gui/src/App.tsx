@@ -23,7 +23,7 @@ import {
   WechatOutlined, ClockCircleOutlined, BellOutlined, MedicineBoxOutlined,
   DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined, SyncOutlined, DownloadOutlined,
   GlobalOutlined, MinusOutlined, BorderOutlined, CloseOutlined, MobileOutlined,
-  HomeOutlined,
+  HomeOutlined, KeyOutlined, HeartOutlined,
 } from '@ant-design/icons';
 /* P0-4: 代码分割 — 首屏组件同步加载，其他页面延迟加载 */
 // 首屏核心组件 - 同步导入避免骨架屏等待
@@ -56,6 +56,7 @@ import { KnowledgeGraphPanelChunk, preloadLazyChunks } from './lazyChunks';
 const KnowledgeGraphPanel = KnowledgeGraphPanelChunk;
 const MonitoringPanel = lazy(() => import('./components/MonitoringPanel').then(m => ({ default: m.default })));
 const KnowledgeDashboard = lazy(() => import('./components/KnowledgeDashboard').then(m => ({ default: m.KnowledgeDashboard })));
+const SoulPanel = lazy(() => import('./components/SoulPanel').then(m => ({ default: m.SoulPanel })));
 import { RightPanel } from './components/RightPanel';
 import { PulseFlowSidebar } from './components/PulseFlowSidebar';
 import { GuideModal } from './components/GuideModal';
@@ -64,6 +65,7 @@ import { GitStatusBar } from './components/GitStatusBar';
 import { SimpleGitPanel } from './components/SimpleGitPanel';  // 使用简化版 Git 面板
 import { TerminalPanel, terminalTaskManager, TerminalTask } from './components/TerminalPanel';  // 终端任务面板
 import { Onboarding } from './components/Onboarding';
+import { IdentityOnboarding } from './components/IdentityOnboarding';
 import { SetupWizard } from './components/SetupWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { PageSkeleton } from './components/PageSkeleton';
@@ -78,86 +80,67 @@ import FloatingSuggestionToast from './components/FloatingSuggestionToast';
 import { useSuggestionSSE } from './hooks/useSuggestionSSE';
 import { useSuggestionStore } from './store/suggestionStore';
 import { Splash } from './components/Splash';
-import { AuthPage } from './components/AuthPage';
 import { ReuseIdentityPrompt } from './components/ReuseIdentityPrompt';
 import { GlobalBrowserDrawer, openGlobalBrowser } from './components/GlobalBrowserDrawer';
 import { useIdeState } from './hooks/useIdeState';
 import { useUpdaterStore, mountUpdaterEventBus } from './store/updaterStore';
-import { useSubscriptionStore, SUBSCRIPTION_PLANS } from './store/subscriptionStore';
+import { useSubscriptionStore } from './store/subscriptionStore';
 
 // 暴露到 window, 顶部导航按钮可调用
 if (typeof window !== 'undefined') {
   (window as any).openGlobalBrowser = openGlobalBrowser;
 }
 
-/* ════════════════ 订阅路由守卫 ════════════════ */
-const SubscriptionGuard: React.FC<{
+/* ════════════════ 功能引导提示 (非强制锁定) ════════════════ */
+/**
+ * 设计理念：
+ * - 生图/生视频页面允许所有用户进入
+ * - 免费用户使用内置免费模型（能力有限）
+ * - 高级模型需要密钥，点击时引导去设置
+ * - 不强制拦截页面访问
+ */
+const FeatureGuide: React.FC<{
   page: PageMeta;
-  onSubscribe: () => void;
   children: React.ReactNode;
-}> = ({ page, onSubscribe, children }) => {
-  const { planId, expiresAt, isPaid } = useSubscriptionStore();
-  const isSubscribed = isPaid && expiresAt > Date.now();
-
-  if (isSubscribed) {
+}> = ({ page, children }) => {
+  const { isActivated } = useSubscriptionStore();
+  
+  // 如果已激活或不需要引导，直接显示内容
+  if (isActivated || !page.requireSubscription) {
     return <>{children}</>;
   }
-
-  // 未订阅，显示引导页面
+  
+  // 未激活时显示内容 + 顶部提示条
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      height: '100%', padding: 40, textAlign: 'center',
-    }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* 顶部提示条 */}
       <div style={{
-        width: 80, height: 80, borderRadius: '50%',
-        background: 'linear-gradient(135deg, #6366F1 0%, #EC4899 100%)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 40, marginBottom: 24,
+        padding: '10px 16px',
+        background: 'linear-gradient(90deg, rgba(99, 102, 241, 0.1), rgba(236, 72, 153, 0.1))',
+        borderBottom: '1px solid var(--border)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        flexShrink: 0,
       }}>
-        {page.icon}
+        <span style={{ fontSize: 14 }}>💡</span>
+        <span style={{ fontSize: 12, color: 'var(--fg-2)', flex: 1 }}>
+          当前使用<span style={{ fontWeight: 600, color: 'var(--accent)' }}> 免费内置模型</span>，
+          能力有限。添加密钥可解锁 <b>GPT Image 2</b>、<b>Nano Banana</b> 等高级模型。
+        </span>
+        <Button 
+          type="primary" 
+          size="small"
+          icon={<KeyOutlined />}
+          onClick={() => window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'settings' as any } }))}
+        >
+          添加密钥解锁
+        </Button>
       </div>
-      <h2 style={{ fontSize: 24, fontWeight: 600, marginBottom: 12, color: 'var(--fg)' }}>
-        {page.label} 需要订阅
-      </h2>
-      <p style={{ fontSize: 14, color: 'var(--muted-2)', maxWidth: 400, lineHeight: 1.8, marginBottom: 24 }}>
-        {page.desc}<br />
-        订阅后可解锁 {page.label} 功能，以及更多高级模型和生图次数。
-      </p>
-
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', marginBottom: 32 }}>
-        {Object.values(SUBSCRIPTION_PLANS).map(plan => (
-          <div key={plan.id} style={{
-            padding: '16px 20px', borderRadius: 12, border: '1px solid var(--border)',
-            background: plan.popular ? 'var(--accent-soft)' : 'var(--panel)',
-            minWidth: 140, position: 'relative',
-          }}>
-            {plan.popular && (
-              <span style={{
-                position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)',
-                background: 'var(--accent)', color: '#fff', fontSize: 10, padding: '2px 8px',
-                borderRadius: 10,
-              }}>推荐</span>
-            )}
-            <div style={{ fontSize: 20, marginBottom: 4 }}>{plan.icon}</div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{plan.name}</div>
-            <div style={{ fontSize: 12, color: 'var(--muted-2)' }}>¥{plan.priceMonth}/月</div>
-          </div>
-        ))}
+      {/* 页面内容 */}
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        {children}
       </div>
-
-      <button
-        onClick={onSubscribe}
-        style={{
-          padding: '12px 32px', borderRadius: 8, border: 'none',
-          background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 500,
-          cursor: 'pointer', transition: 'opacity 0.15s',
-        }}
-        onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '0.9'}
-        onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '1'}
-      >
-        前往订阅
-      </button>
     </div>
   );
 };
@@ -206,7 +189,7 @@ const ChatModeToggle: React.FC = () => {
 };
 
 /* ════════════════ PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'pascal' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'sandbox' | 'knowledge-graph' | 'external-connections' | 'monitoring' | 'knowledge-explore';
+type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'pascal' | 'decorai' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'schedule' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'sandbox' | 'knowledge-graph' | 'external-connections' | 'monitoring' | 'knowledge-explore';
 
 interface PageMeta {
   key: PageKey;
@@ -219,25 +202,31 @@ interface PageMeta {
   desc: string;
   /** 右上角小徽章 (可选) */
   badge?: string;
+  /** 是否需要订阅才能使用 */
+  requireSubscription?: boolean;
+  /** 是否在侧栏隐藏 (空壳/半成品栏目, 代码保留但不在导航中显示) */
+  hidden?: boolean;
 }
 
 const GovernorPanel = lazy(() => import('./components/GovernorPanel').then(m => ({ default: m.GovernorPanel })));
 const StatsPanel = lazy(() => import('./components/StatsPanel').then(m => ({ default: m.StatsPanel })));
 const ExternalConnectionsPanel = lazy(() => import('./components/ExternalConnectionsPanel').then(m => ({ default: m.ExternalConnectionsPanel })));
 const PascalEditor = lazy(() => import('./components/PascalEditor').then(m => ({ default: m.PascalEditor })));
+const DecorAI = lazy(() => import('./components/DecorAI/index').then(m => ({ default: m.DecorAI })));
 
 const PAGES: PageMeta[] = [
   { key: 'chat',     label: '对话',     icon: <MessageOutlined />,    comp: ChatView,      group: 'core',   desc: '智能对话 · 多模型 · 工具调用' },
   { key: 'editor',   label: '编辑器',   icon: <CodeOutlined />,       comp: Editor,        group: 'core',   desc: '代码编辑 · 改写 · 文件管理' },
   { key: 'xuanji',   label: '医案',     icon: <MedicineBoxOutlined />, comp: XuanjiPanel,   group: 'core',   desc: '四诊合参 · 辨证论治 · 经验积累', badge: 'NEW' },
-  { key: 'external-connections', label: '外部连接', icon: <MobileOutlined />, comp: ExternalConnectionsPanel, group: 'system', desc: 'Android 设备 · SketchUp · 公众号自动化', badge: 'NEW' },
-  { key: 'image',    label: '生图',     icon: <PictureOutlined />,    comp: ImageStudio,   group: 'media',  desc: 'AI 图像工作室 · 5种创作模式' },
-  { key: 'video',    label: '生视频',   icon: <VideoCameraOutlined />,comp: VideoGen,      group: 'media',  desc: '文生视频 · 图生视频 · 首尾帧' },
+  { key: 'external-connections', label: '外部连接', icon: <MobileOutlined />, comp: ExternalConnectionsPanel, group: 'system', desc: 'Android 设备 · SketchUp · 公众号自动化', badge: 'NEW', hidden: true },
+  { key: 'image',    label: '生图',     icon: <PictureOutlined />,    comp: ImageStudio,   group: 'media',  desc: 'AI 图像工作室 · 5种创作模式', requireSubscription: true },
+  { key: 'video',    label: '生视频',   icon: <VideoCameraOutlined />,comp: VideoGen,      group: 'media',  desc: '文生视频 · 图生视频 · 首尾帧', requireSubscription: true },
   { key: '3d',       label: '3D建模',   icon: <AppstoreOutlined />,   comp: Model3DGen,    group: 'media',  desc: '文/图生3D · 混元 · 豆包' },
   { key: 'pascal',   label: '建筑编辑', icon: <HomeOutlined />,       comp: PascalEditor,  group: 'media',  desc: 'AI 驱动 3D 建筑模型 · 墙体/门窗/屋顶', badge: 'NEW' },
+  { key: 'decorai',  label: '建筑装饰', icon: <ExperimentOutlined />, comp: DecorAI,        group: 'media',  desc: '对话画布 · 效果图 · 改图 · 报价 · 视频', badge: 'NEW' },
   { key: 'write',    label: '写作',     icon: <EditOutlined />,       comp: WritePage,     group: 'media',  desc: '长文写作 · 模板 · 一键导出' },
   { key: 'skills',   label: '技能库',   icon: <AppstoreOutlined />,   comp: SkillLibrary,  group: 'system', desc: '25+ 技能 · 7 分类' },
-  { key: 'cleaner',  label: '智能清理', icon: <ThunderboltOutlined />,comp: CleanerPanel,  group: 'system', desc: '扫描 / 分类 / 安全清理' },
+  { key: 'cleaner',  label: '智能清理', icon: <ThunderboltOutlined />,comp: CleanerPanel,  group: 'system', desc: '扫描 / 分类 / 安全清理', hidden: true },
   { key: 'qq',       label: 'QQ Bot',   icon: <QQIcon />,             comp: QQBotPanel,    group: 'system', desc: '反向 WS · 自动回复' },
   { key: 'wechat',   label: '微信',     icon: <SmileOutlined />,      comp: WechatSetup,   group: 'system', desc: 'ClawBot 插件 · 扫码绑定' },
   { key: 'knowledge', label: '知识库', icon: <BookOutlined />,       comp: KnowledgeBasePanel, group: 'system', desc: '行业知识库 · 文档上传 · BM25 检索' },
@@ -245,15 +234,16 @@ const PAGES: PageMeta[] = [
   { key: 'automation',   label: '自动化',   icon: <ThunderboltOutlined />, comp: AutomationPanel, group: 'system', desc: '定时任务管理 · 成功率统计 · 执行监控', badge: 'NEW' },
   { key: 'workflow',     label: '工作流',   icon: <PartitionOutlined />,   comp: WorkflowPanel,     group: 'system', desc: 'DAG 多步骤自动化 · 行业模板 · 变量管道' },
   { key: 'notification', label: '通知中心', icon: <BellOutlined />,        comp: NotificationPanel, group: 'system', desc: 'SSE · Webhook · 邮件 · 桌面弹窗' },
-  { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system',   desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持' },
-  { key: 'governor', label: '管控员',   icon: <DashboardOutlined />,  comp: GovernorPanel, group: 'system', desc: '动态能力矩阵 · 系统健康 · 模型治理' },
-  { key: 'stats',    label: '用量',     icon: <ThunderboltOutlined />, comp: StatsPanel,    group: 'system', desc: '工具调用统计 · 成功率 · 省时报告', badge: 'NEW' },
+  { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system',   desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持', hidden: true },
+  { key: 'governor', label: '管控员',   icon: <DashboardOutlined />,  comp: GovernorPanel, group: 'system', desc: '动态能力矩阵 · 系统健康 · 模型治理', hidden: true },
+  { key: 'stats',    label: '用量',     icon: <ThunderboltOutlined />, comp: StatsPanel,    group: 'system', desc: '工具调用统计 · 成功率 · 省时报告', badge: 'NEW', hidden: true },
   { key: 'tasks',    label: '任务中心', icon: <SyncOutlined />,       comp: TaskCenterPanel, group: 'system', desc: '长任务快照 · 跨会话恢复 · 进度跟踪', badge: 'NEW' },
   { key: 'evolution', label: '自进化',  icon: <ExperimentOutlined />, comp: EvolutionPanel,  group: 'system', desc: '跨会话规则自修改 · 技能自动创建 · 行为优化', badge: 'NEW' },
-  { key: 'sandbox',   label: '沙箱规则', icon: <PartitionOutlined />, comp: SandboxRulesEditor, group: 'system', desc: '可视化编辑沙箱规则的 deny/prompt/allow' },
-  { key: 'knowledge-graph', label: '知识图谱', icon: <BulbOutlined />, comp: KnowledgeGraphPanel, group: 'system', desc: '知识关系可视化 · 实体链接 · 概念网络' },
-  { key: 'monitoring', label: '监控面板', icon: <DashboardOutlined />, comp: MonitoringPanel, group: 'system', desc: '进化系统 · 审批策略 · 反馈闭环 实时监控', badge: 'NEW' },
-  { key: 'knowledge-explore', label: '知识探索', icon: <ExperimentOutlined />, comp: KnowledgeDashboard, group: 'system', desc: 'AI 自主学习 · GitHub 探索 · 知识蒸馏', badge: 'NEW' },
+  { key: 'sandbox',   label: '沙箱规则', icon: <PartitionOutlined />, comp: SandboxRulesEditor, group: 'system', desc: '可视化编辑沙箱规则的 deny/prompt/allow', hidden: true },
+  { key: 'knowledge-graph', label: '知识图谱', icon: <BulbOutlined />, comp: KnowledgeGraphPanel, group: 'system', desc: '知识关系可视化 · 实体链接 · 概念网络', hidden: true },
+  { key: 'monitoring', label: '监控面板', icon: <DashboardOutlined />, comp: MonitoringPanel, group: 'system', desc: '进化系统 · 审批策略 · 反馈闭环 实时监控', badge: 'NEW', hidden: true },
+  { key: 'knowledge-explore', label: '知识探索', icon: <ExperimentOutlined />, comp: KnowledgeDashboard, group: 'system', desc: 'AI 自主学习 · GitHub 探索 · 知识蒸馏', badge: 'NEW', hidden: true },
+  { key: 'soul', label: '灵魂', icon: <HeartOutlined />, comp: SoulPanel, group: 'system', desc: '梦境 · 好奇心 · 内心独白 · 痛觉 · 辩论 — AI 的内心世界', badge: 'NEW' },
   { key: 'settings', label: '设置',     icon: <SettingOutlined />,    comp: Settings,      group: 'system', desc: '密钥 · 框架 · 模型 · 主题' },
 ];
 
@@ -324,7 +314,6 @@ export const App: React.FC = () => {
   const [wechatModalVisible, setWechatModalVisible] = useState(false);
   const [setupWizardVisible, setSetupWizardVisible] = useState(false);
   const [splashVisible, setSplashVisible] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [gitPanelVisible, setGitPanelVisible] = useState(false);
   const [terminalPanelVisible, setTerminalPanelVisible] = useState(false);
   const [terminalTasks, setTerminalTasks] = useState<TerminalTask[]>([]);
@@ -478,7 +467,6 @@ export const App: React.FC = () => {
             // 只在以下情况覆盖: localStorage 为空, 或路径不存在
             if (!existing || existing === 'C:\\') {
               localStorage.setItem('agentai.workspace', data.cwd);
-              console.log('[workspace] synced from gateway:', data.cwd);
             }
           }
         }
@@ -494,7 +482,6 @@ export const App: React.FC = () => {
                 // 同步到 modelStore
                 const { useModelStore } = await import('./store/modelStore');
                 useModelStore.getState().setCommercialKey(keyData.envVar, 'configured');
-                console.log(`[keys] loaded ${provider}: ${keyData.envVar}`);
               }
             }
           } catch (e) {
@@ -506,7 +493,6 @@ export const App: React.FC = () => {
         try {
           const { useModelStore } = await import('./store/modelStore');
           await useModelStore.getState().loadDynamicModels();
-          console.log('[models] dynamic models loaded from backend');
         } catch (e) {
           console.warn('[models] failed to load dynamic models:', e);
         }
@@ -628,13 +614,6 @@ export const App: React.FC = () => {
     const stored = getLocalProfile();
     return !!stored?.name && !!stored?.industry;
   });
-
-  /* --- 认证检查 --- */
-  useEffect(() => {
-    const token = localStorage.getItem('agentai-auth-token');
-    const userId = localStorage.getItem('agentai-auth-user');
-    setIsAuthenticated(!!(token && userId));
-  }, []);
 
   /* --- 首次启动环境检测 (仅 Tauri 桌面端打包后生效) --- */
   useEffect(() => {
@@ -799,7 +778,6 @@ export const App: React.FC = () => {
    * ║ - layer = false: 关闭 antd v5 @layer 特性(部分打包器不兼容)║
    * ╚═══════════════════════════════════════════════════════════════╝
    */
-  if (isAuthenticated === false) return <AuthPage />;
   return (
     <StyleProvider hashPriority="high" layer={false}>
       <ConfigProvider
@@ -829,7 +807,7 @@ export const App: React.FC = () => {
           {/* 主导航 Tab (分组: core 直接显示, media/system 下拉) */}
           <div style={{ display: 'flex', gap: 2, flex: 1, marginLeft: 16, overflow: 'auto', alignItems: 'center' }}>
             {/* Core 组: 直接显示 */}
-            {PAGES.filter(p => p.group === 'core').map(p => (
+            {PAGES.filter(p => p.group === 'core' && !p.hidden).map(p => (
               <span
                 key={p.key}
                 onClick={() => setPage(p.key)}
@@ -859,7 +837,7 @@ export const App: React.FC = () => {
               trigger={['click']}
               placement="bottomLeft"
               menu={{
-                items: PAGES.filter(p => p.group === 'media').map(p => ({
+                items: PAGES.filter(p => p.group === 'media' && !p.hidden).map(p => ({
                   key: p.key,
                   label: (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
@@ -886,7 +864,7 @@ export const App: React.FC = () => {
               trigger={['click']}
               placement="bottomLeft"
               menu={{
-                items: PAGES.filter(p => p.group === 'system').map(p => ({
+                items: PAGES.filter(p => p.group === 'system' && !p.hidden).map(p => ({
                   key: p.key,
                   label: (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', minWidth: 180 }}>
@@ -915,15 +893,14 @@ export const App: React.FC = () => {
             </Dropdown>
           </div>
 
-          {/* 模型选择 (TitleBar) */}
-          <div style={{ marginRight: 8 }}>
-            <ModelSelector mode="minimal" />
-          </div>
+{/* 模型选择 (TitleBar) */}
+<div style={{ marginRight: 8 }}>
+<ModelSelector mode="minimal" />
+</div>
 
-          {/* 对话改图切换按钮 */}
-          <ChatModeToggle />
+{/* 对话改图切换已移入 Composer 对话框内底部 */}
 
-          {/* 显示设置 (主题 + 字体) */}
+{/* 显示设置 (主题 + 字体) */}
           <Tooltip title="主题 & 字体大小">
             <Dropdown
               trigger={['click']}
@@ -1180,12 +1157,12 @@ export const App: React.FC = () => {
           <div className="app-content">
             <ErrorBoundary key={page} onRetry={() => setPage(page)}>
               <Suspense fallback={<PageSkeleton />}>
-                {/* 订阅路由守卫 */}
-                {currentPage?.requireSubscription ? (
-                  <SubscriptionGuard page={currentPage} onSubscribe={() => setPage('settings')}>
-                    <currentPage.comp />
-                  </SubscriptionGuard>
-                ) : currentPage?.comp ? (
+          {/* 功能引导提示（非强制锁定） */}
+          {currentPage?.requireSubscription ? (
+            <FeatureGuide page={currentPage}>
+              <currentPage.comp />
+            </FeatureGuide>
+          ) : currentPage?.comp ? (
                   <currentPage.comp />
                 ) : (
                   <PageSkeleton />
@@ -1232,8 +1209,15 @@ export const App: React.FC = () => {
         onClose={() => setShowReusePrompt(false)}
       />
 
-      {/* ═══ 7. Onboarding Modal (首次启动) ═══ */}
-      {showOnboarding && <OnboardingWrapper onFinish={handleOnboardFinish} />}
+      {/* ═══ 7. Onboarding Modal (首次启动 — 新颖身份设置) ═══ */}
+      {showOnboarding && (
+        <IdentityOnboarding
+          onDone={() => {
+            sessionStorage.setItem('agentai.onboarded', '1');
+            setShowOnboarding(false);
+          }}
+        />
+      )}
 
       {/* ═══ 7.5 环境检测向导 (缺失依赖时弹出) ═══ */}
       <SetupWizard visible={setupWizardVisible} onClose={() => setSetupWizardVisible(false)} />
@@ -1287,7 +1271,7 @@ export const App: React.FC = () => {
       />
 
       {/* Splash 启动欢迎页 (PulseFlow v2, 3600ms 多阶段动画) */}
-      {splashVisible && isAuthenticated !== false && (
+      {splashVisible && (
         <Splash onFinish={() => setSplashVisible(false)} duration={3600} />
       )}
 

@@ -17,7 +17,7 @@ import {
   LoadingOutlined, PlayCircleOutlined, WarningOutlined,
   CodeOutlined,
 } from '@ant-design/icons';
-import { useTaskOrchestrator, type SandboxRecord } from '../store/taskOrchestratorStore';
+import { useTaskStore, useTaskOrchestrator, type SandboxRecord } from '../store/taskStore';
 import { apiGet } from '../services/api';
 
 interface SandboxConfig {

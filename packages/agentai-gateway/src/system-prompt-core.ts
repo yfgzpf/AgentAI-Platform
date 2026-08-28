@@ -42,72 +42,44 @@ export interface ToolDefinition {
 }
 
 export const L1_TOOLS: ToolDefinition[] = [
-  // 代码操作（代码相关任务）
-  {
-    name: 'read_file',
-    description: '读取文件内容',
-    keywords: ['看看', '读', '查看', '内容', '文件', 'code', 'read', 'view'],
-  },
-  {
-    name: 'write_file',
-    description: '创建或覆盖文件',
-    keywords: ['创建', '写', '生成', '保存', 'write', 'create', 'save'],
-  },
-  {
-    name: 'multi_edit',
-    description: '批量编辑文件',
-    keywords: ['修改', '更新', '批量', 'edit', 'update', 'modify'],
-  },
-  {
-    name: 'search_codebase',
-    description: '搜索代码库',
-    keywords: ['搜索', '查找', '在哪里', 'search', 'find', 'locate'],
-  },
+  // ====== 核心工具（所有任务均可用） ======
+  { name: 'read_file', description: '读取文件内容', keywords: ['读', '查看', '内容', 'read', 'view'], required: true },
+  { name: 'write_file', description: '创建或覆盖文件', keywords: ['创建', '写', '生成', '保存', 'write', 'create'], required: true },
+  { name: 'multi_edit', description: '批量编辑文件', keywords: ['修改', '更新', '批量', 'edit', 'update', 'modify'], required: true },
+  { name: 'search_codebase', description: '搜索代码库', keywords: ['搜索', '查找', 'search', 'find', 'locate'], required: true },
+  { name: 'web_search', description: '网络搜索', keywords: ['搜索', '查资料', '最新', 'search', 'google'], required: true },
+  { name: 'web_fetch', description: '获取网页内容', keywords: ['打开', '获取', '网页', 'fetch', '访问'], required: true },
+  { name: 'ask_user', description: '向用户提问', keywords: ['问', '确认', '可以吗', 'ask', 'confirm'], required: true },
+  { name: 'plan_task', description: '拆解复杂任务为子任务列表', keywords: ['计划', '拆解', '规划', 'plan'], required: true },
+  { name: 'spawn_subagent', description: '启动子智能体并行执行', keywords: ['子任务', '并行', 'subagent', 'spawn'], required: true },
   
-  // 命令执行（需要运行命令）
-  {
-    name: 'run_terminal_cmd',
-    description: '执行终端命令',
-    keywords: ['运行', '执行', '命令', 'cmd', 'run', 'execute', 'terminal'],
-  },
+  // ====== 编码任务专用 ======
+  { name: 'run_terminal_cmd', description: '执行终端命令', keywords: ['运行', '执行', '命令', 'cmd', 'run', 'execute', 'terminal'] },
+  { name: 'run_tests', description: '运行测试套件', keywords: ['测试', 'test', 'jest', 'pytest', 'unittest'] },
+  { name: 'typecheck', description: '运行类型检查', keywords: ['类型检查', 'tsc', 'typecheck', 'lint'] },
+  { name: 'git_status', description: '查看Git工作区状态', keywords: ['git', '状态', 'status', '提交'] },
+  { name: 'git_diff', description: '查看Git差异', keywords: ['diff', '差异', 'git diff'] },
+  { name: 'git_commit', description: '创建Git提交', keywords: ['提交', 'commit', 'git commit'] },
+  { name: 'find_references', description: '查找符号引用', keywords: ['引用', '查找', '参考', 'references'] },
+  { name: 'get_outline', description: '获取文件结构概览', keywords: ['结构', '概览', 'outline', '大纲'] },
   
-  // 网络搜索（需要外部信息）
-  {
-    name: 'web_search',
-    description: '网络搜索',
-    keywords: ['搜索', '查资料', '最新', 'search', 'google', '查询'],
-  },
-  {
-    name: 'web_fetch',
-    description: '获取网页内容',
-    keywords: ['打开', '获取', '网页', 'fetch', '访问'],
-  },
+  // ====== 创意/媒体任务专用 ======
+  { name: 'generate_image', description: '生成图片', keywords: ['生成图片', '画图', 'image', 'picture', 'photo'] },
+  { name: 'generate_video', description: '生成视频', keywords: ['生成视频', 'video', '视频'] },
+  { name: 'generate_diagram', description: '生成图表', keywords: ['图表', 'diagram', 'chart', '流程图'] },
+  { name: 'render_widget', description: '内联渲染SVG/HTML组件', keywords: ['渲染', 'widget', '界面', 'UI'] },
   
-  // 多媒体生成（创意任务）
-  {
-    name: 'generate_image',
-    description: '生成图片',
-    keywords: ['生成图片', '画图', 'image', 'picture', 'photo'],
-  },
-  {
-    name: 'generate_video',
-    description: '生成视频',
-    keywords: ['生成视频', 'video', '视频'],
-  },
+  // ====== 行业任务专用 ======
+  { name: 'knowledge_import', description: '导入知识库', keywords: ['知识', '导入', 'knowledge', '行业'] },
+  { name: 'generate_quotation', description: '生成行业报价', keywords: ['报价', 'quotation', '预算', '装修'] },
+  { name: 'cad_control', description: 'CAD图纸控制', keywords: ['CAD', '图纸', 'cad', '制图'] },
+  { name: 'industry_insight', description: '获取行业洞察', keywords: ['行业', '洞察', 'insight', '领域'] },
   
-  // 技能系统（复杂任务）
-  {
-    name: 'discover_or_create_skill',
-    description: '发现或创建技能',
-    keywords: ['技能', '自动化', 'workflow', 'skill', '自动化'],
-  },
-  
-  // 用户交互（需要确认）
-  {
-    name: 'ask_user',
-    description: '向用户提问',
-    keywords: ['问', '确认', '可以吗', '?', 'ask', 'confirm'],
-  },
+  // ====== 系统管理任务专用 ======
+  { name: 'self_diagnose', description: '系统健康检查', keywords: ['健康', '诊断', '自检', 'diagnose'] },
+  { name: 'schedule_task', description: '创建定时任务', keywords: ['定时', '调度', 'schedule', 'cron'] },
+  { name: 'send_notification', description: '发送通知', keywords: ['通知', '提醒', 'notification', '告警'] },
+  { name: 'automation_create', description: '创建自动化任务', keywords: ['自动化', 'automation', '自动'] },
 ];
 
 /**

@@ -401,7 +401,7 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   private directives = new SystemDirectiveManager();
 
   /** 当前任务类型和行业 (由 buildImmutablePrefix 检测, 主循环中使用) */
-  private _taskType: 'coding' | 'research' | 'general' | 'industry' = 'general';
+  private _taskType: 'coding' | 'research' | 'media' | 'industry' | 'general' = 'general';
   private _userIndustry: string = 'general';
   
   /** 强制调用的技能 (由 skillAutoInvoker 设置) */
@@ -825,15 +825,20 @@ private _emptyResponseCount: number = 0;
         keywords,
         userId: this.opts.userId,
         workspace: this.opts.workspace,
-        limit: 30
+        limit: 30,
+        /** 【P0-4】有效性过滤：过滤已触发但有效性<0.3的噪声规则 */
+        minEffectiveness: 0.3,
+        /** 【P0-4】按有效性排序：已验证有效的规则优先返回 */
+        prioritizeEffective: true,
       });
       evolutionPatterns = extractPatterns(relevantEvolution);
 
       // 格式化进化记忆供两种 prompt 共用
       // P2-1.6: 只取 Top-3 最相关经验 (节省 ~1500 token)
+      // P0-4: 按有效性排序，已验证有效的优先展示
       const valuable = relevantEvolution
         .filter(e => e.type !== 'tool_stats')
-        .slice(-3);
+        .slice(0, 3);
       if (valuable.length > 0) {
         const lines = valuable.map(e => {
           const tag = e.type === 'meta_instruction' ? '[教练建议]'
@@ -841,7 +846,12 @@ private _emptyResponseCount: number = 0;
             : e.type === 'preference' ? '[偏好]'
             : '[经验]';
           const content = (e.content || '').slice(0, 80);
-          return `- ${tag} ${content}`;
+          // P0-4: 有效性标记
+          const tc = e.triggerCount || 0;
+          const ec = e.effectCount || 0;
+          const eff = tc > 0 ? Math.round(ec / tc * 100) : -1;
+          const effTag = eff >= 0 ? ` [有效${eff}%]` : '';
+          return `- ${tag} ${content}${effTag}`;
         });
         evolutionSystemBlock = `# Evolution Memory (跨会话经验)\n${lines.join('\n')}`;
       }
@@ -2498,6 +2508,27 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         elapsedTimeMs: Date.now() - startedAt
       });
 
+      // ═══ P0: 长对话防失忆 — 每轮注入任务进度快照 (第3轮起) ═══
+      // 问题: AI 做 5 轮工具调用后, 上下文里没有"已做了什么/下一步做什么"的结构化提醒 → 边做边忘
+      // 修复: 从第 3 轮开始, 每轮自动注入进度摘要到 directives
+      if (this.iteration >= 3) {
+        try {
+          const toolMsgs = this.context.appendOnlyLog.filter(m => m.role === 'tool');
+          const assistantMsgs = this.context.appendOnlyLog.filter(m => m.role === 'assistant' && m.content);
+          const userMsgs = this.context.appendOnlyLog.filter(m => m.role === 'user' && m.content);
+
+          const toolNames = [...new Set(toolMsgs.map((m: any) => m.name || '').filter(Boolean))];
+          const failedTools = toolMsgs.filter((m: any) => typeof m.content === 'string' && m.content.startsWith('[ERROR]'));
+          const lastUserMsg = userMsgs[userMsgs.length - 1];
+          const userGoal = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content.slice(0, 150) : '';
+          const lastAssistant = assistantMsgs[assistantMsgs.length - 1];
+          const lastReply = typeof lastAssistant?.content === 'string' ? lastAssistant.content.slice(0, 200) : '';
+
+          const progressSummary = `# 📋 任务进度快照 (第${this.iteration}轮)\n## 用户目标\n${userGoal}\n## 已完成\n- 工具调用 ${toolMsgs.length} 次 (${toolNames.slice(0, 6).join(', ')})\n- AI 回复 ${assistantMsgs.length} 次\n## 失败项\n${failedTools.length > 0 ? `失败 ${failedTools.length} 次: ${failedTools.slice(0, 3).map((m: any) => m.name).join(', ')}` : '无失败'}\n## 上次回复\n${lastReply.slice(0, 150)}\n## ⚡ 下一步\n请基于以上进度继续, 不要重复已完成的操作。如果卡住了换思路。`;
+          this.directives.add('task_progress', progressSummary, 'high');
+        } catch { /* 进度快照 best-effort */ }
+      }
+
       // 工作记忆摘要: 每 10 轮自动生成, 防止长对话"失忆"
       if (this.iteration > 0 && this.iteration % 10 === 0) {
         try {
@@ -3250,6 +3281,19 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       // ═══ 2026-06-27 修复: 过滤掉失败/空响应, 不让异常占用上下文 ═══
       const hasContent = res?.content && res.content.trim().length > 0;
       const hasTools = res?.toolCalls && res.toolCalls.length > 0;
+      // ═══ P0: 工具调用预算 — 控制每轮工具调用总数 ═══
+      // 问题: AI 一轮调用 8+ 工具, 产生冗余和混乱
+      // 修复: 根据任务类型设定每轮工具上限, 超出则截断
+      const TOOL_BUDGET: Record<string, number> = { coding: 5, research: 4, general: 4, industry: 3 };
+      const toolLimit = TOOL_BUDGET[this._taskType] || 5;
+      if (hasTools && res.toolCalls.length > toolLimit) {
+        const truncated = res.toolCalls.slice(0, toolLimit);
+        console.warn(`[loop] 工具预算: 截断 ${res.toolCalls.length} → ${truncated.length} (上限 ${toolLimit}, 任务=${this._taskType})`);
+        this.directives.add('tool_budget',
+          `[SYSTEM] 本轮工具调用 ${res.toolCalls.length} 个超过预算 ${toolLimit}, 已截断。请优先执行最重要的 ${truncated.length} 个, 其余留到下一轮。`,
+          'medium');
+        res.toolCalls = truncated;
+      }
       const isEmptyFailure = !hasContent && !hasTools;
       if (isEmptyFailure) {
         console.warn(`[context] 跳过写入空/失败 assistant 消息 (iter=${this.iteration})`);
@@ -3470,6 +3514,31 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         const duplicateTracker = new Map<string, number>(); // tool:args → 连续失败次数
         for (const r of toolResults) {
           const sig = `${r.name}::${JSON.stringify(res.toolCalls?.find((tc:any) => tc.id === r.id)?.args || {})}`;
+
+          // ═══ P0 修复: plan_task / update_plan 工具结果 → emit SSE 事件 (右侧面板实时同步) ═══
+          const toolData = (r as any).data || (rawResults.find(rr => rr.id === r.id) as any)?.data;
+          if (toolData?.action === 'plan_created' && toolData.plan) {
+            const p = toolData.plan;
+            this.emit('plan:created', {
+              chainId: p.id,
+              goal: p.goal,
+              stages: p.subtasks.map((st: any) => ({ key: st.id, label: st.title, status: st.status })),
+              currentStage: p.subtasks.find((st: any) => st.status === 'pending')?.id || p.subtasks[0]?.id,
+            });
+            console.log(`[loop] 📋 plan_created 事件已推送 (SSE): ${p.goal}`);
+          }
+          if (toolData?.action === 'plan_updated' && toolData.plan) {
+            const p = toolData.plan;
+            const updatedTask = p.subtasks.find((st: any) => st.status === 'completed' || st.status === 'in_progress' || st.status === 'failed');
+            this.emit('plan:stage', {
+              chainId: p.id,
+              stage: updatedTask?.id || '',
+              status: updatedTask?.status || 'pending',
+              progress: { done: p.subtasks.filter((st: any) => st.status === 'completed').length, total: p.subtasks.length },
+            });
+            console.log(`[loop] 📋 plan_stage 事件已推送 (SSE): ${updatedTask?.title || ''} → ${updatedTask?.status}`);
+          }
+
           const failCount = duplicateTracker.get(sig) || 0;
           // ═══ 修复: 统一失败检测 — 不只看 'Error:' 前缀, 还看空输出/null/JSON错误 ═══
           const isToolFailed = !r.output
@@ -3490,15 +3559,34 @@ duplicateTracker.delete(sig);
  try { (await import('./soul/index.js')).getPainSense().feelJoy(); } catch {}
  // 价值向量: 从成功中学习 (更大胆、更自主)
  try { (await import('./soul/index.js')).getValueSystem().learnFromSuccess({}); } catch {}
- } else {
- duplicateTracker.set(sig, failCount + 1);
- // 灵魂层: PainSense 记录失败
- try { (await import('./soul/index.js')).getPainSense().feelPain(r.name); } catch {}
- // 价值向量: 从失败中学习 (更谨慎、更保守)
- try { (await import('./soul/index.js')).getValueSystem().learnFromFailure({}); } catch {}
- // 隐私记忆: 记录"内心想法"
- try { (await import('./soul/index.js')).getPrivateMemory().write(`工具 ${r.name} 失败了, 我感到挫败`, 'failure', 'frustrated'); } catch {}
- }
+          } else {
+          duplicateTracker.set(sig, failCount + 1);
+          // 灵魂层: PainSense 记录失败
+          try { (await import('./soul/index.js')).getPainSense().feelPain(r.name); } catch {}
+          // 价值向量: 从失败中学习 (更谨慎、更保守)
+          try { (await import('./soul/index.js')).getValueSystem().learnFromFailure({}); } catch {}
+          // 隐私记忆: 记录"内心想法"
+          try { (await import('./soul/index.js')).getPrivateMemory().write(`工具 ${r.name} 失败了, 我感到挫败`, 'failure', 'frustrated'); } catch {}
+
+          // ═══ P0: 失败模式分类 — 有些错误该重试, 有些该换方案 ═══
+          const failType = (r.output || '').toLowerCase();
+          if (failType.match(/timeout|etimedout|econnreset|rate.*limit|429|503|socket hang up/)) {
+            // 瞬时错误 → 可重试 (网络/限流)
+            this.directives.add('fail_strategy', `[SYSTEM] 工具 ${r.name} 失败但属于瞬时错误(网络/限流), 可重试。等待2秒后换参数重试。`, 'medium');
+          } else if (failType.match(/not found|enoent|does not exist|cannot find/)) {
+            // 路径/资源不存在 → 不该重试, 换方案
+            this.directives.add('fail_strategy', `[SYSTEM] 工具 ${r.name} 失败因为资源不存在, 不应重试相同参数。请换一种方法: 检查路径、创建缺失文件、或用 search_codebase 查找。`, 'high');
+          } else if (failType.match(/permission|denied|forbidden|403|eacces/)) {
+            // 权限不足 → 不该重试, 换方案
+            this.directives.add('fail_strategy', `[SYSTEM] 工具 ${r.name} 失败因为权限不足, 不应重试。请换方案: 用 ask_user 请求权限, 或跳过此步骤。`, 'high');
+          } else if (failType.match(/syntax|unexpected token|parse error|invalid json/)) {
+            // 语法/格式错误 → 修正参数后重试
+            this.directives.add('fail_strategy', `[SYSTEM] 工具 ${r.name} 失败因为参数格式错误, 请检查参数语法后修正重试。`, 'medium');
+          } else if (failCount >= 2) {
+            // 连续 2 次以上失败 → 强制换方案
+            this.directives.add('fail_strategy', `[SYSTEM] 工具 ${r.name} 已连续失败 ${failCount + 1} 次, 必须换方案! 不要再用相同参数重试, 换一种完全不同的方法。`, 'high');
+          }
+          }
           this.context.appendOnlyLog.push({
             role: 'tool',
             name: r.name,

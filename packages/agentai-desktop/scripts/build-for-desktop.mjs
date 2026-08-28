@@ -29,21 +29,42 @@ console.log('[1/4] Gateway built ✓');
 
 // Step 2: 构建 GUI (跳过 tsc, vite build 已编译 TS)
 console.log('\n[2/4] Building GUI...');
-execSync('node ../../node_modules/vite/bin/vite.js build --config vite.config.ts', {
-  cwd: GUI_DIR, stdio: 'inherit', timeout: 120_000,
-});
+try {
+  // 优先查找 GUI 自己的 node_modules (pnpm workspace 链接)
+  const viteCandidates = [
+    resolve(GUI_DIR, 'node_modules', 'vite', 'bin', 'vite.js'),
+    resolve(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'),
+  ];
+  let vitePath = viteCandidates.find(p => existsSync(p));
+  if (vitePath) {
+    execSync(`node "${vitePath}" build`, { cwd: GUI_DIR, stdio: 'inherit', timeout: 120_000 });
+  } else {
+    // fallback: npx vite build
+    execSync('npx vite build', { cwd: GUI_DIR, stdio: 'inherit', timeout: 120_000 });
+  }
+} catch (e) {
+  console.warn('[2/4] vite build via node failed, trying npx fallback:', e.message);
+  execSync('npx vite build', { cwd: GUI_DIR, stdio: 'inherit', timeout: 120_000 });
+}
 console.log('[2/4] GUI built ✓');
 
 // Step 3: 准备 Gateway 运行时依赖
 console.log('\n[3/4] Preparing Gateway runtime...');
-const GW_DST = resolve(DESKTOP_DIR, 'src-tauri', 'resources', 'gateway-dist-v2');
+const GW_DST = resolve(DESKTOP_DIR, 'src-tauri', 'resources', 'gateway-dist');
 if (existsSync(GW_DST)) rmSync(GW_DST, { recursive: true, force: true });
 mkdirSync(GW_DST, { recursive: true });
 
-// 复制 dist/
+// 复制 dist/ 到 gateway-dist/dist/
+// ⚠️ 重要：不复制 dist/index.js 到根目录！
+// index.js 中的 import 路径是 ./app.js（相对当前目录），如果复制到根目录，
+// Node.js 会从 gateway-dist/ 解析 ./app.js，但 app.js 只在 dist/app.js 存在。
 const dstDist = resolve(GW_DST, 'dist');
 mkdirSync(dstDist, { recursive: true });
 cpSync(resolve(GW_DIR, 'dist'), dstDist, { recursive: true, force: true });
+// 不复制 index.js 到根目录，避免 Rust 端优先选择错误的入口
+// if (existsSync(resolve(GW_DIR, 'dist', 'index.js'))) {
+//   copyFileSync(resolve(GW_DIR, 'dist', 'index.js'), resolve(GW_DST, 'index.js'));
+// }
 
 // 复制 package.json
 copyFileSync(resolve(GW_DIR, 'package.json'), resolve(GW_DST, 'package.json'));
@@ -98,21 +119,39 @@ if (existsSync(liteSrc) && existsSync(guiDist)) {
   copyFileSync(liteSrc, resolve(guiDist, 'lite.html'));
 }
 
+// 复制 .env 文件
+const envSrc = resolve(ROOT, '.env');
+if (existsSync(envSrc)) {
+  copyFileSync(envSrc, resolve(GW_DST, '.env'));
+  console.log('[3/4] .env copied ✓');
+}
+
 // 复制 better-sqlite3 原生模块（确保离线可用）
 console.log('[3/4] Copying native modules...');
-try {
-  // 从源 gateway 目录复制到目标 gateway-dist-v2 目录
-  const sqliteSource = resolve(GW_DIR, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
-  const sqliteTarget = resolve(GW_DST, 'build', 'Release', 'better_sqlite3.node');
-  if (existsSync(sqliteSource)) {
-    mkdirSync(dirname(sqliteTarget), { recursive: true });
-    copyFileSync(sqliteSource, sqliteTarget);
-    console.log('[3/4] better-sqlite3 native module copied ✓');
-  } else {
-    console.warn('[3/4] better-sqlite3 native module not found in source, will use sql.js fallback');
+
+// 查找 better-sqlite3 .node 文件的所有可能位置
+const sqliteSearchPaths = [
+  // flat node_modules (npm install 后的位置)
+  resolve(GW_DST, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
+  // pnpm 源位置
+  resolve(GW_DIR, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
+  resolve(GW_DIR, 'node_modules', '.pnpm', 'better-sqlite3@11.10.0', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
+];
+
+let sqliteFound = false;
+for (const src of sqliteSearchPaths) {
+  if (existsSync(src)) {
+    const target = resolve(GW_DST, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(src, target);
+    console.log(`[3/4] better-sqlite3 native module copied from ${src} ✓`);
+    sqliteFound = true;
+    break;
   }
-} catch (e) {
-  console.warn('[3/4] Failed to copy better-sqlite3 native module:', e.message);
+}
+if (!sqliteFound) {
+  console.warn('[3/4] better-sqlite3 native module not found in any search path, will use sql.js fallback');
+  console.warn('[3/4] Searched paths:', sqliteSearchPaths.map(p => '  ' + p).join('\n'));
 }
 
 console.log('[3/4] ✓');

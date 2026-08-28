@@ -120,31 +120,37 @@ export async function writeMemory(entry: Omit<MemoryEntry, 'ts'>): Promise<Memor
 
   // ══════════════════════════════════════════════════════
   // 4. 反向镜像到 MemoryManager KV (双轨制合并 2/2)
-  //    仅当 entry 有明确的 kvKey 时才回写, 避免噪音污染 KV
-  //    和正向镜像一致: 异步 fire-and-forget, 静默失败
+  //    所有 workspace 级记忆都镜像到 KV, 使用自动生成的 key 或 entityId
+  //    异步 fire-and-forget, 静默失败
   // ══════════════════════════════════════════════════════
-  const md = full.metadata || {};
-  if ((md as any).kvKey && full.workspace) {
+  if (full.workspace) {
     (async () => {
       try {
         const mod = await import('./memory-manager.js');
         const mgr = mod.getMemoryManager(full.workspace);
+        const md = full.metadata || {};
+        // 优先使用已有的 kvKey, 否则自动生成
+        const kvKey = ((md as any).kvKey as string) || full.entityId || `mem:${full.source}:${full.role}:${full.ts}`;
         const scope = (((md as any).kvScope as string) || 'project') as 'user' | 'session' | 'project' | 'global';
         const priority = (full.importance || 0) >= 0.8 ? 'high' : 'normal';
-        await mgr.remember({
-          key: (md as any).kvKey as string,
-          value: full.content || full.entityId || '',
-          scope,
-          metadata: {
-            priority,
-            mirroredFromJSONL: true,
-            entityId: full.entityId,
-            source: full.source,
-            role: full.role,
-            importance: full.importance,
-            userId: full.userId,
-          },
-        });
+        // 只镜像重要记忆 (importance >= 0.5) 或已有 entityId 的记忆
+        if ((full.importance || 0) >= 0.5 || full.entityId) {
+          await mgr.remember({
+            key: kvKey,
+            value: (full.content || '').slice(0, 500),
+            scope,
+            metadata: {
+              priority,
+              mirroredFromJSONL: true,
+              entityId: full.entityId,
+              source: full.source,
+              role: full.role,
+              importance: full.importance,
+              userId: full.userId,
+              ts: full.ts,
+            },
+          });
+        }
       } catch {
         /* 静默失败: 镜像总是可选的 */
       }

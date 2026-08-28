@@ -403,17 +403,17 @@ html, body {
 .ant-input-affix-wrapper { background: var(--bg-2) !important; border-color: var(--border) !important; }
 .ant-input-affix-wrapper > input.ant-input { background: transparent !important; }
 
-/* ====================== Ant Design Select 覆盖 (防止溢出) ====================== */
-.ant-select { width: 100% !important; }
+/* ====================== Ant Design Select 覆盖 ====================== */
+/* 移除 .ant-select { width: 100% !important; } — 它强制所有 Select 宽度 100%, 破坏布局 */
 .ant-select-dropdown { background: var(--panel) !important; }
 .ant-select-item { color: var(--fg) !important; }
 .ant-select-item-option-active { background: var(--card-hover) !important; }
 .ant-select-item-option-selected { background: var(--accent-soft) !important; }
 
 /* ====================== 全局溢出保护 ====================== */
-.ant-form-item-control-input { min-width: 0 !important; }
-.ant-col { min-width: 0 !important; }
-.ant-row { flex-wrap: wrap !important; }
+/* 移除可能导致布局变化的 !important, 改用低优先级 */
+:where(.ant-form-item-control-input) { min-width: 0; }
+:where(.ant-col) { min-width: 0; }
 
 /* ====================== App 架构层样式 ====================== */
 
@@ -817,12 +817,12 @@ html, body {
   box-shadow: 0 0 0 2px var(--accent-soft) !important;
 }
 
-/* Antd Button 点击反馈 */
+/* Antd Button 点击反馈 — 移除 !important 避免覆盖 antd 过渡动画 */
 .ant-btn:active {
   transform: scale(0.97);
 }
-.ant-btn {
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+:where(.ant-btn) {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* 链接/可点击 span 统一 hover 效果 */
@@ -844,4 +844,174 @@ html, body {
 }
 .ui-card:hover {
   box-shadow: var(--shadow-hover);
+}
+
+/* ====================== 欢迎页视觉增强 (2026-08-10) ====================== */
+
+/* Demo 卡片 — 基础样式 + 主题色 + Hover 动效 */
+.demo-card {
+  position: relative;
+  overflow: hidden;
+}
+.demo-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, transparent, var(--demo-color, #6366f1), transparent);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.demo-card:hover {
+  transform: translateY(-3px) !important;
+  border-color: var(--demo-color, #6366f1) !important;
+  box-shadow: 
+    0 8px 24px rgba(0,0,0,0.12),
+    0 0 0 1px rgba(99,102,241,0.1),
+    0 0 20px color-mix(in srgb, var(--demo-color, #6366f1) 15%, transparent) !important;
+}
+.demo-card:hover::before {
+  opacity: 1;
+}
+.demo-card:hover .demo-icon {
+  transform: scale(1.2) rotate(-5deg);
+}
+.demo-card .demo-icon {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  display: inline-block;
+}
+
+/* 欢迎页 Logo 动画 — 浮动呼吸光晕 */
+.welcome-logo {
+  animation: logoFloat 4s ease-in-out infinite;
+  filter: drop-shadow(0 4px 16px rgba(232,144,85,0.3));
+}
+@keyframes logoFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.welcome-logo-glow {
+  animation: logoGlow 3s ease-in-out infinite alternate;
+}
+@keyframes logoGlow {
+  0% { filter: drop-shadow(0 2px 8px rgba(232,144,85,0.2)); }
+  100% { filter: drop-shadow(0 4px 24px rgba(232,144,85,0.5)); }
+}
+
+/* 欢迎页标题 — 渐变文字 + 入场动画 */
+.welcome-title {
+  background: linear-gradient(135deg, var(--fg) 0%, var(--accent) 50%, var(--fg) 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: titleShimmer 4s ease-in-out infinite;
+}
+@keyframes titleShimmer {
+  0%, 100% { background-position: 0% center; }
+  50% { background-position: 200% center; }
+}
+
+/* 次标题淡入动画 */
+.welcome-subtitle {
+  animation: fadeUp 0.6s ease-out 0.2s both;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 能力数据展示区 */
+.welcome-stats {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  margin-bottom: 28px;
+  animation: fadeUp 0.6s ease-out 0.35s both;
+}
+.welcome-stat-item {
+  text-align: center;
+  padding: '10px 18px';
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  min-width: 80px;
+  transition: all 0.25s ease;
+}
+.welcome-stat-item:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 16px rgba(99,102,241,0.1);
+  transform: translateY(-2px);
+}
+.welcome-stat-number {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.welcome-stat-label {
+  font-size: 11px;
+  color: var(--muted-2);
+  margin-top: 2px;
+}
+
+/* 行业快捷指令胶囊 — 增强 */
+.welcome-action-chip {
+  padding: '5px 14px' !important;
+  border-radius: 20px !important;
+  font-size: 12px !important;
+  background: var(--panel) !important;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  position: relative;
+  overflow: hidden;
+}
+.welcome-action-chip::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--accent), transparent);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.welcome-action-chip:hover {
+  border-color: var(--accent) !important;
+  color: var(--fg) !important;
+  transform: scale(1.05) translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(99,102,241,0.15) !important;
+}
+.welcome-action-chip:hover::after {
+  opacity: 0.08;
+}
+
+/* 欢迎页动态背景粒子容器 */
+.welcome-bg-particles {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.welcome-particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  animation: particleFloat 8s ease-in-out infinite;
+}
+@keyframes particleFloat {
+  0% { opacity: 0; transform: translateY(20px) scale(0); }
+  20% { opacity: 0.6; }
+  80% { opacity: 0.3; }
+  100% { opacity: 0; transform: translateY(-80px) scale(1); }
+}
+
+/* 行业徽章脉冲动画 */
+.industry-badge-pulse {
+  animation: badgePulse 2.5s ease-in-out infinite;
+}
+@keyframes badgePulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+  50% { box-shadow: 0 0 0 6px transparent; }
 }

@@ -4,28 +4,31 @@
  * 共用: ZHIPU_API_KEY (文本/生图/生视频同一 key)
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Input, Button, Card, Space, Tag, Alert, Spin, message, Progress, Empty, Select, Tooltip, Modal } from 'antd';
-import { VideoCameraOutlined, DownloadOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined, SendOutlined, SwapOutlined, ThunderboltOutlined, PlusOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { Input, Button, Card, Space, Tag, Alert, Spin, message, Progress, Select, Modal, Checkbox, Divider } from 'antd';
+import { VideoCameraOutlined, DownloadOutlined, HistoryOutlined, DeleteOutlined, PlusOutlined, InfoCircleOutlined, BulbOutlined, UploadOutlined, PlayCircleOutlined, RedoOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
+import { useModelStore } from '../store/modelStore';
+import { apiPost } from '../services/api';
 
 const PRESETS = [
-  { label: '风景', prompt: 'A cinematic sunset over a misty mountain valley, soft golden light' },
-  { label: '动物', prompt: 'A cute orange cat playing in a cozy living room, natural lighting' },
-  { label: '海洋', prompt: 'Aerial view of ocean waves crashing on a sandy beach at golden hour' },
-  { label: '城市', prompt: 'Cyberpunk city street at night, rain-soaked neon reflections' },
-  { label: '科幻', prompt: 'A spaceship flying through colorful nebula in deep space' },
-  { label: '植物', prompt: 'Cherry blossom tree blooming, soft pink petals falling in the wind' },
-  { label: '电影感', prompt: 'Cinematic shot, shallow depth of field, anamorphic lens, film grain' },
-  { label: '建筑漫游', prompt: 'Architectural visualization, modern building, smooth walkthrough' },
-  { label: '美食', prompt: 'delicious food cooking, close-up, steam rising, cinematic food photography, slow motion' },
-  { label: '时尚', prompt: 'fashion runway, elegant model, dynamic lighting, high-end fashion photography' },
-  { label: '运动', prompt: 'sports action, dynamic motion, slow motion, athletic performance, dramatic lighting' },
-  { label: '自然', prompt: 'aerial nature landscape, birds eye view, smooth drone footage, misty mountains' },
-  { label: '烟花', prompt: 'fireworks display, night sky, colorful explosions, slow motion, festive' },
-  { label: '水下', prompt: 'underwater scene, coral reef, fish swimming, sunlight rays through water' },
-  { label: '星空', prompt: 'time-lapse of starry night sky, milky way, rotating stars, astrophotography' },
-  { label: '极光', prompt: 'aurora borealis, northern lights, green purple sky, arctic landscape, smooth motion' },
+  { label: '风景', prompt: 'A cinematic sunset over a misty mountain valley, soft golden light', category: '自然' },
+  { label: '动物', prompt: 'A cute orange cat playing in a cozy living room, natural lighting', category: '自然' },
+  { label: '海洋', prompt: 'Aerial view of ocean waves crashing on a sandy beach at golden hour', category: '自然' },
+  { label: '植物', prompt: 'Cherry blossom tree blooming, soft pink petals falling in the wind', category: '自然' },
+  { label: '烟花', prompt: 'fireworks display, night sky, colorful explosions, slow motion, festive', category: '自然' },
+  { label: '极光', prompt: 'aurora borealis, northern lights, green purple sky, arctic landscape, smooth motion', category: '自然' },
+  { label: '水下', prompt: 'underwater scene, coral reef, fish swimming, sunlight rays through water', category: '自然' },
+  { label: '星空', prompt: 'time-lapse of starry night sky, milky way, rotating stars, astrophotography', category: '自然' },
+  { label: '城市', prompt: 'Cyberpunk city street at night, rain-soaked neon reflections', category: '人文' },
+  { label: '科幻', prompt: 'A spaceship flying through colorful nebula in deep space', category: '人文' },
+  { label: '电影感', prompt: 'Cinematic shot, shallow depth of field, anamorphic lens, film grain', category: '人文' },
+  { label: '建筑漫游', prompt: 'Architectural visualization, modern building, smooth walkthrough', category: '人文' },
+  { label: '美食', prompt: 'delicious food cooking, close-up, steam rising, cinematic food photography, slow motion', category: '人文' },
+  { label: '时尚', prompt: 'fashion runway, elegant model, dynamic lighting, high-end fashion photography', category: '人文' },
+  { label: '运动', prompt: 'sports action, dynamic motion, slow motion, athletic performance, dramatic lighting', category: '人文' },
 ];
+
+const PRESET_CATEGORIES = ['全部', '自然', '人文'];
 
 const DURATIONS = [
   { value: '3s', label: '3秒 (快速)', frames: 73, fps: 24 },
@@ -81,6 +84,10 @@ export const VideoGen: React.FC = () => {
   const [duration, setDuration] = useState('5s');
   const [model, setModel] = useState('cogvideo');
   const [busy, setBusy] = useState(false);
+  const [presetCategory, setPresetCategory] = useState('全部');
+  // ★ 四维润色
+  const [dimensions, setDimensions] = useState<string[]>(['action', 'atmosphere', 'quality']);
+  const [optimizing, setOptimizing] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [current, setCurrent] = useState<HistoryItem | null>(null);
   const [firstFrame, setFirstFrame] = useState<string>(''); // 首帧 base64
@@ -95,8 +102,10 @@ export const VideoGen: React.FC = () => {
   const [newModel, setNewModel] = useState<Partial<CustomModel>>({});
 
   // 合并内置模型和自定义模型
+  const videoModels = useModelStore.getState().models.filter(m => m.modelType === 'video' && m.enabled);
   const allModelOptions = [
     ...MODELS.map(m => ({ value: m.value, label: m.label })),
+    ...videoModels.map(m => ({ value: m.id, label: `${m.label}${m.freeQuotaNote ? ' ' + m.freeQuotaNote : ''}` })),
     ...customModels.map(m => ({ value: `custom:${m.id}`, label: `🔑 ${m.name}`, isCustom: true })),
   ];
 
@@ -136,6 +145,15 @@ export const VideoGen: React.FC = () => {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) setHistory(JSON.parse(raw));
     } catch {}
+    // ★ 读取跨页首帧 (从 ImageStudio 发送过来)
+    try {
+      const crossFrame = localStorage.getItem('agentai-video-firstframe');
+      if (crossFrame) {
+        setFirstFrame(crossFrame);
+        localStorage.removeItem('agentai-video-firstframe');
+        message.info('📸 已从图像工作室接收首帧图片');
+      }
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -147,6 +165,56 @@ export const VideoGen: React.FC = () => {
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   const httpUrl = GATEWAY_HTTP;
+
+  /** ★ LLM 提示词优化 (接入真实 AI) */
+  const optimizePrompt = async () => {
+    if (!prompt.trim()) { message.warning('请先输入描述'); return; }
+    setOptimizing(true);
+    try {
+      // 构建上下文: 四维润色选项
+      const ctxParts: string[] = [];
+      if (dimensions.includes('action')) ctxParts.push('动作增强');
+      if (dimensions.includes('atmosphere')) ctxParts.push('氛围渲染');
+      if (dimensions.includes('quality')) ctxParts.push('质量提升');
+      if (dimensions.includes('style')) ctxParts.push('风格化');
+
+      const data = await apiPost('/v1/prompt/optimize', {
+        text: prompt,
+        type: 'video',
+        context: ctxParts.length > 0 ? `用户选择的增强维度: ${ctxParts.join(', ')}` : undefined,
+      });
+
+      if (data.ok && data.enhanced) {
+        setPrompt(data.enhanced);
+        message.success('✨ AI 已优化提示词');
+      } else {
+        // 降级: 本地增强
+        const enhancers: string[] = [];
+        let enhanced = prompt;
+        if (dimensions.includes('action')) { enhanced += ', smooth natural motion, dynamic movement, fluid animation'; enhancers.push('动作增强'); }
+        if (dimensions.includes('atmosphere')) { enhanced += ', cinematic lighting, atmospheric depth, soft bokeh background'; enhancers.push('氛围渲染'); }
+        if (dimensions.includes('quality')) { enhanced += ', 8k, ultra detailed, professional, high quality'; enhancers.push('质量提升'); }
+        if (dimensions.includes('style')) { enhanced += ', cinematic style, film grain, anamorphic lens'; enhancers.push('风格化'); }
+        setPrompt(enhanced);
+        message.warning(`AI 优化失败, 已本地增强: ${enhancers.join(' · ')}`);
+      }
+    } catch (e: any) {
+      console.error('[VideoGen] 优化失败:', e);
+      message.error('优化失败: ' + (e?.message || '未知错误'));
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
+  /** ★ 重置全部 */
+  const resetAll = () => {
+    setPrompt('');
+    setFirstFrame('');
+    setLastFrame('');
+    setCurrent(null);
+    setBusy(false);
+    if (pollRef.current) clearInterval(pollRef.current);
+  };
 
   const pollTask = (taskId: string, item: HistoryItem) => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -263,6 +331,11 @@ return (
         }
       >
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          {/* ★ 步骤 1: 描述 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: 'var(--bg)', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>1</div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>输入视频描述</span>
+          </div>
           <Input.TextArea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
@@ -273,12 +346,68 @@ return (
           />
           <Space wrap>
             <span style={{ color: 'var(--muted)' }}>🎬 场景:</span>
-            {PRESETS.map(p => (
-              <Tag key={p.label} color="purple" style={{ cursor: 'pointer', padding: '4px 8px' }} onClick={() => setPrompt(p.prompt)}>
-                {p.label}
-              </Tag>
+            {/* ★ 分类筛选 */}
+            {PRESET_CATEGORIES.map(cat => (
+              <Tag.CheckableTag key={cat} checked={presetCategory === cat} onChange={() => setPresetCategory(cat)}>
+                {cat}
+              </Tag.CheckableTag>
             ))}
           </Space>
+          {/* ★ 场景预设卡片化 */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 6 }}>
+            {PRESETS.filter(p => presetCategory === '全部' || p.category === presetCategory).map(p => {
+              const presetIcons: Record<string, string> = {
+                '风景': '🏔️', '动物': '🐱', '海洋': '🌊', '植物': '🌸', '城市': '🌃', '科幻': '🚀',
+                '电影感': '🎬', '建筑漫游': '🏛️', '美食': '🍜', '时尚': '👗', '运动': '⚽',
+                '烟花': '🎆', '水下': '🐠', '星空': '🌌', '极光': '❄️',
+              };
+              const active = prompt === p.prompt;
+              return (
+                <button key={p.label}
+                  onClick={() => setPrompt(p.prompt)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '8px 10px', borderRadius: 8, fontSize: 12,
+                    background: active ? 'rgba(139,92,246,0.15)' : 'var(--panel)',
+                    border: `1px solid ${active ? '#8b5cf6' : 'var(--border)'}`,
+                    color: active ? '#8b5cf6' : 'var(--fg-2)',
+                    cursor: 'pointer', textAlign: 'left',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <span style={{ fontSize: 15 }}>{presetIcons[p.label] || '🎬'}</span>
+                  <span style={{ fontWeight: 600 }}>{p.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* ★ 四维润色面板 */}
+          <div style={{ padding: 12, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>✨ 提示词四维润色</span>
+              <Button size="small" icon={<BulbOutlined />} loading={optimizing} onClick={optimizePrompt}
+                disabled={!prompt.trim() || busy}
+                style={{ borderRadius: 6 }}
+              >{optimizing ? '润色中...' : '一键润色'}</Button>
+            </div>
+            <Checkbox.Group value={dimensions} onChange={(vals) => setDimensions(vals as string[])}
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
+            >
+              <Checkbox value="action" style={{ fontSize: 12 }}>🏃 动作增强</Checkbox>
+              <Checkbox value="atmosphere" style={{ fontSize: 12 }}>🌅 氛围渲染</Checkbox>
+              <Checkbox value="quality" style={{ fontSize: 12 }}>💎 质量提升</Checkbox>
+              <Checkbox value="style" style={{ fontSize: 12 }}>🎬 风格化</Checkbox>
+            </Checkbox.Group>
+          </div>
+
+          <Divider style={{ margin: '4px 0' }} />
+
+          {/* ★ 步骤 2: 设置 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: 'var(--bg)', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>2</div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>选择时长与首尾帧</span>
+          </div>
           <Space wrap>
             <span style={{ color: 'var(--muted)' }}>⏱ 时长:</span>
             {DURATIONS.map(d => (
@@ -290,15 +419,12 @@ return (
                 {d.label}
               </Tag.CheckableTag>
             ))}
-            <Tooltip title="优化提示词">
-              <Button size="small" icon={<SwapOutlined />} onClick={() => {
-                setPrompt(`masterpiece, best quality, cinematic, ${prompt}, 8k, professional`);
-              }} disabled={busy}>优化</Button>
-            </Tooltip>
-            <Button size="small" icon={<VideoCameraOutlined />} onClick={() => imgRef.current?.click()} disabled={busy}>
+          </Space>
+          <Space wrap>
+            <Button size="small" icon={<UploadOutlined />} onClick={() => imgRef.current?.click()} disabled={busy}>
               {firstFrame ? '更换首帧' : '上传首帧'}
             </Button>
-            <Button size="small" icon={<VideoCameraOutlined />} onClick={() => lastFrameRef.current?.click()} disabled={busy || !firstFrame}>
+            <Button size="small" icon={<UploadOutlined />} onClick={() => lastFrameRef.current?.click()} disabled={busy || !firstFrame}>
               {lastFrame ? '更换尾帧' : '上传尾帧'}
             </Button>
             {(firstFrame || lastFrame) && <Button size="small" danger onClick={() => { setFirstFrame(''); setLastFrame(''); }}>清除图片</Button>}
@@ -306,14 +432,11 @@ return (
               onChange={e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => setFirstFrame(r.result as string); r.readAsDataURL(f); e.target.value = ''; }} />
             <input ref={lastFrameRef} type="file" accept="image/*" style={{ display: 'none' }}
               onChange={e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => setLastFrame(r.result as string); r.readAsDataURL(f); e.target.value = ''; }} />
-            <Button type="primary" size="large" loading={busy} onClick={() => submit()}>
-              {busy ? '提交中...' : '生成'}
-            </Button>
           </Space>
           {model === 'cogvideo' && (
             <Alert message="CogVideoX-3 免费模型, 同 ZHIPU_API_KEY。支持: 文生视频 / 图生视频 / 首尾帧生视频" style={{ fontSize: 11, background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }} showIcon icon={<InfoCircleOutlined />} />
           )}
-          {/* 首尾帧预览 */}
+          {/* ★ 跨页首帧提示 */}
           {firstFrame && (
             <div style={{ display: 'flex', gap: 12, padding: 8, borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)' }}>
               <div style={{ textAlign: 'center' }}>
@@ -338,6 +461,31 @@ return (
           {model === 'agnes' && (
             <Alert message={`Agnes Video V2.0 | 时长: ${duration} | 帧率: 24fps | 需 AGENTAI_API_KEY`} style={{ fontSize: 11, background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }} showIcon icon={<InfoCircleOutlined />} />
           )}
+
+          <Divider style={{ margin: '4px 0' }} />
+
+          {/* ★ 步骤 3: 生成 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: 'var(--bg)', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>3</div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>生成视频</span>
+            <span style={{ fontSize: 11, color: 'var(--muted-2)' }}>预计 {duration === '3s' ? '1-2 分钟' : duration === '5s' ? '2-3 分钟' : '3-5 分钟'}</span>
+          </div>
+          <Space>
+            <Button type="primary" size="large" icon={<PlayCircleOutlined />} loading={busy} onClick={() => submit()}
+              disabled={!prompt.trim() || busy}
+              style={{
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                border: 'none', borderRadius: 10, padding: '0 32px',
+                boxShadow: '0 4px 16px rgba(99,102,241,0.3)',
+              }}
+            >
+              {busy ? '提交中...' : '生成视频'}
+            </Button>
+            {/* ★ 重置按钮 */}
+            <Button size="large" icon={<RedoOutlined />} onClick={resetAll} disabled={busy}>
+              重置
+            </Button>
+          </Space>
         </Space>
       </Card>
 
@@ -369,7 +517,7 @@ return (
           }
         >
           {current.videoUrl ? (
-            <div style={{ textAlign: 'center', background: 'var(--panel)', padding: 12, borderRadius: 8 }}>
+            <div style={{ textAlign: 'center', background: 'var(--panel)', padding: 12, borderRadius: 8, animation: 'videoResultIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
               <video
                 src={current.videoUrl}
                 controls
@@ -386,6 +534,12 @@ return (
                 {current.status === 'queued' && '🕒 排队中...'}
                 {current.status === 'in_progress' && '🎨 AI 渲染中...'}
               </div>
+              {/* ★ 预估时间提示 */}
+              {current.status === 'in_progress' && current.progress > 0 && current.progress < 100 && (
+                <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 4 }}>
+                  预计还需约 {Math.max(5, Math.ceil((100 - current.progress) * 0.8))} 秒
+                </div>
+              )}
             </div>
           )}
           <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 12 }}>
@@ -443,8 +597,50 @@ return (
       )}
 
       {!current && history.length === 0 && !busy && (
-        <Empty description={<span style={{ color: 'var(--muted)' }}>还没生成过视频, 上面写 prompt 提交</span>} style={{ marginTop: 60 }} />
+        <div style={{ textAlign: 'center', marginTop: 40, marginBottom: 40 }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🎬</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--fg)', marginBottom: 6 }}>
+            AI 视频生成
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--muted-2)', marginBottom: 24, maxWidth: 400, margin: '0 auto 24px' }}>
+            输入视频描述，选择场景预设，点击生成即可创建 AI 视频。支持文生视频 / 图生视频 / 首尾帧过渡
+          </div>
+          {/* 灵感画廊 */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, maxWidth: 500, margin: '0 auto' }}>
+            {PRESETS.slice(0, 6).map(p => {
+              const presetIcons: Record<string, string> = {
+                '风景': '🏔️', '动物': '🐱', '海洋': '🌊', '植物': '🌸', '城市': '🌃', '科幻': '🚀',
+              };
+              return (
+                <button key={p.label}
+                  onClick={() => setPrompt(p.prompt)}
+                  style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                    padding: '20px 12px', borderRadius: 12, cursor: 'pointer',
+                    background: 'var(--panel)', border: '1px solid var(--border)',
+                    transition: 'all 0.25s ease', textAlign: 'center',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(99,102,241,0.1)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; }}
+                >
+                  <span style={{ fontSize: 32 }}>{presetIcons[p.label] || '🎬'}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>{p.label}</span>
+                  <span style={{ fontSize: 10, color: 'var(--muted-2)', lineHeight: 1.3 }}>点击试试 →</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
+
+      {/* ★ 结果动画 CSS */}
+      <style>{`
+        @keyframes videoResultIn {
+          0% { opacity: 0; transform: scale(0.92) translateY(20px); }
+          60% { transform: scale(1.02) translateY(-4px); }
+          100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+      `}</style>
 
       {/* 自定义模型配置弹窗 */}
       <Modal

@@ -1,34 +1,31 @@
 [package]
-name = "pulseflow-desktop"
+name = "agentai-desktop"
 version = "0.1.0"
-description = "PulseFlow — 让智能体理解系统的生命状态"
-authors = ["PulseFlow Team"]
+description = "AgentAI Desktop"
+authors = ["you"]
 edition = "2021"
-publish = false
+
+[lib]
+name = "agentai_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "image-ico"] }
 tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-log = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
-# tauri-plugin-notification = \"2\"  // 暂时禁用，API 变更待修复
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
-anyhow = "1"
-tokio = { version = "1", features = ["time"] }
+reqwest = { version = "0.12", features = ["json"] }
+sysinfo = "0.32"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
-
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1
-panic = "abort"

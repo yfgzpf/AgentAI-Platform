@@ -1,0 +1,128 @@
+{
+  "decoration": {
+    "id": "decoration",
+    "label": "装修建材",
+    "themeId": "decoration",
+    "supportedFormats": [".dwg", ".dxf", ".pdf", ".docx", ".doc", ".jpg", ".jpeg", ".png", ".bmp", ".xlsx"],
+    "knowledgeFiles": ["decoration/报价模板.json", "decoration/施工规范.md", "decoration/材料清单.json", "decoration/设计风格索引.md"],
+    "skills": [
+      { "name": "recognize_blueprint", "description": "识别CAD图纸(.dwg/.dxf/.pdf), 提取房间/门窗/尺寸信息。学自 cad_analyzer.py", "category": "format" },
+      { "name": "parse_requirement", "description": "解析客户自然语言需求, 提取面积/材料/预算。学自 SmartRequirementParser", "category": "knowledge" },
+      { "name": "generate_quotation", "description": "生成装修报价表(xlsx)。空间报价法+Excel公式+3工作表。学自 generate_haicang_quote_final.py", "category": "workflow" },
+      { "name": "measure_materials", "description": "根据房间面积计算材料用量。包含: 地砖/墙砖/美缝/乳胶漆/防水/柜体。学自 construction_knowledge_base.json", "category": "knowledge" },
+      { "name": "parse_dxf", "description": "解析DXF图纸文件，提取墙体/门窗/房间尺寸数据。学自 cad-import.ts + cad_analyzer.py", "category": "format" },
+      { "name": "generate_cad_drawing", "description": "生成标准施工图(含图框), 支持A3/A4, 含尺寸标注。学自 cad_generation_service.py", "category": "workflow" },
+      { "name": "query_materials_library", "description": "查询建材知识库。瓷砖/木材/涂料/五金/管材 规格-价格-应用。学自 construction_knowledge_base.json", "category": "knowledge" },
+      { "name": "quotation_form", "description": "装修报价信息收集表单。11个字段供前端展示追问卡片。", "category": "workflow" }
+    ]
+  },
+  "ecommerce": {
+    "id": "ecommerce",
+    "label": "电商营销",
+    "themeId": "ecommerce",
+    "supportedFormats": [".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov", ".xlsx", ".csv", ".pdf", ".docx"],
+    "knowledgeFiles": ["ecommerce/商品品类.md", "ecommerce/营销术语.md", "ecommerce/平台规则.md"],
+    "skills": [
+      { "name": "generate_product_copy", "description": "生成商品详情文案，包含卖点提炼/场景描述/规格说明", "category": "workflow" },
+      { "name": "analyze_sales_data", "description": "分析店铺销售数据(Excel/CSV), 输出商品排行/趋势/转化率", "category": "knowledge" },
+      { "name": "generate_marketing_plan", "description": "制定营销推广方案，含目标/渠道/预算/排期/KPI", "category": "workflow" },
+      { "name": "generate_product_image_prompt", "description": "生成商品图/主图/场景图的AI绘图提示词", "category": "workflow" }
+    ]
+  },
+  "education": {
+    "id": "education",
+    "label": "教育",
+    "themeId": "education",
+    "supportedFormats": [".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".md", ".txt"],
+    "knowledgeFiles": ["education/教学大纲模板.md", "education/评分标准.md"],
+    "skills": [
+      { "name": "generate_lesson_plan", "description": "生成教学教案，含教学目标/重难点/教学过程/作业布置", "category": "workflow" },
+      { "name": "generate_exam", "description": "出题/组卷，支持单选/多选/判断/填空/简答", "category": "workflow" },
+      { "name": "analyze_student_scores", "description": "分析学生成绩数据，输出平均分/分布/进退步/薄弱点", "category": "knowledge" },
+      { "name": "generate_course_outline", "description": "制定课程大纲，含章节/学时/教学目标/参考书目", "category": "workflow" }
+    ]
+  },
+  "developer": {
+    "id": "developer",
+    "label": "开发者",
+    "themeId": "developer",
+    "supportedFormats": [".ts", ".js", ".py", ".go", ".rs", ".java", ".cpp", ".json", ".yaml", ".md", ".toml"],
+    "knowledgeFiles": ["developer/代码规范.md", "developer/架构模式.md"],
+    "skills": [
+      { "name": "review_code", "description": "审查代码质量，检查命名/结构/安全/性能问题", "category": "workflow" },
+      { "name": "analyze_architecture", "description": "分析项目架构，生成模块依赖图/数据流图/架构评估", "category": "knowledge" },
+      { "name": "debug_issue", "description": "排查和修复bug，分析错误日志/堆栈跟踪/复现步骤", "category": "workflow" },
+      { "name": "performance_optimize", "description": "分析和优化性能瓶颈，含CPU/内存/网络/渲染", "category": "workflow" }
+    ]
+  },
+  "comic": {
+    "id": "comic",
+    "label": "漫剧创作",
+    "themeId": "comic",
+    "supportedFormats": [".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".md", ".txt", ".pdf"],
+    "knowledgeFiles": ["comic/分镜模板.md", "comic/角色设定指南.md"],
+    "skills": [
+      { "name": "generate_script", "description": "生成漫画/短剧剧本，含角色/场景/对白/分镜", "category": "workflow" },
+      { "name": "design_character", "description": "设计漫画角色，含外观/性格/背景/关系网", "category": "workflow" },
+      { "name": "generate_storyboard", "description": "生成漫画分镜脚本，含镜头/构图/对白/时长", "category": "workflow" }
+    ]
+  },
+  "real_estate": {
+    "id": "real_estate",
+    "label": "房地产",
+    "themeId": "real_estate",
+    "supportedFormats": [".pdf", ".docx", ".doc", ".xlsx", ".jpg", ".jpeg", ".png", ".dwg", ".dxf"],
+    "knowledgeFiles": ["real_estate/户型术语.md", "real_estate/营销话术.md"],
+    "skills": [
+      { "name": "generate_property_desc", "description": "生成房产描述文案，含户型/配套/交通/卖点", "category": "workflow" },
+      { "name": "analyze_property_value", "description": "分析房产价值，含周边房价对比/升值潜力/租金回报", "category": "knowledge" },
+      { "name": "generate_floor_plan_desc", "description": "分析户型图，输出各功能区/动线/通风/采光评价", "category": "format" }
+    ]
+  },
+  "medical": {
+    "id": "medical",
+    "label": "中医问诊",
+    "themeId": "medical",
+    "supportedFormats": [".pdf", ".docx", ".doc", ".xlsx", ".csv", ".jpg", ".jpeg", ".dcm"],
+    "knowledgeFiles": [
+      "tcm_classics/常见证型索引.md",
+      "tcm_herbs/常用药材性味归经.md",
+      "tcm_cases/经典医案精选.md",
+      "tcm_wellness/体质辨识与养生.md"
+    ],
+    "skills": [
+      { "name": "analyze_symptom", "description": "分析症状描述，提供可能的病因和就医建议（非诊断）", "category": "knowledge" },
+      { "name": "generate_health_report", "description": "生成健康报告解读，含体检指标分析/风险评估/改善建议", "category": "workflow" },
+      { "name": "query_drug_info", "description": "查询药品信息，含成分/适应症/用法/禁忌/不良反应", "category": "knowledge" },
+      { "name": "tcm_diagnose", "description": "中医完整问诊→辨证→开方: 按十问歌收集症状, 四诊合参, 八纲+脏腑+气血津液三步辨证, 输出证型+治则+处方(君臣佐使+剂量)+煎服法+医嘱", "category": "tcm-diagnostic" },
+      { "name": "tcm_classic_search", "description": "检索中医经典原文 (伤寒论/金匮要略/黄帝内经/温病条辨)，含白话翻译和临床解读", "category": "tcm-classic" },
+      { "name": "tcm_case_match", "description": "根据当前症状/证型匹配历史医案库中的相似案例，参考名老中医诊疗思路", "category": "tcm-case" },
+      { "name": "tcm_herb_query", "description": "查询中药材性味归经/功效主治/方剂君臣佐使/十八反十九畏配伍禁忌", "category": "tcm-herb" },
+      { "name": "tcm_wellness_plan", "description": "根据体质类型(王琦九分法)制定个性化养生方案: 饮食/起居/功法/季节养生", "category": "tcm-wellness" }
+    ]
+  },
+  "legal": {
+    "id": "legal",
+    "label": "法律",
+    "themeId": "legal",
+    "supportedFormats": [".pdf", ".docx", ".doc", ".md", ".txt"],
+    "knowledgeFiles": ["legal/法律法规索引.md", "legal/合同模板.md"],
+    "skills": [
+      { "name": "draft_contract", "description": "起草合同文本，支持租赁/劳务/买卖/服务等类型", "category": "workflow" },
+      { "name": "analyze_legal_risk", "description": "分析法律风险，检查合同/行为的合规性", "category": "knowledge" },
+      { "name": "query_law", "description": "查询法律法规，支持按关键词/领域/效力级别检索", "category": "knowledge" }
+    ]
+  },
+  "manufacturing": {
+    "id": "manufacturing",
+    "label": "制造业",
+    "themeId": "manufacturing",
+    "supportedFormats": [".pdf", ".xlsx", ".csv", ".dwg", ".dxf", ".stp", ".step", ".md"],
+    "knowledgeFiles": ["manufacturing/工艺标准.md", "manufacturing/质检规范.md"],
+    "skills": [
+      { "name": "generate_process_flow", "description": "生成生产工艺流程，含工序/参数/设备/质检点", "category": "workflow" },
+      { "name": "analyze_quality_data", "description": "分析质检数据，输出合格率/缺陷分布/趋势/改进建议", "category": "knowledge" },
+      { "name": "estimate_production_cost", "description": "估算生产成本，含材料/人工/设备/管理费", "category": "workflow" }
+    ]
+  }
+}

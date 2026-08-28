@@ -25,7 +25,7 @@ import {
 import { useProfileStore } from '../store';
 import { EditorChatPanel } from './EditorChatPanel';
 import { MonacoEditor, detectLangFromPath, type AICodeDecoration } from './MonacoEditor';
-import { useTaskOrchestrator } from '../store/taskOrchestratorStore';
+import { useTaskStore, useTaskOrchestrator } from '../store/taskStore';
 import { FileTimeline } from '../services/FileTimeline';
 import { gatewayFallback } from '../services/GatewayFallback';
 import { UnifiedWorkspace } from './UnifiedWorkspace';
@@ -59,6 +59,26 @@ interface OpenFile {
 
 const baseUrl = () => gatewayFallback.url || 'http://127.0.0.1:18789';
 
+/** 统一 fetch 封装: 自动处理错误和 JSON 解析 */
+async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  try {
+    const resp = await fetch(url, options);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      // 如果不是 JSON, 可能是错误页面
+      const text = await resp.text();
+      throw new Error(`Expected JSON, got: ${ct}`);
+    }
+    return await resp.json() as T;
+  } catch (e: any) {
+    if (e.message?.includes('Failed to fetch') || e.message?.includes('NetworkError')) {
+      throw new Error('网关未启动或无法连接');
+    }
+    throw e;
+  }
+}
+
 const LANGS: Record<string, string> = {
   '.ts': 'typescript', '.tsx': 'typescript', '.js': 'javascript', '.jsx': 'javascript',
   '.py': 'python', '.json': 'json', '.md': 'markdown', '.txt': 'text',
@@ -78,26 +98,26 @@ const fmtSize = (n: number): string => {
 };
 
 const API = {
-  drives: () => fetch(`${baseUrl()}/v1/fs/drives`).then(r => r.json()),
-  list: (dir: string) => fetch(`${baseUrl()}/v1/fs/list?dir=${encodeURIComponent(dir)}`).then(r => r.json()),
-  read: (p: string) => fetch(`${baseUrl()}/v1/files/read?path=${encodeURIComponent(p)}`).then(r => r.json()),
-  write: (p: string, content: string) => fetch(`${baseUrl()}/v1/files/write`, {
+  drives: () => apiFetch<{ drives: string[]; common?: string[] }>(`${baseUrl()}/v1/fs/drives`),
+  list: (dir: string) => apiFetch<any>(`${baseUrl()}/v1/fs/list?dir=${encodeURIComponent(dir)}`),
+  read: (p: string) => apiFetch<{ content: string; path: string; error?: string }>(`${baseUrl()}/v1/files/read?path=${encodeURIComponent(p)}`),
+  write: (p: string, content: string) => apiFetch<any>(`${baseUrl()}/v1/files/write`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: p, content }),
-  }).then(r => r.json()),
-  mkdir: (p: string) => fetch(`${baseUrl()}/v1/files/mkdir`, {
+  }),
+  mkdir: (p: string) => apiFetch<any>(`${baseUrl()}/v1/files/mkdir`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: p }),
-  }).then(r => r.json()),
-  touch: (p: string, content = '') => fetch(`${baseUrl()}/v1/files/touch`, {
+  }),
+  touch: (p: string, content = '') => apiFetch<any>(`${baseUrl()}/v1/files/touch`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: p, content }),
-  }).then(r => r.json()),
-  rename: (from: string, to: string) => fetch(`${baseUrl()}/v1/files/rename`, {
+  }),
+  rename: (from: string, to: string) => apiFetch<any>(`${baseUrl()}/v1/files/rename`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ from, to }),
-  }).then(r => r.json()),
-  remove: (p: string) => fetch(`${baseUrl()}/v1/files?path=${encodeURIComponent(p)}`, { method: 'DELETE' }).then(r => r.json()),
+  }),
+  remove: (p: string) => apiFetch<any>(`${baseUrl()}/v1/files?path=${encodeURIComponent(p)}`, { method: 'DELETE' }),
 };
 
 export const Editor: React.FC = () => {
@@ -549,7 +569,7 @@ export const Editor: React.FC = () => {
   const openDrivesModal = async () => {
     setOpenFolderModal(true);
     const d = await API.drives();
-    setDrivesInfo(d);
+    setDrivesInfo({ drives: d.drives || [], common: d.common || [] });
   };
 
   // ===== 状态栏数据 =====

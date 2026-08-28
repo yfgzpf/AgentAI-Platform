@@ -11,8 +11,9 @@ import { SandboxRulesEditor } from './SandboxRulesEditor';
 import { EvolutionPanel } from './EvolutionPanel';
 import MCPConfigModal from './mcp/MCPConfigModal';
 import { useSettingsStore, useFrameworkStore } from '../store';
-import { useModelStore, type ModelConfig } from '../store/modelStore';
+import { useModelStore, type ModelConfig, FACTORY_KEY_GROUPS } from '../store/modelStore';
 import { useModeStore, MODE_CONFIG, MODE_ORDER, type AppMode } from '../store/modeStore';
+import { useSubscriptionStore } from '../store/subscriptionStore';
 import { taskNotifier } from '../services/TaskNotifier';
 import { setTtsEnabled, isTtsEnabled } from '../services/VoiceService';
 import { VoiceSelector } from './VoiceSelector';
@@ -258,8 +259,8 @@ const MODEL_TEMPLATES: ModelTemplate[] = [
   // NVIDIA NIM 已移除 (2026-07-25): 需自建 GPU Docker + 端点不稳定 + 中国大陆不可达
 ];
 
-// ===== SuperAPI 模型工厂 - 模型列表及定价 =====
-interface SuperAPIModel {
+// ===== ALRC 聚合平台 - 模型列表及定价 =====
+interface ALRCModel {
   id: string;
   label: string;
   color: string;
@@ -268,19 +269,36 @@ interface SuperAPIModel {
   priceCache?: string;
   level?: string;
 }
-const SUPERAPI_MODEL_LIST: SuperAPIModel[] = [
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', color: '#10B981', priceIn: '0.51', priceOut: '1', level: 'default' },
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', color: '#059669', priceIn: '1.65', priceOut: '3.36', priceCache: '0.025', level: 'vvip' },
-  { id: 'glm-5.2', label: 'GLM-5.2 (智谱)', color: '#3B82F6', priceIn: '1.25', priceOut: '5.68', level: 'svip' },
-  { id: 'qwen3.7-plus', label: 'Qwen3.7 Plus (千问)', color: '#FF6A00', priceIn: '1.3072', priceOut: '6.192', level: 'default' },
-  { id: 'qwen3.7-max', label: 'Qwen3.7 Max (千问)', color: '#E65100', priceIn: '3.88', priceOut: '8.88', priceCache: '0.12', level: 'default' },
-  { id: 'qwen3.6-plus', label: 'Qwen3.6 Plus (千问)', color: '#FF8F00', priceIn: '1.1696', priceOut: '5.504', level: 'vvip' },
-  { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code', color: '#6466F1', priceIn: '1.25', priceOut: '5.68', level: 'vvip' },
-  { id: 'grok-4.3', label: 'Grok 4.3 (xAI)', color: '#EC4899', priceIn: '0.6', priceOut: '1', priceCache: '0.12', level: 'default' },
-  { id: 'doubao-seed-2.0-pro', label: '豆包 Seed 2.0 Pro', color: '#06B6D4', priceIn: '0.3', priceOut: '0.9', level: 'svip' },
-  { id: 'step-3.7-flash', label: 'Step 3.7 Flash (阶跃)', color: '#8B5CF6', priceIn: '0.11', priceOut: '0.3', level: 'vip' },
-  { id: 'mimo-v2.5-pro', label: 'Mimo V2.5 Pro', color: '#F97316', priceIn: '2.064', priceOut: '4.816', priceCache: '0.0344', level: 'vip' },
-  { id: 'MiniMax-M3', label: 'MiniMax M3', color: '#14B8A6', priceIn: '0.24', priceOut: '0.8', level: 'default' },
+// ===== 模型工厂模型列表 (按量计费) =====
+// 与 ALRO 平台 (https://alro.huazhiweilai.com) 实际可用模型保持同步
+const FACTORY_MODEL_LIST: ALRCModel[] = [
+  // DeepSeek
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash ⭐', color: '#10B981', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', color: '#059669', priceIn: '$1.035', priceOut: '$3.11', level: '专业版' },
+  // 智谱 GLM
+  { id: 'glm-4.7', label: 'GLM 4.7', color: '#3B82F6', priceIn: '$0.103', priceOut: '$0.31', level: '智谱' },
+  { id: 'glm-5', label: 'GLM 5', color: '#2563EB', priceIn: '$0.207', priceOut: '$0.62', level: '智谱' },
+  { id: 'glm-5.1', label: 'GLM 5.1', color: '#1D4ED8', priceIn: '$0.207', priceOut: '$0.62', level: '智谱' },
+  { id: 'glm-5.2', label: 'GLM 5.2', color: '#1E40AF', priceIn: '$0.207', priceOut: '$0.62', level: '智谱最新' },
+  // Kimi
+  { id: 'kimi-k2.5', label: 'Kimi K2.5', color: '#6366F1', priceIn: '$0.138', priceOut: '$0.41', level: '月之暗面' },
+  { id: 'kimi-k2.6', label: 'Kimi K2.6', color: '#4F46E5', priceIn: '$0.207', priceOut: '$0.62', level: '月之暗面' },
+  { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code', color: '#4338CA', priceIn: '$0.207', priceOut: '$0.62', level: '代码专用' },
+  { id: 'kimi-k3', label: 'Kimi K3', color: '#3730A3', priceIn: '$0.345', priceOut: '$1.04', level: '最新旗舰' },
+  // MiniMax
+  { id: 'MiniMax-M2.5', label: 'MiniMax M2.5', color: '#8B5CF6', priceIn: '$0.103', priceOut: '$0.31', level: 'MiniMax' },
+  { id: 'MiniMax-M2.7', label: 'MiniMax M2.7', color: '#7C3AED', priceIn: '$0.207', priceOut: '$0.62', level: 'MiniMax' },
+  { id: 'MiniMax/MiniMax-M3', label: 'MiniMax M3', color: '#6D28D9', priceIn: '$0.345', priceOut: '$1.04', level: 'MiniMax最新' },
+  // 其他
+  { id: 'hy3', label: 'HY3', color: '#10B981', priceIn: '$0.103', priceOut: '$0.31', level: '其他' },
+];
+// 模型工厂生图模型 (按次计费)
+const FACTORY_IMAGE_MODEL_LIST: { id: string; label: string; color: string; price: string; desc: string }[] = [
+  { id: 'nano-banana', label: 'Nano Banana', color: '#FBBF24', price: '$0.048/次', desc: 'Google · 标准版' },
+  { id: 'nano-banana-2', label: 'Nano Banana 2 ⭐', color: '#F59E0B', price: '$0.041/次', desc: 'Google · 最新版 · 最便宜' },
+  { id: 'nano-banana-pro', label: 'Nano Banana Pro', color: '#D97706', price: '$0.062/次', desc: 'Google · 旗舰版' },
+  { id: 'gpt-image-2', label: 'GPT Image 2 ⭐', color: '#3B82F6', price: '$0.014/次', desc: 'OpenAI · 标准版 · 超值' },
+  { id: 'gpt-image-2-vip', label: 'GPT Image 2 VIP', color: '#1D4ED8', price: '$0.045/次', desc: 'OpenAI · 高清版' },
 ];
 
 // ===== 免费模型内置列表 =====
@@ -309,10 +327,11 @@ export const Settings: React.FC = () => {
   const [newModel, setNewModel] = useState({ label: '', baseURL: '', apiKey: '', modelName: '', color: '#6366F1', modelType: 'chat' as 'chat' | 'image' | 'video' });
   const [testingCustom, setTestingCustom] = useState(false);
   
-  // SuperAPI 模型工厂
-  const [superApiKey, setSuperApiKey] = useState('');
-  const [testingSuperApi, setTestingSuperApi] = useState(false);
-  const [superApiExpanded, setSuperApiExpanded] = useState(false); // SuperAPI 子模型列表折叠状态
+  // ALRC 聚合平台
+  const [factoryKeys, setFactoryKeys] = useState<Record<string, string>>({});
+  const [testingKey, setTestingKey] = useState<string | null>(null);
+  const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>({});
+  const [alrcExpanded, setAlrcExpanded] = useState(false); // ALRC 子模型列表折叠状态
   
   // 通知设置
   const [desktopNotify, setDesktopNotify] = useState(taskNotifier.desktopEnabled);
@@ -341,7 +360,7 @@ export const Settings: React.FC = () => {
     const allProviders = [
       ...FREE_MODELS.map(m => ({ id: m.id, envVar: m.envVar })),
       ...MODEL_TEMPLATES.map(t => ({ id: t.id, envVar: `${t.id.toUpperCase()}_API_KEY` })),
-      { id: 'superapi', envVar: 'SUPERAPI_API_KEY' },
+      { id: 'alrc', envVar: 'ALRC_API_KEY' },
       { id: 'sensenova', envVar: 'SENSENOVA_API_KEY' },
       { id: 'longcat', envVar: 'LONGCAT_API_KEY' },
       // nvidia API key 检查已移除
@@ -770,11 +789,11 @@ return (
                     </div>
                   </div>
 
-                  {/* ===== SuperAPI 模型工厂 (迁至商业模型上方) ===== */}
+                  {/* ===== 模型工厂 (ALRC 聚合平台) ===== */}
                   <div>
                     <Divider orientation="left" style={{ fontSize: 14, color: 'var(--violet)', margin: 0 }}>
                       <ApiOutlined style={{ color: 'var(--violet)', marginRight: 6 }} />
-                      SuperAPI 模型工厂 (一个密钥接入全部模型)
+                      模型工厂 (一个密钥解锁全部 AI 能力)
                     </Divider>
 
                     <Alert
@@ -782,98 +801,124 @@ return (
                       style={{ marginTop: 8, marginBottom: 12, fontSize: 12 }}
                       message={
                         <div style={{ fontSize: 12, lineHeight: 1.8 }}>
-                          <div><strong>SuperAPI</strong> 是一个聚合 API，使用单一个密钥即可接入 DeepSeek、千问、GLM、Kimi 等多个模型。</div>
-                          <div style={{ marginTop: 4 }}>
-                            🔑 获取密钥及充值请联系开发者 — 提供密钥后在此处配置即可使用。
-                          </div>
-                          <div style={{ marginTop: 2, color: 'var(--violet)' }}>
-                            <LinkOutlined /> API 端点: <code>https://superapi.vanguard.dpdns.org/v1</code> (OpenAI 兼容协议)
+                          <div>模型工厂接入 GPT-5、Claude、Grok、豆包等顶级模型，支持对话、生图、生视频等多种能力。</div>
+                          <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--accent-soft)', borderRadius: 6, border: '1px dashed var(--accent)' }}>
+                            <b>🔑 如何获取密钥？</b><br/>
+                            添加作者微信 <b>agentai-platform</b> 获取密钥，填入后即可解锁全部模型。
                           </div>
                         </div>
                       }
                     />
 
-                    {/* SuperAPI API Key 配置 */}
+                    {/* 模型工厂: 按分组显示密钥+模型列表 */}
                     <div style={{ marginBottom: 12 }}>
-                      <Space.Compact style={{ width: '100%' }}>
-                        <Input.Password
-                          value={superApiKey}
-                          onChange={e => setSuperApiKey(e.target.value)}
-                          placeholder="输入 SuperAPI 密钥..."
-                          style={{ flex: 1 }}
-                        />
-                        <Button
-                          type="primary"
-                          icon={testingSuperApi ? <LoadingOutlined /> : <CheckOutlined />}
-                          onClick={async () => {
-                            if (!superApiKey.trim()) { message.warning('请输入 SuperAPI 密钥'); return; }
-                            setTestingSuperApi(true);
-                            const ok = await testConnection(
-                              'https://superapi.vanguard.dpdns.org/v1',
-                              superApiKey,
-                              'deepseek-v4-flash',
-                              'superapi-test'
-                            );
-                            setTestingSuperApi(false);
-                            if (ok) {
-                              await saveApiKeyToGateway('superapi', superApiKey);
-                              message.success('SuperAPI 密钥已保存');
-                            } else {
-                              message.error('连接测试失败，请检查密钥是否正确');
-                            }
-                          }}
-                          loading={testingSuperApi}
-                        >
-                          测试并保存密钥
-                        </Button>
-                      </Space.Compact>
-                    </div>
-
-                    {/* SuperAPI 子模型列表 (折叠展开, 默认折叠避免页面过长) */}
-                    <div
-                      style={{ fontSize: 12, color: 'var(--muted-2)', marginBottom: 8, cursor: 'pointer', userSelect: 'none' }}
-                      onClick={() => setSuperApiExpanded(!superApiExpanded)}
-                    >
-                      {superApiExpanded ? '▼' : '▶'} 子模型列表 ({SUPERAPI_MODEL_LIST.length} 个, 启用后出现在模型选择器中)
-                    </div>
-                    {superApiExpanded && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {SUPERAPI_MODEL_LIST.map(m => {
-                        const modelInStore = models.find(x => x.id === `superapi-${m.id}`);
-                        const isEnabled = modelInStore?.enabled ?? false;
-                        const hasKey = !!localStorage.getItem('SUPERAPI_API_KEY') || (superApiKey?.length > 0);
+                      {FACTORY_KEY_GROUPS.map(group => {
+                        // 获取该分组的模型列表
+                        const groupModels = group.id === 'chat' ? FACTORY_MODEL_LIST
+                          : group.id === 'image' ? FACTORY_IMAGE_MODEL_LIST
+                          : []; // GPT/Claude/Grok/Video 分组: 服务端尚未分配模型, 显示占位
+                        const hasKey = !!factoryKeys[group.envVar]?.trim();
+                        const isExpanded = !!groupExpanded[group.id];
                         return (
-                          <div key={m.id} style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '8px 12px', borderRadius: 8,
-                            background: 'var(--bg-2)', border: isEnabled ? '1px solid #8B5CF6' : '1px solid var(--border)',
-                          }}>
-                            <span style={{ width: 10, height: 10, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
-                                SuperAPI · {m.label}
-                                {isEnabled && <Tag style={{ marginLeft: 6, fontSize: 9, lineHeight: '14px', padding: '0 4px' }} color="purple">已启用</Tag>}
-                              </div>
-                              <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>
-                                输入 ¥{m.priceIn}/1M · 输出 ¥{m.priceOut}/1M{m.priceCache ? ` · 缓存 ¥${m.priceCache}/1M` : ''}
-                                {m.level && <span> · <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>{m.level}</Tag></span>}
-                              </div>
+                          <div key={group.id} style={{ marginBottom: 12, padding: 10, background: 'var(--bg-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                            {/* 分组标题 + 密钥输入 */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                              <span style={{ width: 10, height: 10, borderRadius: 2, background: group.color, display: 'inline-block' }} />
+                              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>{group.label}</span>
+                              <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>{group.desc}</span>
                             </div>
-                            <Button
-                              size="small"
-                              type={isEnabled ? 'primary' : 'default'}
-                              icon={isEnabled ? <CheckOutlined /> : <ApiOutlined />}
-                              disabled={!hasKey}
-                              onClick={() => useModelStore.getState().toggleModel(`superapi-${m.id}`, !isEnabled)}
-                              style={{ fontSize: 10 }}
-                            >
-                              {isEnabled ? '已启用' : '启用'}
-                            </Button>
+                            <Space.Compact style={{ width: '100%' }}>
+                              <Input.Password
+                                value={factoryKeys[group.envVar] || ''}
+                                onChange={e => setFactoryKeys(prev => ({ ...prev, [group.envVar]: e.target.value }))}
+                                placeholder={`输入${group.label}...`}
+                                style={{ flex: 1 }}
+                              />
+                              <Button
+                                type="primary"
+                                size="small"
+                                icon={testingKey === group.envVar ? <LoadingOutlined /> : <CheckOutlined />}
+                                onClick={async () => {
+                                  const key = factoryKeys[group.envVar]?.trim();
+                                  if (!key) { message.warning('请输入密钥'); return; }
+                                  setTestingKey(group.envVar);
+                                  const testModel = group.id === 'chat' ? 'deepseek-v4-flash' : group.id === 'image' ? 'nano-banana' : group.id === 'video' ? 'seedance-1.0-lite' : group.id;
+                                  const ok = await testConnection('https://alro.huazhiweilai.com/v1', key, testModel, `factory-${group.id}`);
+                                  setTestingKey(null);
+                                  if (ok) {
+                                    await saveApiKeyToGateway('factory', key);
+                                    (useSubscriptionStore as any).getState().activateWithKey();
+                                    message.success(`${group.label} 验证成功`);
+                                  }
+                                }}
+                                loading={testingKey === group.envVar}
+                              >
+                                验证
+                              </Button>
+                            </Space.Compact>
+
+                            {/* 该分组的模型列表 (可折叠) */}
+                            {groupModels.length > 0 && (
+                              <>
+                                <div
+                                  style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 8, cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setGroupExpanded(prev => ({ ...prev, [group.id]: !prev[group.id] }))}
+                                >
+                                  {isExpanded ? '▼' : '▶'} {groupModels.length} 个模型 (启用后出现在选择器中)
+                                </div>
+                                {isExpanded && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                                    {groupModels.map((m: any) => {
+                                      const modelInStore = models.find(x => x.id === `factory-${m.id}`);
+                                      const isEnabled = modelInStore?.enabled ?? false;
+                                      return (
+                                        <div key={m.id} style={{
+                                          display: 'flex', alignItems: 'center', gap: 8,
+                                          padding: '6px 10px', borderRadius: 6,
+                                          background: 'var(--bg)', border: isEnabled ? `1px solid ${group.color}` : '1px solid var(--border)',
+                                        }}>
+                                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
+                                          <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>
+                                              {m.label}
+                                              {isEnabled && <Tag style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }} color="purple">已启用</Tag>}
+                                            </div>
+                                            <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+                                              {'priceIn' in m ? `输入 ${m.priceIn}/1M · 输出 ${m.priceOut}/1M` : `按次 ${m.price}`}
+                                              {m.level && <span> · <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>{m.level}</Tag></span>}
+                                            </div>
+                                          </div>
+                                          <Button
+                                            size="small"
+                                            type={isEnabled ? 'primary' : 'default'}
+                                            icon={isEnabled ? <CheckOutlined /> : <ApiOutlined />}
+                                            disabled={!hasKey}
+                                            onClick={() => useModelStore.getState().toggleModel(`factory-${m.id}`, !isEnabled)}
+                                            style={{ fontSize: 10 }}
+                                          >
+                                            {isEnabled ? '已启用' : '启用'}
+                                          </Button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                            {groupModels.length === 0 && hasKey && (
+                              <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 4 }}>
+                                ⏳ 该分组模型列表将从服务端动态加载
+                              </div>
+                            )}
+                            {groupModels.length === 0 && !hasKey && (
+                              <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 4 }}>
+                                🔒 填入密钥后显示可用模型
+                              </div>
+                            )}
                           </div>
                         );
                       })}
                     </div>
-                    )}
                   </div>
 
                   {/* ===== 商用模型区域 (备选接入方案) ===== */}

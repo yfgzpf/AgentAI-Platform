@@ -88,14 +88,15 @@ class IdeStateCollector {
 
     private async _push(): Promise<void> {
         try {
+            const workspace = localStorage.getItem('agentai.workspace') || localStorage.getItem('currentWorkspace') || '';
             const payload: IdeStatePayload = {
                 ...this._state,
                 recent_edits: this._recent_edits.slice(0, 5),
             };
             await fetch('/v1/ide-state', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json', 'x-workspace': workspace },
+                body: JSON.stringify({ ...payload, workspace }),
             });
         } catch { /* push optional */ }
     }

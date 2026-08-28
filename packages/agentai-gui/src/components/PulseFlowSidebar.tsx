@@ -9,16 +9,18 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Input, Tooltip, Popconfirm, Dropdown, Modal } from 'antd';
 import {
-  MessageOutlined, FolderOpenOutlined, SyncOutlined,
+  MessageOutlined, FolderOpenOutlined,
   DeleteOutlined, EditOutlined, SearchOutlined, PlusOutlined,
   FileTextOutlined, DownOutlined, UpOutlined, CloseOutlined,
   PlayCircleOutlined, CheckCircleOutlined, RollbackOutlined,
   FolderOutlined, FolderAddOutlined, MoreOutlined,
   CalendarOutlined, ClockCircleOutlined, BookOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useChatStore } from '../store/chatStore';
 import { useSessionStore, type Session } from '../store/sessionStore';
-import { useTaskOrchestrator, type TaskSession } from '../store/taskOrchestratorStore';
+import { useModelStore } from '../store/modelStore';
+import { useTaskStore, type TaskSession } from '../store/taskStore';
 import { useProfileStore } from '../store';
 
 type TabKey = 'sessions' | 'files' | 'tasks';
@@ -234,7 +236,7 @@ const SessionsByDateGroup: React.FC<{
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'sessions', label: '会话', icon: <MessageOutlined style={{ fontSize: 12 }} /> },
   { key: 'files', label: '文件', icon: <FolderOpenOutlined style={{ fontSize: 12 }} /> },
-  { key: 'tasks', label: '任务', icon: <SyncOutlined style={{ fontSize: 12 }} /> },
+  { key: 'tasks', label: '工作流', icon: <ThunderboltOutlined style={{ fontSize: 12 }} /> },
 ];
 
 /* ════════════ File tree panel ════════════ */
@@ -388,6 +390,140 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
   );
 };
 
+/** Gateway HTTP base */
+const GW_HTTP = (() => {
+  const gw = (typeof window !== 'undefined' ? (window as any).__AGENTAI_GATEWAY__ : '') || 'ws://127.0.0.1:18789';
+  return gw.replace(/^ws([s]?):\/\//, 'http$1://');
+})();
+
+/** 预置工作流卡片 */
+const PresetWorkflowList: React.FC = () => {
+  const [workflows, setWorkflows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`${GW_HTTP}/api/preset-workflows`);
+      if (r.ok) {
+        const j = await r.json();
+        setWorkflows(j.workflows || []);
+      }
+    } catch { /* silent */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleTrigger = (w: any) => {
+    // 构建结构化触发消息
+    let msg = `我要执行「${w.description || w.name}」工作流。\n\n`;
+
+    // 执行步骤
+    if (w.stages && w.stages.length > 0) {
+      msg += `执行步骤:\n`;
+      w.stages.forEach((s: any) => {
+        msg += `${s.step}. ${s.description}\n`;
+      });
+      msg += '\n';
+    }
+
+    // 参数
+    if (w.parameters && w.parameters.length > 0) {
+      msg += `需要以下参数:\n`;
+      w.parameters.forEach((p: any) => {
+        const req = p.required ? '必填' : '可选';
+        const def = p.default !== undefined ? `, 默认: ${p.default}` : '';
+        const opts = p.options ? `, 可选值: ${p.options.map((o: any) => o.value).join('/')}` : '';
+        msg += `- ${p.label} (${req}${def}${opts}): ${p.placeholder || p.description || p.name}\n`;
+      });
+      msg += '\n';
+    }
+
+    // 示例
+    if (w.examples && w.examples.length > 0) {
+      const ex = w.examples[0];
+      msg += `示例: ${ex.title} — ${ex.description}\n`;
+      if (ex.input) {
+        msg += `示例输入: ${JSON.stringify(ex.input, null, 2)}\n`;
+      }
+      msg += '\n';
+    }
+
+    msg += `请根据以上工作流信息开始执行。如果缺少必填参数，请使用默认值或询问我。使用你可用的工具逐步完成每个步骤。`;
+
+    window.dispatchEvent(new CustomEvent('agentai:trigger-workflow', {
+      detail: {
+        workflow: w.name,
+        message: msg,
+        parameters: w.parameters,
+      },
+    }));
+  };
+
+  if (loading) {
+    return <div style={{ padding: 12, fontSize: 11, color: 'var(--muted-2)' }}>加载工作流...</div>;
+  }
+
+  if (workflows.length === 0) {
+    return (
+      <div style={{ padding: 8, fontSize: 11, color: 'var(--muted-2)' }}>
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <ThunderboltOutlined style={{ fontSize: 24, color: 'var(--muted-2)', marginBottom: 8 }} />
+          <div>暂无预置工作流</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ padding: '4px 4px', fontSize: 10, color: 'var(--muted-2)', display: 'flex', alignItems: 'center', gap: 4 }}>
+        <ThunderboltOutlined style={{ fontSize: 10 }} />
+        <span style={{ flex: 1 }}>预置工作流 ({workflows.length})</span>
+        <button onClick={load} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-2)', fontSize: 10, padding: 2 }}>⟳</button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 2px' }}>
+        {workflows.map((w) => (
+          <div
+            key={w.name}
+            onClick={() => handleTrigger(w)}
+            style={{
+              padding: '6px 8px', borderRadius: 5, cursor: 'pointer', marginBottom: 4,
+              display: 'flex', alignItems: 'flex-start', gap: 6,
+              border: '1px solid var(--border)',
+              transition: 'background 0.12s, border-color 0.12s',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.background = 'var(--accent-soft)';
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.background = 'transparent';
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+            }}
+          >
+            <span style={{ fontSize: 18, flexShrink: 0 }}>{w.icon}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontSize: 11, fontWeight: 600, color: 'var(--fg)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{w.description || w.name}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
+                <span style={{
+                  fontSize: 9, color: 'var(--accent)',
+                  background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 3,
+                }}>{w.category}</span>
+                <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>~{w.estimatedTime}分钟</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: string) => void; compact?: boolean }> = ({ width = 260, onFileOpen, compact = false }) => {
   const [activeTab, setActiveTab] = useState<TabKey>('sessions');
   const [searchQuery, setSearchQuery] = useState('');
@@ -417,9 +553,8 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
   
   // 按日期分组会话
   const groupedSessions = useMemo(() => {
-    const filtered = searchQuery
-      ? sessions.filter(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()))
-      : sessions;
+    const filtered = sessions
+      .filter(s => !searchQuery || s.title.toLowerCase().includes(searchQuery.toLowerCase()));
     
     const groups: Record<string, Session[]> = {};
     filtered.forEach(s => {
@@ -434,8 +569,9 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
       .map(([label, sess]) => ({ label, sessions: sess.sort((a, b) => b.updatedAt - a.updatedAt) }));
   }, [sessions, searchQuery]);
 
-  const handleNewSession = () => {
-    createSession('新对话');
+  const handleNewSession = (type: 'chat' | 'image' | 'video' = 'chat') => {
+    const titles = { chat: '新对话', image: '生图任务', video: '生视频任务' };
+    createSession(titles[type], undefined, type);
     chatStore.clearMessages();
   };
 
@@ -454,7 +590,7 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
             {/* 操作栏 */}
             <div style={{ padding: '6px 4px' }}>
               <button
-                onClick={handleNewSession}
+                onClick={() => handleNewSession('chat')}
                 style={{
                   width: '100%', padding: '6px 8px', borderRadius: 6, fontSize: 11,
                   background: 'var(--accent-soft)', color: 'var(--accent)',
@@ -501,7 +637,16 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                     groupLabel={group.label}
                     sessions={group.sessions}
                     activeId={activeId || undefined}
-                    onSelect={id => { useSessionStore.getState().setActive(id); }}
+                    onSelect={id => {
+                      const session = useSessionStore.getState().getActive();
+                      // 点击生图会话时自动切换到 image_edit 模式并选择生图模型
+                      if (session?.type === 'image') {
+                        useModelStore.getState().setChatMode('image_edit');
+                        const imgModels = useModelStore.getState().models.filter(m => m.modelType === 'image' && m.enabled);
+                        if (imgModels.length > 0) useModelStore.getState().setActive(imgModels[0].id);
+                      }
+                      useSessionStore.getState().setActive(id);
+                    }}
                     onDelete={id => { deleteSession(id); }}
                   />
                 ))
@@ -512,14 +657,7 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
       case 'files':
         return <FileTreePanel workspace={workspace} onFileOpen={onFileOpen} />;
       case 'tasks':
-        return (
-          <div style={{ padding: 8, fontSize: 11, color: 'var(--muted-2)' }}>
-            <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <SyncOutlined style={{ fontSize: 24, color: 'var(--muted-2)', marginBottom: 8 }} />
-              <div>任务面板开发中...</div>
-            </div>
-          </div>
-        );
+        return <PresetWorkflowList />;
     }
   };
 

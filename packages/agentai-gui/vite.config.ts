@@ -13,8 +13,12 @@ function readPkgVersion(): string {
 const APP_VERSION = process.env.npm_package_version || readPkgVersion() || '0.1.0';
 
 export default defineConfig({
-  base: './',  // ✅ 关键：Tauri 2 webview 需要相对路径，否则 prod 下 /assets/xxx 会 404
-  plugins: [react()],
+  base: './',
+  plugins: [
+    // @ant-design/icons v5 是 ES module + 支持 tree-shaking，不需要 babel-plugin-import
+    // antd 5.x 使用 CSS-in-JS，样式自动注入，也不需要 babel-plugin-import
+    react(),
+  ],
   define: {
     __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
@@ -22,13 +26,6 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
-    /*
-     * ╔═══════════════════════════════════════════════════════════════╗
-     * ║ 构建vs开发一致性修复 (P1): dedupe                           ║
-     * ║ pnpm monorepo 可能出现多份 antd/react 实例 → 打包后样式    ║
-     * ║ 优先级错乱、React hooks 重复初始化异常。强制在构建时去重    ║
-     * ╚═══════════════════════════════════════════════════════════════╝
-     */
     dedupe: [
       'react', 'react-dom',
       'antd', '@ant-design/cssinjs', '@ant-design/icons', '@ant-design/icons-svg',
@@ -37,7 +34,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    host: '127.0.0.1', // 明确指定 host
+    host: '127.0.0.1',
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:18789',
@@ -55,94 +52,33 @@ export default defineConfig({
         target: 'http://127.0.0.1:18789',
         changeOrigin: true,
         secure: false,
-        timeout: 30000, // 30秒超时
+        timeout: 30000,
         configure: (proxy, _options) => {
           proxy.on('error', (err, _req, _res) => {
-            console.log('[Vite Proxy] /v1 error:', err.message);
-          });
-          proxy.on('proxyReq', (proxyReq, req, _res) => {
-            console.log('[Vite Proxy] Sending Request:', req.method, req.url, '→', proxyReq.path);
-          });
-          proxy.on('proxyRes', (proxyRes, req, _res) => {
-            console.log('[Vite Proxy] Received Response:', proxyRes.statusCode, req.url);
+            console.error('[vite proxy] error:', err);
           });
         },
-      },
-      '/health': {
-        target: 'http://127.0.0.1:18789',
-        changeOrigin: true,
-        secure: false,
-        timeout: 30000,
-      },
-      '/agent': {
-        target: 'http://127.0.0.1:18789',
-        changeOrigin: true,
-        secure: false,
-        timeout: 30000,
       },
     },
   },
   build: {
-    outDir: 'dist',
-    target: 'es2022',
-    sourcemap: true,
-    cssCodeSplit: true, // 懒加载 chunk 的 CSS 单独抽取为 .css 文件
-    chunkSizeWarningLimit: 1600, // antd/react/vendor 合起来就 1MB+, 正常范围
-    commonjsOptions: {
-      transformMixedEsModules: true,
-      strictRequires: true,
-    },
+    sourcemap: false,
+    minify: 'esbuild',
+    target: 'es2020',
     rollupOptions: {
       output: {
-        // 确保chunk文件使用相对路径
-        chunkFileNames: 'assets/[name]-[hash].js',
-        entryFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash][extname]',
-        /*
-         * ╔═══════════════════════════════════════════════════════════╗
-         * ║ 构建vs开发一致性修复 (P1): manualChunks                 ║
-         * ║ 把 antd / icons / react / zustand 等稳定依赖拆成独立   ║
-         * ║ chunk: 1) 懒加载组件 chunk 变小, 首屏骨架屏停留时间短  ║
-         * ║         2) antd 样式 chunk 稳定, 降低"打包后样式乱"    ║
-         * ║         3) 业务代码与框架代码完全分离                   ║
-         * ╚═══════════════════════════════════════════════════════════╝
-         */
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return;
-          // 判断顺序: 越专用越先匹配, 避免 monaco → antd → react 循环
-          if (id.includes('/monaco-editor/') || id.includes('/@monaco-editor/')) return 'vendor-monaco';
-          if (id.includes('/antd/') || id.includes('/@ant-design/')) return 'vendor-antd';
-          if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/')) return 'vendor-react';
-          if (id.includes('/zustand/')) return 'vendor-zustand';
-          if (id.includes('/framer-motion/')) return 'vendor-framer';
-          if (id.includes('/axios/') || id.includes('/socket.io-client/')) return 'vendor-net';
-          if (id.includes('/react-markdown/') || id.includes('/remark-') || id.includes('/rehype-') || id.includes('/react-virtuoso/')) return 'vendor-md';
-          return 'vendor-other';
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'antd-vendor': ['antd', '@ant-design/icons'],
+          'editor-vendor': ['@monaco-editor/react', 'monaco-editor'],
+          'socket-vendor': ['socket.io-client'],
         },
+        chunkFileNames: 'assets/js/[name]-[hash].js',
+        entryFileNames: 'assets/js/[name]-[hash].js',
+        assetFileNames: 'assets/[ext]/[name]-[hash].[ext]',
       },
     },
+    assetsInlineLimit: 4096,
+    cssCodeSplit: true,
   },
-  optimizeDeps: {
-    exclude: ['monaco-editor'],
-    esbuildOptions: { target: 'es2022' },
-    /*
-     * ╔═════════════════════════════════════════════════════════════╗
-     * ║ 构建vs开发一致性修复 (P1): optimizeDeps.include          ║
-     * ║ dev 模式下提前打包 antd/cssinjs/icons/react，避免 HMR   ║
-     * ║ 动态转换导致"开发模式即时样式 vs 构建后静态样式"差异    ║
-     * ╚═════════════════════════════════════════════════════════════╝
-     */
-    include: [
-      'react', 'react-dom',
-      'antd', '@ant-design/cssinjs', '@ant-design/icons', '@ant-design/icons-svg',
-      'antd/locale/zh_CN',
-      'zustand',
-      'axios',
-      'framer-motion',
-    ],
-  },
-  worker: {
-    format: 'es',
-  },
-  clearScreen: false,
 });

@@ -61,7 +61,6 @@ export function installFetchInterceptor(): void {
       const targetBase = gatewayFallback.url || GATEWAY_HTTP;
       const redirectedUrl = targetBase + url;
       
-      console.log(`[fetch-interceptor] ${url} → ${redirectedUrl} (gateway status: ${gatewayFallback.currentStatus})`);
 
       if (input instanceof Request) {
         return originalFetch.call(window, new Request(redirectedUrl, input), init);
@@ -74,10 +73,8 @@ export function installFetchInterceptor(): void {
   };
 
   gatewayFallback.onChange((status) => {
-    console.log('[fetch-interceptor] gateway state changed to:', status);
   });
 
-  console.log('[fetch-interceptor] installed (current gateway status:', gatewayFallback.currentStatus + ')');
 }
 
 installFetchInterceptor();

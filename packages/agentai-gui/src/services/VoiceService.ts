@@ -191,7 +191,6 @@ async function speakInternal(text: string, options?: { rate?: number; pitch?: nu
       // 后端返回 JSON fallback
       const data = await resp.json();
       if (data.fallback === 'browser-api') {
-        console.log('[VoiceService] 后端建议使用浏览器 TTS:', data.note);
         speakText(cleanText, { voice: options?.voiceName, rate: options?.rate, pitch: options?.pitch });
         return;
       }
@@ -278,7 +277,6 @@ export function initWakeWord(callback: (transcript: string) => void): void {
     const last = event.results[event.results.length - 1];
     if (last.isFinal) {
       const transcript = last[0].transcript.trim();
-      console.log('[VoiceService] 识别到:', transcript);
 
       // 检测唤醒词 (动态获取, 包含用户名)
       const wakeWords = getWakeWords();

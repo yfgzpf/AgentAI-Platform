@@ -10,11 +10,14 @@
   <meta name="description" content="PulseFlow — 让智能体理解系统的生命状态，融合中医辨证思维的状态感知型智能体框架" />
   <title>PulseFlow Studio</title>
   
-  <!-- ═══ 艺术字体: 草书 + 科技感 ═══ -->
-  <!-- Ma Shan Zheng: 中文草书 -->
+  <!-- ═══ 艺术字体: 草书 + 科技感 (非阻塞加载, 不可达时自动降级) ═══ -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=ZCOOL+XiaoWei&family=Orbitron:wght@400;500;600;700&family=Exo+2:wght@400;500;600&family=Syncopate:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=ZCOOL+XiaoWei&family=Orbitron:wght@400;500;600;700&family=Exo+2:wght@400;500;600&family=Syncopate:wght@400;700&display=swap"
+    media="print" onload="this.media='all'">
+  <noscript>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=ZCOOL+XiaoWei&family=Orbitron:wght@400;500;600;700&family=Exo+2:wght@400;500;600&family=Syncopate:wght@400;700&display=swap">
+  </noscript>
   
   <!-- ═══ 关键: 预加载主题变量，防止 FOUC (Flash of Unstyled Content) ═══ -->
   <style>

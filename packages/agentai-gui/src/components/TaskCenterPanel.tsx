@@ -19,7 +19,7 @@ import {
   AppstoreOutlined, SendOutlined, VideoCameraOutlined, EditOutlined,
   BarChartOutlined, CodeOutlined, FileMarkdownOutlined,
 } from '@ant-design/icons';
-import { useTaskResumeStore } from '../store/taskResumeStore';
+import { useTaskStore, useTaskResumeStore } from '../store/taskStore';
 import {
   taskDuration, taskIdleMin, statusLabel, statusColor,
   type TaskMeta, type TaskSnapshot, type TaskStatus,
@@ -126,21 +126,55 @@ export const TaskCenterPanel: React.FC = () => {
     setPresetLoading(false);
   }, []);
 
-  // 触发工作流到对话窗口
+  // 触发工作流到对话窗口 — 先导航到 chat 页, 再发送事件 (ChatView 需挂载才能接收)
   const handleTriggerWorkflow = (workflow: any) => {
-    // 构建触发消息
-    const triggerMsg = `执行预置工作流: ${workflow.name}\n${workflow.description}`;
-    
-    // 通过自定义事件通知 ChatView
-    window.dispatchEvent(new CustomEvent('agentai:trigger-workflow', {
-      detail: {
-        workflow: workflow.name,
-        message: triggerMsg,
-        parameters: workflow.parameters,
+    // 构建结构化触发消息 (与 PulseFlowSidebar 一致)
+    let triggerMsg = `我要执行「${workflow.description || workflow.name}」工作流。\n\n`;
+
+    if (workflow.stages && workflow.stages.length > 0) {
+      triggerMsg += `执行步骤:\n`;
+      workflow.stages.forEach((s: any) => {
+        triggerMsg += `${s.step}. ${s.description}\n`;
+      });
+      triggerMsg += '\n';
+    }
+
+    if (workflow.parameters && workflow.parameters.length > 0) {
+      triggerMsg += `需要以下参数:\n`;
+      workflow.parameters.forEach((p: any) => {
+        const req = p.required ? '必填' : '可选';
+        const def = p.default !== undefined ? `, 默认: ${p.default}` : '';
+        const opts = p.options ? `, 可选值: ${p.options.map((o: any) => o.value).join('/')}` : '';
+        triggerMsg += `- ${p.label} (${req}${def}${opts}): ${p.placeholder || p.description || p.name}\n`;
+      });
+      triggerMsg += '\n';
+    }
+
+    if (workflow.examples && workflow.examples.length > 0) {
+      const ex = workflow.examples[0];
+      triggerMsg += `示例: ${ex.title} — ${ex.description}\n`;
+      if (ex.input) {
+        triggerMsg += `示例输入: ${JSON.stringify(ex.input, null, 2)}\n`;
       }
-    }));
-    
-    message.success(`已发送「${workflow.name}」到对话窗口`);
+      triggerMsg += '\n';
+    }
+
+    triggerMsg += `请根据以上工作流信息开始执行。如果缺少必填参数，请使用默认值或询问我。使用你可用的工具逐步完成每个步骤。`;
+
+    // 先导航到 chat 页 (确保 ChatView 已挂载)
+    window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'chat' } }));
+
+    // 延迟发送事件, 等 ChatView 挂载并注册事件监听器
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('agentai:trigger-workflow', {
+        detail: {
+          workflow: workflow.name,
+          message: triggerMsg,
+        }
+      }));
+    }, 600);
+
+    message.success(`已发送「${workflow.description || workflow.name}」到对话窗口`);
   };
 
   // Tab 切换时按需加载

@@ -1,0 +1,313 @@
+{
+  "tiles": [
+    {
+      "x": 94.0,
+      "y": 396.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 0,
+      "col": 0
+    },
+    {
+      "x": 94.0,
+      "y": 1198.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 1,
+      "col": 0
+    },
+    {
+      "x": 94.0,
+      "y": 2000.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 2,
+      "col": 0
+    },
+    {
+      "x": 94.0,
+      "y": 2802.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 3,
+      "col": 0
+    },
+    {
+      "x": 94.0,
+      "y": 3604.0,
+      "width": 800,
+      "height": 396.0,
+      "is_cut": true,
+      "row": 4,
+      "col": 0
+    },
+    {
+      "x": 896.0,
+      "y": 797.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 0,
+      "col": 1
+    },
+    {
+      "x": 896.0,
+      "y": 1599.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 1,
+      "col": 1
+    },
+    {
+      "x": 896.0,
+      "y": 2401.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 2,
+      "col": 1
+    },
+    {
+      "x": 896.0,
+      "y": 3203.0,
+      "width": 800,
+      "height": 797.0,
+      "is_cut": true,
+      "row": 3,
+      "col": 1
+    },
+    {
+      "x": 1698.0,
+      "y": 396.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 0,
+      "col": 2
+    },
+    {
+      "x": 1698.0,
+      "y": 1198.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 1,
+      "col": 2
+    },
+    {
+      "x": 1698.0,
+      "y": 2000.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 2,
+      "col": 2
+    },
+    {
+      "x": 1698.0,
+      "y": 2802.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 3,
+      "col": 2
+    },
+    {
+      "x": 1698.0,
+      "y": 3604.0,
+      "width": 800,
+      "height": 396.0,
+      "is_cut": true,
+      "row": 4,
+      "col": 2
+    },
+    {
+      "x": 2500.0,
+      "y": 797.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 0,
+      "col": 3
+    },
+    {
+      "x": 2500.0,
+      "y": 1599.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 1,
+      "col": 3
+    },
+    {
+      "x": 2500.0,
+      "y": 2401.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 2,
+      "col": 3
+    },
+    {
+      "x": 2500.0,
+      "y": 3203.0,
+      "width": 800,
+      "height": 797.0,
+      "is_cut": true,
+      "row": 3,
+      "col": 3
+    },
+    {
+      "x": 3302.0,
+      "y": 396.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 0,
+      "col": 4
+    },
+    {
+      "x": 3302.0,
+      "y": 1198.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 1,
+      "col": 4
+    },
+    {
+      "x": 3302.0,
+      "y": 2000.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 2,
+      "col": 4
+    },
+    {
+      "x": 3302.0,
+      "y": 2802.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 3,
+      "col": 4
+    },
+    {
+      "x": 3302.0,
+      "y": 3604.0,
+      "width": 800,
+      "height": 396.0,
+      "is_cut": true,
+      "row": 4,
+      "col": 4
+    },
+    {
+      "x": 4104.0,
+      "y": 797.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 0,
+      "col": 5
+    },
+    {
+      "x": 4104.0,
+      "y": 1599.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 1,
+      "col": 5
+    },
+    {
+      "x": 4104.0,
+      "y": 2401.0,
+      "width": 800,
+      "height": 800,
+      "is_cut": false,
+      "row": 2,
+      "col": 5
+    },
+    {
+      "x": 4104.0,
+      "y": 3203.0,
+      "width": 800,
+      "height": 797.0,
+      "is_cut": true,
+      "row": 3,
+      "col": 5
+    },
+    {
+      "x": 4906.0,
+      "y": 396.0,
+      "width": 94.0,
+      "height": 800,
+      "is_cut": true,
+      "row": 0,
+      "col": 6
+    },
+    {
+      "x": 4906.0,
+      "y": 1198.0,
+      "width": 94.0,
+      "height": 800,
+      "is_cut": true,
+      "row": 1,
+      "col": 6
+    },
+    {
+      "x": 4906.0,
+      "y": 2000.0,
+      "width": 94.0,
+      "height": 800,
+      "is_cut": true,
+      "row": 2,
+      "col": 6
+    },
+    {
+      "x": 4906.0,
+      "y": 2802.0,
+      "width": 94.0,
+      "height": 800,
+      "is_cut": true,
+      "row": 3,
+      "col": 6
+    },
+    {
+      "x": 4906.0,
+      "y": 3604.0,
+      "width": 94.0,
+      "height": 396.0,
+      "is_cut": true,
+      "row": 4,
+      "col": 6
+    }
+  ],
+  "full_tiles": 21,
+  "cut_tiles": 11,
+  "total_pieces": 32,
+  "waste_rate": 20.19,
+  "total_area": 20.0,
+  "estimated_cost": 0,
+  "tile_layout_output": {
+    "room_area_m2": 20.0,
+    "net_area_m2": 20.0,
+    "tile_spec": "800x800mm",
+    "tile_area_m2": 0.64,
+    "pattern": "staggered",
+    "full_tiles": 21,
+    "cut_tiles": 11,
+    "total_pieces": 32,
+    "waste_rate_percent": 20.19,
+    "total_tile_area_m2": 20.48,
+    "estimated_cost": 0,
+    "price_per_piece": 0,
+    "grout_width_mm": 2
+  }
+}

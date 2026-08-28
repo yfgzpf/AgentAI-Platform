@@ -31,7 +31,7 @@ import { computeCapabilities, getCapabilitiesById, type ModelCapability, type Ca
 
 // ===== 类型定义 =====
 
-export type TaskType = 'coding' | 'research' | 'general' | 'industry';
+export type TaskType = 'coding' | 'research' | 'media' | 'industry' | 'general';
 
 /** 单个「模型 × 任务类型」的运行时统计 */
 export interface RuntimeStats {
@@ -159,6 +159,7 @@ const MATRIX_FILE = path.join(DATA_DIR, 'capability-matrix.json');
 const TASK_WEIGHTS: Record<TaskType, { success: number; toolCall: number; quality: number; latency: number }> = {
   coding:   { success: 0.30, toolCall: 0.35, quality: 0.25, latency: 0.10 },
   research: { success: 0.25, toolCall: 0.15, quality: 0.40, latency: 0.20 },
+  media:    { success: 0.20, toolCall: 0.15, quality: 0.45, latency: 0.20 },
   general:  { success: 0.30, toolCall: 0.20, quality: 0.30, latency: 0.20 },
   industry: { success: 0.25, toolCall: 0.25, quality: 0.35, latency: 0.15 },
 };

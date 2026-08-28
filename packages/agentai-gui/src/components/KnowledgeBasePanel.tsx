@@ -147,7 +147,7 @@ export const KnowledgeBasePanel: React.FC = () => {
   };
 
   // 预设行业列表
-  const presetIndustries = ['装修建材', '电商', '教育', '医疗', '法律', '金融', '制造', 'IT', '其他'];
+  const presetIndustries = ['装修建材', '电商', '教育', '中医问诊', '法律', '金融', '制造', 'IT', '其他'];
 
   const handleFileUpload = async (file: File): Promise<boolean> => {
     setUploading(true);

@@ -44,6 +44,7 @@
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "babel-plugin-import": "^1.13.8",
     "concurrently": "^9.0.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^9.0.0",
@@ -79,5 +80,9 @@
   "bugs": {
     "url": "https://github.com/yfgzpf/AgentAI-Platform/issues"
   },
-  "homepage": "https://github.com/yfgzpf/AgentAI-Platform#readme"
+  "homepage": "https://github.com/yfgzpf/AgentAI-Platform#readme",
+  "dependencies": {
+    "@xyflow/react": "^12.11.2",
+    "@xyflow/system": "^0.0.79"
+  }
 }

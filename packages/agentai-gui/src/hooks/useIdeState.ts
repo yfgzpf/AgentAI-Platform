@@ -72,13 +72,16 @@ function getEditorState(): IdeStatePayload | null {
 
 /**
  * 推送 IDE 状态到 Gateway
+ * P0 修复: 附带当前 workspace, 让后端能区分不同工作区
  */
 async function pushIdeState(state: IdeStatePayload): Promise<void> {
   try {
+    // P0 修复: 从 localStorage 获取当前 workspace, 随请求一起推送
+    const workspace = localStorage.getItem('agentai.workspace') || localStorage.getItem('currentWorkspace') || '';
     await fetch(`${GATEWAY_URL}/ide-state`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state),
+      headers: { 'Content-Type': 'application/json', 'x-workspace': workspace },
+      body: JSON.stringify({ ...state, workspace }),
       signal: AbortSignal.timeout(3000),
     });
   } catch {

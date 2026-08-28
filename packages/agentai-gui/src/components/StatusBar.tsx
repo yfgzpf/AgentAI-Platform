@@ -13,6 +13,8 @@ import { VoiceWakeIndicator } from './VoiceWakeIndicator';
 import { MusicPlayer } from './MusicPlayer';
 import { gatewayFallback } from '../services/GatewayFallback';
 import { TokenPressureBar } from './TokenPressureBar';
+import { useUsageStats } from '../hooks/useUsageStats';
+import { useSubscriptionStore } from '../store/subscriptionStore';
 
 type GwStatus = 'online' | 'offline' | 'starting';  // 与 GatewayFallback 状态一致
 
@@ -46,6 +48,13 @@ export const StatusBar: React.FC = () => {
   const [musicOpen, setMusicOpen] = useState(false);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [showMusicTip, setShowMusicTip] = useState(false); // 首次启动音乐入口提示
+  
+  // 用量统计
+  const { stats, formatTokens, formatCost } = useUsageStats();
+  
+  // 账户状态 (密钥制)
+  const { isActivated, getActivationStatus } = useSubscriptionStore();
+  const activationStatus = { activated: isActivated, source: 'factory' };
 
   /* ---- QQ 状态 ---- */
   const [qq, setQq] = useState<ConnStatus>('checking');
@@ -57,6 +66,31 @@ export const StatusBar: React.FC = () => {
 
   /* ---- P3-3: 仪表盘数据 ---- */
   const [dash, setDash] = useState<DashboardInfo>({});
+
+  /* ---- 灵魂层: AI 情绪状态 ---- */
+  const [mood, setMood] = useState<{ emoji: string; label: string; color: string; intensity: number } | null>(null);
+
+  /* ---- 灵魂层: 监听 mood SSE 事件 ---- */
+  useEffect(() => {
+    const onMood = (e: CustomEvent) => {
+      const m = e.detail;
+      if (!m) return;
+      const MOOD_MAP: Record<string, { emoji: string; label: string; color: string }> = {
+        calm: { emoji: '😌', label: '平静', color: '#9ca3af' },
+        anxious: { emoji: '😟', label: '焦虑', color: '#f59e0b' },
+        frustrated: { emoji: '😣', label: '沮丧', color: '#ef4444' },
+        confident: { emoji: '😊', label: '自信', color: '#10b981' },
+        thrilled: { emoji: '🤩', label: '兴奋', color: '#8b5cf6' },
+        determined: { emoji: '💪', label: '坚定', color: '#3b82f6' },
+        reflective: { emoji: '🤔', label: '沉思', color: '#6366f1' },
+        curious: { emoji: '🔍', label: '好奇', color: '#06b6d4' },
+      };
+      const cfg = MOOD_MAP[m.mood] || MOOD_MAP.calm;
+      setMood({ ...cfg, intensity: m.intensity || 0 });
+    };
+    window.addEventListener('agentai:mood', onMood as EventListener);
+    return () => window.removeEventListener('agentai:mood', onMood as EventListener);
+  }, []);
 
   /* ---- Gateway 状态监听 GatewayFallback ---- */
   useEffect(() => {
@@ -319,6 +353,16 @@ export const StatusBar: React.FC = () => {
         </Tooltip>
       )}
 
+      {/* ═══ 灵魂层: AI 情绪指示器 ═══ */}
+      {mood && mood.intensity > 0.2 && (
+        <Tooltip title={`AI 心境: ${mood.label} (${Math.round(mood.intensity * 100)}%)`} mouseEnterDelay={0.3}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help', marginLeft: 4 }}>
+            <span style={{ fontSize: 12 }}>{mood.emoji}</span>
+            <span style={{ fontSize: 10, color: mood.color }}>{mood.label}</span>
+          </span>
+        </Tooltip>
+      )}
+
       {/* Token 用量 + 压力可视化 (2026-08-03 升级) */}
       {dash.tokens != null && (
         <TokenPressureBar
@@ -347,6 +391,68 @@ export const StatusBar: React.FC = () => {
           </span>
         </Tooltip>
       )}
+
+      <span className="ui-divider" />
+
+      {/* 用量统计 */}
+      <Tooltip 
+        title={
+          <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+            <div><b>今日用量</b></div>
+            <div>Token: {formatTokens(stats.tokensToday)}</div>
+            <div>费用: {formatCost(stats.costToday)}</div>
+            <div>调用: {stats.callsToday} 次</div>
+            <div style={{ marginTop: 4, borderTop: '1px solid var(--border)', paddingTop: 4 }}>
+              <b>本月用量</b>
+            </div>
+            <div>Token: {formatTokens(stats.tokensMonth)}</div>
+            <div>费用: {formatCost(stats.costMonth)}</div>
+            <div>调用: {stats.callsMonth} 次</div>
+            <div>生图: {stats.imagesGenerated} 张</div>
+          </div>
+        } 
+        mouseEnterDelay={0.3}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'help' }}>
+          <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>今日</span>
+          <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>{formatTokens(stats.tokensToday)}</span>
+          <span style={{ fontSize: 10, color: 'var(--warning)' }}>{formatCost(stats.costToday)}</span>
+        </span>
+      </Tooltip>
+
+      {/* 账户状态 (密钥制) */}
+      <Tooltip
+        title={
+          <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+            <div><b>账户状态</b></div>
+            <div style={{ color: isActivated ? 'var(--success)' : 'var(--muted-2)', fontWeight: 600 }}>
+              {isActivated ? '已激活' : '未激活'}
+            </div>
+            {!isActivated && (
+              <div style={{ marginTop: 4, borderTop: '1px solid var(--border)', paddingTop: 4, fontSize: 10 }}>
+                点击前往设置添加密钥
+              </div>
+            )}
+          </div>
+        }
+        mouseEnterDelay={0.3}
+      >
+        <span 
+          onClick={() => window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'settings' as any } }))}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+        >
+          <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+            {isActivated ? '🔑' : '🔒'}
+          </span>
+          <span style={{ 
+            fontSize: 10, 
+            color: isActivated ? 'var(--success)' : 'var(--warning)', 
+            fontWeight: 600 
+          }}>
+            {isActivated ? '已激活' : '未激活'}
+          </span>
+        </span>
+      </Tooltip>
 
       <span style={{ flex: 1 }} />
 

@@ -467,7 +467,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                     // NVIDIA NIM 已移除 (2026-07-25): NIM 不可用
                     { name: '商汤 SenseNova', url: 'https://platform.sensenova.cn', quota: '每 5 小时 1500 次', env: 'SENSENOVA_API_KEY' },
                     { name: '美团 LongCat', url: 'https://longcat.chat', quota: '申请内测资格', env: 'LONGCAT_API_KEY' },
-                    { name: 'SuperAPI', url: 'https://superapi.vanguard.dpdns.org', quota: '联系管理员', env: 'SUPERAPI_API_KEY' },
+                    { name: 'ALRC聚合', url: 'https://alro.huazhiweilai.com', quota: '联系管理员', env: 'ALRC_API_KEY' },
                     { name: '通义千问', url: 'https://dashscope.aliyun.com', quota: '新用户免费额度', env: 'QWEN_API_KEY' },
                     { name: 'Moonshot', url: 'https://platform.moonshot.cn', quota: '新用户 15 元额度', env: 'MOONSHOT_API_KEY' },
                     { name: 'MiniMax', url: 'https://platform.minimaxi.com', quota: '新用户免费额度', env: 'MINIMAX_API_KEY' },

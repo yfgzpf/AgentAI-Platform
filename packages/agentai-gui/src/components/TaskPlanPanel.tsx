@@ -28,7 +28,7 @@ import {
   CodeOutlined,
   BulbOutlined,
 } from '@ant-design/icons';
-import { useTaskOrchestrator } from '../store/taskOrchestratorStore';
+import { useTaskStore, useTaskOrchestrator } from '../store/taskStore';
 
 const { Text } = Typography;
 

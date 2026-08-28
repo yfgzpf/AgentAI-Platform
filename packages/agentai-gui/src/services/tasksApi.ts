@@ -61,7 +61,7 @@ export interface ResumableTask extends TaskMeta {
 // ===== API 调用 =====
 
 /** 列出全部任务 */
-export async function listTasks(opts: { userId?: string; status?: TaskStatus; limit?: number } = {}): Promise<{
+export async function listTasks(opts: { userId?: string; status?: TaskStatus; limit?: number; workspace?: string } = {}): Promise<{
   success: boolean;
   count: number;
   tasks: TaskMeta[];
@@ -71,17 +71,21 @@ export async function listTasks(opts: { userId?: string; status?: TaskStatus; li
   if (opts.userId) params.set('userId', opts.userId);
   if (opts.status) params.set('status', opts.status);
   if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.workspace) params.set('workspace', opts.workspace);
   const qs = params.toString();
   return apiGet(`/v1/tasks${qs ? `?${qs}` : ''}`);
 }
 
 /** 列出可恢复任务 (running/paused/abandoned) */
-export async function listResumableTasks(userId?: string): Promise<{
+export async function listResumableTasks(userId?: string, workspace?: string): Promise<{
   success: boolean;
   count: number;
   tasks: ResumableTask[];
 }> {
-  const qs = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+  const params: string[] = [];
+  if (userId) params.push(`userId=${encodeURIComponent(userId)}`);
+  if (workspace) params.push(`workspace=${encodeURIComponent(workspace)}`);
+  const qs = params.length > 0 ? `?${params.join('&')}` : '';
   return apiGet(`/v1/tasks/resumable${qs}`);
 }
 
@@ -137,9 +141,15 @@ export async function deleteTask(taskId: string): Promise<{ success: boolean; ta
   }
 }
 
-/** 清理过期任务 */
-export async function cleanupTasks(maxAgeDays = 30): Promise<{ success: boolean; removed: number; maxAgeDays: number }> {
-  return apiPost('/v1/tasks/cleanup', { maxAgeDays });
+/** 清理过期任务 (智能: 超龄 + 无效 + 超量) */
+export async function cleanupTasks(maxAgeDays = 7, opts?: { maxTaskCount?: number; removeTrivial?: boolean }): Promise<{
+  success: boolean;
+  removed: number;
+  byReason?: { expired: number; trivial: number; overLimit: number; staleRunning: number; corrupt: number };
+  maxAgeDays?: number;
+  maxTaskCount?: number;
+}> {
+  return apiPost('/v1/tasks/cleanup', { maxAgeDays, ...opts });
 }
 
 // ===== 工具函数 =====

@@ -24,7 +24,7 @@ import {
   LockOutlined, DownOutlined,
 } from '@ant-design/icons';
 import { useModelStore, type ModelConfig } from '../store/modelStore';
-import { useSubscriptionStore, SUBSCRIPTION_PLANS } from '../store/subscriptionStore';
+import { useSimpleSubscriptionStore, SUBSCRIPTION_PLANS } from '../store/subscriptionStore';
 import { useModelMetrics } from '../hooks/useModelMetrics'; // Phase 3: 模型性能指标
 
 /* ===== 密钥检查 ===== */
@@ -39,7 +39,8 @@ function hasApiKey(m: ModelConfig, commercialKeys: Record<string, string>): bool
 }
 
 function isFreeModel(m: ModelConfig): boolean {
-  return m.id === 'agentai' || m.id === 'zhipu' || m.provider === 'agnes';
+  // 只保留2个免费模型
+  return m.id === 'agnes-2.5-flash' || m.id === 'zhipu';
 }
 
 /** 从 baseURL 提取渠道简称 */
@@ -57,7 +58,7 @@ function channelName(baseURL: string): string {
     'api.minimax.chat': 'MiniMax',
     'api.anthropic.com': 'Claude',
     'superapi.vanguard.dpdns.org': 'SuperAPI',
-    'alro.huazhiweilai.com': 'ALRC',
+    'alro.huazhiweilai.com': '模型工厂',  // ALRC 包装为模型工厂
     'token.sensenova.cn': 'SenseNova',
     'api.longcat.chat': 'LongCat',
     // nvidia 已移除
@@ -67,7 +68,7 @@ function channelName(baseURL: string): string {
 
 /** 判断是否为工厂组 (单一密钥共享多模型) */
 function isFactoryGroup(m: ModelConfig): boolean {
-  return ['superapi', 'alrc', 'sensenova', 'longcat'].includes(m.provider || '');
+  return ['factory', 'alrc', 'sensenova', 'longcat'].includes(m.provider || '');
 }
 
 /* ===== Props ===== */
@@ -82,11 +83,11 @@ interface Props {
 /* ===== 组件 ===== */
 export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
   const { models, activeModelId, setActive, commercialKeys, chatMode } = useModelStore();
-  const { planId, expiresAt, isPaid } = useSubscriptionStore();
+  const { planId, expiresAt, isPaid } = useSimpleSubscriptionStore();
   const activeModel = models.find(m => m.id === activeModelId) || models[0];
 
-  // 订阅弹窗
-  const [showSubscribeModal, setShowSubscribeModal] = useState(false);
+  // 订阅/解锁弹窗
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [pendingModelId, setPendingModelId] = useState<string | null>(null);
   
   // Phase 3: 模型性能指标
@@ -143,15 +144,12 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
   const groups = Array.from(groupMap.values());
 
   const handleSelect = (id: string) => {
-    // 检查订阅锁定
+    // 检查模型是否锁定（需要密钥解锁）
     const model = models.find(m => m.id === id);
-    if (model?.locked) {
-      const requiredPlan = model.requiredPlan;
-      if (!isPaid || !SUBSCRIPTION_PLANS[planId]?.chatModels.includes(id)) {
-        setPendingModelId(id);
-        setShowSubscribeModal(true);
-        return;
-      }
+    if (model?.locked || (!isFreeModel(model!) && !hasApiKey(model!, commercialKeys))) {
+      setPendingModelId(id);
+      setShowUnlockModal(true);
+      return;
     }
     setActive(id);
     onSelect?.();
@@ -284,44 +282,45 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
 
   const triggerSize = mode === 'minimal' ? { fontSize: 11, padding: '3px 8px', maxWidth: 120 } : { fontSize: 10, padding: '2px 6px', maxWidth: 100 };
 
-  // 订阅锁定弹窗
-  const renderSubscribeModal = () => {
-    if (!showSubscribeModal || !pendingModelId) return null;
+  // 模型解锁弹窗 - 提示联系微信获取密钥
+  const renderUnlockModal = () => {
+    if (!showUnlockModal || !pendingModelId) return null;
     const model = models.find(m => m.id === pendingModelId);
-    const requiredPlan = SUBSCRIPTION_PLANS[model?.requiredPlan || 'pro'];
     return (
       <Modal
-        open={showSubscribeModal}
+        open={showUnlockModal}
         title={
           <Space>
             <LockOutlined style={{ color: 'var(--warning)' }} />
-            需要订阅才能使用此模型
+            模型已锁定
           </Space>
         }
-        onCancel={() => { setShowSubscribeModal(false); setPendingModelId(null); }}
+        onCancel={() => { setShowUnlockModal(false); setPendingModelId(null); }}
         footer={[
-          <Button key="close" onClick={() => { setShowSubscribeModal(false); setPendingModelId(null); }}>取消</Button>,
+          <Button key="close" onClick={() => { setShowUnlockModal(false); setPendingModelId(null); }}>稍后再说</Button>,
           <Button
-            key="subscribe"
+            key="unlock"
             type="primary"
             icon={<CrownOutlined />}
             onClick={() => {
-              setShowSubscribeModal(false);
+              setShowUnlockModal(false);
               setPendingModelId(null);
               window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'settings' as any } }));
             }}
           >
-            前往订阅
+            前往解锁
           </Button>,
         ]}
         width={400}
       >
         <div style={{ fontSize: 13, color: 'var(--fg)', lineHeight: 1.8 }}>
           <div>
-            模型 <b>{model?.label}</b> 需要 <b>{requiredPlan?.name || '专业版'}</b> 及以上订阅才能使用。
+            模型 <b>{model?.label}</b> 需要密钥才能使用。
           </div>
-          <div style={{ marginTop: 8, color: 'var(--muted-2)', fontSize: 12 }}>
-            💡 订阅后即可解锁 {requiredPlan?.chatModels?.length || 0}+ 个 ALRC 模型，畅享 GPT-5、Claude、Grok 等顶级模型。
+          <div style={{ marginTop: 12, padding: '12px', background: 'var(--accent-soft)', borderRadius: 8, border: '1px dashed var(--accent)' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>🔑 如何获取密钥？</div>
+            <div>添加作者微信 <b style={{ color: 'var(--accent)' }}>agentai-platform</b></div>
+            <div style={{ fontSize: 12, color: 'var(--muted-2)', marginTop: 4 }}>获取密钥后在设置页填入即可解锁全部模型</div>
           </div>
         </div>
       </Modal>
@@ -363,7 +362,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
         </span>
       </Tooltip>
     </Dropdown>
-    {renderSubscribeModal()}
+    {renderUnlockModal()}
     </>
   );
 }

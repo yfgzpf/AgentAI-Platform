@@ -416,6 +416,14 @@ export class ToolRegistry extends EventEmitter {
       console.warn(`[tool-registry:hook] PostToolUse failed for ${call.name}:`, error);
     }
 
+    // 【P0-2】工具使用率统计记录
+    try {
+      const { recordToolCall } = await import('./tool-usage-stats.js');
+      recordToolCall(call.name, result.success, result.durationMs || 0);
+    } catch (_e) {
+      // 统计模块异常不影响工具执行
+    }
+
     return result;
   }
 

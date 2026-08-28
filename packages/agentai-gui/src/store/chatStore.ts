@@ -44,13 +44,20 @@ export type ChatSegment =
   | { kind: 'text'; text: string }
   | { kind: 'reasoning'; text: string }
   | { kind: 'thinking'; text: string }
-  | { kind: 'tool'; callId: string; name: string; args?: any; state?: string; result?: string; ok?: boolean; durationMs?: number }
+  | { kind: 'tool'; callId: string; name: string; args?: Record<string, unknown>; state?: string; result?: string; ok?: boolean; durationMs?: number }
   | { kind: 'image'; url?: string; base64?: string; alt?: string; filePath?: string }
   | { kind: 'error'; error: string; details?: string; fix?: string }
   | { kind: 'video'; url: string; poster?: string; alt?: string }
   | { kind: 'widget'; title: string; contentType: 'svg' | 'html'; content: string; width?: number | null; height?: number | null };
 
 export type MessageStatus = 'sending' | 'sent' | 'received' | 'processing' | 'done' | 'error';
+
+export interface InjectedFile {
+  path: string;
+  name: string;
+  content?: string;
+  injectedAt: number;
+}
 
 export interface TokenUsage {
   prompt_tokens?: number;
@@ -87,6 +94,25 @@ interface ChatState {
   removeMessages: (ids: string[]) => void;
   /** 替换某条消息 (用于重新生成时整体替换) */
   replaceMessage: (id: string, m: ChatMessage) => void;
+  // ===== [P1-2] 合并自 editorChatStore: 编辑器内 AI 对话独立状态 =====
+  /** 编辑器内对话消息 (不持久化, 编辑器关闭即丢失) */
+  editorMessages: ChatMessage[];
+  appendEditorMessage: (m: ChatMessage) => void;
+  updateEditorMessage: (id: string, fn: (m: ChatMessage) => ChatMessage) => void;
+  clearEditorMessages: () => void;
+  // ===== [P1-2] 合并自 contextStore: 注入到 AI 上下文的文件 =====
+  /** 已注入的文件列表 */
+  injectedFiles: InjectedFile[];
+  /** 添加文件到上下文 */
+  addInjectedFile: (file: Omit<InjectedFile, 'injectedAt'>) => void;
+  /** 从上下文中移除文件 */
+  removeInjectedFile: (path: string) => void;
+  /** 清空所有注入的文件 */
+  clearInjectedFiles: () => void;
+  /** 检查文件是否已注入 */
+  isFileInjected: (path: string) => boolean;
+  /** 获取所有注入文件的内容（用于发送到后端） */
+  getInjectedFilesContent: () => { path: string; name: string; content: string }[];
 }
 
 // ═══ updateMessage 微任务刷新: SSE 高频 delta 更新合并, 减少 React 重渲染 ═══
@@ -112,9 +138,30 @@ function scheduleFlush(set: (fn: (s: ChatState) => Partial<ChatState>) => void) 
   });
 }
 
+// ═══ [P1-2] 合并自 editorChatStore: 编辑器消息使用 requestAnimationFrame 批量更新 ═══
+const editorPendingUpdates = new Map<string, ((m: ChatMessage) => ChatMessage)[]>();
+let editorFlushTimer: ReturnType<typeof requestAnimationFrame> | null = null;
+
+function scheduleEditorFlush(set: (fn: (s: ChatState) => Partial<ChatState>) => void) {
+  if (editorFlushTimer) return;
+  editorFlushTimer = requestAnimationFrame(() => {
+    editorFlushTimer = null;
+    if (editorPendingUpdates.size === 0) return;
+    const updates = new Map(editorPendingUpdates);
+    editorPendingUpdates.clear();
+    set((s) => ({
+      editorMessages: s.editorMessages.map((m) => {
+        const fns = updates.get(m.id);
+        if (!fns) return m;
+        return fns.reduce((acc, fn) => fn(acc), m);
+      }),
+    }));
+  });
+}
+
 export const useChatStore = create<ChatState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       messages: [],
       appendMessage: (m) => set((s) => {
         // P1-7: 去重 — 同 ID 消息不重复追加
@@ -147,11 +194,37 @@ export const useChatStore = create<ChatState>()(
       replaceMessage: (id, m) => set((s) => ({
         messages: s.messages.map(x => x.id === id ? m : x),
       })),
+      // ===== [P1-2] 合并自 editorChatStore =====
+      editorMessages: [],
+      appendEditorMessage: (m) => set((s) => ({ editorMessages: [...s.editorMessages, m] })),
+      updateEditorMessage: (id, fn) => {
+        const existing = editorPendingUpdates.get(id) || [];
+        existing.push(fn);
+        editorPendingUpdates.set(id, existing);
+        scheduleEditorFlush(set);
+      },
+      clearEditorMessages: () => {
+        editorPendingUpdates.clear();
+        set({ editorMessages: [] });
+      },
+      // ===== [P1-2] 合并自 contextStore =====
+      injectedFiles: [],
+      addInjectedFile: (file) => {
+        const state = get();
+        if (state.injectedFiles.some(f => f.path === file.path)) return;
+        set({ injectedFiles: [...state.injectedFiles, { ...file, injectedAt: Date.now() }] });
+      },
+      removeInjectedFile: (path) => {
+        set((s) => ({ injectedFiles: s.injectedFiles.filter(f => f.path !== path) }));
+      },
+      clearInjectedFiles: () => set({ injectedFiles: [] }),
+      isFileInjected: (path) => get().injectedFiles.some(f => f.path === path),
+      getInjectedFilesContent: () => get().injectedFiles.filter(f => f.content).map(f => ({ path: f.path, name: f.name, content: f.content! })),
     }),
     {
       name: 'agentai-chat-messages',
       storage: createJSONStorage(() => throttledStorage),
-      partialize: (s) => ({ messages: s.messages.slice(-200) }),
+      partialize: (s) => ({ messages: s.messages.slice(-200), injectedFiles: s.injectedFiles }),
     },
   ),
 );
