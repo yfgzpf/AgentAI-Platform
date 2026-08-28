@@ -70,6 +70,32 @@
 
 ---
 
+## 🟢 P2: 远期优化（战略方向）
+
+### P2-9: 子智能体系统深度集成
+**问题**: 子智能体 (`subagent.ts`, `team-orchestrator.ts`) 存在于 gateway 层，前端不可见
+**方案**:
+- 后端: 添加 WebSocket 事件推送子智能体执行状态（"架构师正在分析架构"、"测试员正在编写测试"）
+- 前端: Chat 界面中实时显示 Agent 状态面板（角色 + 当前活动 + 进度）
+- 预估收益: 用户体验提升，多 Agent 协作可视化
+
+### P2-10: 灵魂系统与进化系统融合
+**问题**: 灵魂 (`soul/`) 是独立模块，与进化系统 (`evolution.ts`) 无关联
+**方案**:
+- `curiosity-engine.ts` 的"好奇心" → 驱动探索性学习，自动产生新进化规则
+- `pain-sense.ts` 的"痛觉" → 驱动规则优化，高失败率规则自动降级
+- 融合后: 灵魂的七位一体模块与进化系统形成完整闭环
+
+### P2-11: 数学化仪表盘 — 整合现有页面
+**问题**: 所有指标散落在日志中，无可视化展示
+**方案**:
+- 不新建独立页面，整合到现有 `监控/Monitoring` 相关页面中
+- 新增 Tab/卡片展示: 工具使用率、token 消耗趋势、错误分布、自进化效果
+- 复用已有 API: `/api/monitoring/evolution/stats`、`/api/monitoring/feedback/stats`、`/api/monitoring/dashboard`
+- 预估收益: 系统健康度可视化，辅助决策
+
+---
+
 ## 执行顺序
 
 ```
@@ -81,6 +107,11 @@ P0-1 工具分层加载 ───→ P0-2 工具使用率统计 ───→ P0-
                                     P1-2 Store 合并
                                     P1-3 用户反馈
                                     P1-4 页面合并
+                                            │
+                            ┌───────────────┼───────────────┐
+                            │               │               │
+                        P2-9 子智能体  P2-10 灵魂进化  P2-11 仪表盘
+                        深度集成        融合          整合现有页面
 ```
 
 ---
@@ -117,3 +148,19 @@ P0-1 工具分层加载 ───→ P0-2 工具使用率统计 ───→ P0-
 
 ### P1-4: 页面合并
 - 修改: `packages/agentai-gui/src/App.tsx`
+
+### P2-9: 子智能体深度集成
+- 修改: `packages/agentai-gateway/src/subagent.ts` — 添加状态事件
+- 修改: `packages/agentai-gateway/src/team-orchestrator.ts` — 推送执行状态
+- 新增: `packages/agentai-gui/src/services/subagentApi.ts` — 前端API
+- 新增: `packages/agentai-gui/src/components/SubagentStatus.tsx` — Agent状态面板
+
+### P2-10: 灵魂与进化融合
+- 修改: `packages/agentai-gateway/src/soul/index.ts` — 统一入口
+- 修改: `packages/agentai-gateway/src/soul/curiosity-engine.ts` — 输出进化规则
+- 修改: `packages/agentai-gateway/src/soul/pain-sense.ts` — 驱动规则优化
+- 修改: `packages/agentai-gateway/src/evolution.ts` — 接收灵魂输入
+
+### P2-11: 仪表盘整合
+- 修改: `packages/agentai-gui/src/components/` 现有监控面板 — 添加仪表盘Tab
+- 复用: `/api/monitoring/dashboard` 已有API

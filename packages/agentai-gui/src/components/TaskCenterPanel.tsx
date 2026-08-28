@@ -34,9 +34,9 @@ const GW = (() => {
 
 export const TaskCenterPanel: React.FC = () => {
   const {
-    allTasks, resumableTasks, currentTask, loading, error,
+    allTasks, resumableTasks, currentTask, taskLoading: loading, taskError: error,
     activeTaskId, lastRefreshAt,
-    refreshAll, loadTask, markCompleted, markFailed, deleteTask, cleanupOld, setActiveTaskId, clearError,
+    refreshAll, loadTask, markCompleted, markFailed, deleteTask, cleanupOld, setActiveTaskId, clearTaskError: clearError,
   } = useTaskResumeStore();
 
   const [detailVisible, setDetailVisible] = useState(false);

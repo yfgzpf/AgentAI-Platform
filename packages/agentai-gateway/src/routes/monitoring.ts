@@ -224,6 +224,37 @@ router.post('/approval/:id/approve', (req: Request, res: Response) => {
 // ============================================================
 
 /**
+ * POST /api/monitoring/feedback/submit
+ * 提交用户反馈
+ */
+router.post('/feedback/submit', (req: Request, res: Response) => {
+  const { sessionId, messageId, type, originalOutput, context, comment } = req.body;
+  
+  if (!sessionId || !messageId || !type) {
+    res.status(400).json({ error: 'Missing required fields: sessionId, messageId, type' });
+    return;
+  }
+  
+  if (!['thumbs_up', 'thumbs_down', 'correction', 'detailed'].includes(type)) {
+    res.status(400).json({ error: `Invalid type: ${type}` });
+    return;
+  }
+  
+  getFeedbackLoop().submitFeedback({
+    sessionId,
+    messageId,
+    type,
+    comment,
+    originalOutput: originalOutput || { content: '' },
+    context: context || {},
+  }).then((entry: any) => {
+    res.json({ ok: true, id: entry.id, timestamp: entry.timestamp });
+  }).catch((error: any) => {
+    res.status(500).json({ error: String(error) });
+  });
+});
+
+/**
  * GET /api/monitoring/feedback/stats
  * 获取反馈统计
  */

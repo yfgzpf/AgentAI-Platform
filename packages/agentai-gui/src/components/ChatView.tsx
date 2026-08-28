@@ -292,6 +292,7 @@ import { ClarificationCard, type ClarificationRequest } from './ClarificationCar
 import { DiffViewer, useDiffEvents } from './DiffViewer';
 import { LastSessionHint } from './LastSessionHint';
 import { gatewayFallback } from '../services/GatewayFallback';
+import { submitFeedback } from '../services/feedbackApi';
 import { taskNotifier } from '../services/TaskNotifier';
 import { speak, isTtsEnabled as checkTts } from '../services/VoiceService';
 import { useSmartScroll } from '../hooks/useSmartScroll';
@@ -1533,7 +1534,7 @@ export const ChatView: React.FC = () => {
   }, [messages, removeMessages]);
 
   /**
-   * 反馈 (点赞/点踩): 写入 localStorage, 不再依赖后端
+   * 反馈 (点赞/点踩): 写入 localStorage + 提交后端
    */
   const feedbackMessage = useCallback((messageId: string, kind: 'up' | 'down') => {
     try {
@@ -1543,7 +1544,19 @@ export const ChatView: React.FC = () => {
       else all[messageId] = kind;
       localStorage.setItem(key, JSON.stringify(all));
     } catch { /* ignore */ }
-  }, []);
+    // 提交到后端 (fire-and-forget)
+    const sid = activeId;
+    if (sid && messageId) {
+      const msg = messages.find(m => m.id === messageId);
+      const text = msg?.segments?.filter((s: any) => s.kind === 'text').map((s: any) => s.text).join('\n') || '';
+      submitFeedback({
+        sessionId: sid,
+        messageId,
+        type: kind === 'up' ? 'thumbs_up' : 'thumbs_down',
+        originalOutput: { content: text.slice(0, 500) },
+      }).catch(() => { /* 静默失败 */ });
+    }
+  }, [activeId, messages]);
 
   /**
    * 收藏: 写入 localStorage, 供笔记面板后续消费
