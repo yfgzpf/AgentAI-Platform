@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * ChatView — 主对话视图 (重构版)
  *   - 集成 Thread 卡片式消息渲染

@@ -189,7 +189,7 @@ const ChatModeToggle: React.FC = () => {
 };
 
 /* ════════════════ PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'pascal' | 'decorai' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'sandbox' | 'knowledge-graph' | 'external-connections' | 'monitoring' | 'knowledge-explore';
+type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'pascal' | 'decorai' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'sandbox' | 'knowledge-graph' | 'external-connections' | 'monitoring' | 'knowledge-explore' | 'soul';
 
 interface PageMeta {
   key: PageKey;

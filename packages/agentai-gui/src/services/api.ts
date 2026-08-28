@@ -151,9 +151,10 @@ export function makeChatHandlers(
           let filePath: string | undefined;
           if (!imgUrl && !imgBase64) {
             const pathMatch = result.match(/([A-Za-z]:[\\\/][^\s"'<>|]+\.(?:png|jpg|jpeg|webp))/i);
-            if (pathMatch) {
-              filePath = pathMatch[1];
-              imgAlt = `本地图片: ${filePath.split(/[\\\/]/).pop()}`;
+            const fp = pathMatch?.[1];
+            if (fp) {
+              filePath = fp;
+              imgAlt = `本地图片: ${fp.split(/[\\\/]/).pop()}`;
             }
           }
 
@@ -264,10 +265,10 @@ case 'progress': handlers.onProgress?.(data); break;
 case 'mood':
   window.dispatchEvent(new CustomEvent('agentai:mood', { detail: data }));
   break;
-case 'inner_voice': updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'reasoning', text: `[内心独白] ${data.text || ''}` }] })); break;
-case 'curiosity': updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'reasoning', text: `[好奇心] ${data.question || data.text || ''}` }] })); break;
-case 'debate': updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'reasoning', text: `[内部辩论] ${data.recommendation || data.synthesis || ''}` }] })); break;
-case 'dream': updateMessage(botId, (m: any) => ({ ...m, segments: [...m.segments, { kind: 'reasoning', text: `[梦境记忆] ${data.summary || ''}` }] })); break;
+case 'inner_voice': window.dispatchEvent(new CustomEvent('agentai:inner-voice', { detail: data })); break;
+case 'curiosity': window.dispatchEvent(new CustomEvent('agentai:curiosity', { detail: data })); break;
+case 'debate': window.dispatchEvent(new CustomEvent('agentai:debate', { detail: data })); break;
+case 'dream': window.dispatchEvent(new CustomEvent('agentai:dream', { detail: data })); break;
               case 'done': handlers.onDone?.({ provider: data.provider, content: data.content, usage: data.usage, displayModel: data.displayModel }); return;
               case 'error': handlers.onError?.(data.error || data.text || 'Unknown error'); return;
             }
