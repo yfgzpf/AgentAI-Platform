@@ -42,7 +42,7 @@ const CleanerPanel = lazy(() => import('./components/CleanerPanel').then(m => ({
 const KnowledgeBasePanel = lazy(() => import('./components/KnowledgeBasePanel').then(m => ({ default: m.KnowledgeBasePanel })));
 const SkillLibrary = lazy(() => import('./components/SkillLibrary').then(m => ({ default: m.SkillLibrary })));
 const WechatSetup = lazy(() => import('./components/WechatSetup').then(m => ({ default: m.WechatSetup })));
-const SchedulePanel = lazy(() => import('./components/SchedulePanel').then(m => ({ default: m.SchedulePanel })));
+// SchedulePanel 已合并到 AutomationPanel
 const NotificationPanel = lazy(() => import('./components/NotificationPanel').then(m => ({ default: m.NotificationPanel })));
 const WorkflowPanel = lazy(() => import('./components/WorkflowPanel').then(m => ({ default: m.WorkflowPanel })));
 const ProactiveSuggestionsPanel = lazy(() => import('./components/ProactiveSuggestionsPanel').then(m => ({ default: m.default })));
@@ -230,8 +230,7 @@ const PAGES: PageMeta[] = [
   { key: 'qq',       label: 'QQ Bot',   icon: <QQIcon />,             comp: QQBotPanel,    group: 'system', desc: '反向 WS · 自动回复' },
   { key: 'wechat',   label: '微信',     icon: <SmileOutlined />,      comp: WechatSetup,   group: 'system', desc: 'ClawBot 插件 · 扫码绑定' },
   { key: 'knowledge', label: '知识库', icon: <BookOutlined />,       comp: KnowledgeBasePanel, group: 'system', desc: '行业知识库 · 文档上传 · BM25 检索' },
-  { key: 'schedule',     label: '定时任务', icon: <ClockCircleOutlined />, comp: SchedulePanel,     group: 'system', desc: 'Cron 调度 · RPA 定时回放 · AI 任务自动化' },
-  { key: 'automation',   label: '自动化',   icon: <ThunderboltOutlined />, comp: AutomationPanel, group: 'system', desc: '定时任务管理 · 成功率统计 · 执行监控', badge: 'NEW' },
+  { key: 'automation',   label: '自动化',   icon: <ThunderboltOutlined />, comp: AutomationPanel, group: 'system', desc: 'Cron 调度 · RPA 自动化 · AI 任务 · 成功率统计 · 执行监控', badge: 'NEW' },
   { key: 'workflow',     label: '工作流',   icon: <PartitionOutlined />,   comp: WorkflowPanel,     group: 'system', desc: 'DAG 多步骤自动化 · 行业模板 · 变量管道' },
   { key: 'notification', label: '通知中心', icon: <BellOutlined />,        comp: NotificationPanel, group: 'system', desc: 'SSE · Webhook · 邮件 · 桌面弹窗' },
   { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system',   desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持', hidden: true },

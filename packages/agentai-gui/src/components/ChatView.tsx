@@ -291,6 +291,7 @@ import { AskUserCard } from './AskUserCard';
 import { ClarificationCard, type ClarificationRequest } from './ClarificationCard';
 import { DiffViewer, useDiffEvents } from './DiffViewer';
 import { LastSessionHint } from './LastSessionHint';
+import { SubagentStatus, type SubagentInfo } from './SubagentStatus';
 import { gatewayFallback } from '../services/GatewayFallback';
 import { submitFeedback } from '../services/feedbackApi';
 import { taskNotifier } from '../services/TaskNotifier';
@@ -436,6 +437,7 @@ export const ChatView: React.FC = () => {
   const [scene3D, setScene3D] = useState<Scene3DData | null>(null);
   const [emotionMap, setEmotionMap] = useState<Record<string, EmotionResult>>({});
   const [thinking, setThinking] = useState(true);
+  const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
   // 2026-06-24 新增: 透明进度状态
   const [progress, setProgress] = useState<{
     step: string;
@@ -1329,34 +1331,27 @@ export const ChatView: React.FC = () => {
           ambiguities: info.ambiguities,
         });
       },
-      // 子智能体事件: 渲染为可见文本
+      // 子智能体事件: 实时显示 SubagentStatus 组件
       onSubagentStart: (info: any) => {
         lastActivityTs = Date.now();
-        updateMessage(botId, (m: any) => ({
-          ...m, segments: [...m.segments, {
-            kind: 'text',
-            text: `\n\n> 🤖 **子智能体启动** [${info.type}]: ${info.task}\n`,
-          }],
-        }));
+        setSubagents(prev => {
+          const existing = prev.find(a => a.id === info.id);
+          if (existing) return prev.map(a => a.id === info.id ? { ...a, status: 'running' as const, task: info.task } : a);
+          return [...prev, { id: info.id, type: info.type || 'explore', task: info.task, status: 'running' as const }];
+        });
       },
       onSubagentDone: (info: any) => {
         lastActivityTs = Date.now();
         const subagentResult = typeof info.result === 'string' ? info.result : JSON.stringify(info.result || '');
-        updateMessage(botId, (m: any) => ({
-          ...m, segments: [...m.segments, {
-            kind: 'text',
-            text: `\n\n> ✅ **子智能体完成**: ${String(subagentResult).slice(0, 300)}\n`,
-          }],
-        }));
+        setSubagents(prev => prev.map(a => a.id === info.id ? { ...a, status: 'done' as const, result: subagentResult } : a));
+        // 折叠后延迟移除已完成 Agent
+        setTimeout(() => {
+          setSubagents(prev => prev.filter(a => a.id !== info.id));
+        }, 5000);
       },
       onSubagentError: (info: any) => {
         lastActivityTs = Date.now();
-        updateMessage(botId, (m: any) => ({
-          ...m, segments: [...m.segments, {
-            kind: 'text',
-            text: `\n\n> ❌ **子智能体失败**: ${info.error}\n`,
-          }],
-        }));
+        setSubagents(prev => prev.map(a => a.id === info.id ? { ...a, status: 'error' as const, error: info.error } : a));
       },
       onToolStuck: (info: any) => {
         lastActivityTs = Date.now();
@@ -2194,6 +2189,9 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
 
         {/* 3D 可交互场景 (AI 调用 generate_3d_scene 生成) */}
         {scene3D && <Scene3DViewer scene={scene3D} />}
+
+        {/* 子智能体状态实时显示 (P2-9) */}
+        {subagents.length > 0 && <SubagentStatus agents={subagents} pending={subagents.some(a => a.status === 'running')} />}
 
         {/* Bottom padding */}
         <div style={{ height: 8 }} />

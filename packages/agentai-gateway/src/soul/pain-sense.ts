@@ -19,6 +19,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { updateEvolutionEffectiveness } from '../evolution.js';
 
 export type PainLevel = 'none' | 'mild' | 'moderate' | 'severe' | 'critical';
 export type JoyLevel = 'none' | 'satisfied' | 'happy' | 'excited';
@@ -76,6 +77,10 @@ export class PainSense extends EventEmitter {
 
     if (count >= 3) {
       console.log(`[pain-sense] 😣 痛感 ${this.state.pain} (连续失败 ${count} 次, mood=${this.state.mood})`);
+      // 【P2-10】严重痛感 → 降低进化规则有效性 (触发规则优化)
+      try {
+        updateEvolutionEffectiveness(errorType || 'pain_triggered', 'effect');
+      } catch { /* 静默 */ }
     }
   }
 

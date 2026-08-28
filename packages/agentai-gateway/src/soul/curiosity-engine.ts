@@ -24,6 +24,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EventEmitter } from 'events';
 import { WorkspaceManager } from '../workspace-manager.js';
+import { writeEvolutionAsync } from '../evolution.js';
 
 // ===== 类型定义 =====
 
@@ -335,6 +336,18 @@ export class CuriosityEngine extends EventEmitter {
         this.insights.push(insight);
         if (this.insights.length > this.maxInsights) this.insights = this.insights.slice(-this.maxInsights);
         this.emit('insight', insight);
+        // 【P2-10】好奇心洞察 → 写入进化记忆
+        (async () => {
+          try {
+            await writeEvolutionAsync({
+              type: 'self-eval-insight',
+              content: insight.text.slice(0, 300),
+              taskType: 'general',
+              keywords: ['curiosity', insight.type, question.type],
+              success: true,
+            });
+          } catch { /* 静默 */ }
+        })();
       } else if (question.exploreCount >= 5) {
         question.status = 'abandoned';
       }

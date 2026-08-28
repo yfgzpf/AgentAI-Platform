@@ -172,6 +172,21 @@ interface DiagnosisResult {
   };
 }
 
+// 工具使用率统计接口 (P2-11)
+interface ToolStats {
+  summary: { totalTools: number; totalCalls: number; staleTools: number };
+  tools: Array<{
+    name: string;
+    calls: number;
+    success: number;
+    fail: number;
+    successRate: string;
+    lastCalled: string;
+    avgDurationMs: number;
+  }>;
+  cleanedUp: number;
+}
+
 // 预测性维护接口
 interface PredictiveMaintenance {
   predictions: Array<{
@@ -197,13 +212,14 @@ const MonitoringPanel: React.FC = () => {
   const [agentBusStats, setAgentBusStats] = useState<AgentBusStats | null>(null);
   const [diagnosisResult, setDiagnosisResult] = useState<DiagnosisResult | null>(null);
   const [maintenanceData, setMaintenanceData] = useState<PredictiveMaintenance | null>(null);
+  const [toolStats, setToolStats] = useState<ToolStats | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'evolution' | 'approval' | 'feedback' | 'cost' | 'system'>('overview');
 
   const fetchData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [dashRes, evoRes, appRes, feedRes, costRes, busRes, diagRes, maintRes] = await Promise.all([
+      const [dashRes, evoRes, appRes, feedRes, costRes, busRes, diagRes, maintRes, toolRes] = await Promise.all([
         fetch(`${GATEWAY_HTTP}/api/monitoring/dashboard`),
         fetch(`${GATEWAY_HTTP}/api/monitoring/evolution/stats`),
         fetch(`${GATEWAY_HTTP}/api/monitoring/approval/stats`),
@@ -212,6 +228,7 @@ const MonitoringPanel: React.FC = () => {
         fetch(`${GATEWAY_HTTP}/api/agent-bus/stats`),
         fetch(`${GATEWAY_HTTP}/api/self-diagnosis/result`),
         fetch(`${GATEWAY_HTTP}/api/predictive-maintenance/report`),
+        fetch(`${GATEWAY_HTTP}/v1/tools/stats`),
       ]);
 
       if (!dashRes.ok) throw new Error('Failed to fetch dashboard data');
@@ -227,6 +244,10 @@ const MonitoringPanel: React.FC = () => {
       if (busRes.ok) setAgentBusStats(await busRes.json());
       if (diagRes.ok) setDiagnosisResult(await diagRes.json());
       if (maintRes.ok) setMaintenanceData(await maintRes.json());
+      if (toolRes.ok) {
+        const toolData = await toolRes.json();
+        if (toolData.ok) setToolStats(toolData.data);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load monitoring data');
     } finally {
@@ -480,6 +501,102 @@ const MonitoringPanel: React.FC = () => {
         </Row>
       )}
 
+      {/* P2-11: 工具使用率统计 */}
+      {toolStats && (
+        <>
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col span={24}>
+              <Card title={<><ThunderboltOutlined /> 工具使用率统计</>}>
+                <Row gutter={16} style={{ marginBottom: 16 }}>
+                  <Col span={6}>
+                    <Statistic title="工具总数" value={toolStats.summary.totalTools} />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic title="总调用次数" value={toolStats.summary.totalCalls} valueStyle={{ color: '#1890ff' }} />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic title="已清理死工具" value={toolStats.cleanedUp} valueStyle={{ color: toolStats.cleanedUp > 0 ? '#faad14' : '#52c41a' }} />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic title="日均调用" value={toolStats.summary.totalCalls > 0 ? Math.round(toolStats.summary.totalCalls / 7) : 0} suffix="次/日" />
+                  </Col>
+                </Row>
+                <Table
+                  dataSource={toolStats.tools.slice(0, 10)}
+                  rowKey="name"
+                  pagination={false}
+                  size="small"
+                  columns={[
+                    { title: '工具名', dataIndex: 'name', ellipsis: true },
+                    { title: '调用次数', dataIndex: 'calls', width: 100 },
+                    { title: '成功', dataIndex: 'success', width: 80 },
+                    { title: '失败', dataIndex: 'fail', width: 80 },
+                    { 
+                      title: '成功率', dataIndex: 'successRate', width: 80,
+                      render: (rate: string) => {
+                        const num = parseInt(rate);
+                        return <Tag color={num >= 90 ? 'success' : num >= 70 ? 'warning' : 'error'}>{rate}</Tag>;
+                      }
+                    },
+                    { 
+                      title: '平均耗时', dataIndex: 'avgDurationMs', width: 100,
+                      render: (ms: number) => ms > 0 ? `${ms}ms` : '-'
+                    },
+                  ]}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          {/* P2-11: 错误分布 */}
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col span={12}>
+              <Card title="失败分类统计">
+                {evolutionStats?.failureCategories && Object.keys(evolutionStats.failureCategories).length > 0 ? (
+                  <Table
+                    dataSource={Object.entries(evolutionStats.failureCategories).map(([k, v]) => ({ category: k, count: v }))}
+                    rowKey="category"
+                    pagination={false}
+                    size="small"
+                    columns={[
+                      { title: '分类', dataIndex: 'category' },
+                      { title: '次数', dataIndex: 'count', width: 100 },
+                      { 
+                        title: '占比', dataIndex: 'count', width: 120,
+                        render: (count: number, _: any, i: number) => {
+                          const total = Object.values(evolutionStats.failureCategories).reduce((a: number, b: number) => a + b, 0);
+                          return `${(count / total * 100).toFixed(1)}%`;
+                        }
+                      },
+                    ]}
+                  />
+                ) : (
+                  <div style={{ color: '#888', padding: 16, textAlign: 'center' }}>暂无数据</div>
+                )}
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card title="错误类型分布">
+                {evolutionStats?.errorTypes && Object.keys(evolutionStats.errorTypes).length > 0 ? (
+                  <Table
+                    dataSource={Object.entries(evolutionStats.errorTypes).map(([k, v]) => ({ type: k, count: v }))}
+                    rowKey="type"
+                    pagination={false}
+                    size="small"
+                    columns={[
+                      { title: '错误类型', dataIndex: 'type' },
+                      { title: '次数', dataIndex: 'count', width: 100 },
+                    ]}
+                  />
+                ) : (
+                  <div style={{ color: '#888', padding: 16, textAlign: 'center' }}>暂无数据</div>
+                )}
+              </Card>
+            </Col>
+          </Row>
+        </>
+      )}
+
       {/* 自我诊断问题 */}
       {diagnosisResult && diagnosisResult.issues.length > 0 && (
         <Row gutter={[16, 16]}>
@@ -572,6 +689,62 @@ const MonitoringPanel: React.FC = () => {
           ]}
         />
       </Card>
+
+      {/* P2-11: 自进化效果 */}
+      {evolutionStats && (
+        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+          <Col span={24}>
+            <Card title="自进化效果">
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Statistic title="日增进化记录" value={evolutionStats.dailyStats?.filter(d => {
+                    const today = new Date().toISOString().split('T')[0];
+                    return d.date === today;
+                  }).reduce((sum, d) => sum + d.success + d.failure, 0) || 0} />
+                </Col>
+                <Col span={8}>
+                  <Statistic title="今日成功率" value={(() => {
+                    const today = new Date().toISOString().split('T')[0];
+                    const td = evolutionStats.dailyStats?.find(d => d.date === today);
+                    if (!td || (td.success + td.failure) === 0) return '-';
+                    return `${(td.success / (td.success + td.failure) * 100).toFixed(1)}%`;
+                  })()} valueStyle={{ color: '#52c41a' }} />
+                </Col>
+                <Col span={8}>
+                  <Statistic title="7日趋势" value={(() => {
+                    const stats = evolutionStats.dailyStats?.slice(-7) || [];
+                    const recent = stats.reduce((sum, d) => sum + d.success, 0);
+                    const total = stats.reduce((sum, d) => sum + d.success + d.failure, 0);
+                    if (total === 0) return '-';
+                    return `${(recent / total * 100).toFixed(1)}%`;
+                  })()} suffix="成功率" />
+                </Col>
+              </Row>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>每日进化统计</div>
+                <Table
+                  dataSource={evolutionStats.dailyStats?.slice(-7) || []}
+                  rowKey="date"
+                  pagination={false}
+                  size="small"
+                  columns={[
+                    { title: '日期', dataIndex: 'date' },
+                    { title: '成功', dataIndex: 'success' },
+                    { title: '失败', dataIndex: 'failure' },
+                    { 
+                      title: '成功率', 
+                      render: (_: any, record: { success: number; failure: number }) => {
+                        const total = record.success + record.failure;
+                        return total > 0 ? `${(record.success / total * 100).toFixed(1)}%` : '-';
+                      }
+                    },
+                  ]}
+                />
+              </div>
+            </Card>
+          </Col>
+        </Row>
+      )}
     </>
   );
 
