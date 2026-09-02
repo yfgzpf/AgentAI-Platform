@@ -148,3 +148,8 @@ PulseFlow
 # 临时文件
 *.bak
 *.bak.*
+
+# 防止误提交 gateway 大日志 (历史上误纳 119MB 文件阻断推送)
+packages/agentai-gateway/gateway-restart.log.old
+packages/agentai-gateway/gateway-restart.log
+*.log.old
