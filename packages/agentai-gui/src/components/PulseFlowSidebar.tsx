@@ -531,9 +531,11 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
   const [newFolderName, setNewFolderName] = useState('');
   const { profile } = useProfileStore();
   const workspace = profile?.workspace || localStorage.getItem('agentai.workspace') || '';
-  const { createSession, deleteSession, getMySessions, updateTitle } = useSessionStore.getState();
-  const sessions = getMySessions();
-  const activeId = useSessionStore.getState().activeId;
+  // ★ 修复: 从 getState() 静态快照改为 hook 响应式订阅
+  // 原代码用 getState() 只读一次渲染时的快照, store 变化后组件不重渲染,
+  // 导致「删除会话后列表不消失」「点击会话不高亮激活」「新建会话不出现」。
+  const { createSession, deleteSession, updateTitle, activeId } = useSessionStore();
+  const sessions = useSessionStore((s) => s.getMySessions());
   const chatStore = useChatStore.getState();
 
   // 监听定位文件事件 → 自动切换到"文件"tab
@@ -638,7 +640,8 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                     sessions={group.sessions}
                     activeId={activeId || undefined}
                     onSelect={id => {
-                      const session = useSessionStore.getState().getActive();
+                      // ★ 修复: 判断"被点击的会话"而非"当前激活会话"
+                      const session = useSessionStore.getState().sessions.find(s => s.id === id);
                       // 点击生图会话时自动切换到 image_edit 模式并选择生图模型
                       if (session?.type === 'image') {
                         useModelStore.getState().setChatMode('image_edit');
@@ -647,7 +650,18 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                       }
                       useSessionStore.getState().setActive(id);
                     }}
-                    onDelete={id => { deleteSession(id); }}
+                    onDelete={id => {
+                      deleteSession(id);
+                      // ★ 修复: 删除当前激活会话后自动切换到相邻会话, 避免空白/残留旧消息
+                      if (activeId === id) {
+                        const remaining = useSessionStore.getState().getMySessions();
+                        if (remaining.length > 0) {
+                          useSessionStore.getState().setActive(remaining[0].id);
+                        } else {
+                          chatStore.clearMessages();
+                        }
+                      }
+                    }}
                   />
                 ))
               )}

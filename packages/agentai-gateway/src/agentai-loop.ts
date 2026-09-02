@@ -41,6 +41,20 @@ import { loopLogger as logger, isLogEnabled } from './logger.js';
 import { recordToolCall, finalizeSessionAnalytics } from './tool-call-analytics.js';
 import { getFourDiagnosesSystem } from './qihuang/four-diagnoses.js';
 import { buildRemoteContext, isRemoteSessionActive, getActiveRemoteSession, detectRemoteIntent } from './remote/ai-integration.js';
+import { selfManager } from './self-manager.js';
+
+// ── Phase 1 提取模块 (从 agentai-loop.ts 拆分, 置信度 95%+) ──
+import {
+  addTrustedPattern as _addTrustedPattern,
+  getTrustedPatterns as _getTrustedPatterns,
+  removeTrustedPattern as _removeTrustedPattern,
+} from './trusted-patterns.js';
+// Phase 1 提取模块 + 本地去重完成: SystemDirectiveManager / consolidateSystemInjections /
+// sanitizeToolMessages 已统一使用信任的独立模块, 移除 agentai-loop.ts 内的重复实现。
+import { SystemDirectiveManager } from './system-directive-manager.js';
+import { consolidateSystemInjections, sanitizeToolMessages } from './message-utils.js';
+import { formatToolResult as _formatToolResult, isSafeFileModification as _isSafeFileModification } from './tool-utils.js';
+import { filterToolsByIntent as _filterToolsByIntent, getModelContextWindow as _getModelContextWindow } from './tool-filter.js';
 
 /* ═══════════ 审批白名单: 用户信任的命令模式 ═══════════
  * 当用户在审批卡片中点击"信任此命令"后，相同工具+路径模式将自动跳过审批
@@ -76,7 +90,7 @@ function loadTrustedPatterns(): TrustedPattern[] {
       }));
       return trustedPatternsCache;
     }
-  } catch { /* ignore */ }
+  } catch (e) { logger.warn(`加载信任命令文件失败: ${(e as Error).message}`); }
   return [];
 }
 
@@ -86,7 +100,7 @@ function saveTrustedPatterns(patterns: TrustedPattern[]): void {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(TRUSTED_COMMANDS_FILE, JSON.stringify(patterns, null, 2), 'utf-8');
     trustedPatternsCache = patterns;
-  } catch { /* ignore */ }
+  } catch (e) { logger.warn(`保存信任命令文件失败: ${(e as Error).message}`); }
 }
 
 /** 检查命令是否在白名单中 */
@@ -120,184 +134,6 @@ export function addTrustedPattern(toolName: string, pathPattern: string): void {
 /** 获取所有信任模式 */
 export function getTrustedPatterns(): TrustedPattern[] {
   return loadTrustedPatterns();
-}
-
-/**
- * P0-1.3: 合并连续的 [SYSTEM] 注入消息
- * 多个模块可能在一轮中各推一条 [SYSTEM] 指令, 弱模型容易迷失
- * 此函数将连续的 [SYSTEM] 消息合并为一条, 保留最关键信息
- */
-function consolidateSystemInjections(messages: ChatMessage[]): ChatMessage[] {
-  if (messages.length <= 1) return messages;
-  const result: ChatMessage[] = [];
-  let pendingSystem: string[] = [];
-
-  const flushPending = () => {
-    if (pendingSystem.length === 0) return;
-    if (pendingSystem.length === 1) {
-      result.push({ role: 'user', content: pendingSystem[0]! });
-    } else {
-      // 多条合并: 保留含 [CRITICAL]/[P0] 标记的安全指令, 其余只保留最后一条
-      const critical = pendingSystem.filter(s => /\[CRITICAL\]|\[P0\]/i.test(s));
-      const latest = pendingSystem[pendingSystem.length - 1]!;
-      if (critical.length > 0 && !critical.includes(latest)) {
-        // 有 critical 指令且最后一条不是 critical → 合并 critical + 最新
-        const merged = critical.join('\n---\n') + '\n---\n' + latest;
-        // 截断保护: 合并后不超过 3000 字符
-        result.push({ role: 'user', content: merged.slice(0, 3000) });
-      } else if (critical.length > 0) {
-        // 最后一条就是 critical → 合并所有 critical
-        result.push({ role: 'user', content: critical.join('\n---\n').slice(0, 3000) });
-      } else {
-        // 无 critical → 只保留最后一条
-        result.push({ role: 'user', content: latest });
-      }
-    }
-    pendingSystem = [];
-  };
-
-  for (const msg of messages) {
-    const content = typeof msg.content === 'string' ? msg.content : '';
-    const isSystemInjection = msg.role === 'user' && content.startsWith('[SYSTEM]');
-
-    if (isSystemInjection) {
-      pendingSystem.push(content);
-    } else {
-      flushPending();
-      result.push(msg);
-    }
-  }
-  flushPending();
-
-  return result;
-}
-
-/**
- * ═══ 系统指令管理器 v2 (智能延迟注入) ═══
- * 解决: 多个模块同时注入 [SYSTEM] 指令 → 弱模型迷失
- * 策略:
- *   1. 即时队列 (pending): 错误反应类指令, 每轮取优先级最高的 1 条注入
- *   2. 延迟队列 (deferred): 质量管控类指令, 执行中缓冲, 任务完成后处理
- * 优先级: critical(安全/错误) > high(任务推进) > medium(风格建议) > low(杂项)
- */
-interface PendingDirective {
-  source: string;
-  content: string;
-  priority: 'critical' | 'high' | 'medium' | 'low';
-}
-
-class SystemDirectiveManager {
-  private pending: PendingDirective[] = [];
-  private deferred: PendingDirective[] = [];
-
-  /** 可延迟的指令来源 — 质量管控类, 不阻塞任务执行 */
-  private static DEFERRABLE_SOURCES = new Set([
-    'meta_ask', 'meta_pua',           // 元认知决策
-    'boundary_check', 'boundary_p0',  // 知识边界/认知自检
-    'low_conf_search',                // 低置信度搜索 (不阻塞, 可后续补)
-    'op_awareness',                    // 操作感知
-    // 'ambiguity' 移除 — 歧义检测必须在首轮立即注入, 否则 AI 不会追问用户
-    // 'low_conf_clarify' 移除 — 低置信度追问必须即时注入, 否则 AI 不会调用 ask_user
-  ]);
-
-  /** 添加一条指令 */
-  add(source: string, content: string, priority: PendingDirective['priority']): void {
-    // 可延迟来源 → 进入延迟缓冲, 不在执行中注入
-    if (SystemDirectiveManager.DEFERRABLE_SOURCES.has(source)) {
-      // 同来源去重: 只保留最后一条
-      this.deferred = this.deferred.filter(d => d.source !== source);
-      this.deferred.push({ source, content, priority });
-      return;
-    }
-    // 即时指令: critical 始终加入; 其他如果已有 critical 则跳过
-    if (this.pending.some(d => d.priority === 'critical') && priority !== 'critical') return;
-    this.pending.push({ source, content, priority });
-  }
-
-  /** 刷新即时队列: 取优先级最高的 1 条, 返回消息内容 (或 null) */
-  flush(): string | null {
-    if (this.pending.length === 0) return null;
-    const order = { critical: 0, high: 1, medium: 2, low: 3 };
-    this.pending.sort((a, b) => order[a.priority] - order[b.priority]);
-    const top = this.pending[0]!;
-    this.pending = [];
-    return top.content;
-  }
-
-  /** v3.2 修复: 按 source 读取最新一条指令 (含延迟队列) */
-  get(source: string): string | null {
-    const inPending = this.pending.find(d => d.source === source);
-    if (inPending) return inPending.content;
-    const inDeferred = this.deferred.find(d => d.source === source);
-    return inDeferred?.content || null;
-  }
-
-  /** 刷新延迟队列: 返回所有缓冲指令 (任务完成后调用) */
-  flushDeferred(): PendingDirective[] {
-    const result = [...this.deferred];
-    this.deferred = [];
-    return result;
-  }
-
-  /** 延迟队列中是否有高优先级指令 (需要补一轮) */
-  hasCriticalDeferred(): boolean {
-    return this.deferred.some(d => d.priority === 'high');
-  }
-
-  /** 检查是否有待处理即时指令 */
-  hasPending(): boolean {
-    return this.pending.length > 0;
-  }
-
-  /** 清空即时队列 (每轮循环开始时调用) */
-  clear(): void {
-    this.pending = [];
-  }
-
-  /** 清空所有队列 */
-  clearAll(): void {
-    this.pending = [];
-    this.deferred = [];
-  }
-}
-
-/**
- * 消毒消息数组: 确保每个 role='tool' 消息前面都有对应的 assistant(tool_calls) 消息
- * OpenAI 协议要求: tool 消息必须跟在 assistant 的 tool_calls 后面, 否则 400 错误
- * 此函数在发送给 LLM 前清理, 防止上下文压缩或 pre-read 注入导致的协议违规
- */
-function sanitizeToolMessages(messages: ChatMessage[]): ChatMessage[] {
-  const result: ChatMessage[] = [];
-  /** 已知的 tool_call_id 集合 (来自前面 assistant 消息的 tool_calls) */
-  const knownToolCallIds = new Set<string>();
-
-  for (const msg of messages) {
-    const anyMsg = msg as any;
-    if (msg.role === 'assistant' && anyMsg.tool_calls) {
-      // 记录 assistant 声明的 tool_call_id
-      for (const tc of anyMsg.tool_calls) {
-        if (tc.id) knownToolCallIds.add(tc.id);
-      }
-      result.push(msg);
-    } else if (msg.role === 'tool') {
-      // 检查这个 tool 消息是否有对应的 assistant tool_calls
-      if (msg.tool_call_id && knownToolCallIds.has(msg.tool_call_id)) {
-        result.push(msg); // 合法, 保留
-      } else {
-        // 孤立的 tool 消息 → 降级为 system 消息, 避免协议违规
-        const toolName = msg.name || 'unknown';
-        const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
-        result.push({
-          role: 'system',
-          content: `[tool-result:${toolName}] ${content}`,
-        });
-      }
-    } else {
-      result.push(msg);
-    }
-  }
-
-  return result;
 }
 
 /** 移除信任模式 */
@@ -376,6 +212,7 @@ export class AgentAILoop extends EventEmitter {
 
 private _aborted = false;
 private _startupGitInjected = false;
+private _startupSelfDiagnosis = false;
 private _startupSessionInjected = false;
 private _hardStopNext = false;  // v3.1 死循环硬停标志: 下一轮 LLM 响应后立即退出
 private _hardStopCount = 0;     // v3.1 硬停次数: 超过 2 次直接 force break (防 AI 忽视指令)
@@ -874,6 +711,17 @@ private _emptyResponseCount: number = 0;
       systemMsgs.push({ role: 'system', content: AGENT_SYSTEM_IDENTITY });
     }
 
+    // P0 修复: 注入实时日期 — AI 不知道当前日期会导致:
+    // 1. 用错误日期读取文件/数据 → 找不到 → 重复操作
+    // 2. 编造日期 → 输出错误的"今日"信息
+    // 3. 无法正确判断"今天/昨天/上周"等时间词
+    const _now = new Date();
+    const _dateStr = `${_now.getFullYear()}年${_now.getMonth() + 1}月${_now.getDate()}日`;
+    const _weekDays = ['日', '一', '二', '三', '四', '五', '六'];
+    const _weekStr = _weekDays[_now.getDay()];
+    const _timeStr = `${String(_now.getHours()).padStart(2, '0')}:${String(_now.getMinutes()).padStart(2, '0')}`;
+    systemMsgs.push({ role: 'system', content: `# 当前时间\n今天是 ${_dateStr}（星期${_weekStr}）\n当前时间: ${_timeStr}\n\n重要: 你必须使用这个日期作为"今天"的基准。不要猜测日期, 不要使用训练数据中的日期。所有涉及"今天/昨天/本周/最新"的操作都以这个日期为准。` });
+
     // 技能调用指令注入（高优先级，位于身份之后）
     if (skillInvocationBlock) {
       systemMsgs.push({ role: 'system', content: skillInvocationBlock });
@@ -1348,6 +1196,29 @@ if (memCtx) {
       } catch { /* workspace-agent optional */ }
     }
 
+    // ═══ 启动自检: 首次运行自动诊断系统健康并尝试修复 ═══
+    if (!this._startupSelfDiagnosis) {
+      this._startupSelfDiagnosis = true;
+      selfManager.diagnose().then(d => {
+        if (d.overallStatus !== 'healthy') {
+          logger.info(`[self-diagnosis] 系统状态: ${d.overallStatus}, 尝试自动修复...`);
+          selfManager.autoFix().then(results => {
+            for (const r of results) {
+              if (r.fixed) {
+                logger.info(`[self-diagnosis] ✅ ${r.component}: ${r.message}`);
+              } else {
+                logger.warn(`[self-diagnosis] ❌ ${r.component}: ${r.message}`);
+              }
+            }
+          });
+        } else {
+          logger.info('[self-diagnosis] 系统健康 ✅');
+        }
+      }).catch((e: any) => {
+        logger.warn(`[self-diagnosis] 启动诊断失败: ${e?.message}`);
+      });
+    }
+
     // === 4.9 跨会话连续记忆: 注入上次会话摘要 (支持 AI 控制是否注入) ===
     // P0 修复: 同会话内"继续"类消息 → 注入当前会话进度摘要 (429/空回复中断后恢复)
     if (this.iteration === 0 && typeof userMessage === 'string' && /继续|接着|继续实现|继续完成|resume/i.test(userMessage)) {
@@ -1383,7 +1254,7 @@ if (memCtx) {
             skipInjection = true;
             logger.info('🚫 AI 已设置跳过跨会话记忆注入');
           }
-        } catch { /* ignore */ }
+        } catch (e) { logger.warn(`读取项目记忆 skip_last_session_injection 失败: ${(e as Error).message}`); }
 
         if (!skipInjection) {
           const { getPersistentMemory } = await import('./persistent-memory.js');
@@ -1795,9 +1666,9 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         lastUserText.slice(0, 30) === prevUserText.slice(0, 30));
       const retainedOld = isSameTopic
         ? oldMsgs.filter(m => m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')).slice(-3)
-        : []; // 不同话题: 清除所有旧 tool 结果
+        : oldMsgs.filter(m => m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')).slice(-5);
       this.context.appendOnlyLog = [...retainedOld, ...recentMsgs];
-      logger.info(`🧹 清理旧对话: ${oldMsgs.length} 条 → 保留 ${retainedOld.length} 条 tool 结果 + ${recentMsgs.length} 条最近消息${isSameTopic ? '' : ' (话题切换, 清除旧 tool)'}`);
+      logger.info(`🧹 清理旧对话: ${oldMsgs.length} 条 → 保留 ${retainedOld.length} 条 tool 结果 + ${recentMsgs.length} 条最近消息${isSameTopic ? '' : ' (话题切换, 保留最近 tool 防重复)'}`);
     }
 
     // ═══ 2026-06-27 新增: 情绪历史追踪 ═══
@@ -4113,10 +3984,10 @@ duplicateTracker.delete(sig);
         // 否则会导致: 你好→回复→supervisor resume→你好→回复→... 死循环
         const _userMsgCtx = typeof userMessage === 'string' ? userMessage : '';
         const _aiReplyCtx = (res?.content || '').trim();
-        const _isChitChatCtx = /^(你好|嗨|hi|hello|好的|谢谢|没问题|ok|嗯|对|是|不|行|可以|能|在吗|你在|怎么样|能不能|会不会|为什么|怎么|什么|如何|哪里|哪个)/i.test(_userMsgCtx.trim())
+        const _isChitChatCtx = /^(你好|嗨|hi|hello|好的|谢谢|没问题|ok|嗯|对|是|不|行|可以|能|在吗|你在|怎么样|能不能|会不会|为什么|怎么|什么|如何|哪里|哪个|早上好|下午好|晚上好|早安|晚安|好久不见|收到|明白|知道了|再见|拜拜|明天见|回头见)/i.test(_userMsgCtx.trim())
           || _userMsgCtx.trim().length < 15;
-        const _isGreetingCtx = /^(你好|嗨|hi|hello|嘿|哈喽|我是|我在|有什么|随时|开干|说吧)/i.test(_aiReplyCtx)
-          || /智能助手|AgentAI|PulseFlow|帮你搞|帮你处理|开干|我在的|我在呢|没有掉线/i.test(_aiReplyCtx);
+        const _isGreetingCtx = /^(你好|嗨|hi|hello|嘿|哈喽|我是|我在|有什么|随时|开干|说吧|早上好|下午好|晚上好|早安|晚安|好久不见|再见|拜拜|明天见|回头见|good\s*(morning|afternoon|evening|night)|bye|see\s*you)/i.test(_aiReplyCtx)
+          || /智能助手|AgentAI|PulseFlow|帮你搞|帮你处理|开干|我在的|我在呢|没有掉线|很高兴见到你|很高兴认识你/i.test(_aiReplyCtx);
         if (!_isChitChatCtx && !_isGreetingCtx) {
           const resumeDecision = await supervisor.shouldAutoResume({
             lastError: health.interruptionReason,
@@ -4373,8 +4244,8 @@ if (this._capabilityTier !== 'autonomous') {
       // 规则4: 短回复 + 无工具 + 还有恢复次数 + 非告别 + 非问候 → 自动恢复
       // 强模型跳过 — 如果它给了短回复, 大概率是任务确实简单
       // 问候/自我介绍不应触发 autoResume (否则死循环: 你好→太短→你好→太短)
-      const isGreetingOrIntro = /^(你好|嗨|hi|hello|嘿|哈喽|我是|我在|有什么|随时|开干|说吧)/i.test(text.trim())
-        || /智能助手|AgentAI|帮你搞|帮你处理|开干|我在的|我在呢|没有掉线/i.test(text);
+      const isGreetingOrIntro = /^(你好|嗨|hi|hello|嘿|哈喽|我是|我在|有什么|随时|开干|说吧|早上好|下午好|晚上好|早安|晚安|好久不见|再见|拜拜|明天见|回头见|good\s*(morning|afternoon|evening|night)|bye|see\s*you)/i.test(text.trim())
+        || /智能助手|AgentAI|PulseFlow|帮你搞|帮你处理|开干|我在的|我在呢|没有掉线|很高兴见到你|很高兴认识你/i.test(text);
       if (this._capabilityTier !== 'autonomous' && !hasPriorTools && len < 200 && autoResumeCount < MAX_AUTO_RESUME && !isNoKeyResponse && !isChitChat && !isGoodbye && !isGreetingOrIntro) {
         autoResumeCount++;
         this.directives.add('short_response', '[SYSTEM] 回复过短, 请调用 list_directory 了解结构, 用 read_file/write_file 等工具完成任务。', 'medium');
