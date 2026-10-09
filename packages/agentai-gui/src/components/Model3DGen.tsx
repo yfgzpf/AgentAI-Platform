@@ -38,7 +38,13 @@ export const Model3DGen: React.FC = () => {
   const [imageBase64, setImageBase64] = useState('');
   const [format, setFormat] = useState('glb');
   const [busy, setBusy] = useState(false);
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [tasks, setTasks] = useState<TaskItem[]>(() => {
+    try { const raw = localStorage.getItem('agentai-3d-tasks'); if (raw) return JSON.parse(raw); } catch {}
+    return [];
+  });
+  useEffect(() => {
+    try { localStorage.setItem('agentai-3d-tasks', JSON.stringify(tasks.slice(0, 20))); } catch {}
+  }, [tasks]);
   const [showKeys, setShowKeys] = useState(false);
   // 密钥
   const [arkKey, setArkKey] = useState(() => localStorage.getItem('agentai.3d.ark-key') || '');
@@ -138,14 +144,14 @@ export const Model3DGen: React.FC = () => {
   const providerInfo = PROVIDERS.find(p => p.value === provider);
 
   return (
-    <div style={{ padding: 16, color: '#fff', height: '100%', overflow: 'auto' }}>
+    <div style={{ padding: 16, color: 'var(--fg)', height: '100%', overflow: 'auto' }}>
       <Card size="small" title={<Space><AppstoreOutlined /> 3D 模型生成</Space>}
         extra={<Button size="small" icon={<SettingOutlined />} onClick={() => setShowKeys(!showKeys)}>密钥配置</Button>}>
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
           {/* 密钥配置 */}
           {showKeys && (
-            <div style={{ padding: 12, borderRadius: 8, background: '#1a1a1a', border: '1px solid #333' }}>
-              <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>密钥保存在浏览器本地, 不上传服务器</div>
+<div style={{ padding: 12, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+<div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>密钥保存在浏览器本地, 不上传服务器</div>
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
                 <Input.Password size="small" placeholder="豆包 ARK API Key" value={arkKey} onChange={e => setArkKey(e.target.value)}
                   addonBefore="豆包" />
@@ -184,11 +190,11 @@ export const Model3DGen: React.FC = () => {
 
           {/* 图片预览 */}
           {imageBase64 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8, borderRadius: 8, background: '#1a1a1a', border: '1px solid #333' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
               <img src={imageBase64} alt="参考图" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6 }} />
-              <div style={{ flex: 1, fontSize: 12, color: '#999' }}>
+              <div style={{ flex: 1, fontSize: 12, color: 'var(--muted)' }}>
                 已上传参考图<br />
-                <span style={{ fontSize: 11, color: '#666' }}>{provider === 'doubao' ? '豆包将基于此图生成 3D 模型' : '混元将基于此图生成 3D 模型'}</span>
+                <span style={{ fontSize: 11, color: 'var(--muted-2)' }}>{provider === 'doubao' ? '豆包将基于此图生成 3D 模型' : '混元将基于此图生成 3D 模型'}</span>
               </div>
               <Button size="small" danger onClick={() => setImageBase64('')}>移除</Button>
             </div>
@@ -205,14 +211,14 @@ export const Model3DGen: React.FC = () => {
       {tasks.length > 0 && (
         <Card size="small" style={{ marginTop: 16 }} title="生成任务">
           {tasks.map(task => (
-            <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid #222' }}>
+            <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
               <Tag color={task.status === 'succeeded' ? 'green' : task.status === 'failed' ? 'red' : 'blue'}>
                 {task.status === 'succeeded' ? '完成' : task.status === 'failed' ? '失败' : task.status === 'running' ? '生成中' : '排队中'}
               </Tag>
-              <span style={{ flex: 1, fontSize: 12, color: '#ccc' }}>
+              <span style={{ flex: 1, fontSize: 12, color: 'var(--fg-2)' }}>
                 {task.prompt?.slice(0, 30) || '图生3D'} — {task.provider}
               </span>
-              <span style={{ fontSize: 10, color: '#666' }}>{new Date(task.ts).toLocaleTimeString()}</span>
+              <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>{new Date(task.ts).toLocaleTimeString()}</span>
               {task.fileUrl && (
                 <Button size="small" icon={<DownloadOutlined />} href={task.fileUrl} target="_blank">
                   下载
@@ -224,13 +230,13 @@ export const Model3DGen: React.FC = () => {
       )}
 
       {tasks.length === 0 && !busy && (
-        <Empty description={<span style={{ color: '#666' }}>上传图片或输入描述, 生成 3D 模型</span>} style={{ marginTop: 60 }} />
+        <Empty description={<span style={{ color: 'var(--muted-2)' }}>上传图片或输入描述, 生成 3D 模型</span>} style={{ marginTop: 60 }} />
       )}
 
       {busy && (
         <div style={{ textAlign: 'center', padding: 40 }}>
           <Spin size="large" />
-          <div style={{ marginTop: 16, color: '#888' }}>3D 生成中, 通常需要 1-3 分钟...</div>
+          <div style={{ marginTop: 16, color: 'var(--muted)' }}>3D 生成中, 通常需要 1-3 分钟...</div>
         </div>
       )}
     </div>

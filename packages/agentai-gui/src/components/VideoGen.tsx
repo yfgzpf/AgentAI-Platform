@@ -4,10 +4,12 @@
  * 共用: ZHIPU_API_KEY (文本/生图/生视频同一 key)
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Input, Button, Card, Space, Tag, Alert, Spin, message, Progress, Select, Modal, Checkbox, Divider } from 'antd';
-import { VideoCameraOutlined, DownloadOutlined, HistoryOutlined, DeleteOutlined, PlusOutlined, InfoCircleOutlined, BulbOutlined, UploadOutlined, PlayCircleOutlined, RedoOutlined } from '@ant-design/icons';
+import { Input, Button, Card, Space, Tag, Alert, Spin, message, Progress, Select, Modal, Checkbox, Tooltip } from 'antd';
+import { VideoCameraOutlined, DownloadOutlined, HistoryOutlined, DeleteOutlined, PlusOutlined, BulbOutlined, UploadOutlined, PlayCircleOutlined, RedoOutlined, CopyOutlined, EditOutlined, CloseOutlined, ForwardOutlined, CheckCircleOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
+import { StoryboardPanel } from './StoryboardPanel';
 import { useModelStore } from '../store/modelStore';
+import { videoTaskManager, type VideoTask } from '../services/videoTaskManager';
 import { apiPost } from '../services/api';
 
 const PRESETS = [
@@ -31,20 +33,92 @@ const PRESETS = [
 const PRESET_CATEGORIES = ['全部', '自然', '人文'];
 
 const DURATIONS = [
-  { value: '3s', label: '3秒 (快速)', frames: 73, fps: 24 },
-  { value: '5s', label: '5s (快)', frames: 121, fps: 24 },
-  { value: '8s', label: '8秒', frames: 193, fps: 24 },
-  { value: '10s', label: '10s (标准)', frames: 241, fps: 24 },
-  { value: '18s', label: '18s (长)', frames: 441, fps: 24 },
+  { value: '4s', label: '4秒' },
+  { value: '5s', label: '5秒' },
+  { value: '6s', label: '6秒' },
+  { value: '8s', label: '8秒' },
+  { value: '10s', label: '10秒' },
+  { value: '12s', label: '12秒 (最长)' },
 ];
 
+const SIZES = [
+  { value: '720P', label: '720P' },
+  { value: '1080P', label: '1080P' },
+];
+
+const ASPECT_RATIOS = [
+  { value: '16:9', label: '16:9 横屏' },
+  { value: '9:16', label: '9:16 竖屏' },
+  { value: '1:1', label: '1:1 方形' },
+];
+
+/** 模型能力配置表 — 切换模型时自动调整 UI */
+interface ModelCapabilities {
+  maxSeconds: number;        // 最大时长 (秒)
+  sizes: string[];           // 支持的分辨率
+  fixedSize?: string;        // 固定分辨率 (Flash)
+  maxRefImages: number;      // 最大参考图数量
+  maxRefAudios: number;      // 最大参考音频数量
+  supportsKeyframe: boolean; // 是否支持首尾帧
+  supportsFirstFrame: boolean; // 是否支持首帧图生视频
+  seedSupported?: boolean;   // 是否支持 seed 参数
+}
+
+const MODEL_CAPS: Record<string, ModelCapabilities> = {
+  'agnes-video-2.5': {
+    maxSeconds: 12,
+    sizes: ['720P', '1080P'],
+    maxRefImages: 50,
+    maxRefAudios: 10,
+    supportsKeyframe: true,
+    supportsFirstFrame: true,
+  },
+  'agnes': {
+    maxSeconds: 12,
+    sizes: ['720P'],
+    fixedSize: '720P',
+    maxRefImages: 5,
+    maxRefAudios: 3,
+    supportsKeyframe: true,
+    supportsFirstFrame: true,
+  },
+  'seedance-2.5': {
+    maxSeconds: 30,
+    sizes: ['720P', '1080P'],
+    maxRefImages: 50,
+    maxRefAudios: 50,
+    supportsKeyframe: false,
+    supportsFirstFrame: true,
+  },
+  'cogvideo': {
+    maxSeconds: 10,
+    sizes: ['720P'],
+    maxRefImages: 0,
+    maxRefAudios: 0,
+    supportsKeyframe: true,
+    supportsFirstFrame: true,
+  },
+};
+
+/** 获取当前模型能力, 未知模型用默认值 */
+const getModelCaps = (model: string): ModelCapabilities => {
+  if (MODEL_CAPS[model]) return MODEL_CAPS[model];
+  // 自定义模型默认配置
+  return {
+    maxSeconds: 12,
+    sizes: ['720P', '1080P'],
+    maxRefImages: 5,
+    maxRefAudios: 3,
+    supportsKeyframe: true,
+    supportsFirstFrame: true,
+  };
+};
+
 const MODELS = [
-    { value: 'cogvideo', label: 'CogVideoX-Flash (免费)', desc: '智谱免费, 同 ZHIPU_API_KEY' },
-    { value: 'agnes', label: 'Agnes Video V2.0', desc: '需 AGENTAI_API_KEY' },
-    // NVIDIA Cosmos 已移除 (NIM 不可用)
-    { value: 'wanx', label: '通义万相 (免费500条)', desc: '阿里 DashScope, 需 DASHSCOPE_API_KEY, 文/图生视频' },
-    { value: 'runway-gen3', label: 'Runway Gen-3', desc: '需 RUNWAY_API_KEY, 专业级视频生成' },
-    { value: 'pika', label: 'Pika Labs', desc: '需 PIKA_API_KEY, AI视频生成新秀' },
+    { value: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版 ⭐', desc: '支持图生视频/首尾帧/参考, 需 AGNES_VIDEO_API_KEY' },
+    { value: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', desc: 'Flash 免费版, 需 AGENTAI_API_KEY' },
+    { value: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', desc: '智谱免费, 同 ZHIPU_API_KEY' },
+    { value: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', desc: '1080p, 需 VOLCANO_API_KEY' },
 ];
 
 /** 自定义模型配置 */
@@ -66,40 +140,64 @@ const saveCustomModels = (models: CustomModel[]) => {
     localStorage.setItem('agentai-custom-video-models', JSON.stringify(models));
 };
 
-interface HistoryItem {
-  id: string;
-  prompt: string;
-  taskId: string;
-  videoUrl: string | null;
-  status: 'queued' | 'in_progress' | 'completed' | 'failed';
-  progress: number;
-  ts: number;
-  provider?: string;
-}
+/**
+ * 2026-10-05: 删除本地 `HistoryItem` 接口，统一使用 `VideoTask`
+ * ==================================================================
+ * 原来本文件同时存在两套类型:
+ *   - 本地 `HistoryItem`: status = 'queued' | 'in_progress' | 'completed' | 'failed'
+ *   - `videoTaskManager.VideoTask`: status = 'queued' | 'submitting' | 'polling' | 'completed' | 'failed'
+ *                            且taskId: string | null（提交前为 null），另有 model/params
+ *
+ * 但 `history` / `current` 两个 state 实际声明的是 `VideoTask[]`，
+ * 而 `pollTask()` 的参数与内部对象却是 `HistoryItem` →
+ * tsc 报 TS2345 "HistoryItem is not assignable to VideoTask" × 6
+ * 且 UI 层还在判`status === 'in_progress'`（VideoTask 里根本没这个值）→
+ * 并行改动 VideoTask 定义时漏改了这里，渲染逻辑实际永不命中。
+ *
+ * 现在统一到 VideoTask，并把 UI 状态名对齐为 submitting / polling。
+ */
+
+//const HistoryItem 已移除 —— 统一用 VideoTask（见上方说明）
 
 const STORAGE_KEY = 'agentai-video-history';
 
 export const VideoGen: React.FC = () => {
+  const httpUrl = GATEWAY_HTTP;
   const [prompt, setPrompt] = useState('');
   const [duration, setDuration] = useState('5s');
-  const [model, setModel] = useState('cogvideo');
+  const [videoSize, setVideoSize] = useState('720P');
+  const [aspectRatio, setAspectRatio] = useState('16:9');
+  const [model, setModel] = useState('agnes'); // 默认 Flash (免费), 不是正式版 (需要独立 key)
   const [busy, setBusy] = useState(false);
+const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
   const [presetCategory, setPresetCategory] = useState('全部');
   // ★ 四维润色
   const [dimensions, setDimensions] = useState<string[]>(['action', 'atmosphere', 'quality']);
   const [optimizing, setOptimizing] = useState(false);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [current, setCurrent] = useState<HistoryItem | null>(null);
+  // P0: 历史记录从全局 taskManager 订阅 — 退出再进入不丢失
+  const [history, setHistory] = useState<VideoTask[]>([]);
+  const [current, setCurrent] = useState<VideoTask | null>(null);
   const [firstFrame, setFirstFrame] = useState<string>(''); // 首帧 base64
   const [lastFrame, setLastFrame] = useState<string>('');  // 尾帧 base64
+  // P0 新增: 多图参考上传 (Agnes Video 2.5 Flash 支持最多5张参考图)
+  const [refImages, setRefImages] = useState<string[]>([]); // 参考图 base64 数组
+  const [refAudios, setRefAudios] = useState<string[]>([]); // 参考音频 base64 数组
+  // 视频原型上传: 上传一段视频 → 自动提取首尾帧 → 作为 firstFrame/lastFrame
+  const [uploadedVideoPath, setUploadedVideoPath] = useState<string>(''); // 后端保存的视频路径
+  const [extractingFrames, setExtractingFrames] = useState(false); // 提取帧中
   const pollRef = useRef<number | null>(null);
   const imgRef = useRef<HTMLInputElement>(null);
   const lastFrameRef = useRef<HTMLInputElement>(null);
+  const multiImgRef = useRef<HTMLInputElement>(null); // P0: 多图参考上传
+  const audioRef = useRef<HTMLInputElement>(null);     // P0: 音频参考上传
+  const videoUploadRef = useRef<HTMLInputElement>(null); // 视频原型上传
 
   // 自定义模型状态
   const [customModels, setCustomModels] = useState<CustomModel[]>(getCustomModels());
   const [showAddModel, setShowAddModel] = useState(false);
   const [newModel, setNewModel] = useState<Partial<CustomModel>>({});
+  const [editingModelId, setEditingModelId] = useState<string | null>(null); // P1: 编辑模式
+  const [testingModel, setTestingModel] = useState<string | null>(null); // P1: 测试中
 
   // 合并内置模型和自定义模型
   const videoModels = useModelStore.getState().models.filter(m => m.modelType === 'video' && m.enabled);
@@ -109,25 +207,109 @@ export const VideoGen: React.FC = () => {
     ...customModels.map(m => ({ value: `custom:${m.id}`, label: `🔑 ${m.name}`, isCustom: true })),
   ];
 
-  /** 添加自定义模型 */
+  /** 切换模型时自动调整参数 */
+  const handleModelChange = (val: string) => {
+    setModel(val);
+    const caps = getModelCaps(val);
+    // 固定分辨率
+    if (caps.fixedSize) {
+      setVideoSize(caps.fixedSize);
+    }
+    // 时长超出上限 → 截断
+    const curSec = parseInt(duration.replace('s', ''), 10);
+    if (curSec > caps.maxSeconds) {
+      setDuration(caps.maxSeconds + 's');
+    }
+    // 分辨率不在支持列表 → 降级
+    if (!caps.sizes.includes(videoSize)) {
+      setVideoSize(caps.sizes[0]);
+    }
+    // 参考图超出上限 → 截断
+    if (refImages.length > caps.maxRefImages) {
+      setRefImages(prev => prev.slice(0, caps.maxRefImages));
+    }
+    if (refAudios.length > caps.maxRefAudios) {
+      setRefAudios(prev => prev.slice(0, caps.maxRefAudios));
+    }
+  };
+
+  /** 添加/编辑自定义模型 */
   const handleAddModel = () => {
     if (!newModel.name || !newModel.apiKey) {
       message.error('请填写模型名称和 API Key');
       return;
     }
-    const model: CustomModel = {
-      id: `custom-${Date.now()}`,
-      name: newModel.name!,
-      apiKey: newModel.apiKey!,
-      baseUrl: newModel.baseUrl || '',
-    };
-    const updated = [...customModels, model];
-    setCustomModels(updated);
-    saveCustomModels(updated);
-    setModel(`custom:${model.id}`);
-    setNewModel({});
-    setShowAddModel(false);
-    message.success(`已添加视频模型: ${model.name}`);
+    if (editingModelId) {
+      // 编辑模式
+      const updated = customModels.map(m =>
+        m.id === editingModelId
+          ? { ...m, name: newModel.name!, apiKey: newModel.apiKey!, baseUrl: newModel.baseUrl || '' }
+          : m
+      );
+      setCustomModels(updated);
+      saveCustomModels(updated);
+      setEditingModelId(null);
+      setNewModel({});
+      setShowAddModel(false);
+      message.success(`已更新模型: ${newModel.name}`);
+    } else {
+      // 新增模式
+      const model: CustomModel = {
+        id: `custom-${Date.now()}`,
+        name: newModel.name!,
+        apiKey: newModel.apiKey!,
+        baseUrl: newModel.baseUrl || '',
+      };
+      const updated = [...customModels, model];
+      setCustomModels(updated);
+      saveCustomModels(updated);
+      setModel(`custom:${model.id}`);
+      setNewModel({});
+      setShowAddModel(false);
+      message.success(`已添加视频模型: ${model.name}`);
+    }
+  };
+
+  /** 编辑自定义模型 */
+  const handleEditModel = (id: string) => {
+    const m = customModels.find(m => m.id === id);
+    if (!m) return;
+    setNewModel({ name: m.name, apiKey: m.apiKey, baseUrl: m.baseUrl });
+    setEditingModelId(id);
+    setShowAddModel(true);
+  };
+
+  /** 测试自定义模型 */
+  const handleTestModel = async (id: string) => {
+    const m = customModels.find(m => m.id === id);
+    if (!m) return;
+    setTestingModel(id);
+    try {
+      const baseUrl = m.baseUrl || 'https://apihub.agnes-ai.cn/v1';
+      const resp = await fetch(`${baseUrl}/videos`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${m.apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'agnes-video-2.5',
+          prompt: 'test',
+          seconds: '4',
+          mode: 'text',
+          size: '720P',
+          aspect_ratio: '16:9',
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (resp.ok || resp.status === 202) {
+        message.success(`✅ ${m.name} 连接成功`);
+      } else {
+        const errText = await resp.text().catch(() => '');
+        message.warning(`${m.name} 返回 ${resp.status}: ${errText.slice(0, 100)}`);
+      }
+    } catch (e: any) {
+      message.error(`${m.name} 连接失败: ${e.message}`);
+    } finally {
+      setTestingModel(null);
+    }
   };
 
   /** 删除自定义模型 */
@@ -141,30 +323,56 @@ export const VideoGen: React.FC = () => {
   };
 
   useEffect(() => {
+    // 设置 httpUrl
+    videoTaskManager.setHttpUrl(httpUrl);
+    // 请求浏览器通知权限
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+    // P0: 订阅全局 taskManager — 退出再进入历史不丢失, 后台继续轮询
+    const unsub = videoTaskManager.subscribe((tasks, active) => {
+      setHistory(tasks);
+      setCurrent(active);
+      setBusy(!!active);
+    });
+    // ★ 读取跨页图片 (从 ImageStudio 发送过来) — 作为参考图输入, 不强制设首帧
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setHistory(JSON.parse(raw));
-    } catch {}
-    // ★ 读取跨页首帧 (从 ImageStudio 发送过来)
-    try {
-      const crossFrame = localStorage.getItem('agentai-video-firstframe');
-      if (crossFrame) {
-        setFirstFrame(crossFrame);
+      const crossImg = localStorage.getItem('agentai-video-refimg') || localStorage.getItem('agentai-video-firstframe');
+      if (crossImg) {
+        // 添加到参考图列表 (用户可自行决定是否设为首帧)
+        setRefImages(prev => prev.includes(crossImg) ? prev : [...prev, crossImg]);
+        localStorage.removeItem('agentai-video-refimg');
         localStorage.removeItem('agentai-video-firstframe');
-        message.info('📸 已从图像工作室接收首帧图片');
+        message.info('📸 已从图像工作室接收图片, 已添加为参考图');
       }
     } catch {}
+    return () => { unsub(); };
   }, []);
 
+  // P0 修复: history 变化时自动保存到 localStorage
+  // 关键: 不要用 null URL 覆盖已有的有效 URL
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(0, 30)));
-    } catch {}
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') as VideoTask[];
+      const savedMap = new Map(saved.map((s) => [s.id, s]));
+      // 合并: 当前 history 优先, 但如果当前项 videoUrl 为 null 且 saved 有有效 URL, 保留 saved 的
+      const merged = history.map(h => {
+        const prev = savedMap.get(h.id);
+        if (!h.videoUrl && prev?.videoUrl) {
+          return { ...h, videoUrl: prev.videoUrl };
+        }
+        return h;
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged.slice(0, 50)));
+    } catch (e) {
+      // localStorage 可能溢出 (视频URL很长), 尝试只保存前20条
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(history.filter(h => h.videoUrl).slice(0, 20)));
+      } catch { /* give up */ }
+    }
   }, [history]);
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
-
-  const httpUrl = GATEWAY_HTTP;
 
   /** ★ LLM 提示词优化 (接入真实 AI) */
   const optimizePrompt = async () => {
@@ -185,12 +393,30 @@ export const VideoGen: React.FC = () => {
       });
 
       if (data.ok && data.enhanced) {
-        setPrompt(data.enhanced);
-        message.success('✨ AI 已优化提示词');
+        // 2026-10-06防"润色重复叠加"
+        // 症状: 反复点「一键润色」，或 AI 生成过一轮后又点润色，
+        //   setPrompt(enhanced) 把上一版结果当输入再润色一遍 → 层层叠加。
+        //   用户看到的是同一段内容被复述 2~3 遍。
+        //
+        // 判定"输出只是把输入复述了一遍"：如果 enhanced 包含原 prompt，
+        // 且新增内容不足原文的 30% → 视为无效润色，保留原文。
+        const before = prompt.trim();
+        const after = String(data.enhanced).trim();
+        const grew = after.length - before.length;
+        const merelyEchoes = after.includes(before) && grew < before.length * 0.3;
+        if (merelyEchoes) {
+          message.info('提示词已经比较完整, 未做改动（避免重复叠加润色）');
+          return;
+        }
+        setPrompt(after);
+        message.success(`✨ AI 已优化提示词（${before.length} → ${after.length} 字）`);
       } else {
         // 降级: 本地增强
+        // 同样要防叠加：本地增强是纯字符串追加，重复点会无限增长
         const enhancers: string[] = [];
         let enhanced = prompt;
+        // 先剥掉可能已追加过的英文增强片段，再重新加 —— 保证幂等
+        enhanced = enhanced.replace(/,\s*(smooth natural motion[^\n]*|cinematic lighting[^\n]*|8k, ultra detailed[^\n]*|cinematic style[^\n]*)/gi, '');
         if (dimensions.includes('action')) { enhanced += ', smooth natural motion, dynamic movement, fluid animation'; enhancers.push('动作增强'); }
         if (dimensions.includes('atmosphere')) { enhanced += ', cinematic lighting, atmospheric depth, soft bokeh background'; enhancers.push('氛围渲染'); }
         if (dimensions.includes('quality')) { enhanced += ', 8k, ultra detailed, professional, high quality'; enhancers.push('质量提升'); }
@@ -211,33 +437,97 @@ export const VideoGen: React.FC = () => {
     setPrompt('');
     setFirstFrame('');
     setLastFrame('');
+    setUploadedVideoPath('');
     setCurrent(null);
     setBusy(false);
     if (pollRef.current) clearInterval(pollRef.current);
   };
 
-  const pollTask = (taskId: string, item: HistoryItem) => {
+  const pollTask = (taskId: string, item: VideoTask) => {
     if (pollRef.current) clearInterval(pollRef.current);
+    let pollCount = 0;
+    const MAX_POLLS = 200; // 200次 × 15秒 = 50分钟超时
     pollRef.current = window.setInterval(async () => {
+      pollCount++;
+      if (pollCount > MAX_POLLS) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        setBusy(false);
+        message.error('⏰ 视频生成超时 (50分钟), 请稍后在历史记录中查看');
+        return;
+      }
       try {
-        const r = await fetch(`${httpUrl}/v1/video/${taskId}`);
+        const r = await fetch(`${httpUrl}/v1/video/${taskId}?provider=${encodeURIComponent(item.provider || '')}`);
         const data = await r.json();
-        let parsed: any = {};
-        try { parsed = JSON.parse(data.raw || '{}'); } catch {}
-        const newStatus = (parsed.status || 'queued') as HistoryItem['status'];
-        const newProgress = typeof parsed.progress === 'number' ? parsed.progress : 0;
-        const remoteUrl = parsed.video_url || parsed.remixed_from_video_id || null;
-        const updated: HistoryItem = { ...item, status: newStatus, progress: newProgress, videoUrl: remoteUrl };
-        setCurrent(updated);
-        setHistory(prev => prev.map(h => h.id === item.id ? updated : h));
-        if (newStatus === 'completed' || newStatus === 'failed') {
+        if (data.error) {
           if (pollRef.current) clearInterval(pollRef.current);
           setBusy(false);
-          if (newStatus === 'completed') message.success('🎬 视频生成完成!');
-          else message.error('视频生成失败');
+          message.error('视频生成失败: ' + data.error);
+          const failed: VideoTask = { ...item, status: 'failed' };
+          setCurrent(failed);
+          setHistory(prev => prev.map(h => h.id === item.id ? failed : h));
+          return;
         }
-      } catch { /* retry */ }
-    }, 3000);
+        // P0 修复: 直接用后端返回字段, 不再解析 raw JSON
+        const newStatus = data.status || 'queued';
+        const newProgress = typeof data.progress === 'number' ? data.progress : 0;
+        const remoteUrl = data.videoUrl || data.video_url || null;
+        const coverUrl = data.coverUrl || data.cover_url || null;
+        const updated: VideoTask = {
+          ...item,
+          status: newStatus as VideoTask['status'],
+          progress: newProgress,
+          videoUrl: remoteUrl,
+          coverUrl,
+        };
+        setCurrent(updated);
+        setHistory(prev => prev.map(h => h.id === item.id ? updated : h));
+
+        // 判断完成/失败 (兼容多种状态名)
+        const isDone = ['completed', 'success', 'succeeded', 'done', 'finished'].includes(newStatus) || (remoteUrl && newStatus !== 'failed');
+        const isFailed = ['failed', 'error', 'cancelled', 'canceled'].includes(newStatus);
+
+        // P0 修复: 如果状态是完成但没URL, 尝试从 raw 中提取
+        let finalUrl = remoteUrl;
+        if (isDone && !finalUrl && data.raw) {
+          try {
+            const raw = JSON.parse(data.raw);
+            finalUrl = raw.video_url || raw.video?.url || raw.output?.[0]?.url || raw.url || raw.result?.video_url || null;
+          } catch { /* ignore */ }
+        }
+        // 更新最终 URL
+        if (finalUrl && finalUrl !== remoteUrl) {
+          updated.videoUrl = finalUrl;
+          setCurrent(updated);
+          setHistory(prev => prev.map(h => h.id === item.id ? updated : h));
+        }
+
+        if (isDone || isFailed) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setBusy(false);
+          if (isDone) {
+            message.success('🎬 视频生成完成! 已自动保存到历史记录');
+            // P0: 自动保存到 localStorage — 用户不需要一直等着
+            try {
+              const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+              const existIdx = saved.findIndex((s: any) => s.id === item.id);
+              const savedItem = { ...updated, videoUrl: finalUrl || remoteUrl, savedAt: Date.now() };
+              if (existIdx >= 0) {
+                saved[existIdx] = savedItem;
+              } else {
+                saved.unshift(savedItem);
+              }
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(saved.slice(0, 50)));
+            } catch { /* ignore */ }
+            // 浏览器通知 (用户切走后也能收到)
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification('视频生成完成', { body: item.prompt.slice(0, 50) });
+            }
+          } else {
+            message.error('视频生成失败: ' + (data.error || newStatus));
+          }
+        }
+      } catch { /* 网络抖动, 下次重试 */ }
+    }, 15000); // P0: 15秒间隔 — 视频生成需要分钟级, 3秒太频繁浪费请求
   };
 
   const submit = async (imageUrl?: string) => {
@@ -245,258 +535,310 @@ export const VideoGen: React.FC = () => {
       message.warning('写个视频描述吧~');
       return;
     }
-    setBusy(true);
+    // P0: 使用全局 taskManager — 后台轮询+排队+持久化
+    const img = imageUrl || firstFrame;
+    const modeLabel = lastFrame ? '[首尾帧]' : img ? '[图生视频]' : '';
+    const fullPrompt = modeLabel ? `${modeLabel} ${prompt}` : prompt;
+    videoTaskManager.submitTask({
+      prompt: fullPrompt,
+      image: img || undefined,
+      end_frame: lastFrame || undefined, // 尾帧传给后端
+      images: refImages.length > 0 ? refImages : undefined,
+      audios: refAudios.length > 0 ? refAudios : undefined,
+      duration,
+      model,
+      size: videoSize,
+      aspect_ratio: aspectRatio,
+    });
+    message.info(`📨 任务已提交, 可继续操作其他内容, 完成后会通知`);
+    // 清空输入 (保留提示词方便用户编辑)
+    // setPrompt(''); // 不清空, 方便用户二次编辑
+  };
+
+  /** 上传视频做原型 — 自动保存 + 提取首尾帧 */
+  const handleVideoUpload = async (file: File) => {
+    if (!file.type.startsWith('video/')) {
+      message.error('请上传视频文件');
+      return;
+    }
+    if (file.size > 100 * 1024 * 1024) {
+      message.error('视频不能超过 100MB');
+      return;
+    }
+    setExtractingFrames(true);
+    message.loading({ content: '正在上传视频并提取帧...', key: 'vid-upload', duration: 0 });
     try {
-      const dur = DURATIONS.find(d => d.value === duration);
-      const body: any = {
-        prompt,
-        num_frames: dur?.frames || 121,
-        frame_rate: dur?.fps || 24,
-        model,
-      };
-      // 优先使用直传参数, 否则使用首帧状态
-      const img = imageUrl || firstFrame;
-      if (img) body.image = img;
-      if (lastFrame) body.end_frame = lastFrame;
-      const r = await fetch(httpUrl + '/v1/video', {
+      // 1. 上传文件到后端
+      const formData = new FormData();
+      formData.append('file', file);
+      const uploadResp = await fetch(`${httpUrl}/v1/video/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!uploadResp.ok) {
+        message.error({ content: '上传失败: HTTP ' + uploadResp.status, key: 'vid-upload' });
+        setExtractingFrames(false);
+        return;
+      }
+      const uploadData = await uploadResp.json();
+      const videoPath = uploadData.path || uploadData.filePath || '';
+      if (!videoPath) {
+        message.error({ content: '上传成功但未返回路径', key: 'vid-upload' });
+        setExtractingFrames(false);
+        return;
+      }
+      setUploadedVideoPath(videoPath);
+
+      // 2. 调用 extract-frames 提取首尾帧
+      const frameResp = await fetch(`${httpUrl}/v1/video/extract-frames`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ videoPath }),
       });
-      const data = await r.json();
-      if (data.error) { message.error('提交失败: ' + data.error); setBusy(false); return; }
-      const modeLabel = lastFrame ? '[首尾帧]' : img ? '[图生视频]' : '';
-      const item: HistoryItem = {
-        id: `${Date.now()}`,
-        prompt: modeLabel ? `${modeLabel} ${prompt}` : prompt,
-        taskId: data.taskId || `${Date.now()}`,
-        videoUrl: null,
-        status: 'queued',
-        progress: 0,
-        ts: Date.now(),
-        provider: data.provider,
-      };
-      setCurrent(item);
-      setHistory([item, ...history]);
-      pollTask(item.taskId, item);
-      message.info(`📨 (${data.provider || model}) 任务已提交`);
+      if (frameResp.ok) {
+        const frameData = await frameResp.json();
+        if (frameData.firstFrame) {
+          setFirstFrame(frameData.firstFrame);
+          message.success({ content: `✅ 视频已上传, 首帧已提取${frameData.lastFrame ? ' (尾帧也提取了)' : ''}`, key: 'vid-upload' });
+          // 如果提取到尾帧, 自动设上
+          if (frameData.lastFrame) {
+            setLastFrame(frameData.lastFrame);
+          }
+          // 自动切换到支持首尾帧的模型
+          if (model === 'cogvideo' || model === 'agnes') {
+            setModel('agnes-video-2.5');
+          }
+        } else {
+          message.warning({ content: '首帧提取失败, 请手动上传图片', key: 'vid-upload' });
+        }
+      } else {
+        message.warning({ content: '帧提取失败, 请手动上传图片作为首帧', key: 'vid-upload', duration: 5 });
+      }
     } catch (e: any) {
-      message.error('网络错误: ' + e.message);
-      setBusy(false);
+      message.error({ content: '上传失败: ' + e.message, key: 'vid-upload' });
+    } finally {
+      setExtractingFrames(false);
     }
   };
 
-  const handleUpload = async (file: File) => {
-    if (!prompt.trim()) { message.warning('先写描述'); return; }
-    const b64 = await new Promise<string>((res, rej) => {
-      const reader = new FileReader();
-      reader.onload = () => res(reader.result as string);
-      reader.onerror = rej;
-      reader.readAsDataURL(file);
-    });
-    submit(b64);
-  };
-
 return (
-<div style={{ padding: '8px 12px', color: 'var(--fg)', height: '100%', overflow: 'auto' }}>
-      <Card
-        size="small"
-        title={<Space><VideoCameraOutlined />AI 生视频</Space>}
-        extra={
-          <Space>
-  <Select
-    size="small"
-    value={model}
-    onChange={setModel}
-    style={{ width: 240 }}
-    options={allModelOptions}
-    dropdownRender={(menu) => (
-      <>
-        {menu}
-        <div style={{ padding: '4px 8px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>自定义模型</span>
-          <Button size="small" type="link" icon={<PlusOutlined />} onClick={(e) => { e.stopPropagation(); setShowAddModel(true); }}>
-            添加
-          </Button>
-        </div>
-      </>
-    )}
-  />
-  {model.startsWith('custom:') && (
-    <Button size="small" type="link" danger onClick={() => handleDeleteModel(model.replace('custom:', ''))} style={{ fontSize: 12, marginLeft: 8 }}>
-      删除此模型
-    </Button>
-  )}
-          </Space>
-        }
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
-          {/* ★ 步骤 1: 描述 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: 'var(--bg)', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>1</div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>输入视频描述</span>
-          </div>
-          <Input.TextArea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="描述视频内容, 越详细越好. 例: 'a cat walking on the beach at sunset, cinematic, soft golden lighting'"
-            autoSize={{ minRows: 2, maxRows: 5 }}
-            size="large"
-            disabled={busy}
-          />
-          <Space wrap>
-            <span style={{ color: 'var(--muted)' }}>🎬 场景:</span>
-            {/* ★ 分类筛选 */}
-            {PRESET_CATEGORIES.map(cat => (
-              <Tag.CheckableTag key={cat} checked={presetCategory === cat} onChange={() => setPresetCategory(cat)}>
-                {cat}
-              </Tag.CheckableTag>
-            ))}
-          </Space>
-          {/* ★ 场景预设卡片化 */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 6 }}>
-            {PRESETS.filter(p => presetCategory === '全部' || p.category === presetCategory).map(p => {
-              const presetIcons: Record<string, string> = {
-                '风景': '🏔️', '动物': '🐱', '海洋': '🌊', '植物': '🌸', '城市': '🌃', '科幻': '🚀',
-                '电影感': '🎬', '建筑漫游': '🏛️', '美食': '🍜', '时尚': '👗', '运动': '⚽',
-                '烟花': '🎆', '水下': '🐠', '星空': '🌌', '极光': '❄️',
-              };
-              const active = prompt === p.prompt;
-              return (
-                <button key={p.label}
-                  onClick={() => setPrompt(p.prompt)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '8px 10px', borderRadius: 8, fontSize: 12,
-                    background: active ? 'rgba(139,92,246,0.15)' : 'var(--panel)',
-                    border: `1px solid ${active ? '#8b5cf6' : 'var(--border)'}`,
-                    color: active ? '#8b5cf6' : 'var(--fg-2)',
-                    cursor: 'pointer', textAlign: 'left',
-                    transition: 'all 0.2s ease',
-                  }}
-                >
-                  <span style={{ fontSize: 15 }}>{presetIcons[p.label] || '🎬'}</span>
-                  <span style={{ fontWeight: 600 }}>{p.label}</span>
-                </button>
-              );
-            })}
-          </div>
+<div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 50px)', color: 'var(--fg)' }}>
+{/* 顶部 Tab 切换 */}
+<div style={{ display: 'flex', gap: 0, flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+  <button onClick={() => setViewMode('single')} style={{ padding: '8px 20px', fontSize: 13, cursor: 'pointer', background: viewMode === 'single' ? 'rgba(99,102,241,0.1)' : 'transparent', border: 'none', borderBottom: viewMode === 'single' ? '2px solid #6366f1' : '2px solid transparent', color: viewMode === 'single' ? '#6366f1' : 'var(--muted)', fontWeight: 600 }}>
+    <VideoCameraOutlined /> 单次生成
+  </button>
+  <button onClick={() => setViewMode('storyboard')} style={{ padding: '8px 20px', fontSize: 13, cursor: 'pointer', background: viewMode === 'storyboard' ? 'rgba(99,102,241,0.1)' : 'transparent', border: 'none', borderBottom: viewMode === 'storyboard' ? '2px solid #6366f1' : '2px solid transparent', color: viewMode === 'storyboard' ? '#6366f1' : 'var(--muted)', fontWeight: 600 }}>
+    <BulbOutlined /> 剧本分镜
+  </button>
+</div>
 
-          {/* ★ 四维润色面板 */}
-          <div style={{ padding: 12, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>✨ 提示词四维润色</span>
-              <Button size="small" icon={<BulbOutlined />} loading={optimizing} onClick={optimizePrompt}
-                disabled={!prompt.trim() || busy}
-                style={{ borderRadius: 6 }}
-              >{optimizing ? '润色中...' : '一键润色'}</Button>
+{viewMode === 'storyboard' ? (
+  /* 剧本分镜模式 — 全宽布局 */
+  <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+    <StoryboardPanel httpUrl={httpUrl} refImages={refImages} model={model} />
+  </div>
+) : (
+  /* 单次生成模式 — 原有左右分栏 */
+<div style={{ display: 'flex', gap: 12, flex: 1, overflow: 'hidden' }}>
+{/* 左侧: 控制面板 */}
+<div style={{ width: 420, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
+      <Card size="small" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+        title={<Space><VideoCameraOutlined /> AI 生视频</Space>}
+extra={<Select size="small" value={model} onChange={handleModelChange} style={{ width: 180 }} popupMatchSelectWidth={false} getPopupContainer={() => document.body} options={allModelOptions}
+dropdownRender={(menu) => (<>{menu}<div style={{ padding: '4px 8px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+<Button size="small" type="link" icon={<PlusOutlined />} onClick={(e) => { e.stopPropagation(); setShowAddModel(true); setEditingModelId(null); setNewModel({}); }}>添加自定义</Button>
+{customModels.length > 0 && <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 4 }}>
+<div style={{ fontSize: 10, color: 'var(--muted)', padding: '2px 4px' }}>已添加的自定义模型:</div>
+{customModels.map(m => (
+<div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px' }}>
+<span style={{ flex: 1, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
+<Button size="small" type="text" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); handleEditModel(m.id); }} style={{ fontSize: 10 }} />
+<Button size="small" type="text" loading={testingModel === m.id} icon={<CheckCircleOutlined />} onClick={(e) => { e.stopPropagation(); handleTestModel(m.id); }} style={{ fontSize: 10 }} />
+<Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); handleDeleteModel(m.id); }} style={{ fontSize: 10 }} />
+</div>
+))}
+</div>}
+</div></>)} />}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
+          {/* 提示词输入 */}
+<Input.TextArea value={prompt} onChange={(e) => setPrompt(e.target.value)}
+placeholder="描述视频内容, 例: a cat walking on the beach at sunset, cinematic"
+autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
+
+          {/* 场景预设 */}
+          <Select size="small" value={prompt && PRESETS.find(p => p.prompt === prompt)?.label || undefined}
+            onChange={(val) => setPrompt(PRESETS.find(p => p.label === val)?.prompt || '')}
+            placeholder="选择场景预设..." style={{ width: '100%' }} allowClear disabled={busy}
+            options={PRESETS.map(p => ({ value: p.label, label: `${p.label} · ${p.category}` }))} />
+
+          {/* 四维润色 */}
+          <div style={{ padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)' }}>提示词润色</span>
+              <Button size="small" icon={<BulbOutlined />} loading={optimizing} onClick={optimizePrompt} disabled={!prompt.trim() || busy} style={{ borderRadius: 6 }}>{optimizing ? '润色中...' : '一键润色'}</Button>
             </div>
-            <Checkbox.Group value={dimensions} onChange={(vals) => setDimensions(vals as string[])}
-              style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
-            >
-              <Checkbox value="action" style={{ fontSize: 12 }}>🏃 动作增强</Checkbox>
-              <Checkbox value="atmosphere" style={{ fontSize: 12 }}>🌅 氛围渲染</Checkbox>
-              <Checkbox value="quality" style={{ fontSize: 12 }}>💎 质量提升</Checkbox>
-              <Checkbox value="style" style={{ fontSize: 12 }}>🎬 风格化</Checkbox>
+            <Checkbox.Group value={dimensions} onChange={(vals) => setDimensions(vals as string[])} style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              <Checkbox value="action" style={{ fontSize: 11 }}>动作增强</Checkbox>
+              <Checkbox value="atmosphere" style={{ fontSize: 11 }}>氛围渲染</Checkbox>
+              <Checkbox value="quality" style={{ fontSize: 11 }}>质量提升</Checkbox>
+              <Checkbox value="style" style={{ fontSize: 11 }}>风格化</Checkbox>
             </Checkbox.Group>
           </div>
 
-          <Divider style={{ margin: '4px 0' }} />
-
-          {/* ★ 步骤 2: 设置 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: 'var(--bg)', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>2</div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>选择时长与首尾帧</span>
+          {/* 时长选择 */}
+          <div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>时长 {getModelCaps(model).maxSeconds > 12 && `(最长 ${getModelCaps(model).maxSeconds}秒)`}</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {DURATIONS.filter(d => parseInt(d.value.replace('s', ''), 10) <= getModelCaps(model).maxSeconds).map(d => (
+                <Tag.CheckableTag key={d.value} checked={duration === d.value} onChange={() => setDuration(d.value)} style={{ fontSize: 11 }}>{d.label}</Tag.CheckableTag>
+              ))}
+              {/* Seedance 30秒选项 */}
+              {getModelCaps(model).maxSeconds >= 15 &&
+                [15, 20, 25, 30].filter(s => s <= getModelCaps(model).maxSeconds).map(s => (
+                  <Tag.CheckableTag key={s + 's'} checked={duration === s + 's'} onChange={() => setDuration(s + 's')} style={{ fontSize: 11 }}>{s}秒</Tag.CheckableTag>
+                ))
+              }
+            </div>
           </div>
-          <Space wrap>
-            <span style={{ color: 'var(--muted)' }}>⏱ 时长:</span>
-            {DURATIONS.map(d => (
-              <Tag.CheckableTag
-                key={d.value}
-                checked={duration === d.value}
-                onChange={() => setDuration(d.value)}
+
+          {/* 尺寸 + 宽高比 */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>分辨率</div>
+              <Select size="small" value={videoSize} onChange={setVideoSize} style={{ width: '100%' }}
+                disabled={!!getModelCaps(model).fixedSize}
+                options={getModelCaps(model).sizes.map(s => ({ value: s, label: s }))} />
+              {getModelCaps(model).fixedSize && <div style={{ fontSize: 9, color: 'var(--muted-2)' }}>固定 {getModelCaps(model).fixedSize}</div>}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>宽高比</div>
+              <Select size="small" value={aspectRatio} onChange={setAspectRatio} style={{ width: '100%' }} options={ASPECT_RATIOS} />
+            </div>
+          </div>
+
+          {/* 视频做原型: 上传一段视频 → 自动提取首尾帧 */}
+          <div style={{ padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)' }}><VideoCameraAddOutlined /> 视频做原型</span>
+              {uploadedVideoPath && <Button size="small" type="text" danger icon={<CloseOutlined />} onClick={() => { setUploadedVideoPath(''); setFirstFrame(''); setLastFrame(''); }} />}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Button
+                size="small"
+                icon={<UploadOutlined />}
+                loading={extractingFrames}
+                onClick={() => videoUploadRef.current?.click()}
+                disabled={busy || extractingFrames}
+                style={{ flex: 1 }}
               >
-                {d.label}
-              </Tag.CheckableTag>
-            ))}
-          </Space>
-          <Space wrap>
-            <Button size="small" icon={<UploadOutlined />} onClick={() => imgRef.current?.click()} disabled={busy}>
-              {firstFrame ? '更换首帧' : '上传首帧'}
-            </Button>
-            <Button size="small" icon={<UploadOutlined />} onClick={() => lastFrameRef.current?.click()} disabled={busy || !firstFrame}>
-              {lastFrame ? '更换尾帧' : '上传尾帧'}
-            </Button>
-            {(firstFrame || lastFrame) && <Button size="small" danger onClick={() => { setFirstFrame(''); setLastFrame(''); }}>清除图片</Button>}
-            <input ref={imgRef} type="file" accept="image/*" style={{ display: 'none' }}
-              onChange={e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => setFirstFrame(r.result as string); r.readAsDataURL(f); e.target.value = ''; }} />
-            <input ref={lastFrameRef} type="file" accept="image/*" style={{ display: 'none' }}
-              onChange={e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => setLastFrame(r.result as string); r.readAsDataURL(f); e.target.value = ''; }} />
-          </Space>
-          {model === 'cogvideo' && (
-            <Alert message="CogVideoX-3 免费模型, 同 ZHIPU_API_KEY。支持: 文生视频 / 图生视频 / 首尾帧生视频" style={{ fontSize: 11, background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }} showIcon icon={<InfoCircleOutlined />} />
-          )}
-          {/* ★ 跨页首帧提示 */}
-          {firstFrame && (
-            <div style={{ display: 'flex', gap: 12, padding: 8, borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)' }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4 }}>首帧</div>
-                <img src={firstFrame} alt="首帧" style={{ width: 100, height: 60, objectFit: 'cover', borderRadius: 4 }} />
+                {uploadedVideoPath ? '换视频' : '上传视频做原型'}
+              </Button>
+            </div>
+            {uploadedVideoPath && (
+              <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4 }}>
+                ✅ 已提取首尾帧, 将以视频画面为原型生成新视频
               </div>
-              {lastFrame ? (
+            )}
+            <input ref={videoUploadRef} type="file" accept="video/*" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (!f) return; handleVideoUpload(f); e.target.value = ''; }} />
+          </div>
+
+          {/* 首尾帧上传 */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Button size="small" icon={<UploadOutlined />} onClick={() => imgRef.current?.click()} disabled={busy}>{firstFrame ? '换首帧' : '上传首帧'}</Button>
+            <Button size="small" icon={<UploadOutlined />} onClick={() => lastFrameRef.current?.click()} disabled={busy || !firstFrame}>{lastFrame ? '换尾帧' : '上传尾帧'}</Button>
+            {(firstFrame || lastFrame) && <Button size="small" danger onClick={() => { setFirstFrame(''); setLastFrame(''); }}>清除</Button>}
+            <input ref={imgRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => setFirstFrame(r.result as string); r.readAsDataURL(f); e.target.value = ''; }} />
+            <input ref={lastFrameRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => setLastFrame(r.result as string); r.readAsDataURL(f); e.target.value = ''; }} />
+          </div>
+
+          {/* 首尾帧预览 */}
+          {firstFrame && (
+            <div style={{ display: 'flex', gap: 8, padding: 6, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 2 }}>首帧</div>
+                <img src={firstFrame} alt="首帧" style={{ width: 80, height: 48, objectFit: 'cover', borderRadius: 4 }} />
+              </div>
+              {lastFrame && (
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4 }}>尾帧</div>
-                  <img src={lastFrame} alt="尾帧" style={{ width: 100, height: 60, objectFit: 'cover', borderRadius: 4 }} />
-                </div>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--muted)' }}>
-                  可选: 上传尾帧 → 生成首尾帧过渡视频
+                  <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 2 }}>尾帧</div>
+                  <img src={lastFrame} alt="尾帧" style={{ width: 80, height: 48, objectFit: 'cover', borderRadius: 4 }} />
                 </div>
               )}
-              <div style={{ display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--muted-2)', flex: 1 }}>
-                {lastFrame ? '首尾帧模式: AI 将生成从首帧到尾帧的过渡视频' : '图生视频模式: AI 将基于此图生成动态视频'}
+              <div style={{ fontSize: 10, color: 'var(--muted-2)', flex: 1, display: 'flex', alignItems: 'center' }}>
+                {lastFrame ? '首尾帧模式: 生成过渡视频' : '图生视频模式'}
               </div>
             </div>
           )}
-          {model === 'agnes' && (
-            <Alert message={`Agnes Video V2.0 | 时长: ${duration} | 帧率: 24fps | 需 AGENTAI_API_KEY`} style={{ fontSize: 11, background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent)' }} showIcon icon={<InfoCircleOutlined />} />
+
+          {/* 参考图/音频 — 根据模型能力显示 */}
+          {(() => {
+            const caps = getModelCaps(model);
+            const showRef = caps.maxRefImages > 0 || caps.maxRefAudios > 0;
+            if (!showRef && !model.startsWith('custom:')) return null;
+            const maxImg = model.startsWith('custom:') ? 5 : caps.maxRefImages;
+            const maxAud = model.startsWith('custom:') ? 3 : caps.maxRefAudios;
+            return (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {maxImg > 0 && <Button size="small" icon={<UploadOutlined />} onClick={() => multiImgRef.current?.click()} disabled={busy || refImages.length >= maxImg}>参考图 ({refImages.length}/{maxImg})</Button>}
+              {maxAud > 0 && <Button size="small" icon={<UploadOutlined />} onClick={() => audioRef.current?.click()} disabled={busy || refAudios.length >= maxAud}>参考音频 ({refAudios.length}/{maxAud})</Button>}
+              {(refImages.length > 0 || refAudios.length > 0) && <Button size="small" danger onClick={() => { setRefImages([]); setRefAudios([]); }}>清除</Button>}
+              {maxImg > 0 && <input ref={multiImgRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => { const files = Array.from(e.target.files || []).slice(0, maxImg - refImages.length); files.forEach(f => { const r = new FileReader(); r.onload = () => setRefImages(prev => [...prev, r.result as string].slice(0, maxImg)); r.readAsDataURL(f); }); e.target.value = ''; }} />}
+              {maxAud > 0 && <input ref={audioRef} type="file" accept="audio/*" multiple style={{ display: 'none' }} onChange={e => { const files = Array.from(e.target.files || []).slice(0, maxAud - refAudios.length); files.forEach(f => { const r = new FileReader(); r.onload = () => setRefAudios(prev => [...prev, r.result as string].slice(0, maxAud)); r.readAsDataURL(f); }); e.target.value = ''; }} />}
+            </div>
+            );
+          })()}
+
+          {/* 参考图预览 */}
+          {refImages.length > 0 && (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {refImages.map((img, i) => (
+                <div key={i} style={{ position: 'relative' }}>
+                  <img src={img} alt={`ref${i}`} style={{ width: 56, height: 40, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }} />
+                  <span onClick={() => setRefImages(prev => prev.filter((_, j) => j !== i))} style={{ position: 'absolute', top: -4, right: -4, width: 14, height: 14, borderRadius: '50%', background: 'var(--danger)', color: '#fff', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>×</span>
+                </div>
+              ))}
+            </div>
           )}
 
-          <Divider style={{ margin: '4px 0' }} />
-
-          {/* ★ 步骤 3: 生成 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: 'var(--bg)', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>3</div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>生成视频</span>
-            <span style={{ fontSize: 11, color: 'var(--muted-2)' }}>预计 {duration === '3s' ? '1-2 分钟' : duration === '5s' ? '2-3 分钟' : '3-5 分钟'}</span>
+          {/* 生成按钮 */}
+          <div>
+            <Space>
+              <Button type="primary" size="large" icon={<PlayCircleOutlined />} loading={busy} onClick={() => submit()} disabled={!prompt.trim() || busy}
+                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: 10, padding: '0 28px', boxShadow: '0 4px 16px rgba(99,102,241,0.3)' }}>
+                {busy ? '提交中...' : '生成视频'}
+              </Button>
+              <Button size="large" icon={<RedoOutlined />} onClick={resetAll} disabled={busy}>重置</Button>
+            </Space>
           </div>
-          <Space>
-            <Button type="primary" size="large" icon={<PlayCircleOutlined />} loading={busy} onClick={() => submit()}
-              disabled={!prompt.trim() || busy}
-              style={{
-                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                border: 'none', borderRadius: 10, padding: '0 32px',
-                boxShadow: '0 4px 16px rgba(99,102,241,0.3)',
-              }}
-            >
-              {busy ? '提交中...' : '生成视频'}
-            </Button>
-            {/* ★ 重置按钮 */}
-            <Button size="large" icon={<RedoOutlined />} onClick={resetAll} disabled={busy}>
-              重置
-            </Button>
-          </Space>
-        </Space>
-      </Card>
 
+          {/* 填充: 模型信息 */}
+          <div style={{ padding: '8px 10px', borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 4 }}>当前引擎</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {model === 'agnes-video-2.5' && `Agnes Video 2.5 正式版 | ${videoSize} | ${aspectRatio} | ${duration} | 文生/图生/首尾帧/参考`}
+              {model === 'agnes' && `Agnes Video 2.5 Flash | 720P (固定) | ${aspectRatio} | ${duration} | 文生/图生/首尾帧/参考 (图≤5/音≤3)`}
+              {model === 'cogvideo' && 'CogVideoX-Flash — 智谱免费, 支持文生/图生/首尾帧'}
+              {model === 'seedance-2.5' && `Seedance 2.5 | 火山引擎 | ${videoSize} | ${aspectRatio} | ${duration} | 文/图/音/视频 四模态 (素材≤50)`}
+              {model.startsWith('custom:') && `自定义模型: ${customModels.find(m => 'custom:' + m.id === model)?.name || ''}`}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4 }}>预计 {duration === '3s' ? '1-2 分钟' : duration === '5s' ? '2-3 分钟' : '3-5 分钟'}</div>
+          </div>
+        </div>
+</Card>
+
+</div>
+
+{/* 右侧: 结果展示 */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', minWidth: 0 }}>
       {/* 当前结果 */}
       {current && (
         <Card
           size="small"
-          style={{ marginTop: 16 }}
           title={
             <Space>
-              {current.status === 'completed' ? '🎬 已生成' : current.status === 'failed' ? '❌ 失败' : '⏳ 生成中'}
+              {current.status === 'completed' ? '已生成' : current.status === 'failed' ? '失败' : '生成中'}
               <Tag color={current.status === 'completed' ? 'green' : current.status === 'failed' ? 'red' : 'blue'}>
                 {current.status}
               </Tag>
@@ -531,11 +873,12 @@ return (
               <Spin size="large" />
               <Progress percent={current.progress} status="active" style={{ maxWidth: 400, margin: '16px auto' }} />
               <div style={{ color: 'var(--muted)' }}>
-                {current.status === 'queued' && '🕒 排队中...'}
-                {current.status === 'in_progress' && '🎨 AI 渲染中...'}
+                {current.status === 'queued' && '排队中...'}
+                {current.status === 'polling' && 'AI 渲染中...'}
+                {current.status === 'submitting' && '提交中...'}
               </div>
               {/* ★ 预估时间提示 */}
-              {current.status === 'in_progress' && current.progress > 0 && current.progress < 100 && (
+              {current.status === 'polling' && current.progress > 0 && current.progress < 100 && (
                 <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 4 }}>
                   预计还需约 {Math.max(5, Math.ceil((100 - current.progress) * 0.8))} 秒
                 </div>
@@ -543,7 +886,7 @@ return (
             </div>
           )}
           <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 12 }}>
-            {current.prompt} · {current.taskId.slice(0, 24)}...
+            {current.prompt} · {(current.taskId || 'pending').slice(0, 24)}...
           </div>
         </Card>
       )}
@@ -552,43 +895,159 @@ return (
       {history.length > 0 && (
         <Card
           size="small"
-          style={{ marginTop: 16 }}
-          title={<Space><HistoryOutlined />历史记录 ({history.length})</Space>}
+          style={{ marginTop: 0 }}
+          title={<Space><HistoryOutlined />历史记录 ({history.length}) {videoTaskManager.getQueue().length > 0 && <Tag color="orange">排队 {videoTaskManager.getQueue().length}</Tag>}</Space>}
           extra={
-            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { setHistory([]); setCurrent(null); }}>
+            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { videoTaskManager.clearAll(); }}>
               清空
             </Button>
           }
         >
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
             {history.map(item => (
               <div
                 key={item.id}
-                onClick={() => setCurrent(item)}
                 style={{
-                  cursor: 'pointer',
                   position: 'relative',
                   border: current?.id === item.id ? '2px solid var(--accent)' : '1px solid var(--border)',
                   borderRadius: 4,
                   overflow: 'hidden',
                   background: 'var(--bg)',
-                  aspectRatio: '16/9',
                 }}
               >
-                {item.videoUrl ? (
-                  <video src={item.videoUrl} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted)' }}>
-                    <Spin size="small" />
+                <div style={{ aspectRatio: '16/9', position: 'relative' }} onClick={() => setCurrent(item)}>
+                  {item.videoUrl ? (
+                    <video src={item.videoUrl} controls muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted)', flexDirection: 'column', gap: 4 }}>
+                      {item.status === 'queued' ? <Tag color="orange">排队中</Tag> : <Spin size="small" />}
+                      <span style={{ fontSize: 10 }}>{item.status === 'polling' ? '生成中...' : item.status === 'submitting' ? '提交中...' : '等待中'}</span>
+                    </div>
+                  )}
+                  <div style={{ position: 'absolute', top: 4, right: 4 }}>
+                    <Tag color={item.status === 'completed' ? 'green' : item.status === 'failed' ? 'red' : 'blue'}>
+                      {item.status === 'completed' ? '完成' : item.status === 'failed' ? '失败' : item.status === 'queued' ? '排队' : '生成中'}
+                    </Tag>
                   </div>
-                )}
-                <div style={{ position: 'absolute', top: 4, right: 4 }}>
-                  <Tag color={item.status === 'completed' ? 'green' : item.status === 'failed' ? 'red' : 'blue'}>
-                    {item.status === 'completed' ? '✓' : item.status === 'failed' ? '✗' : `${item.progress}%`}
-                  </Tag>
                 </div>
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 4, background: 'linear-gradient(transparent, rgba(0,0,0,0.8))', color: 'var(--fg)', fontSize: 11 }}>
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.prompt}</div>
+                {/* 操作栏 */}
+                <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center', gap: 4, background: 'var(--panel)', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--fg-2)' }}>{item.prompt}</div>
+                  <Tooltip title="复制提示词">
+                    <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(item.params?.prompt || item.prompt); message.success('已复制提示词'); }} />
+                  </Tooltip>
+                  <Tooltip title="编辑提示词">
+                    <Button size="small" type="text" icon={<EditOutlined />} onClick={() => { setPrompt(item.params?.prompt || item.prompt); }} />
+                  </Tooltip>
+                  <Tooltip title="重新生成">
+                    <Button size="small" type="text" icon={<RedoOutlined />} onClick={() => { videoTaskManager.regenerate(item.id); message.info('已重新提交'); }} />
+                  </Tooltip>
+                  {item.videoUrl && item.status === 'completed' && (
+                    <Tooltip title="智能续集 — AI 分析尾帧, 生成下一集剧本">
+                      <Button size="small" type="text" icon={<ForwardOutlined />} onClick={async () => {
+                          // 智能续集: 提取尾帧 → 多模态 LLM 分析画面 → 生成新剧本
+                          message.loading({ content: '🎬 正在分析尾帧并生成续集剧本...', key: 'seq-extract', duration: 0 });
+                          try {
+                            // P3: 从 episodeChain 获取故事上下文和角色
+                            const chainContext = videoTaskManager.getChainContext(item.id);
+                            const episodeIndex = chainContext.episodeIndex;
+                            const knownCharacters = chainContext.characters;
+                            const storyContext = chainContext.storyContext;
+
+                            // P0: 优先使用 API 返回的尾帧 URL, 不需要 ffmpeg
+                            const apiLastFrame = (item as any).lastFrameUrl || null;
+
+                            const resp = await fetch(`${httpUrl}/v1/video/next-episode`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                videoUrl: item.videoUrl,
+                                originalPrompt: item.params?.prompt || item.prompt,
+                                episodeIndex,
+                                characters: knownCharacters,
+                                storyContext,
+                                apiLastFrame, // 传给后端, 跳过 ffmpeg 提取
+                              }),
+                            });
+                          if (resp.ok) {
+                            const data = await resp.json();
+                            if (data.newPrompt) {
+                              // 自动填入新剧本
+                              setPrompt(data.newPrompt);
+                              setRefImages([]);
+                              // 如果有尾帧, 自动设为首帧; 没有则提示用户手动上传
+                              if (data.tailFrameUrl) {
+                                setFirstFrame(data.tailFrameUrl);
+                              } else {
+                                setFirstFrame('');
+                              }
+                              // 保存角色信息到当前任务 (供下一集续集使用)
+                              (item as any).characters = data.characters;
+                              (item as any).storySummary = data.storySummary || '';
+                              const warnMsg = data.warning ? ' ⚠️ ' + data.warning : '';
+                              message.success({ content: `✅ 第${episodeIndex}集剧本已生成, 可编辑后点击生成${warnMsg}`, key: 'seq-extract', duration: 6 });
+                            } else {
+                              message.error({ content: '续集生成失败: 返回数据不完整', key: 'seq-extract' });
+                            }
+                          } else {
+                            // 降级: 调用旧的 extract-tail 接口
+                            message.loading({ content: '正在提取视频尾帧...', key: 'seq-extract', duration: 0 });
+                            const fallbackResp = await fetch(`${httpUrl}/v1/video/extract-tail`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ videoUrl: item.videoUrl }),
+                            });
+                            if (fallbackResp.ok) {
+                              const fallbackData = await fallbackResp.json();
+                              if (fallbackData.tailFrameUrl) {
+                                setPrompt('续集: ' + (item.params?.prompt || item.prompt).slice(0, 60) + '...\n请延续上一段视频的内容和风格, 生成后续画面。');
+                                setFirstFrame(fallbackData.tailFrameUrl);
+                                setRefImages([]);
+                                setModel('agnes-video-2.5');
+                                message.success({ content: '✅ 尾帧已提取 (降级模式), 请手动编辑提示词', key: 'seq-extract', duration: 4 });
+                              } else {
+                                // 2026-10-06: 不再只说"尾帧提取失败"。
+                                // 后端现在返回可执行的原因（最常见是服务器缺 ffmpeg），
+                                // 直接透出给用户，否则用户只能干瞪眼。
+                                const reason = await fallbackResp.json()
+                                  .then((d: any) => d.error || '')
+                                  .catch(() => '');
+                                message.error({
+                                  content: `尾帧提取失败${reason ? '：' + reason : ''}`,
+                                  key: 'seq-extract',
+                                  duration: 8,
+                                });
+                              }
+                            } else {
+                              // 同上：把后端原因透出，而不是笼统提示"请手动截图"
+                              let reason = '';
+                              try {
+                                const j = await resp.json();
+                                reason = j.error || j.hint || '';
+                              } catch { /* 解析失败用默认文案 */ }
+                              message.warning({
+                                content: reason
+                                  ? `续集生成失败：${reason}`
+                                  : '续集生成失败, 请手动截图视频最后一帧上传',
+                                key: 'seq-extract',
+                                duration: 10,
+                              });
+                            }
+                          }
+                        } catch (e: any) {
+                          message.error({ content: '续集生成失败: ' + e.message, key: 'seq-extract' });
+                        }
+                      }} />
+                    </Tooltip>
+                  )}
+                  {(item.status === 'queued' || item.status === 'polling' || item.status === 'submitting') && (
+                    <Tooltip title="取消">
+                      <Button size="small" type="text" danger icon={<CloseOutlined />} onClick={() => videoTaskManager.cancelTask(item.id)} />
+                    </Tooltip>
+                  )}
+                  <Tooltip title="删除">
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => videoTaskManager.deleteTask(item.id)} />
+                  </Tooltip>
                 </div>
               </div>
             ))}
@@ -597,38 +1056,24 @@ return (
       )}
 
       {!current && history.length === 0 && !busy && (
-        <div style={{ textAlign: 'center', marginTop: 40, marginBottom: 40 }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>🎬</div>
+        <div style={{ textAlign: 'center', marginTop: 60 }}>
+          <div style={{ marginBottom: 12, color: 'var(--muted)' }}><VideoCameraOutlined style={{ fontSize: 40 }} /></div>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--fg)', marginBottom: 6 }}>
             AI 视频生成
           </div>
           <div style={{ fontSize: 13, color: 'var(--muted-2)', marginBottom: 24, maxWidth: 400, margin: '0 auto 24px' }}>
             输入视频描述，选择场景预设，点击生成即可创建 AI 视频。支持文生视频 / 图生视频 / 首尾帧过渡
           </div>
-          {/* 灵感画廊 */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, maxWidth: 500, margin: '0 auto' }}>
-            {PRESETS.slice(0, 6).map(p => {
-              const presetIcons: Record<string, string> = {
-                '风景': '🏔️', '动物': '🐱', '海洋': '🌊', '植物': '🌸', '城市': '🌃', '科幻': '🚀',
-              };
-              return (
-                <button key={p.label}
-                  onClick={() => setPrompt(p.prompt)}
-                  style={{
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-                    padding: '20px 12px', borderRadius: 12, cursor: 'pointer',
-                    background: 'var(--panel)', border: '1px solid var(--border)',
-                    transition: 'all 0.25s ease', textAlign: 'center',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(99,102,241,0.1)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; }}
-                >
-                  <span style={{ fontSize: 32 }}>{presetIcons[p.label] || '🎬'}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>{p.label}</span>
-                  <span style={{ fontSize: 10, color: 'var(--muted-2)', lineHeight: 1.3 }}>点击试试 →</span>
-                </button>
-              );
-            })}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8, maxWidth: 500, margin: '0 auto' }}>
+            {PRESETS.slice(0, 6).map(p => (
+              <button key={p.label} onClick={() => setPrompt(p.prompt)}
+                style={{ padding: '14px 8px', borderRadius: 10, cursor: 'pointer', background: 'var(--panel)', border: '1px solid var(--border)', transition: 'all 0.2s', textAlign: 'center' }}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; }}>
+                <span style={{ fontSize: 12, fontWeight: 600, display: 'block' }}>{p.label}</span>
+                <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>{p.category}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -645,10 +1090,10 @@ return (
       {/* 自定义模型配置弹窗 */}
       <Modal
         open={showAddModel}
-        title="添加自定义视频生成模型"
-        onCancel={() => { setShowAddModel(false); setNewModel({}); }}
+        title={editingModelId ? '编辑自定义视频生成模型' : '添加自定义视频生成模型'}
+        onCancel={() => { setShowAddModel(false); setNewModel({}); setEditingModelId(null); }}
         onOk={handleAddModel}
-        okText="添加"
+        okText={editingModelId ? '保存' : '添加'}
         width={480}
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
@@ -679,6 +1124,9 @@ return (
           <Alert type="info" message="API Key 将安全存储在本地浏览器中，不会上传到服务器。" showIcon style={{ fontSize: 11 }} />
         </Space>
       </Modal>
+      </div>
+    </div>
+    )}
     </div>
   );
 };

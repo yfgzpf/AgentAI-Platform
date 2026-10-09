@@ -2,7 +2,7 @@
  * 微信绑定路由 (/api/wechat)
  * 供前端调用：获取二维码、轮询扫码状态、查询绑定状态
  *
- * 关键认知 (来自 Hermes weixin.py):
+ * 关键认知 (weixin.py):
  *   qrcode_img_content 是**需要编码进二维码的文本内容** (URL字符串),
  *   不是图片 URL! 必须用 QR 生成服务把它转成真正的二维码图片。
  */

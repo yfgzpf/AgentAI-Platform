@@ -58,7 +58,7 @@ fi
 CONTENT=""
 if [[ "$SOURCE_INPUT" =~ ^https?:// ]]; then
   echo "🌐 Fetching content from URL: $SOURCE_INPUT"
-  # Use Clawdbot's web_fetch tool if available, otherwise fallback to curl
+  # Use AgentAI's web_fetch tool if available, otherwise fallback to curl
   if command -v clawdbot &> /dev/null && clawdbot tool-exists web_fetch; then
     CONTENT=$(clawdbot web_fetch --url "$SOURCE_INPUT" --extractMode text)
   else

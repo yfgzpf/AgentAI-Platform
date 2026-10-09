@@ -42,7 +42,7 @@ const MODE_ENTRIES = MODE_ORDER.map(k => {
 });
 
 interface Props {
-  onSend: (text: string) => void;
+onSend: (text: string, opts?: { webSearch?: boolean }) => void;
   onAbort: () => void;
   busy: boolean;
   disabled?: boolean;
@@ -389,6 +389,8 @@ setActiveModel(modelId);
       if (e.key === 'Escape') { setPopup(null); e.preventDefault(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey) {
+      // P0 修复: 中文输入法正在组字时 Enter 用于选词, 不发送消息
+      if (composingRef.current) return;
       e.preventDefault();
       const hasContent = draft.trim() || attachments.length > 0;
       if (!hasContent) return;
@@ -399,7 +401,7 @@ setActiveModel(modelId);
           setDraft('');
         }
       } else {
-        onSend(draft);
+        onSend(draft, { webSearch });
         setDraft('');
       }
     }
@@ -434,7 +436,7 @@ setActiveModel(modelId);
       {/* 拖拽高亮提示 */}
       {dragOver && (
         <div style={{
-          position: 'absolute', inset: 0, zIndex: 50,
+          position: 'absolute', inset: 0, zIndex: 'var(--z-sticky)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'rgba(74,222,128,0.08)',
           border: '2px dashed var(--success)',
@@ -668,7 +670,7 @@ setActiveModel(modelId);
           {cameraOpen && (
             <div style={{
               position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-              background: 'rgba(0,0,0,0.7)', zIndex: 10000,
+              background: 'rgba(0,0,0,0.7)', zIndex: 'var(--z-dragging)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }} onClick={(e) => { if (e.target === e.currentTarget) closeTongueCamera(); }}>
               <div style={{
@@ -825,7 +827,7 @@ setActiveModel(modelId);
                 size="small"
                 value={visibleModels.some(m => m.id === activeModelId) ? activeModelId : visibleModels[0]?.id}
                 onChange={handleModelChange}
-                style={{ width: 170, fontSize: 11 }}
+                style={{ width: 200, fontSize: 11 }}
                 variant="borderless"
                 popupMatchSelectWidth={false}
                 getPopupContainer={() => document.body}
@@ -976,7 +978,7 @@ setActiveModel(modelId);
           position: 'absolute', bottom: '100%', left: 12, right: 12,
           background: 'var(--card)', border: '1px solid var(--border)',
           borderRadius: 8, boxShadow: 'var(--shadow-lg)', padding: 4,
-          maxHeight: 200, overflowY: 'auto', zIndex: 100,
+          maxHeight: 200, overflowY: 'auto', zIndex: 'var(--z-dropdown)',
         }}>
           <div style={{ padding: '4px 8px', fontSize: 10, color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: 2 }}>
             {popup.kind === 'slash' ? '/ 命令' : '@ 选择文件'}
@@ -1201,7 +1203,7 @@ const ConnectorsDropdown: React.FC = () => {
     <Dropdown
       menu={{ items }}
       trigger={['click']}
-      getPopupContainer={() => document.body}
+      getPopupContainer={(trigger) => trigger.parentElement || document.body}
     >
       <button
         className="icon-btn-sm"

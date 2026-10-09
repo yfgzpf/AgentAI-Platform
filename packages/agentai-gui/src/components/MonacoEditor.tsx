@@ -6,6 +6,8 @@
  *       AI 代码修改注释: 接收全局事件, 在编辑器中高亮 AI 修改的行 + 行内注释
  */
 import React, { useCallback, useRef, useEffect } from 'react';
+// 副作用导入: 在 Editor 渲染前完成 monaco 本地化注入 (禁用 CDN, 适配离线/Tauri)
+import '../monaco-setup';
 import Editor, { type OnMount, type BeforeMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 

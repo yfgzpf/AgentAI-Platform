@@ -21,6 +21,8 @@ import { AgentAILoop } from '../agentai-loop.js';
 import type { AgentAIRouter } from '../llm-router.js';
 import type { ToolRegistry } from '../tool-registry.js';
 import { WorkspaceManager } from '../workspace-manager.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 export interface GoalRouterDeps {
   router: AgentAIRouter;
@@ -60,14 +62,17 @@ export function createGoalRouter(deps: GoalRouterDeps): Router {
       return res.status(400).json({ error: 'goal required' });
     }
 
-    // 设置项目目录
+    // 确定工作区（2026-10-06: 与 chat.ts 同样的修复）
+    // 原来这里调 wm.setProjectDir(rawWorkspace) 写**进程级**单例，
+    // 而 tools.ts 有 48 处读 wm().projectDir 当路径基准
+    // → goal 请求会把 chat 请求的工作区一起改掉（跨端点串扰）。
+    // 现在只影响本次请求（request-scope ALS）；全局单例留给
+    // files.ts 的 POST /v1/workspace（那是用户显式切换的语义）。
     const wm = WorkspaceManager.getInstance();
-    if (rawWorkspace) {
-      try {
-        wm.setProjectDir(rawWorkspace);
-      } catch {}
+    let workspace = wm.projectDir;
+    if (rawWorkspace && fs.existsSync(rawWorkspace)) {
+      workspace = path.resolve(rawWorkspace);
     }
-    const workspace = wm.projectDir;
 
     // ====== SSE 流式 ======
     req.socket?.setNoDelay?.();

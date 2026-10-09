@@ -63,9 +63,25 @@ export class CodeRunner {
     for (const p of common) {
       try { if (fs.existsSync(p)) { this.pythonPath = p; return p; } } catch {}
     }
+    // P0 修复: execFile 不走 shell, 'py' 不是可执行文件路径会失败
+    // 改为优先用 which/where 查找完整路径, 最后才 fallback 到 'python'
     const candidates = process.platform === 'win32'
-      ? ['py', 'python', 'python3']
+      ? ['python', 'python3', 'py']
       : ['python3', 'python'];
+    // 尝试用 which/where 查找完整路径
+    for (const cmd of candidates) {
+      try {
+        const { execSync } = require('child_process');
+        const found = execSync(
+          process.platform === 'win32' ? `where ${cmd} 2>nul` : `which ${cmd} 2>/dev/null`,
+          { encoding: 'utf-8', timeout: 3000 }
+        ).trim().split('\n')[0].trim();
+        if (found && fs.existsSync(found)) {
+          this.pythonPath = found;
+          return found;
+        }
+      } catch {}
+    }
     this.pythonPath = candidates[0];
     return this.pythonPath;
   }
@@ -88,6 +104,8 @@ export class CodeRunner {
     fs.writeFileSync(tmpFile, code, 'utf-8');
 
     // 3. 构建 runner 脚本
+    // P2 修复 (D5): 处理 ESM import 语句 — 转为 require 调用
+    // AI 生成的代码可能用 import 语法, 但 Node 沙箱是 CommonJS
     const safePath = fs.realpathSync(tmpFile);
     const runnerLines = [
       "'use strict';",
@@ -98,6 +116,10 @@ export class CodeRunner {
       "var src;",
       "try { src = fs.readFileSync('" + safePath.replace(/\\/g, '\\\\') + "', 'utf-8'); }",
       "catch (e) { process.stderr.write('[E] Cannot read code'); process.exit(1); }",
+      "// P2 修复: 将 ESM import 转为 require (沙箱是 CommonJS)",
+      "src = src.replace(/^import\\s+(.+?)\\s+from\\s+['\"](.+?)['\"];?$/gm, 'const $1 = require(\"$2\");');",
+      "src = src.replace(/^import\\s+['\"](.+?)['\"];?$/gm, 'require(\"$1\");');",
+      "src = src.replace(/^export\\s+(default\\s+)?/gm, '// export $1');", // 移除 export
       "var ret;",
       "try { var fn = eval('(' + '(' + src + ')' + ')'); ret = (typeof fn === 'function' ? fn() : fn); }",
       "catch (e) { process.stderr.write('[E]' + e.message); process.exit(1); }",

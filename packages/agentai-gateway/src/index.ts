@@ -215,7 +215,13 @@ PersistentMemory.registerPeriodicCleanup();
 // ===== 灵魂层: DreamEngine 启动 =====
 try {
   const { getDreamEngine } = await import('./soul/index.js');
-  const dreamEngine = getDreamEngine();
+  // 传WorkspaceManager 的默认工作区（进程级后台任务，无请求上下文）。
+  // 梦境的跨任务状态由 workspace-scope 隔离；此处仅启动默认工作区的实例。
+  const { WorkspaceManager } = await import('./workspace-manager.js');
+  const defaultWs = WorkspaceManager.getInstance().projectDir;
+  const dreamEngine = getDreamEngine(undefined, defaultWs);
+  // 供 soul 路由在请求未带 workspace 时兜底到同一实例
+  (globalThis as any).__agentaiDefaultWorkspace = defaultWs;
   dreamEngine.start();
   console.log('[soul] 🧠 灵魂层已启动 (DreamEngine + InnerVoice + PainSense)');
 } catch (e: any) {

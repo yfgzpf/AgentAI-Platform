@@ -192,7 +192,7 @@ const ModeIndicator: React.FC<{ mode: string }> = ({ mode }) => {
         position: 'absolute',
         top: 8,
         right: 12,
-        zIndex: 100,
+        zIndex: 'var(--z-dropdown)',
         display: 'flex',
         alignItems: 'center',
         gap: 6,

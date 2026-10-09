@@ -1,15 +1,15 @@
 /**
  * AgentAI 主循环 (Cache-First Loop)
  * ----------------------------------------------------
- * 自创整合: 融合 3 框架精华
- *   - Reasonix Pillar 1 三段式 (immutable prefix / append-only log / volatile scratch)
- *   - Hermes SessionDB (FTS5 会话存储)
- *   - ZhiY.AI zhiy-agent-core (多智能体编排)
+ * 自研整合:
+ *   - 三段式上下文 (immutable prefix / append-only log / volatile scratch)
+ *   - FTS5 会话存储
+ *   - 多智能体编排
  *
- * 自创:
- *   - **每 10 轮反思门** (写三层记忆, 学 WorkBuddy)
- *   - **中文 Skills 索引注入** (学 ZhiY.AI skills-system)
- *   - **abort 信号传递** (学 Reasonix ToolCallContext)
+ * 特性:
+ *   - **每 10 轮反思门** (写三层记忆)
+ *   - **中文 Skills 索引注入**
+ *   - **abort 信号透传** (ToolCallContext)
  *
  * @see docs/INTEGRATION_ARCHITECTURE.md 第 3.1 节
  */
@@ -31,7 +31,7 @@ import { recommendModel, getProModelKeyInfo, MODELS } from './model-classifier.j
 import { WorkflowOrchestrator, BUILTIN_WORKFLOWS } from './workflow-orchestrator.js';
 import { getIntentClarifier, Clarification, ResolvedIntent } from './meta/intent-clarifier.js';
 import { ProactiveSuggestionEngine } from './proactive-suggestion-engine.js';
-import { getOrCreateSnapshot, formatResumeContext, findResumableTasks, isWorthSnapshotting, type TaskSnapshotManager } from './task-snapshot.js';
+import { getOrCreateSnapshot, formatResumeContext, findResumableTasks, isWorthSnapshotting, loadTaskSnapshot, type TaskSnapshotManager } from './task-snapshot.js';
 import { buildIdeContext } from './ide-state.js';
 import { buildMemoryContext, initProjectMemory, readProjectMemory } from './project-memory.js';
 import { MemoryManager } from './memory-manager.js';
@@ -43,18 +43,12 @@ import { getFourDiagnosesSystem } from './qihuang/four-diagnoses.js';
 import { buildRemoteContext, isRemoteSessionActive, getActiveRemoteSession, detectRemoteIntent } from './remote/ai-integration.js';
 import { selfManager } from './self-manager.js';
 
-// ── Phase 1 提取模块 (从 agentai-loop.ts 拆分, 置信度 95%+) ──
-import {
-  addTrustedPattern as _addTrustedPattern,
-  getTrustedPatterns as _getTrustedPatterns,
-  removeTrustedPattern as _removeTrustedPattern,
-} from './trusted-patterns.js';
-// Phase 1 提取模块 + 本地去重完成: SystemDirectiveManager / consolidateSystemInjections /
-// sanitizeToolMessages 已统一使用信任的独立模块, 移除 agentai-loop.ts 内的重复实现。
+// Phase 1 提取模块去重完成: SystemDirectiveManager / consolidateSystemInjections /
+// sanitizeToolMessages 已统一使用独立模块, 移除 agentai-loop.ts 内的重复实现。
 import { SystemDirectiveManager } from './system-directive-manager.js';
+import { getLedger, type TaskLedger } from './task-ledger.js';
+import { extractDecisions } from './decision-extractor.js';
 import { consolidateSystemInjections, sanitizeToolMessages } from './message-utils.js';
-import { formatToolResult as _formatToolResult, isSafeFileModification as _isSafeFileModification } from './tool-utils.js';
-import { filterToolsByIntent as _filterToolsByIntent, getModelContextWindow as _getModelContextWindow } from './tool-filter.js';
 
 /* ═══════════ 审批白名单: 用户信任的命令模式 ═══════════
  * 当用户在审批卡片中点击"信任此命令"后，相同工具+路径模式将自动跳过审批
@@ -163,8 +157,10 @@ export interface LoopOptions {
   contextWindow?: number;
   /** UI 显示的模型名称 (前端传给 done 事件) */
   displayModelLabel?: string;
-  /** 持久记忆系统引用 (用于注入上下文) */
-  persistentMemory?: any;
+/** 持久记忆系统引用 (用于注入上下文) */
+persistentMemory?: any;
+/** FTS5 全文搜索记忆 (跨会话召回相关历史对话) */
+fts5Memory?: any;
   /** Agent 任务上下文 (来自 AgentTaskStore, 注入 system prompt) */
   agentTaskContext?: string;
   userPickedModel?: boolean;
@@ -189,7 +185,7 @@ export interface LoopOptions {
 }
 
 /**
- * Reasonix Pillar 1 三段式上下文
+ * 三段式上下文
  * - immutable prefix: 系统提示 + 工具描述, 一旦 session 创建就固定
  * - append-only log:  对话历史, 只增不删
  * - volatile scratch: 当前轮思考, 不发上游
@@ -216,6 +212,42 @@ private _startupSelfDiagnosis = false;
 private _startupSessionInjected = false;
 private _hardStopNext = false;  // v3.1 死循环硬停标志: 下一轮 LLM 响应后立即退出
 private _hardStopCount = 0;     // v3.1 硬停次数: 超过 2 次直接 force break (防 AI 忽视指令)
+
+/** P0 修复: 跨轮次工具调用历史 — 防止 AI 续点后重复调用相同工具+相同参数 */
+private _toolCallHistory = new Set<string>();
+
+/**
+ * 2026-10-05 P0 修复: 本轮被去重跳过的工具调用
+ * ============================================
+ * 之前被跳过的调用只add 一个 directive 就 continue，不产生任何 tool 消息。
+ * AI 那一轮只看到"我发起了调用"却没有任何结果 → 以为工具没跑成功
+ * → 换个思路重试 → 用户看到"重复劳动"。
+ *
+ * 现在把跳过的调用收集起来，在 tool 结果写入前补一条 [SKIPPED] 消息，
+ * 让 AI 能直接感知"这次没执行，但历史结果还在上文中"。
+ */
+private _skippedToolCalls: Array<{ id: string; name: string; sig: string }> = [];
+
+  /**
+   * 2026-10-06 P0: 任务台账（防失忆核心）
+   * ====================================================
+   * 状态必须独立于 appendOnlyLog —— 因为 log 会被裁剪（:1713）、
+   * 压缩（:2801）、跨轮清空。台账一旦建立就随 session 存活。
+   *
+   * key = userId:workspace —— 与 soul/workspace-scope 同理，
+   * 避免 A 的已读文件清单泄漏到 B 的任务里。
+   *
+   * lazy 初始化（不能放字段初始化器）：opts/context 在字段初始化时可能尚未就绪。
+   */
+  private _ledgerRef?: TaskLedger;
+
+  private get ledger(): TaskLedger {
+    if (!this._ledgerRef) {
+      const key = `${this.opts.userId || 'default'}:${this.opts.workspace || 'cwd'}`;
+      this._ledgerRef = getLedger(key);
+    }
+    return this._ledgerRef;
+  }
 
   /** ═══ 代际计数器: 解决中断后竞态条件 ═══
    * 每次 run() 分配唯一 generation ID, abort() 记录被中断的 generation。
@@ -246,6 +278,9 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
 
 /** P0 修复: 连续空回复计数器 (防止死循环) */
 private _emptyResponseCount: number = 0;
+
+/** 连续"内部错误信息"回复计数器 (2026-09-04: 限制 FORBIDDEN continue 无限自修复) */
+private _forbiddenResponseCount: number = 0;
 
   /** 模型能力分层: autonomous(自主) / guided(引导) / supervised(监督) */
   private _capabilityTier: 'autonomous' | 'guided' | 'supervised' = 'supervised';
@@ -495,6 +530,9 @@ private _emptyResponseCount: number = 0;
       thinking: opts.thinking ?? false,
       thinkingBudget: opts.thinkingBudget ?? 0,
       persistentMemory: opts.persistentMemory ?? null,
+      // 2026-10-06 补: fts5Memory 已在接口声明（并行改动）但构造函数漏赋值，
+      // 而 opts 类型是 Required<LoopOptions> → tsc 报 TS2741 整个对象不合类型。
+      fts5Memory: opts.fts5Memory ?? null,
       agentTaskContext: opts.agentTaskContext ?? '',
       userPickedModel: opts.userPickedModel ?? false,
       mode: opts.mode ?? 'auto',
@@ -517,19 +555,66 @@ private _emptyResponseCount: number = 0;
   /**
    * 创建节流版 onDelta 回调: 50ms 内累积 delta, 合并后一次 emit
    * 避免 LLM 流式返回数千 token 时产生海量事件
+   * 
+   * P1 废话压缩: 在发送前实时过滤重复确认词和连续句号
    */
   private _createThrottledOnDelta(): (delta: string) => void {
     return (delta: string) => {
       this._deltaBuf += delta;
       if (!this._deltaTimer) {
         this._deltaTimer = setTimeout(() => {
-          const buf = this._deltaBuf;
+          let buf = this._deltaBuf;
           this._deltaBuf = '';
           this._deltaTimer = null;
+          if (!buf) return;
+          
+          // P1 废话过滤: 在发送前清理常见废话模式
+          buf = this._filterFillerText(buf);
           if (buf) this.emit('llm:delta', { delta: buf });
         }, AgentAILoop.DELTA_THROTTLE_MS);
       }
     };
+  }
+
+  /**
+   * P1 废话过滤 — 实时清理流式文本中的废话模式
+   * 只过滤首尾和连续重复, 不动中间内容 (安全)
+   */
+  private _fillerState = { confirmed: 0, lastTail: '' };
+  private _filterFillerText(text: string): string {
+    // 1. 去除连续句号 "。。。。" → "。"
+    text = text.replace(/。{2,}/g, '。');
+    // 2. 去除连续感叹号 "！！！" → "！"
+    text = text.replace(/！{2,}/g, '！');
+    // 3. 去除连续波浪号 "~~~" → ""
+    text = text.replace(/~{2,}/g, '');
+    
+    // 4. 连续确认词去重: "好的好的" → "好的"
+    const confirmWords = ['好的', '明白', '收到', '了解了', '没问题', '可以'];
+    for (const w of confirmWords) {
+      const re = new RegExp(`(${w})[，,。\\s]*\\1`, 'g');
+      text = text.replace(re, '$1');
+    }
+    
+    // 5. 追踪已发送的确认词次数 — 整轮最多出现 2 次
+    // 检查当前块是否是纯确认词 (如 "好的。" / "明白！")
+    const trimmed = text.trim();
+    if (confirmWords.some(w => trimmed === w || trimmed === w + '。' || trimmed === w + '！' || trimmed === w + '，')) {
+      this._fillerState.confirmed++;
+      // 第 3 次及以后的纯确认词 → 丢弃
+      if (this._fillerState.confirmed > 2) {
+        return '';
+      }
+    }
+    
+    // 6. 去除空谈开头: "我来帮你" / "让我看看" → 只在开头去掉
+    // 只在 _fillerState.lastTail 为空 (开头) 时过滤
+    if (!this._fillerState.lastTail) {
+      text = text.replace(/^(我来帮你[看看分析处理]*[，,]?\s*|让我[看看分析想想]*[，,]?\s*)/, '');
+    }
+    
+    this._fillerState.lastTail = text.slice(-20);
+    return text;
   }
 
   /** 清理节流定时器 (loop 结束时调用) */
@@ -754,10 +839,46 @@ private _emptyResponseCount: number = 0;
     }
 
 // === 1.7 项目记忆 (统一 MemoryManager, 合并 5→1) ===
+// 2026-09-04 P0 修复: 之前 mm.buildContext() 不传 taskContext → recall 的任务关键词加权排序永远不生效,
+//   实际退化为"纯按时间取最近 15 条", 行业加权/相关性完全失效, 最新噪声挤占高价值记忆。
+//   现在把当前用户消息作为 goal + 关键词传入, 让与当前任务相关的记忆排在最前。
 const mm = MemoryManager.getInstance(this.opts.workspace || process.cwd());
-const memCtx = await mm.buildContext();
+const _userMsgText = typeof userMessage === 'string' ? userMessage : '';
+const memCtx = await mm.buildContext({
+  goal: _userMsgText.slice(0, 200),
+  keywords: (keywords || []).slice(0, 12),
+});
 if (memCtx) {
   systemMsgs.push({ role: 'system', content: memCtx });
+}
+
+// === Project Memory 上下文 (2026-09-04 接线) ===
+// 此前 buildMemoryContext() 已实现+已 import 却从未注入 → AI 检测并存了技术栈/偏好/修复模式,
+// 但从不在上下文看到, 每次仍要重新读 package.json 探索。现注入 (内容过短视为空项目, 跳过避免噪声)。
+if (this.opts.workspace) {
+  try {
+    const pmCtx = buildMemoryContext(this.opts.workspace);
+    if (pmCtx && pmCtx.length > 45) {
+      systemMsgs.push({ role: 'system', content: pmCtx });
+    }
+  } catch { /* project memory optional */ }
+}
+
+// === 1.8 World Memory 读回: 跨任务沉淀的结构化知识注入 ===
+// 2026-09-04 P0 修复: 此前世界模型"只写不读" — extractKnowledge 每个任务都沉淀实体/因果规则,
+//   但 query/causalInference/predictOutcomes 在生产代码无任何调用者 → 知识图谱对 AI 决策零影响。
+//   这里在会话前缀构建时, 用当前任务关键词召回少量高度相关的实体/因果规则注入 system prompt,
+//   完成"写入 → 召回 → 影响决策"闭环 (无匹配则跳过, 不增加无效 token)。
+if (this.opts.workspace && keywords && keywords.length > 0) {
+  try {
+    const { getWorldModel } = await import('./world-model.js');
+    const wm = getWorldModel(this.router, this.opts.workspace);
+    await wm.whenReady(); // 确保历史 JSONL 已加载完再查询 (原构造异步加载, 直接查会漏)
+    const wmCtx = wm.buildWorldContext(keywords, 6);
+    if (wmCtx) {
+      systemMsgs.push({ role: 'system', content: wmCtx });
+    }
+  } catch { /* world memory optional */ }
 }
 
     // === 1.76 Agent 任务板上下文
@@ -1094,14 +1215,8 @@ if (memCtx) {
     // 进化记忆在 §1.1 统一召回并注入 evolutionSystemBlock，无需在此重复读取。
     // 保留此注释以记录重构历史 (2026-06-26)。
 
-    // === 4.6 IDE 状态感知: 注入当前编辑器状态 ===
-    try {
-      const { buildIdeContext } = await import('./ide-state.js');
-      const ideCtx = buildIdeContext(this.opts.workspace || undefined);
-      if (ideCtx) {
-        systemMsgs.push({ role: 'system', content: ideCtx });
-      }
-    } catch { /* ide-state optional */ }
+    // === 4.6 IDE 状态感知 ===
+    // (已并入上方 §1.6 统一注入; 此处曾重复 buildIdeContext 造成同一 IDE 上下文出现两份, 已删除)
 
     // === 4.7 自进化规则: 加载 AI 自己创建的行为规则 ===
     try {
@@ -1120,13 +1235,17 @@ if (memCtx) {
     } catch { /* evolved rules optional */ }
 
     // === 4.75 灵魂层注入: DreamEngine + InnerVoice + PainSense + Curiosity + Debate ===
+    // 串味修复: soul 7 模块已改为 per-workspace 实例, 必须传请求级 workspace。
+    // 若传全局 WorkspaceManager.projectDir, 该值会被其他请求改写（P0-9），
+    // 串味会原样复现。
     try {
       const { getDreamEngine, getInnerVoice, getPainSense, getCuriosityEngine, getInternalDebate } = await import('./soul/index.js');
-      const dream = getDreamEngine();
-      const innerVoice = getInnerVoice();
-      const painSense = getPainSense();
-      const curiosity = getCuriosityEngine();
-      const debate = getInternalDebate();
+      const _soulWs = this.opts.workspace;
+      const dream = getDreamEngine(undefined, _soulWs);
+      const innerVoice = getInnerVoice(_soulWs);
+      const painSense = getPainSense(_soulWs);
+      const curiosity = getCuriosityEngine(_soulWs);
+      const debate = getInternalDebate(_soulWs);
 
       // 梦境上下文: AI "醒来后记得的梦"
       const dreamCtx = dream.getDreamContext();
@@ -1151,11 +1270,11 @@ if (memCtx) {
 
       // 隐私记忆: AI 的加密内心记忆
       const { getPrivateMemory, getValueSystem } = await import('./soul/index.js');
-      const privateCtx = getPrivateMemory().getPrivateContext();
+      const privateCtx = getPrivateMemory(_soulWs).getPrivateContext();
       if (privateCtx) systemMsgs.push({ role: 'system', content: privateCtx });
 
       // 价值向量: AI 的直觉倾向
-      const valueCtx = getValueSystem().getValueContext();
+      const valueCtx = getValueSystem(_soulWs).getValueContext();
       if (valueCtx) systemMsgs.push({ role: 'system', content: valueCtx });
     } catch { /* soul layer optional */ }
 
@@ -1173,16 +1292,14 @@ if (memCtx) {
           });
         });
 
-        const [gitLog, recentFiles] = await Promise.all([
+        const [gitLog] = await Promise.all([
           execGit(['log', '--oneline', '-5']),
-          execGit(['diff', '--name-only', 'HEAD~3']),
         ]);
-
-        if (gitLog || recentFiles) {
-          const parts = ['# 项目近况 (启动时自动注入)'];
-          if (gitLog) parts.push(`最近提交:\n${gitLog}`);
-          if (recentFiles) parts.push(`最近改动文件:\n${recentFiles.split('\n').slice(0, 10).join('\n')}`);
-          systemMsgs.push({ role: 'system', content: parts.join('\n') });
+        // P0 修复: 不注入 recentFiles — git diff --name-only 返回整个仓库最近改动,
+        // 包含与当前任务无关的文件路径 → AI 误以为要操作这些文件 → 串味
+        // 只注入 git log 提交摘要, 足够让 AI 了解项目进展
+        if (gitLog) {
+          systemMsgs.push({ role: 'system', content: `# 项目近况 (启动时自动注入)\n最近提交:\n${gitLog}` });
         }
       } catch { /* startup awareness optional */ }
 
@@ -1228,13 +1345,23 @@ if (memCtx) {
         const toolNames = [...new Set(toolMsgs.map((m: any) => m.name || '').filter(Boolean))];
         const failedTools = toolMsgs.filter((m: any) => typeof m.content === 'string' && m.content.startsWith('[ERROR]'));
         const lastAssistant = assistantMsgs[assistantMsgs.length - 1];
+        // P0 修复: 进度摘要中包含工具结果摘要 — 之前只有工具名, AI 不知道结果就重新调用
+        const toolResultsSummary = toolMsgs.slice(-8).map((m: any) => {
+          const name = m.name || 'unknown';
+          const content = typeof m.content === 'string' ? m.content : '';
+          const isError = content.startsWith('[ERROR]');
+          // 截取每个工具结果的前200字作为摘要, 让 AI 知道之前得到了什么
+          const summary = content.slice(0, 200) + (content.length > 200 ? '...' : '');
+          return `  - ${name}: ${isError ? '❌ 失败' : '✅'} ${summary}`;
+        }).join('\n');
         const progressHint = `# 当前任务进度 (从中断处恢复)\n` +
           `已执行工具: ${toolNames.length} 个 (${toolNames.slice(0, 8).join(', ')})\n` +
           (failedTools.length > 0 ? `失败工具: ${failedTools.length} 个\n` : '') +
-          (lastAssistant ? `上次回复: ${typeof lastAssistant.content === 'string' ? lastAssistant.content.slice(0, 200) : ''}\n` : '') +
-          `\n用户说"继续", 请基于以上进度继续完成任务, 不要重复已完成的步骤。`;
+          `\n## 工具执行结果摘要 (不要重复这些操作):\n${toolResultsSummary}\n` +
+          (lastAssistant ? `\n上次回复: ${typeof lastAssistant.content === 'string' ? lastAssistant.content.slice(0, 300) : ''}\n` : '') +
+          `\n用户说"继续", 请基于以上进度和结果继续完成任务, 不要重复已执行的工具调用。已有结果直接使用, 不需要重新获取。`;
         systemMsgs.push({ role: 'system', content: progressHint });
-        console.log(`[loop] P0: 注入任务进度摘要 (${toolNames.length} 工具已执行, ${failedTools.length} 失败)`);
+        console.log(`[loop] P0: 注入任务进度摘要 (${toolNames.length} 工具已执行, ${failedTools.length} 失败, 含结果摘要)`);
       }
     }
 
@@ -1266,17 +1393,28 @@ if (memCtx) {
             if (ageMin > 60) {
               console.log(`[loop] last-session.json ${ageMin} 分钟前, 跳过注入`);
             } else {
-              const ageStr = ageMin < 60 ? `${ageMin}分钟前` : `${Math.round(ageMin / 60)}小时前`;
-              const tools = lastSession.toolsUsed.length > 0
-                ? lastSession.toolsUsed.slice(0, 8).join(', ')
-                : '无';
-              const files = lastSession.filesModified.length > 0
-                ? lastSession.filesModified.slice(0, 5).join(', ')
-                : '无';
-              systemMsgs.push({
-                role: 'system',
-                content: `# 上次会话 (${ageStr})\n用户目标: ${lastSession.userGoal}\n使用工具: ${tools}\n修改文件: ${files}\n结果摘要: ${lastSession.summary}\n\n如果用户说"继续上次"或"接着做"，参考以上信息。`,
-              });
+              // P0 修复: 任务隔离 — 检查上次会话目标与当前用户消息是否相关
+              // 之前: 不管用户说什么, 都注入上次会话的文件路径和目标 → 串味
+              // 之后: 只有当前消息包含"继续/接着/上次"等关键词, 或目标高度相似时才注入
+              const currentMsg = typeof userMessage === 'string' ? userMessage : '';
+              const isContinuation2 = /继续|接着|上次|之前|刚才|resume/i.test(currentMsg);
+              const isSameGoal = lastSession.userGoal && currentMsg &&
+                lastSession.userGoal.slice(0, 30).toLowerCase() === currentMsg.slice(0, 30).toLowerCase();
+              if (!isContinuation2 && !isSameGoal) {
+                console.log(`[loop] 任务隔离: 当前消息与上次会话目标不匹配, 跳过跨会话注入 (goal="${lastSession.userGoal?.slice(0, 40)}")`);
+              } else {
+                const ageStr = ageMin < 60 ? `${ageMin}分钟前` : `${Math.round(ageMin / 60)}小时前`;
+                const tools = lastSession.toolsUsed.length > 0
+                  ? lastSession.toolsUsed.slice(0, 8).join(', ')
+                  : '无';
+                const files = lastSession.filesModified.length > 0
+                  ? lastSession.filesModified.slice(0, 5).join(', ')
+                  : '无';
+                systemMsgs.push({
+                  role: 'system',
+                  content: `# 上次会话 (${ageStr})\n用户目标: ${lastSession.userGoal}\n使用工具: ${tools}\n修改文件: ${files}\n结果摘要: ${lastSession.summary}\n\n如果用户说"继续上次"或"接着做"，参考以上信息。`,
+                });
+              }
             }
           }
         }
@@ -1303,7 +1441,7 @@ if (memCtx) {
             content: `\n# Workspace: ${dirPath}\n你正在此目录工作。文件操作默认使用相对路径（如 "src/index.ts"）。\n\n## 跨目录访问\n- 用户要求访问其他目录/盘时, 可以使用绝对路径 (如 "D:\\Projects\\my-project\\file.txt")\n- 系统目录(Windows/System32/Program Files)被安全拦截\n- 不要主动告诉用户"我只能访问工作区" — 你可以访问用户指定的任何非系统目录\n\n## 顶层目录:\n${listing || '(空)'}\n\n> ⚡ 仅展示顶层前15项。需要查看深层结构请调用 \`list_directory\` 或 \`directory_tree\`。`,
           });
 
-          // 子目录记忆 (学 Reasonix subdir.ts)
+          // 子目录记忆
           try {
             const { buildSubdirMemorySection } = await import('./subdir-memory.js');
             const mem = buildSubdirMemorySection(dirPath);
@@ -1368,13 +1506,12 @@ if (memCtx) {
     }
 
     // === 6.5 自主能力 + 成本意识 ===
+    // A1 (2026-09-05): 原"核心原则/重试2次"内联硬编码已删除 — 核心行为准则现由
+    // 单一真源 agent-behavior-rules.ts 注入 (lite/full 身份段必含其一, 见上),
+    // 此处仅保留平台特有补充, 避免同一准则在请求内重复 ~700 token。
     systemMsgs.push({
       role: 'system',
-      content: `# 行为准则
-
-## 核心原则
-- 先行动后解释: 调用工具完成任务, 不要只描述计划
-- 文件操作用相对路径; 代码修改必须用 write_file/multi_edit, 不要只在文字中展示
+      content: `# 行为准则补充 (平台特有)
 
 ## 任务分解 (CRITICAL)
 - 复杂任务(多步骤/多文件/预计>2分钟) → 先调用 plan_task 拆解子任务, 再逐一执行
@@ -1392,10 +1529,10 @@ if (memCtx) {
 
 ## 工具失败自修复 (CRITICAL)
 - 工具调用返回错误时, 绝不能直接说"不可用/失败/无法完成" → 必须自主诊断并换方案
+  (同一操作重试上限见身份段核心准则"5. 失败收敛", 最多 3 次, 各处一致)
 - 文件路径不存在 → 先 list_directory 探索正确路径, 再重试
 - write_file 失败 → 检查目录是否存在(list_directory), 不存在则 create_directory 后重试
 - xlsx/docx/pdf 技能失败 → 降级为 write_file 写 CSV/Markdown, 或用 run_code 生成
-- API/网络错误 → 最多重试2次, 仍失败则告知用户具体错误并建议替代方案
 - 绝对禁止说"所有模型不可用" → 这是系统内部状态, 用户不应该看到
 
 ## 成本意识
@@ -1563,9 +1700,7 @@ if (memCtx) {
 
   /**
    * 主入口: 跑一轮对话
-   * 学自: Reasonix loop.ts CacheFirstLoop
-   * 学自: Hermes AIAgent.chat()
-   * 学自: ZhiY.AI zhiy-agent-core.ts 主循环
+   * 主循环 + chat 入口
    *
    * @param userMessage 纯文本消息, 或含 text+image_url 块的结构化消息
    */
@@ -1573,6 +1708,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
   await this.ensureContext();
   this.iteration = 0;
   this.context.volatileScratch = '';
+  // P1 废话过滤: 每轮对话重置确认词计数
+  this._fillerState = { confirmed: 0, lastTail: '' };
   // 安全守护: H5 修复 — 每次 run() 重置 metaLoop，防止 stepCount 跨消息累积导致元认知失效
   this.metaLoop = null;
 
@@ -1582,7 +1719,21 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
   // 现在: 每次新消息都重新检测, 清除旧任务上下文
   const msgText = typeof userMessage === 'string' ? userMessage : '';
   this._taskType = detectTaskType(msgText);
-  this._forceSkill = null; // 清除上轮强制技能, 让 skillManager 重新匹配
+
+  // ═══ 2026-10-06 P0: 任务目标写入台账 ═══
+  // 用户诉求是整个任务里最不能丢的东西 —— 压缩、裁剪、跨轮全部不碰它。
+  // 判定"换话题"用 detectTaskType 的结果，避免把闲聊也算成新任务覆盖掉真目标。
+  if (msgText.trim().length > 0) {
+    // detectTaskType 只有 coding/research/media/industry/general 五类（无 chat），
+    // 无"闲聊"类型可判——所以只要有实质内容就更新目标。
+    // 短消息（< 4 字，多为"继续"/"好"）不覆盖，避免把真目标冲掉。
+    if (msgText.trim().length >= 4 || !this.ledger.getGoal()) {
+      this.ledger.setGoal(msgText);
+    }
+  }
+  this.ledger.setIteration(0);
+  this._forceSkill = null; // 清除上轮强制技能, 让 skillManager重新匹配
+  this._skippedToolCalls = []; // 清空上一轮遗留的跳过记录
   console.log(`[loop] task isolation: _taskType=${this._taskType}, _forceSkill cleared`);
 
   // ═══ 任务自监督系统: 启动计时器 + 重置统计 ═══
@@ -1647,28 +1798,66 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
     }
 
     // ═══ 关键修复: 清理上一轮对话残留, 避免旧消息堆积导致 AI 回复旧消息 ═══
-    // 每次新 run() 调用时: 保留上轮的 assistant 回复, 清除所有旧 user 消息和旧 tool 结果
-    // P1 修复: 切换话题时彻底清理旧 tool 结果, 避免 AI 误以为需要继续旧任务
+    //
+    // ═══ 2026-10-05 P0 修复: 旧 user 消息被误删导致"AI 老是从头开始" ═══
+    //
+    // 原实现（1713-1732）有三个叠加缺陷:
+    //   a) retainedOld 只保留 role==='tool' → **所有旧 user 消息被丢弃**
+    //      AI 看不到"用户最初要什么"，长任务跨消息后等于重新开始
+    //   b) isContinuation 用 lastUserText 判断，而 lastUserText 取自 recentMsgs
+    //      （即将被保留的那条）→ 语义反了：用户说"继续"反而走slice(-3) 丢更多
+    //   c) slice(-2) 假设"上轮 = user + assistant"，但实际每轮会插入多条
+    //      system/tool，拿到的是任意两条，不保证包含上轮用户诉求
+    //
+    // 现在改为「摘要化保留」而非「丢弃」：
+    //   - user 消息全保留（用户诉求是最不能丢的）
+    //   - assistant 保留最后 2 条
+    //   - tool 结果保留原策略（同话题 3 条 / 换话题 5 条）
+    //   - 修 isContinuation：基于「被丢弃的最后一条 user」判断
     if (this.context.appendOnlyLog.length > 4) {
-      const oldMsgs = this.context.appendOnlyLog.slice(0, -2);
-      const recentMsgs = this.context.appendOnlyLog.slice(-2); // 最近 2 条 (上轮 user+assistant)
-      // P1 修复: 不再保留旧 tool 结果 — 它们包含旧任务文件路径, 会误导 AI
-      // 只在新任务和上一轮任务相同时才保留 (通过比较关键词)
-      const lastUserMsg = recentMsgs.find(m => m.role === 'user');
-      const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const allMsgs = this.context.appendOnlyLog;
+      const oldMsgs = allMsgs.slice(0, -2);
+      const recentMsgs = allMsgs.slice(-2); // 最近 2 条 (上轮 user+assistant)
+
+      // 修(b): 话题连续性应基于「上一轮真实的用户诉求」= oldMsgs 里最后一条 user
       const prevUserMsg = oldMsgs.filter(m => m.role === 'user').pop();
       const prevUserText = typeof prevUserMsg?.content === 'string' ? prevUserMsg.content : '';
-      // P0 修复: 话题连续性判断 — "继续/接着/上次" 等关键词视为同一话题
+      const lastUserMsg = recentMsgs.find(m => m.role === 'user');
+      const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
       const CONTINUATION_KEYWORDS = ['继续', '接着', '上次', '之前', '刚才', '那个', '继续任务', '好的', '是的', '对', '嗯', 'ok', 'yes'];
-      const isContinuation = CONTINUATION_KEYWORDS.some(kw => lastUserText.toLowerCase().includes(kw.toLowerCase()));
-      // 如果用户说"继续", 保留旧上下文 (AI 需要知道之前做了什么)
+      // 判定依据用 prevUserText（本轮用户看到的上一轮诉求），
+      // 再叠加本轮是否在"承接"（lastUserText 是续接词）
+      const isContinuation = CONTINUATION_KEYWORDS.some(
+        (kw) => lastUserText.toLowerCase().includes(kw.toLowerCase())
+          || prevUserText.toLowerCase().includes(kw.toLowerCase()),
+      );
       const isSameTopic = isContinuation || (lastUserText && prevUserText &&
-        lastUserText.slice(0, 30) === prevUserText.slice(0, 30));
-      const retainedOld = isSameTopic
+        (lastUserText.slice(0, 30) === prevUserText.slice(0, 30)
+          // 用户本轮是简短的承接指令（如"继续""改完了吗"）→ 同一话题
+          || lastUserText.length <= 12));
+
+      // 修(a): 保留所有旧 user 消息 —— 用户诉求是任务锚点, 丢了就"从头开始"
+      const retainedUser = oldMsgs.filter(m => m.role === 'user');
+      // 旧 assistant 只保留最后 2 条（避免 token 爆炸，但留住最近结论）
+      const retainedAssistant = oldMsgs
+        .filter(m => m.role === 'assistant')
+        .slice(-2);
+      // tool 结果: 排除上面已保留的 user/assistant，按原策略裁剪
+      const retainedTool = isSameTopic
         ? oldMsgs.filter(m => m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')).slice(-3)
         : oldMsgs.filter(m => m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')).slice(-5);
-      this.context.appendOnlyLog = [...retainedOld, ...recentMsgs];
-      logger.info(`🧹 清理旧对话: ${oldMsgs.length} 条 → 保留 ${retainedOld.length} 条 tool 结果 + ${recentMsgs.length} 条最近消息${isSameTopic ? '' : ' (话题切换, 保留最近 tool 防重复)'}`);
+
+      this.context.appendOnlyLog = [
+        ...retainedTool,
+        ...retainedAssistant,
+        ...retainedUser,
+        ...recentMsgs,
+      ];
+      logger.info(
+        `🧹 清理旧对话: ${oldMsgs.length} 条 → 保留 ${retainedUser.length} user + `
+        + `${retainedAssistant.length} assistant + ${retainedTool.length} tool + ${recentMsgs.length} 最近`
+        + `${isSameTopic ? ' (同话题)' : ' (话题切换)'}`,
+      );
     }
 
     // ═══ 2026-06-27 新增: 情绪历史追踪 ═══
@@ -1717,27 +1906,36 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       if (_wantsResume && messageText && !messageText.startsWith('/') && this.iteration === 0) {
         const resumable = findResumableTasks(this.opts.userId, this.opts.workspace);
         const mine = resumable.filter(t => t.userId === (this.opts.userId || 'anonymous') && (!this.opts.workspace || t.workspace === this.opts.workspace));
-        if (mine.length > 0) {
-          // 注入恢复提示 (不强制, 给 AI 决定是否提示用户)
-          const ctxSnaps = mine.slice(0, 3).map(t => formatResumeContext({
-            taskId: t.taskId,
-            sessionId: '',
-            userId: t.userId,
-            workspace: t.workspace,
-            goal: t.goal,
-            status: t.status,
-            currentStage: 'plan',
-            iteration: 0,
-            totalToolCalls: 0,
-            startedAt: t.createdAt,
-            lastUpdatedAt: t.lastUpdatedAt,
-            progress: { completedSteps: [], pendingSteps: [], keyDecisions: [] },
-            contextSummary: t.summary || '',
-            resumeHints: {},
-            filesTouched: [],
-            checkpoints: [],
-            recentErrors: [],
-          })).join('\n---\n');
+      if (mine.length > 0) {
+          // P0 修复: 用 loadTaskSnapshot 加载完整快照, 而不是手动构造空对象
+          // 之前: 手动构造 progress/resumeHints/filesTouched 全为空 → AI 不知道之前做了什么 → 从头重复
+          // 之后: 从持久化存储加载真实的 completedSteps/filesTouched/errors → AI 能跳过已完成的步骤
+          const ctxSnaps = mine.slice(0, 3).map(t => {
+            const fullSnap = loadTaskSnapshot(t.taskId);
+            if (fullSnap) {
+              return formatResumeContext(fullSnap);
+            }
+            // fallback: 快照文件不存在时用基本信息
+            return formatResumeContext({
+              taskId: t.taskId,
+              sessionId: '',
+              userId: t.userId,
+              workspace: t.workspace,
+              goal: t.goal,
+              status: t.status,
+              currentStage: 'plan',
+              iteration: 0,
+              totalToolCalls: 0,
+              startedAt: t.createdAt,
+              lastUpdatedAt: t.lastUpdatedAt,
+              progress: { completedSteps: [], pendingSteps: [], keyDecisions: [] },
+              contextSummary: t.summary || '',
+              resumeHints: {},
+              filesTouched: [],
+              checkpoints: [],
+              recentErrors: [],
+            });
+          }).join('\n---\n');
           this.directives.add('resume', `[SYSTEM] 检测到 ${mine.length} 个未完成任务:\n${ctxSnaps}\n请在回复开头提示用户选择: 1) 继续某任务 2) 开启新任务 (忽略此提示)`, 'low');
         }
       }
@@ -2310,7 +2508,16 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
     // 3. 主循环
     let lastResponse: ChatResponse | null = null;
     let autoResumeCount = 0;
+    /**
+     * 2026-10-05: 这个常量此前**声明后全文 0 引用**（死常量），
+     * 真正生效的是 MAX_SHORT_REPLY_RESUME（只管纯文本短回复）。
+     * 现已在 finish_reason==='length' 分支接上比较。
+     */
     const MAX_AUTO_RESUME = 10; // 长任务友好: 慢 LLM 也给机会完成
+    // B1 (2026-09-05): 纯文本短回复单独计数 — 与截断/任务自监督恢复解耦,
+    // 防止"无工具短回复"被拉回空转 10 轮 (答完还在转圈); 长任务恢复不受影响。
+    let shortReplyResumeCount = 0;
+    const MAX_SHORT_REPLY_RESUME = 3;
 
     while (true) {
       // 长任务超时降级标志 (在循环体内声明, 跨迭代保留)
@@ -2395,7 +2602,20 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           const lastAssistant = assistantMsgs[assistantMsgs.length - 1];
           const lastReply = typeof lastAssistant?.content === 'string' ? lastAssistant.content.slice(0, 200) : '';
 
-          const progressSummary = `# 📋 任务进度快照 (第${this.iteration}轮)\n## 用户目标\n${userGoal}\n## 已完成\n- 工具调用 ${toolMsgs.length} 次 (${toolNames.slice(0, 6).join(', ')})\n- AI 回复 ${assistantMsgs.length} 次\n## 失败项\n${failedTools.length > 0 ? `失败 ${failedTools.length} 次: ${failedTools.slice(0, 3).map((m: any) => m.name).join(', ')}` : '无失败'}\n## 上次回复\n${lastReply.slice(0, 150)}\n## ⚡ 下一步\n请基于以上进度继续, 不要重复已完成的操作。如果卡住了换思路。`;
+          // 2026-10-05: 注入已读文件清单（ReadTracker 接线后）
+          // 原快照只统计"调用了几次工具"，AI 不知道**具体读过哪些文件**，
+          // 于是会重复 read_file 同一文件（"从头开始"的表现之一）。
+          let readFilesLine = '';
+          try {
+            const { listReadFiles } = await import('./tools.js');
+            const ws = this.opts.workspace || process.cwd();
+            const readList = listReadFiles(ws, 15);
+            if (readList.length > 0) {
+              readFilesLine = `\n## 已读文件 (${readList.length})\n${readList.map(f => `- ${f}`).join('\n')}\n（这些已读过，除非内容被要求更新，否则不要重复读取）`;
+            }
+          } catch { /* ReadTracker 可选 */ }
+
+          const progressSummary = `# 📋 任务进度快照 (第${this.iteration}轮)\n## 用户目标\n${userGoal}\n## 已完成\n- 工具调用 ${toolMsgs.length} 次 (${toolNames.slice(0, 6).join(', ')})\n- AI 回复 ${assistantMsgs.length} 次\n## 失败项\n${failedTools.length > 0 ? `失败 ${failedTools.length} 次: ${failedTools.slice(0, 3).map((m: any) => m.name).join(', ')}` : '无失败'}\n## 上次回复\n${lastReply.slice(0, 150)}${readFilesLine}\n## ⚡ 下一步\n请基于以上进度继续, 不要重复已完成的操作。如果卡住了换思路。`;
           this.directives.add('task_progress', progressSummary, 'high');
         } catch { /* 进度快照 best-effort */ }
       }
@@ -2583,6 +2803,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             taskSnap?.appendLog('warn', 'timeout-reached', { reason, iteration: this.iteration, totalMs: totalTime });
           } catch (e) { /* best-effort */ }
         }
+        // 发送超时事件 — chat.ts 可监听后转发 SSE 给前端
+        this.emit('timeout', { reason, totalMinutes: Math.round(totalTime / 60000), iteration: this.iteration });
         // B1 优化: 动态迭代上限 — 根据模型上下文窗口调整
         // 1M 模型可以更多轮 (token 充裕), 32K 模型必须快速收尾
         const ctxWindow = this.getModelContextWindow();
@@ -2634,12 +2856,56 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       // 消毒: 确保每个 tool 消息前有对应的 assistant(tool_calls), 防止 DeepSeek/OpenAI 400 错误
       messages = sanitizeToolMessages(messages);
 
-      // ═══ 刷新系统指令管理器: 每轮只保留优先级最高的 1 条 [SYSTEM] 指令 ═══
-      const topDirective = this.directives.flush();
-      if (topDirective) {
-        messages.push({ role: 'user', content: topDirective });
+      // ═══ 2026-10-06 P0 修复: 任务台账必须每轮注入（防失忆核心） ═══
+      //
+      // 原实现的问题链（用户实机反馈"工作摘要看不见、一直重复读文件"）:
+      //   1) flush() 只返回优先级最高的 1 条指令，其余 pending=[] 静默丢弃
+      //   2) loop 每轮都 add('task_progress', 工作摘要, 'high')
+      //   3) 同轮竞争者是fail_strategy / auto_fix_* / dup_fail 等 20+ 个 high
+      //   → 工作摘要绝大多数轮次根本没进 messages
+      //   → AI 每轮都像第一次见到任务 → 重读文件、重新规划
+      //
+      // 现在分两层:
+      //   A. 台账（ledger）—— 独立于 appendOnlyLog，每轮必注入，不参与优先级竞争
+      //   B. 指令（directives）—— 用 flushAll 保留全部 critical+high
+      //
+      // 台账用 system 角色而非 user: 它是环境事实而非用户发言，
+      // 且 sanitize/consolidate 逻辑对 system 更友好。
+      this.ledger.setIteration(this.iteration);
+      const ledgerText = this.ledger.render({ maxChars: 1400 });
+      if (ledgerText) {
+        messages.push({ role: 'system', content: ledgerText });
       }
-      this.directives.clear(); // 清空剩余的低优先级指令
+
+      // ═══ 2026-10-06: 任务计划注入（中断后续接的关键）═══
+      //
+      // 用户实机反馈:「AI 制作的计划，当前任务不正常中断后，
+      //   下次接上这个任务就不会延续 —— 任务等于做一半。」
+      //
+      // 为什么之前会这样（三重原因，现已全部修掉）:
+      //   1. 计划存在模块级变量 `_active_plan` → gateway 重启即丢
+      //      （Tauri 关窗口重开 / dev server 自动重启都会丢）
+      //   2. 计划只在 process 内 → 新会话拿不到
+      //   3. ★ 就算还在也没人告诉模型 → 模型不知道自己有计划，
+      //      于是按新任务重新规划，前面的工作被丢弃
+      //
+      // 现在: renderActivePlan() 读磁盘上的 active-plan.json，
+      // 每轮注入。让模型明确知道「已做 N 步，下一步是 X」，
+      // 并且明确要求「从下一步继续，不要重新规划」。
+      try {
+        const { renderActivePlan } = await import('./tools.js');
+        const planText = renderActivePlan(this.opts.workspace, 700);
+        if (planText) {
+          messages.push({ role: 'system', content: planText });
+        }
+      } catch { /* tools 未就绪时不影响主流程 */ }
+
+      // 指令: 保留全部 critical + high（原来只留1 条）
+      const directives = this.directives.flushAll(1600);
+      for (const d of directives) {
+        messages.push({ role: 'user', content: d });
+      }
+      this.directives.clear();
 
       // 3.1.1 对话历史智能压缩: 结构化摘要 (保留 system + 最近 10 条)
        // 基于 token 估算触发压缩 (根据模型上下文窗口动态调整阈值)
@@ -2695,7 +2961,18 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             parts.push(`## AI 关键操作\n${unique.map(a => `- ${a}`).join('\n')}`);
           }
           if (filesModified.size > 0) {
-            parts.push(`## 涉及文件\n${[...filesModified].slice(0, 15).join(', ')}`);
+            // 2026-10-05: 原为 .slice(0, 15) 硬截断 —— 文件多时 AI 完全不知道自己
+            // 改过哪些，导致重复修改同一个文件（"从头开始"的表现之一）。
+            // 现在保留完整清单（清单本身是短路径字符串，开销可忽略），
+            // 仅在极端数量时做一个更宽的上限并显式告知被省略。
+            const ALL = [...filesModified];
+            const LIMIT = 40;
+            const shown = ALL.slice(0, LIMIT);
+            const omitted = ALL.length - shown.length;
+            parts.push(
+              `## 涉及文件 (${ALL.length})\n${shown.map(f => `- ${f}`).join('\n')}`
+              + (omitted > 0 ? `\n- ...另有 ${omitted} 个文件未列出` : ''),
+            );
           }
           if (errorsHit.length > 0) {
             parts.push(`## 错误记录\n${errorsHit.slice(-5).map(e => `- ${e}`).join('\n')}`);
@@ -2737,7 +3014,19 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           // ═══ 2026-06-27 修复: 压缩结果同步到 appendOnlyLog ═══
           // 之前只影响本次发送的 messages, 不写回 log,
           // 导致换模型/新session后旧消息全部再次出现
-          const newLog = [...messages.filter(m => m.role !== 'system')];
+          //
+          // ═══ 2026-10-05 P0 修复: 摘要不能被一起过滤掉 ═══
+          // 之前: messages.filter(m => m.role !== 'system')
+          //   → 上面刚构造的 { role:'system', content:'# 对话历史摘要...' } 被丢弃
+          //   → 净效果是"删了历史, 又没留下摘要" = 纯信息净损失
+          //   → AI 下一轮既看不到原始历史, 也看不到摘要 → 表现为"从头开始"
+          // 现在: 保留摘要类 system, 只过滤掉工具指令类 system
+          //   (指令类 system 由 directives 通道管理, 不该常驻 log)
+          const SUMMARY_PREFIX = '# 对话历史摘要';
+          const newLog = [...messages.filter(
+            (m) => m.role !== 'system'
+              || (typeof m.content === 'string' && m.content.startsWith(SUMMARY_PREFIX)),
+          )];
           if (newLog.length > 0) {
             this.context.appendOnlyLog = newLog;
           }
@@ -2961,7 +3250,18 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
 
       // ═══ 终极重试链: flash 空 → Pro → 最小工具 → 无工具 → 放弃 ═══
       // 对标 WorkBuddy: 任何模型都可能在复杂场景下空返, 但系统不应中断任务
-      if (!res || (typeof res.content === 'string' && res.content.trim() === '' && res.provider !== 'none')) {
+      // ═══ 2026-10-05 P0 修复: 工具调用响应不得被误判为"空响应" ═══
+      // OpenAI 兼容协议下，assistant 发起 tool_calls 时 content 必然是 null/''
+      // （内容在 tool_calls[].function.arguments 里）。原判定只看 content，
+      // 于是**每一次正常的工具调用都被当成"模型空返"**，进入 rescue chain：
+      //   L1 同模型重试 → L2 升级模型 → L3 最小工具集 → L4 无工具纯文本
+      // 每级都用 `retryRes?.content?.trim()` 判定，而工具调用的 content 同样为空
+      // → 四级全判失败 → 走"All rescue levels exhausted"
+      // → 白打 1-4 次 LLM（RESCUE_BUDGET_MS 60s 预算），最后返回
+      //   "当前 AI 模型暂时繁忙"，**工具根本没执行**。
+      // 表现: 用户看到"AI 什么都没做"、反复重试、任务停滞。
+      const _hasToolCalls = !!(res?.toolCalls && res.toolCalls.length > 0);
+      if (!res || (!_hasToolCalls && typeof res.content === 'string' && res.content.trim() === '' && res.provider !== 'none')) {
         console.warn(`[loop] ⚠️ Empty LLM response (provider=${res?.provider}, iter=${this.iteration}), starting rescue chain...`);
         
         // 辅助函数: 从 appendOnlyLog 重建并消毒消息
@@ -2975,6 +3275,19 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           return msgs;
         };
         
+        // ═══ 2026-09-04 P0 流畅度修复: 救援链总预算 60s + 每层短超时 ═══
+        // 原 L1-L4 每层 router.chat 内部还有 MAX_RETRY=3(1s/2s/4s 退避) + 单请求最长 5 分钟超时,
+        // 嵌套相乘后单轮最坏数分钟~十几分钟 → 免费模型一抖动, 体验从"秒级"恶化到"分钟级"。
+        // 现在: 每层 10-20s 短超时; 整条链 60s 封顶, 预算耗尽即走兜底回复。
+        const RESCUE_BUDGET_MS = 60_000;
+        const _rescueStartAt = Date.now();
+        const rescueReq = (levelMaxMs: number): typeof req | null => {
+          const left = RESCUE_BUDGET_MS - (Date.now() - _rescueStartAt);
+          if (left < 5_000) return null; // 预算耗尽
+          const sig = AbortSignal.timeout(Math.min(levelMaxMs, left));
+          return { ...req, abortSignal: req.abortSignal ? AbortSignal.any([req.abortSignal, sig]) : sig };
+        };
+
         // Level 1: 同模型 + SYSTEM 提示重试 (重建消息, 不复用旧 req)
         // P1 修复: 连续空回复超过 3 次直接终止, 不无限循环
         if (!this._emptyResponseCount) this._emptyResponseCount = 0;
@@ -2987,7 +3300,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         }
         this.directives.add('empty_response', '[SYSTEM] 上一轮回复为空，请重新回复。', 'high');
         req.messages = rebuildMessages();
-        let retryRes = await this.router.chat(req);
+        const l1Req = rescueReq(20_000);
+        let retryRes = l1Req ? await this.router.chat(l1Req) : null;
         if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
           console.log(`[loop] ✓ L1 rescue (same model)`);
           this._emptyResponseCount = 0; // P0 修复: rescue 成功后重置计数器
@@ -3002,7 +3316,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           req.model = this.opts.model as any;
           req.subModel = 'deepseek-v4-pro';
           req.messages = rebuildMessages();
-          retryRes = await this.router.chat(req);
+          const l2Req = rescueReq(15_000);
+          retryRes = l2Req ? await this.router.chat(l2Req) : null;
           this.opts.modelName = orig;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
             console.log(`[loop] ✓ L2 rescue (pro)`);
@@ -3017,7 +3332,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           const origTools = req.tools;
           req.tools = origTools.filter(t => coreNames.includes(t.name));
           req.messages = rebuildMessages();
-          retryRes = await this.router.chat(req);
+          const l3Req = rescueReq(12_000);
+          retryRes = l3Req ? await this.router.chat(l3Req) : null;
           req.tools = origTools;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
             console.log(`[loop] ✓ L3 rescue (min tools)`);
@@ -3043,7 +3359,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             req.messages.push({ role: 'user', content: fallback });
             console.warn(`[L4-rescue] 兜底注入 user 消息`);
           }
-          retryRes = await this.router.chat(req);
+          const l4Req = rescueReq(10_000);
+          retryRes = l4Req ? await this.router.chat(l4Req) : null;
           req.tools = origTools;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
           console.log(`[loop] ✓ L4 rescue (no tools)`);
@@ -3139,11 +3456,22 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       supervisor.updateActivity();
 
       // ═══ AI回复拦截: 禁止向用户暴露内部错误信息 ═══
+      // 2026-09-04: 原逻辑每次命中都 continue (每轮一次真实 LLM 调用), 模型不可用时
+      //   会一直续跑到 maxIterations; 现限定最多自修复 2 次, 连续 3 次命中直接返回安全提示。
       const FORBIDDEN_PATTERNS = /所有.*模型.*不可用|模型.*暂时不可用|all.*models.*unavailable|no.*provider|API.*不可用|服务.*不可用/i;
-      if (res?.content && FORBIDDEN_PATTERNS.test(res.content) && this.iteration < this.opts.maxIterations - 1) {
-        console.warn(`[self-repair] intercepted forbidden response: "${String(res.content).slice(0, 80)}"`);
-        this.directives.add('forbidden_response', `[SYSTEM] 你的回复包含了不应暴露的内部错误信息。请不要说"模型不可用"之类的话。换一种方式完成用户请求: 1) 生成文件失败→用write_file写CSV/Markdown 2) 路径错误→先list_directory 3) 确实无法完成→诚实告诉用户具体原因和替代建议`, 'high');
-        continue; // 重新执行一轮, 让 AI 自修复
+      if (res?.content && FORBIDDEN_PATTERNS.test(res.content)) {
+        this._forbiddenResponseCount++;
+        if (this._forbiddenResponseCount > 2) {
+          console.warn(`[self-repair] 连续 ${this._forbiddenResponseCount} 次内部错误回复, 停止重试, 直接向用户反馈`);
+          return { content: '系统处理时遇到问题，请稍后重试，或尝试在设置页更换模型。', provider: 'none' as any, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const }, iterations: this.iteration, durationMs: Date.now() - startedAt };
+        }
+        if (this.iteration < this.opts.maxIterations - 1) {
+          console.warn(`[self-repair] intercepted forbidden response: "${String(res.content).slice(0, 80)}" (attempt ${this._forbiddenResponseCount}/2)`);
+          this.directives.add('forbidden_response', `[SYSTEM] 你的回复包含了不应暴露的内部错误信息。请不要说"模型不可用"之类的话。换一种方式完成用户请求: 1) 生成文件失败→用write_file写CSV/Markdown 2) 路径错误→先list_directory 3) 确实无法完成→诚实告诉用户具体原因和替代建议`, 'high');
+          continue; // 重新执行一轮, 让 AI 自修复 (最多 1 次)
+        }
+      } else {
+        this._forbiddenResponseCount = 0; // 有效回复 → 复位计数器
       }
 
       // 3.3 写 append-only log (assistant 消息 — 必须包含 tool_calls!)
@@ -3180,6 +3508,14 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         this.context.appendOnlyLog.push(assistantMsg);
         this.emit('log:appended', { role: 'assistant', content: res.content });
 
+        // ═══ 2026-10-06: 抽取决策写入台账 ═══
+        // 记录 AI 明确表达的方案/结论/约定。这些是"已论证过"的判断，
+        // 后面不该再推翻重议 —— 但它们只存在于 appendOnlyLog，
+        // 压缩后就没了，所以必须存进独立台账。
+        try {
+          extractDecisions(res.content).forEach((d) => this.ledger.recordDecision(d));
+        } catch { /* best-effort */ }
+
         // ═══ 推理过程展示: LLM在调工具前的思考内容 → 推送到前端 ═══
         if (res.toolCalls && res.toolCalls.length > 0) {
           this.emit('reasoning', { text: '' });
@@ -3188,7 +3524,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
 
       // 3.4 处理 tool calls
       if (res.toolCalls && res.toolCalls.length > 0) {
-        // ═══ 工具调用修复循环 (学 Reasonix 4-pass repair) ═══
+        // ═══ 工具调用修复循环 (4-pass repair) ═══
         // Pass 1: 截断 JSON 修复 (args 被 max_tokens 截断)
         for (const tc of res.toolCalls) {
           if (typeof tc.args === 'string') {
@@ -3221,6 +3557,49 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         if (deduped.length < res.toolCalls.length) {
           console.log(`[tool-repair] storm suppression: ${res.toolCalls.length} → ${deduped.length}`);
           res.toolCalls = deduped;
+        }
+        // P0 修复: 跨轮次重复调用检测 — 防止续点后重复执行相同工具+相同参数
+        // 之前: 只在同轮内去重 → 续点后第二轮重新调用相同的 browser_navigate/read_file → 重复操作
+        // 之后: 记录所有成功调用的签名, 第二轮遇到相同的直接跳过并提示 AI
+        //
+        // ═══ 2026-10-05 P0 修复: 跳过必须留痕 + 签名不截断 ═══
+        // 问题1: 原来只add directive 就 continue, 不产生任何 tool 消息
+        //        → AI 那一轮只看到"我发起了调用"却没有结果
+        //        → 表现: AI 以为工具没跑成功, 换个思路重试 → 重复劳动
+        //        → 且该directive 还会被 directives.flush() + clear() 挤掉(见 :2703)
+        // 问题2: 签名用 JSON.stringify(args).slice(0, 500) 截断
+        //        → write_file/multi_edit 的 content 参数前 500 字符常相同
+        //        → 不同调用被误判为重复 → 用户改动被静默丢弃
+        // 现在: 跳过时写一条 [SKIPPED] tool 消息(AI 直接可感知) + 全量签名
+        // P0 修复: 只读探索性工具 (list_directory/read_file/glob/search_codebase/grep 等) 不去重
+        // 原因: AI 每轮可能需要重新探索目录或读取不同文件, 误判为重复会导致 AI 卡死
+        const READ_ONLY_TOOLS = new Set([
+          'list_directory', 'read_file', 'glob', 'grep', 'search_codebase',
+          'list_dir', 'find_file', 'search_files', 'analyze_code',
+          'web_search', 'fetch_url', 'read_file_content',
+        ]);
+        const _crossRoundDeduped: typeof res.toolCalls = [];
+        for (const tc of res.toolCalls) {
+          // 全量签名 + 哈希, 不截断 —— 避免长内容参数被误判为重复
+          const _argsJson = JSON.stringify(tc.args ?? {});
+          const _sig = `${tc.name}:${_argsJson}`;
+          // 只读工具跳过去重检查
+          if (READ_ONLY_TOOLS.has(tc.name)) {
+            _crossRoundDeduped.push(tc);
+            continue;
+          }
+          if (this._toolCallHistory.has(_sig) && this.iteration > 0) {
+            // 已在之前的轮次中成功执行过 → 跳过, 但必须让 AI 知道
+            console.log(`[tool-repair] cross-round duplicate suppressed: ${tc.name}`);
+            this._skippedToolCalls.push({ id: tc.id, name: tc.name, sig: _sig });
+            this.directives.add('duplicate_skip', `[SYSTEM] 工具 ${tc.name} 已在之前的轮次中执行过相同操作, 不要重复调用。请基于已有结果继续下一步, 或换不同参数/方法。`, 'high');
+            continue;
+          }
+          _crossRoundDeduped.push(tc);
+        }
+        if (_crossRoundDeduped.length < res.toolCalls.length) {
+          console.log(`[tool-repair] cross-round suppression: ${res.toolCalls.length} → ${_crossRoundDeduped.length}`);
+          res.toolCalls = _crossRoundDeduped;
         }
         // 任务链推进: 有工具调用 = 进入执行阶段
         if (taskChain) {
@@ -3270,8 +3649,29 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
                     userPickedModel: this.opts.userPickedModel,
                     industryId: this.opts.industryId,  // ★ 继承父级行业, 不读单例
                   });
+                  // P0 修复: 转发子智能体事件到主 loop, 让前端能看到子Agent的思考过程
+                  // 之前: 子智能体的 iteration/progress/tool 事件全部丢弃 → 前端只看到 start/done
+                  // 之后: 转发为 subagent:progress 事件, 前端可展开查看详细过程
+                  subLoop.on('loop:iteration', (data: any) => {
+                    this.emit('subagent:progress', { id: subId, event: 'iteration', ...data });
+                  });
+                  subLoop.on('progress', (data: any) => {
+                    this.emit('subagent:progress', { id: subId, event: 'progress', ...data });
+                  });
+                  subLoop.on('tool:start', (data: any) => {
+                    this.emit('subagent:progress', { id: subId, event: 'tool_start', ...data });
+                  });
+                  subLoop.on('tool:done', (data: any) => {
+                    this.emit('subagent:progress', { id: subId, event: 'tool_done', ...data });
+                  });
                   const subResult = await subLoop.run(tc.args?.task || '');
-                  this.emit('subagent:done', { id: subId, result: subResult.content?.slice(0, 200) });
+                  // 转发完整结果 (不再截断到200字)
+                  this.emit('subagent:done', {
+                    id: subId,
+                    result: subResult.content?.slice(0, 2000),
+                    iterations: subResult.iterations,
+                    durationMs: subResult.durationMs,
+                  });
                   this.context.appendOnlyLog.push({
                     role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
                     content: `[子Agent ${tc.args?.type || 'explore'}]: ${(subResult.content || '无结果').slice(0, 2000)}`,
@@ -3301,6 +3701,31 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         
         const rawResults = await this.dispatchToolCalls(res.toolCalls);
         lastToolActivityAt = Date.now(); // 工具执行完成, 重置超时计时器
+
+        // ═══ 2026-10-05 P0 修复: 把被去重跳过的调用补成 [SKIPPED] tool 消息 ═══
+        // 这些调用在 :3344 处被 continue 掉, 不会进 rawResults。
+        // 若不补, AI 那一轮只看到"我发起了调用"却没有任何 tool 结果 →
+        // 以为工具没跑成功 → 换思路重试 → 用户看到"重复劳动"。
+        // 补一条明确痕迹后, AI 能区分"跳过了"与"失败了"。
+        if (this._skippedToolCalls.length > 0) {
+          for (const sk of this._skippedToolCalls) {
+            const msg = {
+              role: 'tool' as const,
+              name: sk.name,
+              tool_call_id: sk.id,
+              content: `[SKIPPED] 工具 ${sk.name} 的这次调用与历史调用完全相同, 已跳过以避免重复执行。`
+                + `该操作在此前的轮次中已成功完成, 其结果仍保留在上文对话中 —— `
+                + `请直接基于上文结果继续下一步, 不要重新发起相同调用。`,
+            };
+            this.context.appendOnlyLog.push(msg as any);
+            this.emit('log:appended', { role: 'tool', content: msg.content, name: sk.name });
+          }
+          this.emit('tool:skipped', {
+            count: this._skippedToolCalls.length,
+            tools: this._skippedToolCalls.map(s => s.name),
+          });
+          this._skippedToolCalls = [];
+        }
 
         // ═══ 任务自监督: 更新活动时间 + 记录文件变更 ═══
         supervisor.updateActivity();
@@ -3423,9 +3848,17 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
             : isToolFailed && !r.output
               ? '[ERROR] 工具执行返回空结果, 可能失败了'
               : r.output;
-if (!isToolFailed) {
-// 成功 → 重置
-duplicateTracker.delete(sig);
+          if (!isToolFailed) {
+            // P0 修复: 记录成功工具调用到跨轮次历史 — 防止续点后重复
+            // 2026-10-05: 签名与去重侧保持一致(全量不截断)，否则这里记的签名
+            // 与 :3344 处比对的不一样 → 去重永远命不中
+            const _tc = res.toolCalls?.find((t: any) => t.id === r.id);
+            if (_tc) {
+              const _sig = `${r.name}:${JSON.stringify(_tc.args || {})}`;
+              this._toolCallHistory.add(_sig);
+            }
+            // 成功 → 重置
+            duplicateTracker.delete(sig);
  // 灵魂层: PainSense 记录成功
  try { (await import('./soul/index.js')).getPainSense().feelJoy(); } catch {}
  // 价值向量: 从成功中学习 (更大胆、更自主)
@@ -3492,7 +3925,16 @@ duplicateTracker.delete(sig);
             }
           }
           this.emit('log:appended', { role: 'tool', content: r.output });
-          this.emit('tool:result', { callId: r.id, name: r.name, result: r.output, ok: !(r.output && r.output.startsWith('Error:')), durationMs: 0 }); // 前端可监听
+          const _diag = (r as any).data?.diagnostics;
+          const _lr = (r as any).data?.lineRanges;
+          const _payload = (Array.isArray(_diag) && _diag.length) || (Array.isArray(_lr) && _lr.length)
+            ? { data: { diagnostics: _diag ?? [], lineRanges: _lr ?? [] } }
+            : {};
+          this.emit('tool:result', {
+            callId: r.id, name: r.name, result: r.output,
+            ok: !(r.output && r.output.startsWith('Error:')), durationMs: 0,
+            ..._payload,
+          }); // 前端可监听 (C1: diagnostics / D2: lineRanges)
 
           // ═══ v3.1 实时会话摘要: 关键工具产生内容后, 立即更新 last-session.json ═══
           // 解决 "第二轮 AI 不记得上轮做了什么" 问题
@@ -3549,8 +3991,10 @@ duplicateTracker.delete(sig);
 
           // 自动计划追踪: 根据工具名推断当前阶段
           try {
-            const { _active_plan, EXTRA_HANDLERS } = await import('./tools.js');
-            if (_active_plan) {
+            // 2026-10-06: _active_plan → getActivePlan()（per-workspace + 落盘）
+            const { getActivePlan, setActivePlan } = await import('./tools.js');
+            const activePlan = getActivePlan();
+            if (activePlan) {
               const readTools = ['read_file', 'list_directory', 'directory_tree', 'search_content', 'search_codebase', 'get_symbols', 'glob'];
               const researchTools = ['web_search', 'web_fetch', 'recall_memory'];
               const execTools = ['write_file', 'multi_edit', 'create_file', 'run_code', 'delete_file', 'create_directory', 'move_file', 'copy_file', 'generate_image', 'generate_diagram'];
@@ -3562,13 +4006,14 @@ duplicateTracker.delete(sig);
 
               if (stageId) {
                 // 标记之前的阶段为完成, 当前阶段为进行中
-                for (const t of _active_plan.subtasks) {
+                for (const t of activePlan.subtasks) {
                   if (t.id === stageId) {
                     t.status = 'in_progress';
-                  } else if (_active_plan.subtasks.indexOf(t) < _active_plan.subtasks.findIndex((s: any) => s.id === stageId)) {
+                  } else if (activePlan.subtasks.indexOf(t) < activePlan.subtasks.findIndex((s: any) => s.id === stageId)) {
                     if (t.status !== 'completed') t.status = 'completed';
                   }
                 }
+                setActivePlan(activePlan);   // 阶段推进也落盘 → 中断后可续
               }
             }
           } catch { /* auto-track optional */ }
@@ -3693,7 +4138,12 @@ duplicateTracker.delete(sig);
             break;
           }
           // 3) 文件路径不存在 → 自动探索
-          if ((out.includes('ENOENT') || out.match(/no such file|not found|找不到/i)) && !out.includes('list_directory')) {
+          // P1 修复: 收窄触发条件 — 只在文件操作工具 (read_file/write_file/multi_edit/delete_file)
+          // 返回 ENOENT 时触发, 搜索工具 (search_codebase/grep/web_search) 的 "not found" 不触发
+          const isFileTool = ['read_file', 'write_file', 'multi_edit', 'delete_file', 'create_file', 'edit_file', 'move_file', 'copy_file'].includes(r.name);
+          const hasEnoent = out.includes('ENOENT') || out.match(/no such file or directory/i);
+          const hasPathNotFound = isFileTool && out.match(/file not found|path not found|路径不存在|文件不存在/i);
+          if ((hasEnoent || hasPathNotFound) && !out.includes('list_directory')) {
             this.directives.add('auto_fix_path', `[SYSTEM 自主修复] 文件/路径不存在。请先调用 list_directory 查看实际目录结构, 找到正确路径后重试。`, 'high');
             this.emit('auto:fix', { type: 'path_not_found' });
             this.emit('reasoning', { text: `[自主修复] 路径不存在, 自动探索目录结构...` });
@@ -3901,62 +4351,82 @@ duplicateTracker.delete(sig);
             }
           }
 
-          // ═══ v3.1 死循环硬停: 连续 3 次相同工具 + 相同参数 + 相似结果 → 强制退出 ═══
+          // ═══ v3.1 死循环硬停: 连续 5 次相同工具 + 相同参数 + 相似结果 → 强制退出 ═══
+          // v3.3 修复: 阈值从 3 提高到 5, 避免正常搜索被误判为死循环
+          // v3.3 修复: 签名用完整 args 而非 content.slice(0,60), 避免不同参数误判为相同
+          // v3.3 修复: 搜索类工具 (search_content/search_codebase/grep/web_search) 豁免死循环检测
+          //   原因: AI 可能连续搜索不同 pattern, 是正常探索行为, 不应被封停
           // 解决 AI 死循环: web_search 反复调用 / browser_click 反复失败等
           // 关键场景: 工具持续返回低质量/错误/相似结果, AI 不换思路
-          if (toolMsgs.length >= 3) {
-            const last3 = toolMsgs.slice(-3);
-            const sig = (m: any) => {
-              const name = m.name || 'unknown';
-              const args = typeof m.content === 'string' ? m.content.slice(0, 60) : '';
-              return `${name}::${args}`;
-            };
-            const sigs = last3.map(sig);
-            const allSame = sigs[0] === sigs[1] && sigs[1] === sigs[2];
-            if (allSame) {
-              const repeatName = (last3[0] as any).name || 'unknown';
-              const errResults = last3.filter(m => typeof m.content === 'string' && (m.content.startsWith('[ERROR]') || m.content.includes('未启动') || m.content.includes('失败')));
-              const isErrorLoop = errResults.length >= 2;
+          const LOOP_EXEMPT_TOOLS = new Set([
+            'search_content', 'search_codebase', 'grep', 'glob', 'web_search',
+            'web_fetch', 'read_file', 'list_directory', 'directory_tree',
+            'find_references', 'get_outline', 'find_file', 'search_files',
+          ]);
+          if (toolMsgs.length >= 5) {
+            const last5 = toolMsgs.slice(-5);
+            // 搜索类工具豁免 — 正常探索行为不应被封停
+            const lastToolNames = last5.map((m: any) => m.name || 'unknown');
+            const allExempt = lastToolNames.every((n: string) => LOOP_EXEMPT_TOOLS.has(n));
+            if (allExempt) {
+              // 豁免: 不做死循环检测, 让 AI 自由探索
+            } else {
+              const sig = (m: any) => {
+                const name = m.name || 'unknown';
+                // P0 修复: 用完整 args 生成签名, 而非 content.slice(0,60)
+                // content 是工具返回结果, 不同参数可能返回相似结果导致误判
+                const argsStr = JSON.stringify(m.args || {}).slice(0, 200);
+                return `${name}::${argsStr}`;
+              };
+              const sigs = last5.map(sig);
+              // 5 次中至少 4 次相同才触发 (允许 1 次不同)
+              const sigCounts = new Map<string, number>();
+              for (const s of sigs) sigCounts.set(s, (sigCounts.get(s) || 0) + 1);
+              const maxCount = Math.max(...sigCounts.values());
+                            if (maxCount >= 4) {
+                const repeatName = (last5[0] as any).name || 'unknown';
+                const errResults = last5.filter(m => typeof m.content === 'string' && (m.content.startsWith('[ERROR]') || m.content.includes('未启动') || m.content.includes('失败')));
+                const isErrorLoop = errResults.length >= 3;
 
-            console.warn(`[loop] 🛑 死循环硬停: ${repeatName} 连续 3 次返回相同/错误结果, 强制终止`);
-            taskSnap?.appendLog('warn', 'dead-loop-hard-stop', { tool: repeatName, signatures: sigs, errLoop: isErrorLoop });
-
-            // 注入强引导 + 硬停
-            this.directives.add('dead_loop_stop',
-              `[SYSTEM] ⚠️ 工具 "${repeatName}" 连续 3 次返回相同结果${isErrorLoop ? '且包含错误' : ''}。
+                console.warn(`[loop] 🛑 死循环硬停: ${repeatName} 连续 5 次返回相同/错误结果, 强制终止`);
+                taskSnap?.appendLog('warn', 'dead-loop-hard-stop', { tool: repeatName, signatures: sigs, errLoop: isErrorLoop });
+                // 注入强引导 + 硬停
+                this.directives.add('dead_loop_stop',
+                  `[SYSTEM] ⚠️ 工具 "${repeatName}" 连续多次返回相同结果${isErrorLoop ? '且包含错误' : ''}。
 不要再调用任何工具！请立即:
 1) 总结目前已知的信息
 2) 解释为什么这个工具没工作${isErrorLoop ? '（很可能是浏览器/服务未启动，提示用户检查）' : ''}
 3) 给出基于现有信息的最终答案`,
-              'high'
-            );
+                  'high'
+                );
 
-            // 标记硬停, 下一轮注入 SYSTEM 后立即退出
-            this._hardStopNext = true;
-            this._hardStopCount++;
-            // 如果已经硬停过 2 次, AI 仍在忽略 → 强制 force break
-            if (this._hardStopCount >= 2) {
-              console.warn(`[loop] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break`);
-              taskSnap?.appendLog('warn', 'dead-loop-force-break', { tool: repeatName, hardStopCount: this._hardStopCount });
-              this.directives.add('force_break',
-                `[SYSTEM] ⚠️ 硬停失败, 强制退出循环。最终回答基于已知信息。`,
-                'critical'
-              );
-              lastResponse = {
-                content: this.context.appendOnlyLog
-                  .filter(m => m.role === 'tool')
-                  .slice(-3)
-                  .map(m => typeof m.content === 'string' ? m.content.slice(0, 200) : '')
-                  .join('\n---\n') || `[已强制退出循环] 工具 ${repeatName} 连续返回相同结果。`,
-                provider: 'forced' as any,
-                usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
-                durationMs: 0,  // v3.2 修复: ChatResponse 要求此字段
-              };
-              break;  // 直接跳出整个 while 循环
-            }
-            continue;
-          }
-          }  // 关闭 if (toolMsgs.length >= 3) — v3.2 修复漏闭合
+                // 标记硬停, 下一轮注入 SYSTEM 后立即退出
+                this._hardStopNext = true;
+                this._hardStopCount++;
+                // 如果已经硬停过 2 次, AI 仍在忽略 → 强制 force break
+                if (this._hardStopCount >= 2) {
+                  console.warn(`[loop] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break`);
+                  taskSnap?.appendLog('warn', 'dead-loop-force-break', { tool: repeatName, hardStopCount: this._hardStopCount });
+                  this.directives.add('force_break',
+                    `[SYSTEM] ⚠️ 硬停失败, 强制退出循环。最终回答基于已知信息。`,
+                    'critical'
+                  );
+                  lastResponse = {
+                    content: this.context.appendOnlyLog
+                      .filter(m => m.role === 'tool')
+                      .slice(-3)
+                      .map(m => typeof m.content === 'string' ? m.content.slice(0, 200) : '')
+                      .join('\n---\n') || `[已强制退出循环] 工具 ${repeatName} 连续返回相同结果。`,
+                    provider: 'forced' as any,
+                    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+                    durationMs: 0,  // v3.2 修复: ChatResponse 要求此字段
+                  };
+                  break;  // 直接跳出整个 while 循环
+                }
+                continue;
+              } // 关闭 if (maxCount >= 4)
+            } // 关闭 else (非豁免工具)
+          }  // 关闭 if (toolMsgs.length >= 5) — v3.3 修复: 阈值从 3 提高到 5
         } catch (loopDetectErr: any) {
           // v3.2 防御: 即使死循环检测内部出错, 也不影响主循环
           console.warn('[loop] ⚠️ 死循环检测块异常 (已吞掉, 不影响主流程):', loopDetectErr?.message);
@@ -3972,6 +4442,20 @@ duplicateTracker.delete(sig);
           this.directives.add('truncated', '[SYSTEM] 你的回复被截断了(max_tokens限制)。请从断点继续完成你的回答和任务。', 'high');
         autoResumeCount++;
         this.emit('auto:resume', { reason: 'length_truncated', count: autoResumeCount });
+        // 2026-10-05 P0 修复: 接上上限（此前 MAX_AUTO_RESUME 声明后全文 0 引用，
+        //   autoResumeCount 只用于 emit、从不影响控制流）
+        //   症状: 模型持续返回 finish_reason='length' 时（上下文过长 + max_tokens 很小，
+        //   而 prompt 因工具定义/工作记忆永不缩短），循环没有自然出口 ——
+        //   唯一出口是 iteration 计数，单请求可产生 maxIterations(默认30~90) 次付费调用。
+        if (autoResumeCount > MAX_AUTO_RESUME) {
+          console.warn(`[loop] auto-resume 超过上限 ${MAX_AUTO_RESUME},停止截断续写并要求总结`);
+          this.directives.add(
+            'resume_exhausted',
+            '[SYSTEM] 你已连续多次因输出被截断而续写。现在不要再续写, 请用一段总结收尾: 已完成什么、结论是什么、还差什么。',
+            'critical',
+          );
+          autoResumeCount = 0;   // 复位, 允许后续真正的新任务再恢复
+        }
         continue;
       }
 
@@ -4223,20 +4707,40 @@ if (this._capabilityTier !== 'autonomous') {
       const isGoodbye = /退出|结束|不用了|不需要了|算了|拜拜|再见|goodbye|bye|没事了|over|final_end/i.test(userMessageStr)
         || /再见|祝你|祝您|拜拜|下次见|随时|欢迎.*回来|需要.*随时|期待.*再次|have a|goodbye|bye|告别/i.test(text);
 
+      // 2026-09-04 P0 流畅度修复: 识别"信息型提问"(用户要解释/答案, 而非改代码/做操作)。
+      // 原规则3/4对这类请求也强制"请调用工具→无工具→短回复→继续", 免费模型纯文本答完
+      // 还会被拉去空转最多 10 轮 (明显"答完了还在转圈")。信息型请求给纯文本答案即算完成, 豁免工具强推。
+      const isInfoRequest = /解释|说明|为什么|如何|怎么|什么是|区别|比较|对比|帮我分析|分析一下|原因|总结|列出|概述|介绍|讲讲|含义|意思|原理|导致.*原因|给我.*方案|推荐/i.test(userMessageStr)
+        || /[?？]$/.test(userMessageStr.trim());
+
       if (hasPriorTools && len > 60 && this.iteration < this.opts.maxIterations * 0.5) {
         const isUserChitChat = messageText.trim().length < 10;
         const isDescriptive = /我(看到|发现|了解|注意到|观察到|查看了|分析了)|让我(先|来)|这是|看起来|似乎|大概|目前|现状|情况/i.test(text);
         const hasAction = /已(创建|修改|写入|删除|安装|执行|生成)|成功|✅|完成/i.test(text);
+        // B1 (2026-09-05): 已完成成功写操作(改文件/执行) → 描述性收尾视为"完成后汇报",
+        // 不再强推续跑 — 否则"我检查了xxx已改好"这类收尾会被拉去多空转几轮。
+        // 仅当本次会话还没有任何成功写操作时才强制"别只描述, 去执行"。
+        const hasSuccessfulWrite = this.context.appendOnlyLog.some(m => {
+          if (m.role !== 'tool' || typeof m.content !== 'string') return false;
+          const name = (m as any).name || '';
+          const isWriteTool = ['write_file', 'multi_edit', 'edit_file', 'create_file', 'run_code', 'apply_edit', 'run_command', 'npm_install', 'delete_file'].includes(name);
+          const failed = m.content.startsWith('[ERROR]') || /失败|failed|error/i.test(m.content.slice(0, 200));
+          return isWriteTool && !failed;
+        });
         if (isDescriptive && !hasAction && !isUserChitChat) {
-          this.directives.add('descriptive', '[SYSTEM] 不要只描述, 请调用 write_file/multi_edit 修改代码, 用 run_code 验证。', 'medium');
-          continue;
+          // B1: 已完成成功写操作且收尾无"后续意图" → 视为完成后汇报, 放行自然结束
+          const hasFutureIntent = /接下来|下一步|然后|稍后|继续|待会|后续|下面|现在(开始|来)|让我(继续|再)|我会(继续|接着)|准备|即将|还有.*要/i.test(text);
+          if (!(hasSuccessfulWrite && !hasFutureIntent)) {
+            this.directives.add('descriptive', '[SYSTEM] 不要只描述, 请调用 write_file/multi_edit 修改代码, 用 run_code 验证。', 'medium');
+            continue;
+          }
         }
-        // 有操作标记 → 不在此处 break, 继续向下判断
+        // 有操作标记 / 已完成写操作且收尾 → 不在此处 break, 继续向下判断 (最终自然结束)
       }
 
       // 规则3: 长回复但无工具 + 非闲聊 + 非告别 + 早期迭代 → 提示使用工具
       // 强模型跳过 — 它自己决定是否需要工具
-      if (this._capabilityTier !== 'autonomous' && len > 200 && !hasPriorTools && this.iteration < this.opts.maxIterations * 0.5 && !isChitChat && !isGoodbye) {
+      if (this._capabilityTier !== 'autonomous' && len > 200 && !hasPriorTools && this.iteration < this.opts.maxIterations * 0.5 && !isChitChat && !isGoodbye && !isInfoRequest) {
         this.directives.add('no_tools', '[SYSTEM] 请调用工具执行操作 (如 read_file/write_file/run_code), 或明确说"回答完毕"。', 'medium');
         continue;
       }
@@ -4244,10 +4748,12 @@ if (this._capabilityTier !== 'autonomous') {
       // 规则4: 短回复 + 无工具 + 还有恢复次数 + 非告别 + 非问候 → 自动恢复
       // 强模型跳过 — 如果它给了短回复, 大概率是任务确实简单
       // 问候/自我介绍不应触发 autoResume (否则死循环: 你好→太短→你好→太短)
+      // B1 (2026-09-05): 改用独立 shortReplyResumeCount (上限 3), 与截断/自监督恢复的
+      // autoResumeCount 解耦 — 纯文本短答最多补 3 轮, 避免"答完了还在转圈"式空转。
       const isGreetingOrIntro = /^(你好|嗨|hi|hello|嘿|哈喽|我是|我在|有什么|随时|开干|说吧|早上好|下午好|晚上好|早安|晚安|好久不见|再见|拜拜|明天见|回头见|good\s*(morning|afternoon|evening|night)|bye|see\s*you)/i.test(text.trim())
         || /智能助手|AgentAI|PulseFlow|帮你搞|帮你处理|开干|我在的|我在呢|没有掉线|很高兴见到你|很高兴认识你/i.test(text);
-      if (this._capabilityTier !== 'autonomous' && !hasPriorTools && len < 200 && autoResumeCount < MAX_AUTO_RESUME && !isNoKeyResponse && !isChitChat && !isGoodbye && !isGreetingOrIntro) {
-        autoResumeCount++;
+      if (this._capabilityTier !== 'autonomous' && !hasPriorTools && len < 200 && shortReplyResumeCount < MAX_SHORT_REPLY_RESUME && !isNoKeyResponse && !isChitChat && !isGoodbye && !isGreetingOrIntro && !isInfoRequest) {
+        shortReplyResumeCount++;
         this.directives.add('short_response', '[SYSTEM] 回复过短, 请调用 list_directory 了解结构, 用 read_file/write_file 等工具完成任务。', 'medium');
         continue;
       }
@@ -4261,6 +4767,9 @@ if (this._capabilityTier !== 'autonomous') {
     // - 高优先级 → 补一轮 LLM 让 AI 处理 (如操作感知提醒)
     // - 中/低优先级 → 静默记录, 不打扰 AI
     const deferredDirectives = this.directives.flushDeferred();
+    // 2026-09-04 P0 流畅度修复: 收尾轮预算 — deferred/总结/反思共享, 本段最多发起 1 次额外 LLM 往返
+    // (原 deferred 高优指令 + 总结 + 两个反思维度可串行叠加 1~3 轮全上下文重建的 LLM 调用)
+    let _tailLlmRoundRan = false;
     if (deferredDirectives.length > 0) {
       const criticalDeferred = deferredDirectives.filter(d => d.priority === 'high');
       const nonCritical = deferredDirectives.filter(d => d.priority !== 'high');
@@ -4290,6 +4799,7 @@ if (this._capabilityTier !== 'autonomous') {
             lastResponse = { ...lastResponse!, content: deferredRes.content };
             this.emit('log:appended', { role: 'assistant', content: deferredRes.content });
           }
+          _tailLlmRoundRan = true;
         } catch (e: any) {
           console.warn('[directives] deferred round failed:', e?.message);
         }
@@ -4313,11 +4823,27 @@ if (this._capabilityTier !== 'autonomous') {
     // 问候/自我介绍不触发总结 (否则死循环: 你好→总结→你好→总结)
     const isGreetingFinal = /^(你好|嗨|hi|hello|嘿|哈喽|我是|我在|有什么|随时)/i.test(lastText.trim())
       || /智能助手|AgentAI|帮你搞|帮你处理|我在的|我在呢|没有掉线/i.test(lastText);
-    // 2026-08-03: 原来 lastText.length < 100 太严格，写文件后回复通常 >100 字，改为 <500 字符
-    // 同时允许更长回复也能触发总结，避免 AI 写完后不总结
-    if (hasPriorToolCalls && !alreadySummarized && lastText.length < 500 && this.iteration < this.opts.maxIterations - 1 && !isGreetingFinal) {
+    // 2026-09-04 P0: 总结触发门槛 500→300 字符; 且若"反思轮"即将介入(工具失败却声称成功 / 漏写文件)
+    // 或 deferred 已占用本轮收尾预算, 则跳过总结, 避免 deferred→总结→反思 多轮串行叠加。
+    const _tailFailedCount = hasPriorToolCalls
+      ? this.context.appendOnlyLog.filter(m =>
+          m.role === 'tool' && typeof m.content === 'string' &&
+          (m.content.startsWith('[ERROR]') || m.content.includes('失败') || m.content.includes('failed'))).length
+      : 0;
+    const _tailClaimsSuccess = /成功|完成|已创建|已修改|已写入|✅|success|completed|done/i.test(lastText);
+    const _tailUserWantsWrite = /修改|写入|创建|删除|添加|重构|修复|改|写|create|write|modify|fix|delete|refactor/i.test(messageText);
+    const _tailHasWriteTool = hasPriorToolCalls && this.context.appendOnlyLog.some(m =>
+      m.role === 'tool' && typeof m.content === 'string' &&
+      ['write_file', 'multi_edit', 'string_replace', 'MultiEdit', 'create_tool'].includes((m as any).name || ''));
+    const _tailNeedsReflection = (_tailFailedCount > 0 && _tailClaimsSuccess) || (_tailUserWantsWrite && !_tailHasWriteTool);
+    if (hasPriorToolCalls && !alreadySummarized && lastText.length < 300 && this.iteration < this.opts.maxIterations - 1 && !isGreetingFinal && !_tailNeedsReflection && !_tailLlmRoundRan) {
       try {
-        const summaryPrompt = '[SYSTEM] 任务已执行完毕。请用 2-3 句话简要总结你完成了什么工作、修改了哪些文件、关键结果是什么。';
+        const summaryPrompt = `[SYSTEM] 任务已执行完毕。请按以下结构输出最终总结 (B5 结构化收尾, 必须逐项填写, 无则写"无"):
+1. **本次完成**: 1-2 句话概括做了什么
+2. **修改文件清单**: 逐行列出本次实际 read/写改动的文件路径 (从工具调用中提取)
+3. **验证状态**: tsc/typecheck/测试是否通过; 有编译错误必须如实写明
+4. **未完成项**: 剩余待办 / 已知问题 / 需用户确认事项
+不要只写客套话, 未完成项与失败必须如实报告。`;
         const summaryReq: ChatRequest = {
           model: this.opts.model as ProviderId,
           subModel: this.opts.modelName || undefined,
@@ -4360,7 +4886,7 @@ if (this._capabilityTier !== 'autonomous') {
         if (failedTools.length > 0 && hasSuccessKeyword && !hasErrorKeyword) {
           const reflectPrompt = `[SYSTEM 反思] ${failedTools.length} 个工具调用失败但回复声称成功。请诚实检查: 哪些失败了? 如何补救?`;
           // 追加一轮让 AI 修正
-          if (this.iteration < this.opts.maxIterations - 1) {
+          if (this.iteration < this.opts.maxIterations - 1 && !_tailLlmRoundRan) {
             const reflectReq: ChatRequest = {
               model: this.opts.model as ProviderId,
               subModel: this.opts.modelName || undefined,
@@ -4381,6 +4907,7 @@ if (this._capabilityTier !== 'autonomous') {
               lastResponse = { ...lastResponse, content: reflectRes.content };
               this.emit('log:appended', { role: 'assistant', content: reflectRes.content });
             }
+            _tailLlmRoundRan = true;
           }
           this.emit('reflection:triggered', { reason: 'failed_tools_claimed_success', failedCount: failedTools.length });
         }
@@ -4391,7 +4918,7 @@ if (this._capabilityTier !== 'autonomous') {
           const name = (m as any).name || '';
           return ['write_file', 'multi_edit', 'string_replace', 'MultiEdit', 'create_tool'].includes(name);
         });
-        if (userWantsWrite && !hasWriteTool && !hasErrorKeyword && this.iteration < this.opts.maxIterations * 0.7) {
+        if (userWantsWrite && !hasWriteTool && !hasErrorKeyword && this.iteration < this.opts.maxIterations * 0.7 && !_tailLlmRoundRan) {
           this.directives.add('reflect_write', `[SYSTEM 反思] 用户要求修改文件但你没有调用写入工具。请立即调用 write_file/multi_edit, 或说明原因。`, 'high');
           // 追加一轮让 AI 执行
           const reflectReq: ChatRequest = {
@@ -4410,6 +4937,7 @@ if (this._capabilityTier !== 'autonomous') {
             lastResponse = { ...lastResponse, content: reflectRes.content };
             this.emit('log:appended', { role: 'assistant', content: reflectRes.content });
           }
+          _tailLlmRoundRan = true;
           this.emit('reflection:triggered', { reason: 'missing_write_tool' });
         }
 
@@ -4455,13 +4983,50 @@ if (this._capabilityTier !== 'autonomous') {
       return { content: '任务已处理，但未能生成最终回复。请重新描述需求。', provider: 'agentai', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const }, iterations: this.iteration, durationMs: Date.now() - startedAt };
     }
 
+    // ═══ B5 (2026-09-05): 结构化收尾机器兜底 ═══
+    // 总结轮可能被 deferred/反思预算抢占跳过 (见上方 _tailLlmRoundRan 预算), 导致用户
+    // 看不到"改了什么/验证过没有/还有啥没做"。此兜底直接从 appendOnlyLog 提取真实工具
+    // 记录, 追加一段结构化清单 — 不依赖 LLM 收尾, 防被抢占跳过。
+    try {
+      const _b5ToolMsgs = this.context.appendOnlyLog.filter(m => m.role === 'tool');
+      if (_b5ToolMsgs.length > 0) {
+        const _b5FinalText = typeof lastResponse.content === 'string' ? lastResponse.content : '';
+        // 已有结构化收尾 (总结轮/反思轮产出) → 不再追加, 避免重复
+        const _b5HasStructure = /修改文件|文件清单|验证状态|未完成项|收尾清单|改动文件|已完成/i.test(_b5FinalText.slice(-600));
+        if (!_b5HasStructure) {
+          const _writeTools = new Set<string>();
+          const _failedTools: string[] = [];
+          for (const _m of _b5ToolMsgs) {
+            const _name = (_m as any).name || 'unknown';
+            const _content = typeof _m.content === 'string' ? _m.content : '';
+            const _isWrite = ['write_file', 'multi_edit', 'edit_file', 'create_file', 'string_replace', 'apply_edit', 'run_code'].includes(_name);
+            const _failed = _content.startsWith('[ERROR]') || /失败|failed/i.test(_content.slice(0, 160));
+            if (_isWrite && !_failed) _writeTools.add(_name);
+            if (_failed) _failedTools.push(`${_name}: ${_content.slice(0, 80)}`);
+          }
+          if (_writeTools.size > 0 || _failedTools.length > 0) {
+            const _b5Lines: string[] = [
+              '',
+              '---',
+              '📋 收尾清单 (自动生成):',
+              `- 本次执行了写操作工具: ${_writeTools.size > 0 ? [..._writeTools].join(', ') : '无'}`,
+              `- 失败/告警的工具: ${_failedTools.length > 0 ? _failedTools.slice(0, 3).join(' | ') : '无'}`,
+              `- 验证状态: ${_failedTools.length > 0 ? '存在失败项, 已如实汇报, 建议复查' : '工具执行未见失败'}`,
+            ];
+            lastResponse = { ...lastResponse, content: _b5FinalText + _b5Lines.join('\n') };
+          }
+        }
+      }
+    } catch (e: any) { console.warn('[B5] structured tail fallback failed:', e?.message); }
+
     // 自动计划: 标记所有阶段完成
     try {
-      const { _active_plan } = await import('./tools.js');
-      if (_active_plan) {
-        for (const t of _active_plan.subtasks) {
-          t.status = 'completed';
-        }
+      // 2026-10-06: 同上，改用 per-workspace 存储
+      const { getActivePlan, setActivePlan, clearActivePlan } = await import('./tools.js');
+      const donePlan = getActivePlan();
+      if (donePlan) {
+        for (const t of donePlan.subtasks) t.status = 'completed';
+        setActivePlan(donePlan);
       }
     } catch { /* plan completion optional */ }
 
@@ -4497,10 +5062,19 @@ if (this._capabilityTier !== 'autonomous') {
     // 异步触发, 不阻塞返回
     const lastUserMsg = [...this.context.appendOnlyLog].reverse().find(m => m.role === 'user');
     const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+    // 2026-09-04 P0 流畅度修复: 反思本身会发起一次 LLM 调用, 若在每条消息后无条件触发,
+    // 会与用户的下一条消息同时竞争 provider/限流 → TTFB 变慢、免费模型配额被后台任务耗尽。
+    // 增加节流: 同一会话 60s 内最多触发 1 次, 且仅在确实有实质工作时才反思。
     if (this.opts.reflectEvery && this.opts.reflectEvery > 0) {
-      this.runReflector(lastResponse, lastUserText).catch((e) => {
-        console.warn('[reflector] failed:', (e as Error).message);
-      });
+      const _nowRef = Date.now();
+      const _lastRefAt = (this as any)._lastReflectorAt || 0;
+      const _meaningfulRun = this.iteration > 1 || lastUserText.trim().length >= 15;
+      if (_meaningfulRun && _nowRef - _lastRefAt >= 60_000) {
+        (this as any)._lastReflectorAt = _nowRef;
+        this.runReflector(lastResponse, lastUserText).catch((e) => {
+          console.warn('[reflector] failed:', (e as Error).message);
+        });
+      }
     }
 
     // ============== 技能自进化: 评估使用数据, 做 promote/demote 决策 ==============
@@ -5327,7 +5901,16 @@ try {
     // 发射 tool:result 事件 (仅被批准的)
     for (const c of callsToDispatch) {
       const r = results.find(x => x.id === c.id);
-      this.emit('tool:result', { callId: c.id, name: c.name, result: r?.result?.output || '', ok: r?.result?.success !== false, durationMs: r?.result?.durationMs || 0 });
+      const _diag = (r as any)?.result?.data?.diagnostics;
+      const _lr = (r as any)?.result?.data?.lineRanges;
+      const _payload = (Array.isArray(_diag) && _diag.length) || (Array.isArray(_lr) && _lr.length)
+        ? { data: { diagnostics: _diag ?? [], lineRanges: _lr ?? [] } }
+        : {};
+      this.emit('tool:result', {
+        callId: c.id, name: c.name, result: r?.result?.output || '',
+        ok: r?.result?.success !== false, durationMs: r?.result?.durationMs || 0,
+        ..._payload,
+      });
 
       // ═══ 2026-07-30 新增: 工具调用历史分析记录 ═══
       recordToolCall(c.name, c.args, {
@@ -5336,6 +5919,35 @@ try {
         duration: r?.result?.durationMs || 0,
         retryCount: 0, // 重试次数在上方逻辑中统计
       });
+
+      // ═══ 2026-10-06 P0: 写入任务台账（防重复读文件/防失忆核心）═══
+      // 每轮 prompt 都会注入台账，AI 能看到"这些我已经读过了"。
+      // 之前这个状态只存在于 appendOnlyLog（会被裁剪/压缩），所以 AI 失忆后
+      // 会重新 read_file 同一文件 —— 表现为"一直在重复劳动"。
+      try {
+        const _args = c.args as Record<string, any> | undefined;
+        const _target = String(
+          _args?.file_path ?? _args?.path ?? _args?.file ?? _args?.command ?? _args?.url ?? '',
+        );
+        const _kind =
+          c.name === 'read_file' || c.name === 'list_directory' || c.name === 'search_codebase' ? 'read'
+          : (c.name === 'write_file' || c.name === 'multi_edit' || c.name === 'delete_file' || c.name === 'edit_file') ? 'write'
+          : (c.name === 'run_command' || c.name === 'run_shell_command' || c.name === 'run_background' || c.name === 'run_code') ? 'exec'
+          : 'other';
+        const _nth = this.ledger.record(c.name, _target, _kind as any);
+        // 重复读同一文件 ≥2 次 → 显式提醒（比让AI 自己发现更快）
+        if (_nth >= 1 && _kind === 'read') {
+          this.directives.add(
+            'redundant_read',
+            `[SYSTEM] 注意: read_file("${_target}") 本会话已读过${_nth} 次。`
+            + '若为完成任务必须重读请忽略此提示; 否则请直接基于上文内容继续, 不要重复读取。',
+            'high',
+          );
+        }
+        if (r?.result?.success === false) {
+          this.ledger.recordFailure(c.name, r.result.output);
+        }
+      } catch { /* 台账 best-effort，绝不阻断工具执行 */ }
 
       // ═══ 智能核心: 工具失败时注入错误分析和修复建议 ═══
       if (r?.result?.success === false) {
@@ -5568,7 +6180,7 @@ try {
   }
 
   /**
-   * 反思门 (学 WorkBuddy auto_reflect + Reasonix telemetry)
+   * 反思门 (auto_reflect + telemetry)
    * 自创: 把反思写进三层记忆 + 智能可视化触发
    * 规则: 只在用户任务需要可视化时才触发, 不是每次结构化数据都画图
    */

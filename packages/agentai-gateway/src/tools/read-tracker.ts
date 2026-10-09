@@ -7,12 +7,14 @@
  *   - hasRead(path): 编辑前检查, 未读则拒绝
  *   - reset(): 上下文折叠后调用, 强制重新读取
  *
- * 学自: Reasonix src/tools/read-tracker.ts
+ * src/tools/read-tracker.ts
  */
 import * as pathModule from 'path';
 
 export class ReadTracker {
   private _readFiles = new Set<string>();
+  /** 读取次数（用于 "已读 N 次" 提示） */
+  private _counts = new Map<string, number>();
   private _workspace: string;
 
   constructor(workspace: string) {
@@ -26,10 +28,25 @@ export class ReadTracker {
     return pathModule.resolve(this._workspace, normalized);
   }
 
-  /** 标记文件已读 */
-  markRead(filePath: string): void {
+  /** 标记文件已读，返回这是本会话第几次读该文件（供 read_file 返回"已读 N 次"提示） */
+  markRead(filePath: string): number {
     const resolved = this.resolve(filePath);
     this._readFiles.add(resolved);
+    this._counts.set(resolved, (this._counts.get(resolved) || 0) + 1);
+    return this._counts.get(resolved)!;
+  }
+
+  /** 该文件已被读取过几次（未读过返回 0） */
+  countOf(filePath: string): number {
+    return this._counts.get(this.resolve(filePath)) || 0;
+  }
+
+  /** 已读文件清单（相对工作区，最多 limit 条）—— 供注入任务进度快照 */
+  list(limit = 20): string[] {
+    return [...this._readFiles]
+      .map((abs) => pathModule.relative(this._workspace, abs).replace(/\\/g, '/'))
+      .filter((rel) => rel && !rel.startsWith('..'))
+      .slice(-limit);
   }
 
   /** 检查文件是否已读 */
@@ -50,6 +67,7 @@ export class ReadTracker {
   /** 重置 (上下文折叠时调用) */
   reset(): void {
     this._readFiles.clear();
+    this._counts.clear();
   }
 
   /** 当前已读文件数 */

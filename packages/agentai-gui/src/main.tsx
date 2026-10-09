@@ -14,6 +14,10 @@ import './styles/agentai-theme.css';
 // ═══ 第3层: 全局样式和工具类 ═══
 import './styles/global.css';
 
+// ═══ 第4 层: 布局骨架（z-index 分层 / 三栏可拖拽 / 响应式断点）═══
+// 2026-10-06 新增。必须在 global.css 之后 —— 骨架要能覆盖前两层的默认值。
+import './styles/layout.css';
+
 // ═══ P0 修复: 全局 Fetch 拦截器 ═══
 // 必须在所有组件之前导入, 自动将 /v1/, /api/ 等相对路径重定向到 GATEWAY_HTTP
 // 解决 Tauri 打包后 fetch('/v1/...') 404 的问题
@@ -68,7 +72,7 @@ class ErrorBoundary extends React.Component<
             color: 'var(--fg)',
             fontFamily: 'system-ui',
             padding: 32,
-            zIndex: 99999,
+            zIndex: 'var(--z-dragging)',
           }}
         >
           <div style={{

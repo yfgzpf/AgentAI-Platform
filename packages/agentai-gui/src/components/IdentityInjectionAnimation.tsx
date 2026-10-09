@@ -58,11 +58,11 @@ export const IdentityInjectionAnimation: React.FC<Props> = ({ avatar, name, indu
         }} />
       </div>
 
-      <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 24, fontWeight: 700 }}>
+      <h2 style={{ color: 'var(--fg)', margin: '0 0 8px', fontSize: 24, fontWeight: 700 }}>
         身份已激活！
       </h2>
       <div style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 32, fontSize: 14 }}>
-        <b style={{ color: '#fff' }}>{name}</b> · {industry.icon} {industry.label}
+        <b style={{ color: 'var(--fg)' }}>{name}</b> · {industry.icon} {industry.label}
       </div>
 
       {/* 注入进度 */}

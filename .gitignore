@@ -5,7 +5,9 @@ package-lock.json
 yarn.lock
 
 # ===== Build Output =====
-dist/
+# 注意: 必须是 dist/** 而不是 dist/ —— 后者不匹配
+# references/cursor-mcp/dist/main.js 这类嵌套路径 (实测该文件 2.67MB 曾被提交)
+dist/**
 build/
 out/
 *.tsbuildinfo
@@ -17,6 +19,9 @@ target/          # Rust build
 .env.local
 .env.*.local
 *.log
+# *.log 不匹配 gateway-restart.log.old 这类后缀式日志 (实测 125MB 曾被提交)
+*.log.*
+*.stackdump
 config.json
 .agentai/
 *.agentai/
@@ -79,9 +84,14 @@ packages/agentai-skills/finance/**/data/*.json
 packages/agentai-skills/finance/**/data/*.sqlite
 
 # ===== Customer / business data (报价, 报价单, 业务数据) =====
+# 注意: 原有规则只匹配中文「报价*」, 而实际文件名是英文 quotation_*
+#       -> 46 个客户报价文件曾被提交 (实测 325KB)
 **/报价*.xlsx
 **/报价*.txt
 **/报价*.json
+**/quotation_*.xlsx
+**/quotation_*.txt
+**/output/*.xlsx
 **/*_content.txt
 **/*_powershell.txt
 **/temporal_windows/
@@ -149,7 +159,9 @@ PulseFlow
 *.bak
 *.bak.*
 
-# 防止误提交 gateway 大日志 (历史上误纳 119MB 文件阻断推送)
-packages/agentai-gateway/gateway-restart.log.old
-packages/agentai-gateway/gateway-restart.log
-*.log.old
+# ===== Vendored 第三方参考代码 =====
+# references/ 是有意 vendored 的参考实现(如cursor-mcp), 非本项目生成物,
+# 保持跟踪但排除其中的构建产物新增项。
+# 注意: 不要用 references/ 整体忽略 —— 6 个参考文件是有意提交的。
+references/**/node_modules/
+references/**/.cache/

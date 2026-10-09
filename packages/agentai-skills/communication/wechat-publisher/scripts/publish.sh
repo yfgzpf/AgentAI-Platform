@@ -13,7 +13,7 @@ NC='\033[0m' # No Color
 # 默认配置
 DEFAULT_THEME="lapis"
 DEFAULT_HIGHLIGHT="solarized-light"
-TOOLS_MD="$HOME/.openclaw/workspace/TOOLS.md"
+TOOLS_MD="$HOME/.agentai/workspace/TOOLS.md"
 
 # 检查 wenyan-cli 是否安装
 check_wenyan() {

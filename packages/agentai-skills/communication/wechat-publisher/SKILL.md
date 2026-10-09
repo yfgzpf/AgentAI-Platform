@@ -2,7 +2,7 @@
 name: wechat-publisher
 description: "一键发布 Markdown 到微信公众号草稿箱。基于 wenyan-cli，支持多主题、代码高亮、图片自动上传。"
 metadata:
-  openclaw:
+  agentai:
     emoji: "\U0001F4F1"
 version: 0.1.0
 display_name: "Wechat Publisher"
@@ -16,7 +16,7 @@ visibility: "public"
 
 **一键发布 Markdown 文章到微信公众号草稿箱**
 
-基于 [wenyan-cli](https://github.com/caol64/wenyan-cli) 封装的 OpenClaw skill。
+基于 [wenyan-cli](https://github.com/caol64/wenyan-cli) 封装的 AgentAI skill。
 
 ## 功能
 
@@ -45,7 +45,7 @@ wenyan --help
 
 ### 2. 配置 API 凭证
 
-API 凭证已保存在 `/Users/leebot/.openclaw/workspace/TOOLS.md`
+API 凭证请保存在工作区的 `.agentai/workspace/TOOLS.md`
 
 确保环境变量已设置：
 ```bash
@@ -96,7 +96,7 @@ cover: https://your-cdn.com/image.jpg
 
 **方式 1: 使用 publish.sh 脚本**
 ```bash
-cd /Users/leebot/.openclaw/workspace/wechat-publisher
+cd /Users/leebot/.agentai/workspace/wechat-publisher
 ./scripts/publish.sh /path/to/article.md
 ```
 
@@ -105,7 +105,7 @@ cd /Users/leebot/.openclaw/workspace/wechat-publisher
 wenyan publish -f article.md -t lapis -h solarized-light
 ```
 
-**方式 3: 在 OpenClaw 中使用**
+**方式 3: 在 AgentAI 中使用**
 ```
 "帮我发布这篇文章到微信公众号" + 附带 Markdown 文件路径
 ```

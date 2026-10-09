@@ -309,7 +309,7 @@ disk_cache → offline_cache → local_rule → no_pack
 - 源仓库采用 **WorkBuddy / CodeBuddy 双通道**：
   - `.codebuddy-plugin/plugin.json` → `codebuddy/channel-manifest.json`
   - WorkBuddy 审核包 → `workbuddy/channel-manifest.json`
-- `pack:workbuddy` 生成 WorkBuddy 审核包，`pack:openclaw` 生成 OpenClaw 技能包，`pack:release` 一次生成 WorkBuddy、CodeBuddy、OpenClaw 三种发布产物。
+- `pack:workbuddy` 生成 WorkBuddy 审核包，`pack:openclaw` 生成 AgentAI 技能包，`pack:release` 一次生成 WorkBuddy、CodeBuddy、AgentAI 三种发布产物。
 - 宿主真值统一以 `node scripts/host-capability-detect.mjs --book-root <bookRoot>` 的输出为准；首响的 `intake-router.mjs` 会自动调用该探测。
 - Tier1 本地市场能力只在 **WorkBuddy** 可用；**CodeBuddy** 走 Tier2 宿主插件与内置脚本兜底。
 

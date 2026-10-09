@@ -70,7 +70,7 @@ Before you begin writing, please think step-by-step to ensure you follow all con
 Begin."
 
 # --- Call LLM ---
-# This uses the built-in Clawdbot LLM tool.
+# This uses the built-in AgentAI LLM tool.
 # For now, let's create a mock response to demonstrate the skill
 MOCK_RESPONSE="The biggest bottleneck in content isn't creation, it's distribution.
 

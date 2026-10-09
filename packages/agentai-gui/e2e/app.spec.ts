@@ -36,15 +36,15 @@ test.describe('AgentAI Platform - 网页端 E2E', () => {
     await expect(page.locator('text=富哥, 发个消息开始干')).toBeVisible();
   });
 
-  test('3. 框架栏显示 AgentAI 默认 + 切到 Hermes', async ({ page }) => {
+  test('3. 框架栏显示 AgentAI 默认 + 切到 PulseFlow', async ({ page }) => {
     await page.goto('/');
     await waitApp(page);
     // 看到 AgentAI tag
     await expect(page.locator('text=AgentAI').first()).toBeVisible();
-    // 点 Hermes
-    await page.locator('button:has-text("Hermes")').click();
-    // Hermes tag 出现
-    await expect(page.locator('text=Hermes').first()).toBeVisible();
+    // 点 PulseFlow
+    await page.locator('button:has-text("PulseFlow")').click();
+    // PulseFlow tag 出现
+    await expect(page.locator('text=PulseFlow').first()).toBeVisible();
   });
 
   test('4. A/B 灰度 Slider 可拖动 (0% 到 100%)', async ({ page }) => {

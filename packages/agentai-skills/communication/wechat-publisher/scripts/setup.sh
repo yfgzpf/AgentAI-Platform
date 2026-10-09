@@ -2,7 +2,7 @@
 # setup.sh - 从 TOOLS.md 读取微信公众号环境变量
 # Usage: source ./setup.sh
 
-TOOLS_MD="$HOME/.openclaw/workspace/TOOLS.md"
+TOOLS_MD="$HOME/.agentai/workspace/TOOLS.md"
 
 # 检查 TOOLS.md 是否存在
 if [ ! -f "$TOOLS_MD" ]; then

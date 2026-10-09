@@ -528,7 +528,7 @@ export function runChannelPack(config) {
     }
     fs.mkdirSync(path.dirname(packagedSkillPath), { recursive: true });
     fs.copyFileSync(overrideAbs, packagedSkillPath);
-    console.log(`  ✅ SKILL.md 已由 ${skillMdOverride} 覆盖（OpenClaw 等通道）`);
+    console.log(`  ✅ SKILL.md 已由 ${skillMdOverride} 覆盖（AgentAI 等通道）`);
   }
   if (fs.existsSync(packagedSkillPath)) {
     const skillText = fs.readFileSync(packagedSkillPath, 'utf8');

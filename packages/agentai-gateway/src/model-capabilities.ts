@@ -71,19 +71,20 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
   },
 
   // ─── 智谱 GLM ───
+  // ═══ 2026-09-05 校准: glm-4.7-flash 官方窗口 200K (docs.bigmodel.cn), 原 1M 有误 ═══
   {
     id: 'zhipu',
-    label: '智谱 GLM-4.7 Flash (1M)',
+    label: '智谱 GLM-4.7 Flash (200K)',
     provider: 'zhipu',
     subModel: 'glm-4.7-flash',
-    contextWindow: 1_048_576,  // 1M
+    contextWindow: 200_000,     // 官方 200K (text-only)
     isFree: true,
     rateLimitRPM: 60,
     rateLimitTPM: 60_000,
     costPer1K: 0,
   },
 
-  // ─── DeepSeek ───
+  // ─── DeepSeek (成本校准 2026-09-05: off-peak cache-miss USD/1K) ───
   {
     id: 'deepseek',
     label: 'DeepSeek V4 Flash (1M)',
@@ -93,7 +94,7 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
     isFree: false,
     rateLimitRPM: 100,
     rateLimitTPM: 100_000,
-    costPer1K: 0.00014,
+    costPer1K: 0.00022,
   },
   {
     id: 'deepseek-pro',
@@ -104,7 +105,7 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
     isFree: false,
     rateLimitRPM: 50,
     rateLimitTPM: 50_000,
-    costPer1K: 0.001,
+    costPer1K: 0.00066,
   },
 
   // ─── ALRC 聚合平台 ───
@@ -133,30 +134,30 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
     costPer1K: 0.00015,
   },
 
-  // ─── 通义千问 ───
+  // ─── 通义千问 (2026-09-05 校准: 阿里云官方 32768 上下/输入 30720; costPer1K=输入 2.4元/1M≈$0.34) ───
   {
     id: 'qwen',
-    label: '通义千问 Qwen-Max (128K)',
+    label: '通义千问 Qwen-Max (32K)',
     provider: 'qwen',
     subModel: 'qwen-max',
-    contextWindow: 131_072,
+    contextWindow: 32_768,
     isFree: false,
     rateLimitRPM: 60,
     rateLimitTPM: 60_000,
-    costPer1K: 0.004,
+    costPer1K: 0.00034,
   },
 
-  // ─── 月之暗面 ───
+  // ─── 月之暗面 (2026-09-05 校准: kimi-k2.5 官方 256K) ───
   {
     id: 'moonshot',
-    label: 'Moonshot Kimi K2.5 (128K)',
+    label: 'Moonshot Kimi K2.5 (256K)',
     provider: 'moonshot',
     subModel: 'kimi-k2.5',
-    contextWindow: 131_072,
+    contextWindow: 262_144,
     isFree: false,
     rateLimitRPM: 30,
     rateLimitTPM: 30_000,
-    costPer1K: 0.002,
+    costPer1K: 0.0006,
   },
 
   // ─── 商汤 SenseNova (免费额度) ───
@@ -236,5 +237,10 @@ export function getDefaultContextWindow(provider: string): number {
 /** model 名 → contextWindow (与 llm-router.ts PROVIDER_CONTEXT_WINDOW 等价，但按 model 粒度) */
 export function getModelContextWindow(modelId: string): number | undefined {
   const m = getCapability(modelId);
-  return m?.contextWindow;
+  if (m) return m.contextWindow;
+  // 2026-09-05 修复死路径: llm-router 传的是 subModel 名 (如 'deepseek-v4-flash'),
+  // 而本表 id 多为 provider 级 (如 'deepseek') → 此前 ② 分支永不命中, 恒落 provider max。
+  // 增加 subModel 二次匹配, 使 glm-4.7-flash / kimi-k2.5 / qwen-max 等精确命中。
+  const bySub = MODEL_CAPABILITIES.find(c => c.subModel === modelId);
+  return bySub?.contextWindow;
 }

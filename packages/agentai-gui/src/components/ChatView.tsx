@@ -257,11 +257,12 @@ function detectAndInsertImage(
  *   - 会话管理
  */
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Alert, Button, Select, Space, Spin, Tag } from 'antd';
+import { Alert, Button, Select, Space, Spin, Tag, App } from 'antd';
 import { SyncOutlined, CloseOutlined } from '@ant-design/icons';
 import { io, type Socket } from 'socket.io-client';
 import { useChatStore } from '../store/chatStore';
-import { useModelStore } from '../store/modelStore';
+import type { ChatMessage } from '../store/chatStore';
+import { useModelStore, analyzeComplexity } from '../store/modelStore';
 import { useModeStore } from '../store/modeStore';
 import { useProfileStore } from '../store';
 import { useSessionStore } from '../store/sessionStore';
@@ -280,8 +281,7 @@ import { TaskChainCard, type StageStatus } from './TaskChainCard';
 import { SandboxStatusPanel } from './SandboxStatusPanel';
 import { SandboxResultPanel } from './SandboxResultPanel';
 import { buildTimelinePrompt } from '../services/AiRules';
-import { analyzeComplexity, useModelStore } from '../store/modelStore';
-import { useTaskStore, useTaskOrchestrator, useTaskResumeStore } from '../store/taskStore';
+import { useTaskStore, useTaskOrchestrator, useTaskResumeStore, TaskStatus } from '../store/taskStore';
 
 /** 任务链阶段标识 (与 SSE plan_stage 事件的 stage 字段对齐) */
 type ChainStage = 'plan' | 'solve' | 'verify' | 'fix' | 'report';
@@ -290,6 +290,7 @@ import { AskUserCard } from './AskUserCard';
 import { ClarificationCard, type ClarificationRequest } from './ClarificationCard';
 import { DiffViewer, useDiffEvents } from './DiffViewer';
 import { LastSessionHint } from './LastSessionHint';
+import { WelcomePanel } from './WelcomePanel';
 import { SubagentStatus, type SubagentInfo } from './SubagentStatus';
 import { gatewayFallback } from '../services/GatewayFallback';
 import { submitFeedback } from '../services/feedbackApi';
@@ -308,11 +309,31 @@ function guessImgMimetype(name: string): string {
   return map[ext] || 'image/png';
 }
 
+/* ═══ SSE 帧级渲染优化: 消息行 React.memo (2026-09-05) ═══
+ * ChatView 因 updateMessage (rAF ~60fps) 每帧重渲染; 行内闭包回调每次重建会导致
+ * React.memo 浅比较失败 → 所有历史消息行全量重建 (含折叠卡片/图片/Markdown 解析)。
+ * 方案: 1) 这里对 UserMsg/AssistantMsg 包 React.memo;
+ *       2) ChatView 内按"msg 对象引用"缓存每行的绑定回调 (见 getRowBinds),
+ *          未变化消息行 props 引用稳定 → 直接跳过渲染, 只剩流式的那一条在动。
+ */
+type RowBinds = {
+  onResend?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onBookmark?: () => void;
+  onRegenerate?: () => void;
+  onFeedback?: (kind: 'up' | 'down') => void;
+  /** 合并 durationMs 后的 usage (原每次渲染新建对象, 破坏 memo) */
+  usage?: any;
+};
+const UserMsgRow = React.memo(UserMsg);
+const AssistantMsgRow = React.memo(AssistantMsg);
+
 export const ChatView: React.FC = () => {
   const { messages, appendMessage, updateMessage, clearMessages, removeMessages, setMessages } = useChatStore();
   const { activeModelId, chatMode, setChatMode } = useModelStore();
   const { mode, setMode, setSuggestedMode, recommendEnabled } = useModeStore();
-  const { sessions, activeId, createSession, addMessage, updateTitle } = useSessionStore();
+  const { sessions, activeId, createSession, addMessage, updateTitle, setActive } = useSessionStore();
   // 长任务快照: 订阅 resumableTasks 和 activeTaskId 用于顶部提示条
   const resumableTasks = useTaskResumeStore((s) => s.resumableTasks);
   const activeTaskId = useTaskResumeStore((s) => s.activeTaskId);
@@ -324,111 +345,16 @@ export const ChatView: React.FC = () => {
 
   // 组件顶层: workspace 和 industry (供 ProactiveSuggestionCard 等使用)
   // ★ 2026-08-14 修复: 改为响应式订阅, 行业切换后欢迎页自动更新
-  const zustandProfile = useProfileStore((s) => s?.profile) || {};
-  const profileWs = zustandProfile?.workspace || localStorage.getItem('agentai.workspace') || '';
-  const currentWorkspace = profileWs;
-  let extraProfile: any = {};
-  try { const raw = localStorage.getItem('agentai.profile'); if (raw) extraProfile = JSON.parse(raw); } catch { /* ignore */ }
-  const currentIndustry = zustandProfile?.industry || extraProfile?.industry || 'general';
+  const zustandProfile = (useProfileStore((s) => s?.profile) || {}) as Record<string, any>;
+const profileWs = zustandProfile?.workspace || localStorage.getItem('agentai.workspace') || '';
+const currentWorkspace = profileWs;
 
-  // 行业徽章主题色 (与后端 industry-engine.ts 同步)
-  const INDUSTRY_BADGE_THEME: Record<string, { color: string; icon: string; bgColor: string; label: string }> = {
-    decoration: { color: '#e67e22', icon: '🔨', bgColor: 'rgba(230,126,34,0.12)', label: '装修建材' },
-    real_estate: { color: '#2ecc71', icon: '🏠', bgColor: 'rgba(46,204,113,0.12)', label: '房地产' },
-    ecommerce: { color: '#e74c3c', icon: '🛒', bgColor: 'rgba(231,76,60,0.12)', label: '电商营销' },
-    education: { color: '#3498db', icon: '📚', bgColor: 'rgba(52,152,219,0.12)', label: '教育' },
-    developer: { color: '#9b59b6', icon: '💻', bgColor: 'rgba(155,89,182,0.12)', label: '开发者' },
-    comic: { color: '#f39c12', icon: '🎬', bgColor: 'rgba(243,156,18,0.12)', label: '漫剧创作' },
-    medical: { color: '#1abc9c', icon: '🏥', bgColor: 'rgba(26,188,156,0.12)', label: '中医问诊' },
-    legal: { color: '#34495e', icon: '⚖️', bgColor: 'rgba(52,73,94,0.12)', label: '法律' },
-    manufacturing: { color: '#e67e22', icon: '🏭', bgColor: 'rgba(230,126,34,0.12)', label: '制造业' },
-    general: { color: 'var(--muted)', icon: '💬', bgColor: 'transparent', label: '通用' },
-  };
+// P0: antd message API (用于收藏提示等)
+const { message: messageApi } = App.useApp();
 
-  // 行业专属欢迎语
-  const INDUSTRY_WELCOME: Record<string, { title: string; subtitle: string }> = {
-    decoration: { title: '装修建材智能助手', subtitle: '快速报价 · 材料算量 · 效果图生成 · 施工排期' },
-    real_estate: { title: '房地产智能助手', subtitle: '楼盘分析 · 客户管理 · 营销方案 · 市场洞察' },
-    ecommerce: { title: '电商营销智能助手', subtitle: '数据分析 · 商品文案 · 营销推广 · 库存管理' },
-    education: { title: '教育智能助手', subtitle: '教案生成 · 试卷出题 · 成绩分析 · 课程大纲' },
-    developer: { title: '开发者智能助手', subtitle: '代码审查 · 架构分析 · Bug 修复 · 性能优化' },
-    comic: { title: '漫剧创作智能助手', subtitle: '角色设计 · 分镜脚本 · 场景插画 · 剧情编排' },
-    medical: { title: '中医问诊智能助手', subtitle: '舌诊辨证 · 经方检索 · 养生方案 · 医案参考' },
-    legal: { title: '法律智能助手', subtitle: '合同审查 · 案例检索 · 法条解读 · 风险评估' },
-    manufacturing: { title: '制造业智能助手', subtitle: '生产排程 · 质量管控 · 供应链优化 · 设备维护' },
-    general: { title: '有什么可以帮你的？', subtitle: 'PulseFlow · 岐黄 · 10+ 免费模型 · 越用越懂你' },
-  };
-
-  // 行业快捷指令: 根据用户选择的行业返回对应的快捷操作
-  const getIndustryQuickActions = (industry: string) => {
-    const INDUSTRY_ACTIONS: Record<string, Array<{ label: string; prompt: string }>> = {
-      decoration: [
-        { label: '📋 快速报价', prompt: '帮我做一份装修报价单，我告诉你户型和面积' },
-        { label: '📐 材料算量', prompt: '帮我计算装修材料用量' },
-        { label: '🎨 效果图参考', prompt: '帮我生成一张装修效果图' },
-        { label: '📅 施工排期', prompt: '帮我制定一份施工进度计划表' },
-        { label: '📄 方案书', prompt: '帮我生成一份客户装修方案书' },
-        { label: '🏗️ 施工规范', prompt: '查询装修施工验收标准' },
-      ],
-      ecommerce: [
-        { label: '📊 数据分析', prompt: '帮我分析店铺数据表现' },
-        { label: '📝 商品文案', prompt: '帮我写一段商品详情文案' },
-        { label: '🎯 营销方案', prompt: '帮我制定一个营销推广方案' },
-        { label: '📦 库存管理', prompt: '帮我做一份库存盘点表' },
-      ],
-      education: [
-        { label: '📚 教案生成', prompt: '帮我写一份教学教案' },
-        { label: '📝 试卷出题', prompt: '帮我出一套考试试卷' },
-        { label: '📊 成绩分析', prompt: '帮我分析学生成绩数据' },
-        { label: '📋 课程大纲', prompt: '帮我制定一份课程大纲' },
-      ],
-      developer: [
-    { label: '🔍 审查代码', prompt: '审查当前项目代码质量' },
-    { label: '🏗️ 项目架构', prompt: '帮我分析这个项目的架构' },
-    { label: '🐛 修复 Bug', prompt: '帮我排查和修复这个问题' },
-    { label: '⚡ 性能优化', prompt: '帮我分析和优化性能瓶颈' },
-  ],
-  medical: [
-    { label: '👅 舌诊拍照', prompt: '我想做中医舌诊，请帮我分析舌象 (请先拍摄或上传舌象照片)' },
-    { label: '🔍 开始辨证', prompt: '我最近感觉不舒服，想做个中医辨证问诊' },
-    { label: '🌿 查药材', prompt: '查询一味中药材的性味归经和功效' },
-    { label: '📋 经方检索', prompt: '检索《伤寒论》中关于这个症状的经典条文和方剂' },
-    { label: '🧘 养生方案', prompt: '根据我的体质制定一个中医养生调理方案' },
-    { label: '📖 医案参考', prompt: '查找类似症状的历史名医医案作为参考' },
-  ],
-      comic: [
-        { label: '🎨 角色设计', prompt: '帮我设计一个漫画角色' },
-        { label: '📖 分镜脚本', prompt: '帮我写一段漫画分镜脚本' },
-        { label: '🖼️ 场景插画', prompt: '帮我生成一张场景插画' },
-      ],
-      real_estate: [
-        { label: '📊 楼盘分析', prompt: '帮我分析一个楼盘的优缺点和投资价值' },
-        { label: '📝 营销方案', prompt: '帮我制定一份房产营销推广方案' },
-        { label: '🏠 户型解读', prompt: '帮我解读一个户型的优缺点和装修建议' },
-        { label: '📈 市场报告', prompt: '帮我生成一份房地产市场分析报告' },
-      ],
-      legal: [
-        { label: '📋 合同审查', prompt: '帮我审查一份合同的法律风险' },
-        { label: '🔍 案例检索', prompt: '帮我检索类似案件的法律判例' },
-        { label: '📖 法条解读', prompt: '帮我解读一条法律条文的适用范围' },
-        { label: '⚠️ 风险评估', prompt: '帮我评估一个商业行为的法律风险' },
-      ],
-      manufacturing: [
-        { label: '📅 生产排程', prompt: '帮我制定一份生产排程计划' },
-        { label: '🔍 质量分析', prompt: '帮我分析产品质量问题的根因' },
-        { label: '📦 供应链优化', prompt: '帮我优化供应链管理流程' },
-        { label: '🔧 设备维护', prompt: '帮我制定设备预防性维护计划' },
-      ],
-    };
-    // 通用行业只显示基础操作
-    return INDUSTRY_ACTIONS[industry] || [
-      { label: '💬 开始对话', prompt: '你好，请介绍一下你能做什么' },
-      { label: '📄 写文档', prompt: '帮我写一份文档' },
-      { label: '🔍 搜索信息', prompt: '帮我搜索' },
-    ];
-  };
-
-  const [loading, setLoading] = useState(false);
+const [loading, setLoading] = useState(false);
+  const loadingRef = useRef(false);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
   const [queuedSends, setQueuedSends] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ParsedAttachment[]>([]);
   // 最近生成的图片（用于对话改图模式无缝衔接）
@@ -451,6 +377,10 @@ export const ChatView: React.FC = () => {
     durationMs?: number;
   } | null>(null);
   const msgRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // 2026-09-05: 消息行绑定回调缓存 — key=msg.id, 以 msg 对象引用判定失效
+  const rowBindCache = useRef(new Map<string, { key: ChatMessage; b: RowBinds }>());
+  // 2026-09-05: 最新 handleSend 引用 — 行缓存里的 onResend 走它, 避免闭包捕获过期 attachments
+  const handleSendRef = useRef<(text: string, extra?: ParsedAttachment[]) => void | Promise<void>>(async () => {});
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -459,8 +389,14 @@ export const ChatView: React.FC = () => {
 
   // P2-1: 使用抽取的 useSessionAutoSave hook (替换内联自动保存 + 会话切换逻辑)
   useSessionAutoSave(messages, activeId);
-  // P2-1: 会话切换时重置滚动状态
-  useEffect(() => { resetScroll(); }, [activeId, resetScroll]);
+  // P0 修复: 会话切换时仅重置滚动 + 清缓存
+  // clearMessages 由 useSessionAutoSave hook 负责 (它会在 clear 后立即 setChatMessages 恢复)
+  // 此处再调 clearMessages 会与 useSessionAutoSave 竞争, 导致恢复的消息被二次清空
+  useEffect(() => {
+    resetScroll();
+    rowBindCache.current.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
 
   // 会话类型感知: 点击生图/生视频会话时自动切换 chatMode
   useEffect(() => {
@@ -468,8 +404,18 @@ export const ChatView: React.FC = () => {
     const session = useSessionStore.getState().sessions.find(s => s.id === activeId);
     if (session?.type === 'image' && chatMode !== 'image_edit') {
       useModelStore.getState().setChatMode('image_edit');
+      // P0 修复: 对话改图模式只选支持编辑的模型 (GPT Image / Banana 系列 + Agnes)
+      // 之前: 选第一个 image 模型, 可能选到不支持的模型
       const imgModels = useModelStore.getState().models.filter(m => m.modelType === 'image' && m.enabled);
-      if (imgModels.length > 0) useModelStore.getState().setActive(imgModels[0].id);
+      // 优先选支持编辑的模型: alrc-gpt-image / alrc-nano-banana / agnes
+      const editCapable = imgModels.find(m =>
+        m.id.includes('gpt-image') || m.id.includes('nano-banana') || m.id.includes('agnes')
+      );
+      if (editCapable) {
+        useModelStore.getState().setActive(editCapable.id);
+      } else if (imgModels.length > 0) {
+        useModelStore.getState().setActive(imgModels[0].id);
+      }
     } else if (session?.type === 'chat' && chatMode === 'image_edit') {
       useModelStore.getState().setChatMode('chat');
     }
@@ -493,7 +439,6 @@ export const ChatView: React.FC = () => {
           appendMessage({
             id: `welcome-${Date.now()}`,
             role: 'system',
-            content: `🎨 **对话改图模式已激活**\n\n您现在可以使用自然语言与 AI 协作生成和编辑图片。\n\n**可用生图模型：**\n${modelList}\n\n**使用方式：**\n• 直接输入图片描述词生成图片（如：画一只橘猫）\n• 上传图片后描述修改需求（如：把背景换成星空）\n• 支持风格迁移、局部编辑、虚拟换装等多种玩法\n\n💡 **提示：** 生图结果会自动保存到历史记录，可在左侧「生图」标签查看`,
             ts: Date.now(),
             segments: [{ kind: 'text', text: `🎨 **对话改图模式已激活**\n\n您现在可以使用自然语言与 AI 协作生成和编辑图片。\n\n**可用生图模型：**\n${modelList}\n\n**使用方式：**\n• 直接输入图片描述词生成图片（如：画一只橘猫）\n• 上传图片后描述修改需求（如：把背景换成星空）\n• 支持风格迁移、局部编辑、虚拟换装等多种玩法\n\n💡 **提示：** 生图结果会自动保存到历史记录，可在左侧「生图」标签查看` }],
           });
@@ -524,6 +469,29 @@ export const ChatView: React.FC = () => {
     } catch { /* best-effort */ }
     clearMessages();
   }, [messages, clearMessages, currentWorkspace]);
+
+  // 监听后端 timeout SSE 事件 — 显示超时恢复提示
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ reason: string; totalMinutes: number; iteration: number }>;
+      const info = ce.detail;
+      if (info) {
+        // 在当前 bot 消息中追加超时提示
+        const lastBot = messages.filter(m => m.role === 'assistant').pop();
+        if (lastBot) {
+          updateMessage(lastBot.id, (m: any) => ({
+            ...m,
+            segments: [...m.segments, {
+              kind: 'text',
+              text: `\n\n⏰ **任务超时** (${info.totalMinutes} 分钟, ${info.reason})。可在左侧「任务中心」查看快照并恢复执行。`,
+            }],
+          }));
+        }
+      }
+    };
+    window.addEventListener('agentai:timeout', handler);
+    return () => window.removeEventListener('agentai:timeout', handler);
+  }, [messages, updateMessage]);
 
   /* ---- 启动自检: 加载时查询 gateway 健康状态 ---- */
   const [systemReady, setSystemReady] = useState(false);
@@ -601,6 +569,16 @@ export const ChatView: React.FC = () => {
   /* ---- QQ Bot socket.io 桥接: 实时接收 QQ 消息并显示在对话窗口 ---- */
   const socketRef = useRef<Socket | null>(null);
   useEffect(() => {
+    // P0 修复: 先清理旧连接 — React StrictMode 下 useEffect 会执行两次
+    // 之前: 旧连接的 disconnect 是异步的, 新连接在 disconnect 完成前就创建了
+    //       → 多个 socket 连接同时监听 wechat:message → 消息重复显示5次
+    // 之后: 先彻底断开旧连接 (disconnect + removeAllListeners), 再创建新连接
+    if (socketRef.current) {
+      socketRef.current.removeAllListeners();
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+
     const gatewayWs = (window as any).__AGENTAI_GATEWAY__ || 'ws://127.0.0.1:18789';
     const httpUrl = gatewayWs.replace(/^ws([s]?):\/\//, 'http$1://');
     const sock = io(httpUrl, {
@@ -697,6 +675,24 @@ export const ChatView: React.FC = () => {
       if (data.event === 'done' || data.event === undefined) {
         const durationStr = data.durationMs ? ` (耗时 ${(data.durationMs / 1000).toFixed(1)}s)` : '';
         const errorStr = data.error ? `\n错误: ${data.error}` : '';
+
+        // P1: 自动化清理类任务不堆叠 — 只保留最近 3 条 automation 消息
+        const isAutoCleanup = data.source === 'automation' &&
+          /清理|cleanup|clean|clear|gc|garbage/i.test(data.name || '');
+        if (isAutoCleanup) {
+          // 移除旧的 automation cleanup 消息, 只保留最近 2 条 + 新消息 = 3 条
+          const currentMsgs = useChatStore.getState().messages;
+          const autoMsgs = currentMsgs.filter(m =>
+            m.provider === 'system' && m.id?.startsWith('exec-automation-')
+          );
+          if (autoMsgs.length >= 3) {
+            // 移除最早的
+            const toRemove = autoMsgs.slice(0, autoMsgs.length - 2);
+            const removeIds = new Set(toRemove.map(m => m.id));
+            setMessages(currentMsgs.filter(m => !removeIds.has(m.id)));
+          }
+        }
+
         appendMessage({
           id: `exec-${data.source}-${data.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           role: 'assistant',
@@ -739,7 +735,60 @@ export const ChatView: React.FC = () => {
       } as any);
     });
 
-    return () => { sock.disconnect(); };
+    return () => { sock.removeAllListeners(); sock.disconnect(); socketRef.current = null; };
+  }, []);
+
+  /* ═══ 子智能体事件: 展示思考过程 + 工具调用 ═══ */
+  useEffect(() => {
+    const sock = socketRef.current;
+    if (!sock) return;
+
+    sock.on('subagent:start', (data: any) => {
+      setSubagents(prev => [...prev, {
+        id: data.id,
+        type: data.type || 'sub',
+        task: data.task || '',
+        status: 'running' as const,
+        steps: [],
+      }]);
+    });
+
+    sock.on('subagent:progress', (data: any) => {
+      setSubagents(prev => prev.map(sa => {
+        if (sa.id !== data.id) return sa;
+        const stepDesc = data.event === 'tool_start'
+          ? `🔧 调用工具: ${data.name || ''}`
+          : data.event === 'tool_done'
+            ? `✅ 工具完成: ${data.name || ''}`
+            : data.event === 'progress'
+              ? data.description || `迭代 ${data.iteration || ''}`
+              : `思考中...`;
+        return { ...sa, steps: [...(sa.steps || []), stepDesc].slice(-20) };
+      }));
+    });
+
+    sock.on('subagent:done', (data: any) => {
+      setSubagents(prev => prev.map(sa =>
+        sa.id === data.id
+          ? { ...sa, status: 'done' as const, result: data.result || '', steps: [...(sa.steps || []), `✅ 完成: ${(data.result || '').slice(0, 100)}`] }
+          : sa
+      ));
+    });
+
+    sock.on('subagent:error', (data: any) => {
+      setSubagents(prev => prev.map(sa =>
+        sa.id === data.id
+          ? { ...sa, status: 'error' as const, steps: [...(sa.steps || []), `❌ 失败: ${data.error || ''}`] }
+          : sa
+      ));
+    });
+
+    return () => {
+      sock.off('subagent:start');
+      sock.off('subagent:progress');
+      sock.off('subagent:done');
+      sock.off('subagent:error');
+    };
   }, []);
 
   const CTX_MAX = 1_000_000;
@@ -768,7 +817,7 @@ export const ChatView: React.FC = () => {
   }
 
   /* ---- Send handler ---- */
-  const handleSend = useCallback(async (text: string, extraAttachments?: ParsedAttachment[]) => {
+  const handleSend = useCallback(async (text: string, extraAttachments?: ParsedAttachment[], opts?: { webSearch?: boolean; isAnswer?: boolean }) => {
     // 追问卡片自动退让: 用户在对话框直接输入时关闭卡片（用 ref 避免闭包陷阱）
     if (askUserCardRef.current) {
       if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
@@ -822,8 +871,8 @@ export const ChatView: React.FC = () => {
     if (autoModel.autoModelEnabled) {
       const analysis = analyzeComplexity(text);
       autoModel.setAutoModelAnalysis(analysis);
-      if (analysis.suggestedTier && analysis.isComplex) {
-      }
+      // 分析结果存入 autoModelLastAnalysis, 但当前无 UI 消费它 (TODO: 建议在消息区
+      // 显示"建议切换到 <tier.label>"并提供一键采纳)。此处保留计算以便接入时零改动。
     }
 
     setLoading(true);
@@ -910,7 +959,11 @@ export const ChatView: React.FC = () => {
     }, 200);
 
     // Save to session store
-    addMessage(sessionId!, { role: 'user', content: messageText, ts: Date.now() });
+    // 2026-10-05 P0 修复: 传 id=userId ——
+    //   让 store 里的消息 id 与流式响应的 id 一致，
+    //   否则 ChatView:952 的 findIndex(m => m.id === id) 永远匹配不上，
+    //   切会话时这条消息的流式更新会被丢弃（用户看起来就是"内容丢了"）。
+    addMessage(sessionId!, { id: userId, role: 'user', content: messageText, ts: Date.now() });
 
     // 自动更新对话标题：取第一条用户消息前 30 字
     if (sessionId) {
@@ -950,9 +1003,18 @@ export const ChatView: React.FC = () => {
     const sessionStore = useSessionStore.getState();
     const session = sessionStore.sessions.find(s => s.id === sendSessionId);
     if (session) {
-      const msgIdx = session.messages.findIndex(m => m.id === id);
+      // 2026-10-05 P0 修复: 此前 SessionMessage 根本没有 id 字段，
+      //   `m.id === id` 恒为 false → msgIdx 恒 -1 → 更新被静默丢弃，
+      //   用户看到的就是"生成过程中切会话，内容就没了"。
+      //   现在 store 层已补id（addMessage 透传/生成 + migrate 补历史数据）。
+      //   兜底: 若该会话最后一条消息没有 id（升级前的历史数据），视为本次生成的消息。
+      const msgs = session.messages as any[];
+      let msgIdx = msgs.findIndex(m => m.id === id);
+      if (msgIdx < 0 && msgs.length > 0 && !msgs[msgs.length - 1].id) {
+        msgIdx = msgs.length - 1;
+      }
       if (msgIdx >= 0) {
-        const updatedMessages = [...session.messages];
+        const updatedMessages = [...msgs];
         updatedMessages[msgIdx] = fn(updatedMessages[msgIdx]);
         useSessionStore.setState({
           sessions: sessionStore.sessions.map(s =>
@@ -1126,7 +1188,7 @@ export const ChatView: React.FC = () => {
 
         // 桥接 → 检测代码变更 (write_file / edit_file 等工具)
         try {
-          const toolNames = ['write_file', 'edit_file', 'create_file', 'modify_file', 'delete_file', 'replace_in_file'];
+          const toolNames = ['write_file', 'edit_file', 'create_file', 'modify_file', 'delete_file', 'replace_in_file', 'multi_edit'];
           if (toolNames.includes(info.name)) {
             const args = typeof info.args === 'string' ? JSON.parse(info.args) : info.args;
             const filePath = args?.path || args?.filePath || args?.file_path || '';
@@ -1143,6 +1205,24 @@ export const ChatView: React.FC = () => {
             }
           }
         } catch { /* best-effort code change detection */ }
+
+        // D2: 广播 AI 代码变更事件 (gateway 回传 lineRanges → 编辑器真实行号装饰)
+        try {
+          const lr: any[] = info.data?.lineRanges;
+          if (Array.isArray(lr) && lr.length > 0) {
+            const byFile = new Map<string, any[]>();
+            for (const range of lr) {
+              const arr = byFile.get(range.file) || [];
+              arr.push(range);
+              byFile.set(range.file, arr);
+            }
+            for (const [file, entries] of byFile) {
+              window.dispatchEvent(new CustomEvent('agentai:ai-change', {
+                detail: { file, tool: info.name, entries },
+              }));
+            }
+          }
+        } catch { /* best-effort ai-change broadcast */ }
       },
       onDone: (info: any) => {
         updateMessage(botId, (m: any) => {
@@ -1208,6 +1288,7 @@ export const ChatView: React.FC = () => {
       },
       onError: (err: string) => {
         // 结构化的错误卡片, 解析关键信息
+        const isTimeout = err.includes('timeout') || err.includes('超时') || err.includes('timed out');
         const details = err.length > 120 ? err.slice(0, 120) + '...' : undefined;
         updateMessage(botId, (m: any) => ({
           ...m, streaming: false, status: 'error',
@@ -1215,12 +1296,16 @@ export const ChatView: React.FC = () => {
             kind: 'error',
             error: err.length > 80 ? err.slice(0, 80) + '...' : err,
             details,
-            fix: err.includes('timeout') ? '检查服务是否运行正常，或稍后重试' :
+            fix: isTimeout ? '⏰ 任务超时。可在「任务中心」查看快照并恢复执行' :
                  err.includes('rate limit') ? '请求过于频繁，请稍后再试' :
                  err.includes('unauthorized') ? '请检查 API Key 配置' :
                  err.includes('not found') ? '检查文件路径是否正确' : undefined,
           }],
         }));
+        // 超时时提示恢复入口
+        if (isTimeout) {
+          console.warn('[chat] 任务超时, 可在任务中心恢复');
+        }
         // 任务链标记失败 + 延迟隐藏
         setChainStages(prev => prev.map(s => s.key === chainCurrent ? { ...s, status: 'failed' as StageStatus } : s));
         // 桥接 → 全局任务编排器: 任务失败
@@ -1309,18 +1394,23 @@ export const ChatView: React.FC = () => {
       },
       onSessionRollover: (info: any) => {
         // 上下文超额 → 自动生成摘要并开新对话
+        // 2026-10-05 修正两处隐患:
+        //  1) 原来取 messages[0]（**第一条**）当标题, 应为最后一条
+        //  2) 原来无条件 clearMessages() + 2 秒延迟 —— 但 setActive(id) 之后当前显示
+        //     已切到新会话(本就为空), 再清会清错对象; 且 2 秒内用户新发的消息也会被抹掉。
+        //     改为只切会话, 不清当前消息。
+        // 注: 后端目前从未 emit 'session_rollover'(全库仅此处消费), 故长期是死代码;
+        //     一旦后端接上, 上述行为必须正确。
         const pct = (info.ratio * 100).toFixed(0);
         const summary = "📋 前一个对话已达 " + pct + "% 上下文 (使用 " + info.promptTokens + " tokens / 共 " + info.ctxMax + " tokens)。";
-        try { apiWriteMemory({ userId: 'user', workspace: ws, role: 'summarize', content: summary }); } catch {}
-        setTimeout(() => {
-          try {
-            const firstMsg = messages[0];
-            const firstText = firstMsg?.segments?.[0]?.text || '';
-            const id = createSession("续: " + firstText.slice(0, 30));
-            setActiveId(id);
-            clearMessages();
-          } catch {}
-        }, 2000);
+        try { apiWriteMemory({ userId: 'user', workspace: currentWorkspace, role: 'summarize', content: summary }); } catch {}
+        try {
+          const lastMsg = messages[messages.length - 1];
+          const seg = lastMsg?.segments?.[0];
+          const lastText = seg && 'text' in seg ? seg.text : '';
+          const id = createSession("续: " + (lastText || '上一轮对话').slice(0, 30));
+          setActive(id);
+        } catch { /* rollover best-effort */ }
       },
       onClarifyRequired: (info: any) => {
         setClarificationReq({
@@ -1415,10 +1505,12 @@ export const ChatView: React.FC = () => {
         }));
         updateMessage(userMsgId, (m: any) => ({ ...m, status: 'done' as const }));
       } else {
-        // 流式 SSE
-        // 自动附带当前编辑器打开的文件 (让 AI 知道用户在看什么)
-        const activeEditorFile = localStorage.getItem('agentai.editor.activeFile') || '';
-        await apiStream(base + '/v1/chat', {
+// 流式 SSE
+// P0 修复: 只有在编辑器页面才附带当前打开的文件 — 之前无条件读 localStorage
+// 用户关闭编辑器/切到对话页后, localStorage 中的 activeFile 残留 → AI 串味
+const currentPage = localStorage.getItem('agentai.lastPage') || 'chat';
+const activeEditorFile = currentPage === 'editor' ? (localStorage.getItem('agentai.editor.activeFile') || '') : '';
+await apiStream(base + '/v1/chat', {
           message: messageText, stream: true, model: provider, mode,
           userId: 'user', workspace: ws, projectDir: ws, profile, contextWindow,
           emotion: quickEmotion,
@@ -1428,6 +1520,8 @@ export const ChatView: React.FC = () => {
           systemRules: buildTimelinePrompt(),
           taskId: activeTaskId,  // 长任务快照 ID (跨会话恢复)
           contextInject: useModelStore.getState().contextInject,
+          webSearch: opts?.webSearch || undefined, // P1 修复: webSearch 按钮终于生效
+          isAnswer: opts?.isAnswer || undefined, // P0 修复: ask_user 答案不压制旧 loop
         }, handlers, controller.signal);
       }
     } catch (e: any) {
@@ -1448,6 +1542,8 @@ export const ChatView: React.FC = () => {
       }
     }
   }, [loading, activeModelId, mode, appendMessage, updateMessage, activeId, createSession, addMessage, attachments, setAttachments]);
+  // 2026-09-05: 保持 handleSendRef 指向最新 handleSend (消息行缓存闭包读取)
+  useEffect(() => { handleSendRef.current = handleSend; }, [handleSend]);
 
   /** 用户手动中止当前任务 */
   /** 中止后要自动发送的排队消息 (避免 setQueuedSends 内递归调 handleSend) */
@@ -1482,6 +1578,8 @@ export const ChatView: React.FC = () => {
    * 同时恢复图片附件 (base64 数据存储在消息 segments 中)
    */
   const regenerateAssistant = useCallback((messageId: string) => {
+    // 2026-09-05: 实时读 store (原闭包依赖 messages → 每帧重建 handler, 破坏消息行 memo)
+    const messages = useChatStore.getState().messages;
     const idx = messages.findIndex(m => m.id === messageId);
     if (idx < 0) return;
     // 找上一条用户消息
@@ -1512,20 +1610,22 @@ export const ChatView: React.FC = () => {
     // 删除该 AI 消息及之后所有消息
     const idsToRemove = messages.slice(idx).map(m => m.id);
     removeMessages?.(idsToRemove);
-    // 重新发送 (携带恢复的附件)
-    handleSend(userText, restoredAttachments.length > 0 ? restoredAttachments : undefined);
-  }, [messages, handleSend, removeMessages]);
+    // 重新发送 (携带恢复的附件) — 走 handleSendRef 取最新实现
+    handleSendRef.current(userText, restoredAttachments.length > 0 ? restoredAttachments : undefined);
+  }, [removeMessages]);
 
   /**
    * 删除用户消息及其后续 AI 回复
    */
   const deleteMessageAndResponse = useCallback((messageId: string) => {
+    // 2026-09-05: 实时读 store (原闭包依赖 messages → 每帧重建 handler, 破坏消息行 memo)
+    const messages = useChatStore.getState().messages;
     const idx = messages.findIndex(m => m.id === messageId);
     if (idx < 0) return;
     // 删除该用户消息及之后所有消息（包括 AI 回复）
     const idsToRemove = messages.slice(idx).map(m => m.id);
     removeMessages?.(idsToRemove);
-  }, [messages, removeMessages]);
+  }, [removeMessages]);
 
   /**
    * 反馈 (点赞/点踩): 写入 localStorage + 提交后端
@@ -1534,14 +1634,21 @@ export const ChatView: React.FC = () => {
     try {
       const key = 'agentai.msg_feedback';
       const all = JSON.parse(localStorage.getItem(key) || '{}');
-      if (all[messageId] === kind) delete all[messageId];
-      else all[messageId] = kind;
+      const isRevoking = all[messageId] === kind; // 再点同一个 = 撤销
+      if (isRevoking) {
+        delete all[messageId];
+      } else {
+        all[messageId] = kind;
+      }
       localStorage.setItem(key, JSON.stringify(all));
+      // P0 修复: 撤销时不提交后端, 避免撤销被记成点赞
+      if (isRevoking) return;
     } catch { /* ignore */ }
     // 提交到后端 (fire-and-forget)
     const sid = activeId;
     if (sid && messageId) {
-      const msg = messages.find(m => m.id === messageId);
+      // 2026-09-05: 实时读 store (原闭包依赖 messages → 每帧重建 handler, 破坏消息行 memo)
+      const msg = useChatStore.getState().messages.find(m => m.id === messageId);
       const text = msg?.segments?.filter((s: any) => s.kind === 'text').map((s: any) => s.text).join('\n') || '';
       submitFeedback({
         sessionId: sid,
@@ -1550,7 +1657,7 @@ export const ChatView: React.FC = () => {
         originalOutput: { content: text.slice(0, 500) },
       }).catch(() => { /* 静默失败 */ });
     }
-  }, [activeId, messages]);
+  }, [activeId]);
 
   /**
    * 收藏: 写入 localStorage, 供笔记面板后续消费
@@ -1559,13 +1666,17 @@ export const ChatView: React.FC = () => {
     try {
       const key = 'agentai.bookmarks';
       const list: Array<{ id: string; text: string; ts: number }> = JSON.parse(localStorage.getItem(key) || '[]');
-      if (list.find(b => b.id === messageId)) {
-        // 已收藏, 取消
+      const existing = list.find(b => b.id === messageId);
+      if (existing) {
+        // 已收藏 → 取消收藏
         const next = list.filter(b => b.id !== messageId);
         localStorage.setItem(key, JSON.stringify(next));
+        // P0 修复: 提示与实际操作一致
+        messageApi.success('已取消收藏');
       } else {
         list.push({ id: messageId, text: String(text || '').slice(0, 1000), ts: Date.now() });
         localStorage.setItem(key, JSON.stringify(list));
+        messageApi.success('⭐ 已收藏');
       }
     } catch { /* ignore */ }
   }, []);
@@ -1575,13 +1686,9 @@ export const ChatView: React.FC = () => {
    */
   const openFileInEditor = useCallback((path: string) => {
     try {
-      // 触发全局事件, 由 Editor 组件监听
-      window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path } }));
-      // 切换视图
-      const store = (window as any).__agentai_app_store__;
-      if (store?.getState?.().setView) {
-        store.getState().setView('editor');
-      }
+      // P0: 走 pending 机制, 避免 Editor 未挂载时事件丢失
+      window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
+      window.dispatchEvent(new CustomEvent('agentai:open-file-pending', { detail: { path } }));
     } catch { /* ignore */ }
   }, []);
 
@@ -1641,6 +1748,49 @@ export const ChatView: React.FC = () => {
     window.addEventListener('agentai:navigate-msg', handler);
     return () => window.removeEventListener('agentai:navigate-msg', handler);
   }, [handleNavigateToMsg]);
+
+  /* ═══ 消息行绑定回调缓存 (2026-09-05) ═══
+   * 按 msg 对象引用缓存每行的派生 props/闭包; msg 未变 → 返回同一实例,
+   * 使 React.memo(UserMsgRow/AssistantMsgRow) 对未变化消息直接跳过重渲染。
+   */
+  const getRowBinds = useCallback((msg: ChatMessage): RowBinds => {
+    const cache = rowBindCache.current;
+    const hit = cache.get(msg.id);
+    if (hit && hit.key === msg) return hit.b;
+    const textSegs = msg.segments.filter(s => s.kind === 'text');
+    const text = textSegs[0]?.text || '';
+    const fullText = textSegs.map((s: any) => s.text).join('\n');
+    const restoredAttachments: ParsedAttachment[] = msg.segments
+      .filter((s): s is { kind: 'image'; base64?: string; alt?: string } => s.kind === 'image')
+      .filter(s => s.base64)
+      .map(s => {
+        const imgName = s.alt || 'image.png';
+        const mime = guessImgMimetype(imgName);
+        return {
+          name: imgName,
+          mimetype: mime,
+          size: 0,
+          content: `[图片: ${imgName}]`,
+          dataUrl: `data:${mime};base64,${s.base64}`,
+          kind: 'image' as const,
+        };
+      });
+    const usage = msg.usage ? { ...msg.usage, durationMs: (msg as any).durationMs || (msg.usage as any).durationMs } : undefined;
+    const b: RowBinds = msg.role === 'user' ? {
+      onResend: () => handleSendRef.current(text, restoredAttachments.length > 0 ? restoredAttachments : undefined),
+      onEdit: () => composerRef.current?.setDraft(text),
+      onDelete: () => deleteMessageAndResponse(msg.id),
+      onBookmark: () => bookmarkMessage(msg.id, text),
+    } : {
+      onRegenerate: () => regenerateAssistant(msg.id),
+      onFeedback: (kind) => feedbackMessage(msg.id, kind),
+      onBookmark: () => bookmarkMessage(msg.id, fullText),
+      onEdit: () => composerRef.current?.setDraft(fullText),
+      usage,
+    };
+    cache.set(msg.id, { key: msg, b });
+    return b;
+  }, [deleteMessageAndResponse, bookmarkMessage, regenerateAssistant, feedbackMessage]);
 
   // 监听文件树 "添加到上下文" 事件
   useEffect(() => {
@@ -1724,7 +1874,7 @@ export const ChatView: React.FC = () => {
   // 追问答案待发送 (避免 React 闭包陷阱)
   const [pendingAnswer, setPendingAnswer] = useState<string | null>(null);
   // Diff 预览
-  const { diffFile, clearDiff } = useDiffEvents();
+  const { diffFile, diffText, clearDiff } = useDiffEvents();
   // 规划模式审批状态
   const [planNeedsApproval, setPlanNeedsApproval] = useState(false);
   const [planSessionId, setPlanSessionId] = useState<string>('');
@@ -1732,10 +1882,14 @@ export const ChatView: React.FC = () => {
 const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | null>(null);
 
   /* ---- 追问答案: loading=false 后自动发送 ---- */
+  // P0 修复: 追问答案需要传 isAnswer=true 让后端不压制旧 loop
   useEffect(() => {
     if (pendingAnswer && !loading) {
-      handleSend(pendingAnswer);
+      const answer = pendingAnswer;
       setPendingAnswer(null);
+      // 直接用 handleSend 发送, 但在 apiStream 调用中传 isAnswer=true
+      // handleSend 中 askUserCardRef.current 已被清空, 不会 abort
+      handleSend(answer, undefined, { isAnswer: true } as any);
     }
   }, [pendingAnswer, loading, handleSend]);
 
@@ -1923,160 +2077,16 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
 
         {/* Welcome screen when empty */}
         {messages.length === 0 && (
-          <div style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center',
-            justifyContent: 'center', height: '100%', padding: '60px 40px 40px',
-            textAlign: 'center', position: 'relative',
-            overflowY: 'auto',
-          }}>
-            {/* ★ 动态背景粒子 (2026-08-10 增强) */}
-            <div className="welcome-bg-particles">
-              {[...Array(12)].map((_, i) => (
-                <div
-                  key={i}
-                  className="welcome-particle"
-                  style={{
-                    left: `${8 + (i * 7.5) % 85}%`,
-                    bottom: `${10 + (i * 13) % 60}%`,
-                    animationDelay: `${i * 0.6}s`,
-                    animationDuration: `${6 + (i % 4)}s`,
-                    width: `${3 + (i % 3) * 2}px`,
-                    height: `${3 + (i % 3) * 2}px`,
-                    background: i % 3 === 0 ? 'var(--accent)' : i % 3 === 1 ? '#E89055' : '#1abc9c',
-                  }}
-                />
-              ))}
-            </div>
-
-            {/* ★ Logo — 带浮动呼吸光晕动画 */}
-            <div className="welcome-logo" style={{ marginBottom: 20, position: 'relative', zIndex: 1 }}>
-              <div className="welcome-logo-glow">
-              <svg width="72" height="72" viewBox="0 0 64 64">
-                <defs>
-                  <linearGradient id="chat-logo" x1="0%" y1="100%" x2="0%" y2="0%">
-                    <stop offset="0%" stopColor="#CD7A3A" stopOpacity="0.4"/>
-                    <stop offset="50%" stopColor="#CD7A3A" stopOpacity="0.7"/>
-                    <stop offset="100%" stopColor="#E89055"/>
-                  </linearGradient>
-                  <filter id="logoGlowFilter">
-                    <feGaussianBlur stdDeviation="2" result="blur"/>
-                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-                  </filter>
-                </defs>
-                <rect width="64" height="64" rx="14" fill="#232328"/>
-                <path d="M32 10 L50 46 L42 46 L32 26 L22 46 L14 46 Z" fill="url(#chat-logo)" filter="url(#logoGlowFilter)"/>
-                <path d="M32 24 L40 44 L32 38 L24 44 Z" fill="#CD7A3A"/>
-                <circle cx="32" cy="14" r="3" fill="#E89055"/>
-              </svg>
-              </div>
-            </div>
-
-            {/* 行业徽章 — 带脉冲动画 */}
-            {currentIndustry && currentIndustry !== 'general' && (
-              <div className="industry-badge-pulse" style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '4px 14px', borderRadius: 20,
-                fontSize: 'var(--ui-font-size)', fontWeight: 600, marginBottom: 16,
-                background: (INDUSTRY_BADGE_THEME as any)[currentIndustry]?.bgColor || 'rgba(255,255,255,0.06)',
-                color: (INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--fg-2)',
-                border: `1px solid ${(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.color || 'var(--border)'}60`,
-                position: 'relative', zIndex: 1,
-              }}>
-                <span style={{ fontSize: 16 }}>{(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.icon || '🔧'}</span>
-                <span>{(INDUSTRY_BADGE_THEME as any)[currentIndustry]?.label || currentIndustry}</span>
-              </div>
-            )}
-            {/* ★ 标题 — 行业专属欢迎语 */}
-            <div className="welcome-title" style={{
-              fontSize: 24, fontWeight: 800, marginBottom: 6, lineHeight: 1.3,
-              position: 'relative', zIndex: 1,
-            }}>
-              {(INDUSTRY_WELCOME as any)[currentIndustry]?.title || '有什么可以帮你的？'}
-            </div>
-            {/* ★ 次标题 — 行业专属能力描述 */}
-            <div className="welcome-subtitle" style={{
-              fontSize: 12, color: 'var(--muted-2)', marginBottom: 20,
-              position: 'relative', zIndex: 1,
-            }}>
-              {(INDUSTRY_WELCOME as any)[currentIndustry]?.subtitle || (systemInfo || 'PulseFlow · 岐黄') + ' · 10+ 免费模型 · 越用越懂你'}
-            </div>
-
-            {/* ★ 能力数据展示区 — 震撼数字 (2026-08-10 新增) */}
-            <div className="welcome-stats" style={{ position: 'relative', zIndex: 1 }}>
-              {[
-                { num: '141+', label: 'AI 工具' },
-                { num: '8', label: '模型 Provider' },
-                { num: '1M', label: '上下文窗口' },
-                { num: '9', label: '行业模板' },
-              ].map(stat => (
-                <div key={stat.label} className="welcome-stat-item">
-                  <div className="welcome-stat-number">{stat.num}</div>
-                  <div className="welcome-stat-label">{stat.label}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* ★ Demo 卡片 — 通用快捷入口 (非行业模式时显示) */}
-            {currentIndustry === 'general' && (
-            <div style={{ 
-              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, maxWidth: 460, width: '100%',
-              position: 'relative', zIndex: 1,
-            }}>
-              {[
-                { icon: '📖', label: '读懂项目', prompt: '帮我读一下当前项目的 README，总结这个项目是做什么的', color: '#3B82F6' },
-                { icon: '🎨', label: '画一张图', prompt: '画一张赛博朋克风格的猫，霓虹灯光，高质量', color: '#EC4899' },
-                { icon: '🔍', label: '搜索最新', prompt: '搜索最新的 AI Agent 开源框架，对比它们的优缺点', color: '#10B981' },
-                { icon: '🤖', label: '智能体协作', prompt: '启动一个子智能体帮我分析代码质量并生成优化建议', color: '#8B5CF6' },
-              ].map(demo => (
-                <button
-                  key={demo.label}
-                  onClick={() => handleSend(demo.prompt)}
-                  className="demo-card"
-                  style={{
-                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5,
-                    padding: '12px 16px', borderRadius: 10, fontSize: 12,
-                    background: 'var(--panel)', border: '1px solid var(--border)',
-                    color: 'var(--fg-2)', cursor: 'pointer', textAlign: 'left',
-                    transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                    ['--demo-color' as any]: demo.color,
-                  }}
-                >
-                  <span className="demo-icon" style={{ fontSize: 22 }}>{demo.icon}</span>
-                  <span style={{ fontWeight: 700, color: 'var(--fg)', fontSize: 13 }}>{demo.label}</span>
-                  <span style={{ fontSize: 'var(--tool-font-size)', color: 'var(--muted-2)', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                    {demo.prompt}
-                  </span>
-                </button>
-              ))}
-            </div>
-            )}
-
-            {/* 行业快捷指令 — 增强胶囊样式 */}
-            {getIndustryQuickActions(currentIndustry).length > 0 && (
-              <div style={{ marginTop: 18, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 520, position: 'relative', zIndex: 1 }}>
-                {getIndustryQuickActions(currentIndustry).slice(0, 6).map(action => (
-                  <button
-                    key={action.label}
-                    onClick={() => { composerRef.current?.setDraft(action.prompt); composerRef.current?.focus(); }}
-                    className="welcome-action-chip"
-                    style={{
-                      padding: '5px 14px',
-                      background: 'transparent', border: '1px solid var(--border)',
-                      color: 'var(--muted-2)', cursor: 'pointer', fontSize: 12,
-                      borderRadius: 20,
-                    }}
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <WelcomePanel
+            handleSend={handleSend}
+            composerRef={composerRef as React.RefObject<any>}
+            systemInfo={systemInfo}
+          />
         )}
 
         {/* Message list */}
-        {/* 对话摘要栏: 超过 15 条消息时显示, 帮助用户导航长对话 */}
-        {messages.length > 15 && (
+        {/* 对话摘要栏: 超过 8 条消息时显示, 帮助用户导航长对话 */}
+        {messages.length > 8 && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '4px 12px', margin: '4px 0',
@@ -2111,21 +2121,11 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             const text = textSegs[0]?.text || '';
             const emotion = emotionMap[msg.id];
             const profile = useProfileStore.getState()?.profile;
-            // 从消息 segments 中恢复图片附件 (base64 数据持久化在 chatStore 中)
-            const restoredAttachments: ParsedAttachment[] = msg.segments
-              .filter((s): s is { kind: 'image'; base64?: string; alt?: string } => s.kind === 'image')
-              .filter(s => s.base64)
-              .map(s => ({
-                name: s.alt || 'image.png',
-                mimetype: 'image/png',
-                size: 0,
-                content: `[图片: ${s.alt || 'image.png'}]`,
-                dataUrl: `data:image/png;base64,${s.base64}`,
-                kind: 'image' as const,
-              }));
+            // 2026-09-05: 绑定回调走缓存 + React.memo 行 — msg 未变 → 直接跳过重渲染
+            const binds = getRowBinds(msg);
             return (
-              <div key={msg.id} ref={el => msgRefs.current[msg.id] = el}>
-                <UserMsg
+              <div key={msg.id} ref={el => { msgRefs.current[msg.id] = el; }}>
+                <UserMsgRow
                   text={text}
                   segments={msg.segments}
                   status={msg.status}
@@ -2133,10 +2133,10 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                   onNavigate={handleNavigateToMsg}
                   userName={profile?.name || '你'}
                   userAvatar={undefined}
-                  onResend={() => handleSend(text, restoredAttachments.length > 0 ? restoredAttachments : undefined)}
-                  onEdit={() => composerRef.current?.setDraft(text)}
-                  onDelete={() => deleteMessageAndResponse(msg.id)}
-                  onBookmark={() => bookmarkMessage(msg.id, text)}
+                  onResend={binds.onResend}
+                  onEdit={binds.onEdit}
+                  onDelete={binds.onDelete}
+                  onBookmark={binds.onBookmark}
                 />
                 {emotion && (
                   <div style={{ padding: '0 16px 4px', display: 'flex', justifyContent: 'flex-end' }}>
@@ -2147,29 +2147,22 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             );
           }
           if (msg.role === 'assistant') {
-            // Phase 2: 实时显示 - 合并 durationMs 到 usage
-            const usageWithDuration = msg.usage ? {
-              ...msg.usage,
-              durationMs: msg.durationMs || msg.usage?.durationMs,
-            } : undefined;
+            const binds = getRowBinds(msg);
             return (
-              <div key={msg.id} ref={el => msgRefs.current[msg.id] = el}>
-                <AssistantMsg
+              <div key={msg.id} ref={el => { msgRefs.current[msg.id] = el; }}>
+                <AssistantMsgRow
                   segments={msg.segments}
                   pending={!!msg.streaming}
                   model={msg.provider}
-                  usage={usageWithDuration}
+                  usage={binds.usage}
                   status={msg.status}
                   messageId={msg.id}
                   onNavigate={handleNavigateToMsg}
-                  onRegenerate={() => regenerateAssistant(msg.id)}
-                  onFeedback={(kind) => feedbackMessage(msg.id, kind)}
-                  onBookmark={() => bookmarkMessage(msg.id, msg.segments.filter(s => s.kind === 'text').map((s: any) => s.text).join('\n'))}
-                  onOpenFile={(path) => openFileInEditor(path)}
-                  onEdit={() => {
-                    const last = msg.segments.filter(s => s.kind === 'text').map((s: any) => s.text).join('\n');
-                    composerRef.current?.setDraft(last);
-                  }}
+                  onRegenerate={binds.onRegenerate}
+                  onFeedback={binds.onFeedback}
+                  onBookmark={binds.onBookmark}
+                  onOpenFile={openFileInEditor}
+                  onEdit={binds.onEdit}
                   onDone={scrollToTopOnDone}
                   progress={msg.streaming ? progress : null}
                 />
@@ -2206,7 +2199,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             padding: '6px 14px', borderRadius: 20,
             background: 'var(--accent)', color: '#fff',
             border: 'none', cursor: 'pointer', fontSize: 'var(--ui-font-size)', fontWeight: 600,
-            boxShadow: 'var(--shadow-md)', zIndex: 50,
+            boxShadow: 'var(--shadow-md)', zIndex: 'var(--z-sticky)',
             animation: 'fadeIn 0.2s ease-out',
           }}
         >
@@ -2320,14 +2313,12 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             const answerText = Array.isArray(answer)
               ? answer.join(', ')
               : answer;
-            // 中止当前等待 + 设置待发送答案
-            if (abortRef.current) {
-              abortRef.current.abort();
-              abortRef.current = null;
-            }
-            setLoading(false);
+            // 不 abort 当前 SSE — 让后端保留 loop 上下文
+            // 只关闭卡片 UI
             setAskUserCard(null);
+            // 标记为追问答案, 后端不走压制模式
             setPendingAnswer(answerText);
+            // 不设 loading=false — 让 useEffect 知道这是追问答案
           }}
         />
       )}
@@ -2335,66 +2326,53 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
       {/* Diff 预览 — AI 修改文件后的对比 */}
       {diffFile && <DiffViewer diffText={diffText} filePath={diffFile} onClose={clearDiff} />}
 
-      {/* Context Monitor — 上下文长度提醒 */}
+      {/* Context Monitor — 上下文长度提醒 (单行紧凑版) */}
       {messages.length > 3 && tokenInfo.nearing && (
         <div style={{
-          margin: '4px 16px 0', padding: '5px 10px', borderRadius: 6,
+          margin: '4px 16px 0', padding: '4px 10px', borderRadius: 6,
           background: tokenInfo.critical ? 'rgba(239,68,68,0.1)' : 'rgba(250,204,21,0.08)',
           border: `1px solid ${tokenInfo.critical ? 'rgba(239,68,68,0.25)' : 'rgba(250,204,21,0.2)'}`,
+          display: 'flex', alignItems: 'center', gap: 8,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {/* Progress bar */}
+          {/* Progress bar */}
+          <div style={{ flex: 1, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)', minWidth: 40 }}>
             <div style={{
-              flex: 1, height: 4, borderRadius: 2,
-              background: 'rgba(255,255,255,0.06)',
-            }}>
-              <div style={{
-                width: `${tokenInfo.pct}%`, height: '100%', borderRadius: 2,
-                background: tokenInfo.critical
-                  ? 'linear-gradient(90deg, var(--danger), var(--danger))'
-                  : 'linear-gradient(90deg, var(--warning), #f59e0b)',
-                transition: 'width 0.4s ease',
-              }} />
-            </div>
-            <span style={{
-              fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
-              color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)',
-            }}>
-              {tokenInfo.pct}%
-            </span>
-            {tokenInfo.critical && (
-              <button
-                onClick={() => {
-                  // 创新功能: 自动整理摘要 → 发送到新对话
-                  const summary = generateConversationSummary(messages);
-                  smartClear();
-                  const id = createSession('新对话 (续)');
-                  // 延迟发送摘要到新对话, 让用户看到上下文被保留
-                  setTimeout(() => {
-                    appendMessage({
-                      id: `summary-${Date.now()}`,
-                      role: 'system',
-                      segments: [{ kind: 'text', text: summary }],
-                      ts: Date.now(),
-                      status: 'done',
-                    });
-                  }, 300);
-                }}
-                style={{
-                  fontSize: 'var(--tool-font-size)', padding: '2px 8px', borderRadius: 4,
-                  background: 'var(--accent)', color: '#fff', border: 'none',
-                  cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
-                }}
-              >
-                + 新对话 (带摘要)
-              </button>
-            )}
+              width: `${tokenInfo.pct}%`, height: '100%', borderRadius: 2,
+              background: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)',
+              transition: 'width 0.4s ease',
+            }} />
           </div>
-          <div style={{ fontSize: 9, color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)', marginTop: 3, opacity: 0.8 }}>
-            {tokenInfo.critical
-              ? `对话已接近上下文上限 (${formatTokens(tokenInfo.tokens)} tokens)，建议创建新对话`
-              : `对话上下文 ${formatTokens(tokenInfo.tokens)} tokens`}
-          </div>
+          <span style={{ fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap', color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)' }}>
+            {tokenInfo.pct}%
+          </span>
+          <span style={{ fontSize: 9, color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)', opacity: 0.8, whiteSpace: 'nowrap' }}>
+            {formatTokens(tokenInfo.tokens)} tokens
+          </span>
+          {tokenInfo.critical && (
+            <button
+              onClick={() => {
+                const summary = generateConversationSummary(messages);
+                smartClear();
+                const id = createSession('新对话 (续)');
+                setTimeout(() => {
+                  appendMessage({
+                    id: `summary-${Date.now()}`,
+                    role: 'system',
+                    segments: [{ kind: 'text', text: summary }],
+                    ts: Date.now(),
+                    status: 'done',
+                  });
+                }, 300);
+              }}
+              style={{
+                fontSize: 'var(--tool-font-size)', padding: '2px 8px', borderRadius: 4,
+                background: 'var(--accent)', color: '#fff', border: 'none',
+                cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
+              }}
+            >
+              + 新对话
+            </button>
+          )}
         </div>
       )}
 
@@ -2452,7 +2430,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
       <div style={{ position: 'relative' }}>
         <Composer
           ref={composerRef}
-          onSend={(text) => handleSend(text)}
+          onSend={(text, opts) => handleSend(text, undefined, opts)}
           onAbort={handleStop}
           busy={loading}
           slashCommands={slashCommands}
@@ -2465,14 +2443,13 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           thinking={thinking}
           onThinkingChange={setThinking}
           optimizeDisabled={loading}
-          chatMode={chatMode}
         />
       </div>
 
       {/* Drop overlay */}
       {dragOver && (
         <div style={{
-          position: 'absolute', inset: 0, zIndex: 999,
+          position: 'absolute', inset: 0, zIndex: 'var(--z-dropdown)',
           background: 'oklch(20% 0.006 255 / 0.6)',
           border: '2px dashed var(--accent)',
           display: 'grid', placeItems: 'center',

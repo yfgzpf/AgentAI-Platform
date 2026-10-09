@@ -17,7 +17,7 @@
  */
 
 import { execSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, cpSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, cpSync, rmSync, readdirSync, unlinkSync, renameSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -74,9 +74,22 @@ const gwDist = resolve(gwDir, 'dist', 'index.js');
 log('Step 2: 编译 GUI...');
 const guiDir = resolve(ROOT, 'packages', 'agentai-gui');
 const guiDist = resolve(guiDir, 'dist', 'index.html');
+const guiDistDir = resolve(guiDir, 'dist');
 
 // 每次都重新编译 GUI, 确保打包的是最新代码 (不跳过)
 {
+  // P1 修复: 构建前清空 dist, 防止陈旧的 hashed 文件残留 (index-*.js 累积)
+  // Tauri 2.x webview 缓存 + 多次构建不清理 → 桌面端可能加载旧版本
+  if (existsSync(guiDistDir)) {
+    log('  清空 GUI dist 旧文件 (防止 hash 残留)...');
+    try {
+      rmSync(guiDistDir, { recursive: true, force: true });
+      logOk('  GUI dist 已清空');
+    } catch (e) {
+      logWarn(`  清空 dist 失败: ${e.message}`);
+    }
+  }
+
   const viteCandidates = [
     resolve(guiDir, 'node_modules', 'vite', 'bin', 'vite.js'),
     resolve(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'),
@@ -96,6 +109,25 @@ const guiDist = resolve(guiDir, 'dist', 'index.html');
     // 兜底: npx vite build
     log('使用 npx vite build...');
     run('npx vite build', guiDir);
+  }
+
+  // 验证: 只能有 1 个 index-*.js (hash 必须唯一)
+  if (existsSync(guiDistDir)) {
+    const assetsJsDir = resolve(guiDistDir, 'assets', 'js');
+    if (existsSync(assetsJsDir)) {
+      const indexFiles = readdirSync(assetsJsDir)
+        .filter(f => /^index-.*\.js$/.test(f));
+      if (indexFiles.length === 1) {
+        logOk(`  dist 验证通过: 1 个 entry (${indexFiles[0]})`);
+      } else if (indexFiles.length > 1) {
+        logWarn(`  ⚠️  dist 中存在 ${indexFiles.length} 个 index-*.js, 清理中...`);
+        indexFiles.slice(1).forEach(f => {
+          try { unlinkSync(resolve(assetsJsDir, f)); } catch {}
+        });
+      logOk(`  已清理 ${indexFiles.length - 1} 个旧 entry`);
+    } else {
+      logWarn('  ❌ dist 中未找到 index-*.js!');
+    }
   }
 }
 
@@ -166,7 +198,7 @@ if (existsSync(gwDistV2) && existsSync(resolve(gwDistV2, 'dist', 'index.js'))) {
   logOk('gateway-dist 已同步 (tauri.conf.json 打包用此目录)');
   // 清理旧备份 (只保留最近一个)
   if (existsSync(resourcesDir)) {
-    const backups = require('fs').readdirSync(resourcesDir)
+    const backups = readdirSync(resourcesDir)
       .filter(e => e.startsWith('gateway-dist-backup-'))
       .sort().reverse();
     backups.slice(1).forEach(b => {

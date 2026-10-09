@@ -1,5 +1,5 @@
 /**
- * 多源网页搜索引擎 (借鉴 REASONIX + zyai web-tools + gemini-search-mcp)
+ * 多源网页搜索引擎 (多源 web-tools + gemini-search-mcp)
  * ===================================================
  * 支持引擎 (按优先级自动降级):
  *   0. Browser     (免费, Playwright 真实浏览器搜索 Google, 不限流)

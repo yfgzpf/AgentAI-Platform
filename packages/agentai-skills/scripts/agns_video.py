@@ -16,7 +16,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-API_BASE = os.environ.get("AGNES_BASE_URL", "https://apihub.agnes-ai.com")
+API_BASE = os.environ.get("AGNES_BASE_URL", "https://apihub.agnes-ai.cn")
 TASKS_URL = f"{API_BASE}/v1/videos"
 DEFAULT_MODEL = "agnes-video-v2.0"
 

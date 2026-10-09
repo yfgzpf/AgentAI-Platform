@@ -479,7 +479,7 @@ export const StatusBar: React.FC = () => {
           boxShadow: 'var(--shadow-md)',
           animation: 'msgSlideIn 0.3s ease-out',
           maxWidth: 280,
-          zIndex: 1000,
+          zIndex: 'var(--z-modal)',
         }}>
           <div style={{ fontSize: 12, color: 'var(--fg)', marginBottom: 4 }}>
             🎵 背景音乐已自动播放
@@ -491,7 +491,7 @@ export const StatusBar: React.FC = () => {
             onClick={() => setShowMusicTip(false)}
             style={{
               marginTop: 8, padding: '2px 8px', borderRadius: 4,
-              background: 'var(--accent)', color: '#fff',
+              background: 'var(--accent)', color: 'var(--fg)',
               border: 'none', fontSize: 10, cursor: 'pointer',
             }}
           >

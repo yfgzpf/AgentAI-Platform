@@ -13,6 +13,18 @@ export interface SubagentInfo {
   status: 'running' | 'done' | 'error';
   result?: string;
   error?: string;
+  /**
+   * 执行步骤流水（2026-10-05 补齐）
+   * ----------------------------------------------------
+   * ChatView 的 subagent:progress / :done / :error 三个 handler 一直在往
+   * `steps` 里追加步骤描述（工具调用/ 完成 / 失败），但本接口**没声明该字段**
+   * → tsc 报 TS2339 "Property 'steps' does not exist on type 'SubagentInfo'"
+   * → 且更严重：即使补了类型，下方渲染也没消费它 →
+   *   前端收集几十条步骤，用户一个字都看不到（又一处"只做了 UI 没接线"）。
+   *
+   * 现在：类型补齐 + 渲染真正展示（运行中展开最近 3 步，完成后折叠摘要）。
+   */
+  steps?: string[];
 }
 
 export interface SubagentStatusProps {
@@ -120,6 +132,35 @@ export const SubagentStatus: React.FC<SubagentStatusProps> = ({ agents, pending 
           </div>
         );
       })}
+      {/* 2026-10-05: 真正渲染 steps —— 此前 ChatView 收集了几十条步骤描述，
+          这里一个都没消费，属于"只做了 UI 没接线"。运行中显示最近 3 步。 */}
+      {agents.some(a => a.steps && a.steps.length > 0) && (
+        <div style={{
+          marginTop: 6, paddingTop: 6,
+          borderTop: '1px solid var(--border)',
+          fontSize: 11, color: 'var(--muted)', lineHeight: 1.7,
+        }}>
+          {agents.filter(a => a.steps && a.steps.length > 0).map(a => {
+            const label = ROLE_LABELS[a.type] || a.type;
+            const tail = (a.steps || []).slice(-3);
+            const hidden = (a.steps || []).length - tail.length;
+            return (
+              <div key={`steps-${a.id}`} style={{ marginBottom: 2 }}>
+                <span style={{ color: 'var(--fg-2)', fontWeight: 500 }}>{label}</span>
+                {hidden > 0 && <span style={{ opacity: 0.6 }}> （前 {hidden} 步已折叠）</span>}
+                {tail.map((s, i) => (
+                  <div key={i} style={{
+                    paddingLeft: 10, overflow: 'hidden',
+                    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {s}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {pending && running.length === 0 && agents.length > 0 && (
         <div style={{ color: 'var(--muted)', fontSize: 11, marginTop: 4 }}>
           ⏳ 等待子智能体启动...

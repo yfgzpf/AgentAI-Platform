@@ -6,6 +6,7 @@ import { Router } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { WorkspaceManager } from '../workspace-manager.js';
+import { currentRequestWorkspace } from '../request-scope.js';
 import { isPathAllowed } from '../safety/path-guard.js';
 
 export const filesRouter = Router();
@@ -300,7 +301,9 @@ filesRouter.get('/v1/files/backup', (req, res) => {
   try {
     const filePath = req.query.path as string;
     if (!filePath) return res.status(400).json({ error: 'path required' });
-    const ws = WorkspaceManager.getInstance().projectDir;
+    // 2026-10-06: 请求级工作区（原来读全局单例 → 在 A 项目请求却读 B 项目的备份）。
+    // app.ts 的中间件已按 header/query/body 建立 ALS 作用域。
+    const ws = currentRequestWorkspace() || WorkspaceManager.getInstance().projectDir;
     const backupDir = path.join(ws, '.agentai', 'backups');
     if (!fs.existsSync(backupDir)) return res.json({ ok: true, content: '', message: 'no backups' });
     const fileName = path.basename(filePath);

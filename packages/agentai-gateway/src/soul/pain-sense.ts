@@ -20,6 +20,7 @@
 
 import { EventEmitter } from 'events';
 import { updateEvolutionEffectiveness } from '../evolution.js';
+import { getScoped, resetScoped } from './workspace-scope.js';
 
 export type PainLevel = 'none' | 'mild' | 'moderate' | 'severe' | 'critical';
 export type JoyLevel = 'none' | 'satisfied' | 'happy' | 'excited';
@@ -178,11 +179,16 @@ export class PainSense extends EventEmitter {
 
 // ===== 单例 =====
 
-let _instance: PainSense | null = null;
+// ===== workspace 作用域单例 =====
+// 串味修复: 原为进程级单例，state（痛感/心境/连续失败数）跨任务累积，
+// 会把上一任务的失败计数注入当前任务上下文。
 
-export function getPainSense(): PainSense {
-  if (!_instance) {
-    _instance = new PainSense();
-  }
-  return _instance;
+/** 按 workspace 返回 PainSense 实例（传请求级 workspace） */
+export function getPainSense(workspace?: string): PainSense {
+  return getScoped<PainSense>('painSense', workspace, () => new PainSense());
+}
+
+/** 重置指定 workspace 的实例；不传则重置全部 */
+export function resetPainSense(workspace?: string): void {
+  resetScoped<PainSense>('painSense', workspace);
 }

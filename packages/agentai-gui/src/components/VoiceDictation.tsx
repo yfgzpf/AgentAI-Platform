@@ -270,7 +270,7 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
       bottom: 0,
       left: 0,
       right: 0,
-      zIndex: 1000,
+      zIndex: 'var(--z-modal)',
       background: '#1a1a1a',
       borderTop: '2px solid #4F46E5',
       boxShadow: '0 -4px 24px rgba(0,0,0,0.3)',

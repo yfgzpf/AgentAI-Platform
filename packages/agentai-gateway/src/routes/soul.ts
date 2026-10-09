@@ -13,15 +13,35 @@ import { Router, Request, Response } from 'express';
 
 export const soulRouter = Router();
 
+/**
+ * 从请求解析 workspace —— 串味修复
+ * ================================================
+ * soul 7 模块已改为 per-workspace 实例，本路由的所有查询必须带上
+ * workspace，否则会命中 `__default__` 桶（进程级默认），导致：
+ *   - 前端看到的是默认工作区的状态，而非当前工作区的
+ *   - 与 agentai-loop 注入的上下文不是同一份数据
+ *
+ * 优先级: ?workspace= 查询参数 > x-workspace 头 > 默认工作区
+ */
+function wsOf(req: Request): string {
+  const q = (req.query.workspace as string) || '';
+  if (q) return q;
+  const h = (req.headers['x-workspace'] as string) || '';
+  if (h) return h;
+  // 兜底: 默认工作区（与 index.ts 启动 DreamEngine 时用的一致）
+  return (globalThis as any).__agentaiDefaultWorkspace || '';
+}
+
 // GET /v1/soul/status — 全部灵魂状态
-soulRouter.get('/soul/status', async (_req: Request, res: Response) => {
+soulRouter.get('/soul/status', async (req: Request, res: Response) => {
   try {
+    const ws = wsOf(req);
     const { getDreamEngine, getInnerVoice, getPainSense, getCuriosityEngine, getInternalDebate } = await import('../soul/index.js');
-    const dream = getDreamEngine();
-    const painSense = getPainSense();
-    const curiosity = getCuriosityEngine();
-    const debate = getInternalDebate();
-    const innerVoice = getInnerVoice();
+    const dream = getDreamEngine(undefined, ws);
+    const painSense = getPainSense(ws);
+    const curiosity = getCuriosityEngine(ws);
+    const debate = getInternalDebate(ws);
+    const innerVoice = getInnerVoice(ws);
 
     const dreamStats = {
       dreaming: dream.isDreaming(),
@@ -54,10 +74,10 @@ soulRouter.get('/soul/status', async (_req: Request, res: Response) => {
 });
 
 // GET /v1/soul/dreams — 梦境历史
-soulRouter.get('/soul/dreams', async (_req: Request, res: Response) => {
+soulRouter.get('/soul/dreams', async (req: Request, res: Response) => {
   try {
     const { getDreamEngine } = await import('../soul/index.js');
-    const dreams = getDreamEngine().getRecentDreams(20);
+    const dreams = getDreamEngine(undefined, wsOf(req)).getRecentDreams(20);
     res.json({ ok: true, data: dreams });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message });
@@ -69,7 +89,7 @@ soulRouter.post('/soul/dream', async (req: Request, res: Response) => {
   try {
     const { getDreamEngine } = await import('../soul/index.js');
     const trigger = req.body?.trigger || 'manual';
-    const result = await getDreamEngine().dream(trigger);
+    const result = await getDreamEngine(undefined, wsOf(req)).dream(trigger);
     res.json({ ok: true, data: result });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message });
@@ -77,10 +97,10 @@ soulRouter.post('/soul/dream', async (req: Request, res: Response) => {
 });
 
 // GET /v1/soul/curiosity — 未解问题
-soulRouter.get('/soul/curiosity', async (_req: Request, res: Response) => {
+soulRouter.get('/soul/curiosity', async (req: Request, res: Response) => {
   try {
     const { getCuriosityEngine } = await import('../soul/index.js');
-    const engine = getCuriosityEngine();
+    const engine = getCuriosityEngine(wsOf(req));
     res.json({
       ok: true,
       data: {
@@ -95,20 +115,20 @@ soulRouter.get('/soul/curiosity', async (_req: Request, res: Response) => {
 });
 
 // GET /v1/soul/mood — 当前情绪
-soulRouter.get('/soul/mood', async (_req: Request, res: Response) => {
+soulRouter.get('/soul/mood', async (req: Request, res: Response) => {
   try {
     const { getPainSense } = await import('../soul/index.js');
-    res.json({ ok: true, data: getPainSense().getState() });
+    res.json({ ok: true, data: getPainSense(wsOf(req)).getState() });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message });
   }
 });
 
 // GET /v1/soul/debates — 辩论历史
-soulRouter.get('/soul/debates', async (_req: Request, res: Response) => {
+soulRouter.get('/soul/debates', async (req: Request, res: Response) => {
   try {
     const { getInternalDebate } = await import('../soul/index.js');
-    res.json({ ok: true, data: getInternalDebate().getHistory() });
+    res.json({ ok: true, data: getInternalDebate(wsOf(req)).getHistory() });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message });
   }

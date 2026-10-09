@@ -1,361 +1,373 @@
 // @ts-nocheck
 /**
- * agentai-loop.ts 关键路径测试
- * 
+ * agentai-loop.ts 关键路径契约测试
+ *
  * 目标：建立安全网，确保后续拆分不会破坏核心功能
- * 覆盖：正常执行、工具调用、错误处理、完成检测
+ * 覆盖：构造契约、审批状态机、正常执行、工具调用、错误降级、上下文日志
+ *
+ * 说明：run() 是重量级集成入口 (8 层上下文注入 + 大量动态 import)，
+ * 单测中通过 spy ensureContext 隔离上下文构建，router/registry 使用手工 mock。
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AgentAILoop } from './agentai-loop.js';
 import { AgentAIRouter } from './llm-router.js';
 
-// Mock依赖
+// Mock 依赖模块 (防止模块加载期副作用)
 vi.mock('./llm-router.js');
 vi.mock('./tool-registry.js');
 vi.mock('./memory-manager.js');
 
+/** 超过短回复恢复阈值的中性长文本，保证主循环一轮自然结束 */
+const LONG_REPLY = '这是一个用于测试的完整回复内容'.repeat(20);
+
+/** 隔离的临时工作区, 避免 ProactiveEngine/MemoryHook 等 best-effort 模块用 undefined 路径告警 */
+const TEST_WORKSPACE = mkdtempSync(join(tmpdir(), 'agentai-loop-test-'));
+
+/** 构造一个隔离了上下文构建的 loop 实例 */
+function createLoop(opts: Record<string, any> = {}) {
+  const mockRouter: any = {
+    chat: vi.fn().mockResolvedValue({
+      content: LONG_REPLY,
+      provider: 'agentai',
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+    }),
+    getAvailableModels: vi.fn().mockReturnValue(['agentai', 'deepseek']),
+  };
+  const mockRegistry: any = {
+    dispatch: vi.fn().mockResolvedValue([]),
+    toLLMTools: vi.fn().mockReturnValue([]),
+    list: vi.fn().mockReturnValue([]),
+  };
+  const loop = new AgentAILoop(
+    mockRouter as AgentAIRouter,
+    mockRegistry,
+    [],
+    { maxIterations: 4, userId: 'test-user', workspace: TEST_WORKSPACE, ...opts },
+  );
+
+  // 隔离 8 层 immutable prefix 构建 (文件 IO / 技能索引 / 记忆召回等)
+  vi.spyOn(loop as any, 'ensureContext').mockImplementation(async () => {
+    (loop as any).contextReady = true;
+    (loop as any).context.immutablePrefix = [{ role: 'system', content: 'test-system' }];
+  });
+
+  return { loop, mockRouter, mockRegistry };
+}
+
 describe('AgentAILoop 关键路径测试', () => {
-  let loop: AgentAILoop;
-  let mockRouter: any;
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
 
-  beforeEach(() => {
-    mockRouter = {
-      chat: vi.fn(),
-      getAvailableModels: vi.fn().mockReturnValue(['agentai', 'deepseek']),
-    };
-    
-    loop = new AgentAILoop(mockRouter as AgentAIRouter, [], {
-      maxIterations: 90,
-      userId: 'test-user',
+  // ═══════════════════════════════════════════════════════════
+  // 测试 0: 构造与配置契约
+  // ═══════════════════════════════════════════════════════════
+
+  describe('构造与配置', () => {
+    it('4 参数构造成功并应用默认值', () => {
+      const { loop } = createLoop();
+      expect(loop).toBeInstanceOf(AgentAILoop);
+      expect(loop.getContext().immutablePrefix).toEqual([]);
+    });
+
+    it('maxIterations 自定义值透传', () => {
+      const { loop } = createLoop({ maxIterations: 90 });
+      expect((loop as any).opts.maxIterations).toBe(90);
+    });
+
+    it('getContext 返回不可变读取视图', () => {
+      const { loop } = createLoop();
+      const ctx = loop.getContext();
+      expect(ctx).toHaveProperty('immutablePrefix');
+      expect(ctx).toHaveProperty('appendOnlyLog');
+      expect(ctx).toHaveProperty('volatileScratch');
     });
   });
 
   // ═══════════════════════════════════════════════════════════
-  // 测试1: 正常执行流程
+  // 测试 1: 正常执行流程
   // ═══════════════════════════════════════════════════════════
-  
+
   describe('正常执行流程', () => {
-    it('应该能处理简单对话请求', async () => {
-      // 模拟LLM响应
-      mockRouter.chat.mockResolvedValue({
-        content: '这是一个测试回复',
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
-      });
+    it('应该能处理简单对话请求并返回模型回复', async () => {
+      const { loop, mockRouter } = createLoop();
 
-      const result = await loop.processMessage({
-        content: '你好',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
+      const result = await loop.run('你好');
 
-      expect(result.success).toBe(true);
-      expect(result.response).toContain('测试回复');
-      expect(mockRouter.chat).toHaveBeenCalledTimes(1);
+      expect(result).toBeDefined();
+      expect(result.content).toContain('测试的完整回复内容');
+      expect(mockRouter.chat).toHaveBeenCalled();
     });
 
-    it('应该能处理带工具调用的请求', async () => {
-      // 第一次调用：LLM决定调用工具
-      mockRouter.chat.mockResolvedValueOnce({
-        content: '',
-        tool_calls: [{
-          id: 'call-1',
-          type: 'function',
-          function: {
+    it('应该能处理带工具调用的请求 (工具轮 -> 文本收尾)', async () => {
+      const { loop, mockRouter, mockRegistry } = createLoop();
+
+      mockRouter.chat
+        .mockResolvedValueOnce({
+          content: null,
+          provider: 'agentai',
+          toolCalls: [{
+            id: 'call-1',
             name: 'read_file',
-            arguments: JSON.stringify({ path: '/test/file.txt' }),
-          },
-        }],
-      });
+            args: { file_path: '/test/file.txt' },
+          }],
+        })
+        .mockResolvedValueOnce({
+          content: LONG_REPLY,
+          provider: 'agentai',
+          usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
+        });
+      mockRegistry.dispatch.mockResolvedValueOnce([
+        { id: 'call-1', name: 'read_file', result: { success: true, output: '文件内容', durationMs: 1, data: null } },
+      ]);
 
-      // 第二次调用：LLM生成最终回复
-      mockRouter.chat.mockResolvedValueOnce({
-        content: '文件内容已读取',
-        usage: { prompt_tokens: 20, completion_tokens: 10 },
-      });
+      const result = await loop.run('读取文件');
 
-      const result = await loop.processMessage({
-        content: '读取文件',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
-
-      expect(result.success).toBe(true);
-      expect(mockRouter.chat).toHaveBeenCalledTimes(2);
+      expect(result).toBeDefined();
+      expect(mockRegistry.dispatch).toHaveBeenCalledTimes(1);
     });
   });
 
   // ═══════════════════════════════════════════════════════════
-  // 测试2: 工具调用与审批
+  // 测试 2: 工具调用与审批
   // ═══════════════════════════════════════════════════════════
 
   describe('工具调用与审批', () => {
-    it('低风险工具应该直接执行', async () => {
-      const toolResult = { success: true, output: '文件内容' };
-      
-      mockRouter.chat.mockResolvedValue({
-        content: '',
-        tool_calls: [{
-          id: 'call-1',
-          function: {
-            name: 'read_file', // 低风险工具
-            arguments: JSON.stringify({ path: '/test.txt' }),
-          },
-        }],
-      });
+    it('低风险工具应该直接执行 (不触发审批)', async () => {
+      const { loop, mockRouter, mockRegistry } = createLoop();
+      let approvalEmitted = false;
+      loop.on('approval:required', () => { approvalEmitted = true; });
 
-      // 验证工具被调用且无需审批
-      const spy = vi.spyOn(loop as any, 'executeTool');
-      
-      await loop.processMessage({
-        content: '读取文件',
-        sessionId: 'test-session',
-        userId: 'test-user',
+      mockRouter.chat.mockResolvedValueOnce({
+        content: null,
+        provider: 'agentai',
+        toolCalls: [{ id: 'call-1', name: 'read_file', args: { file_path: '/test.txt' } }],
       });
+      mockRegistry.dispatch.mockResolvedValueOnce([
+        { id: 'call-1', name: 'read_file', result: { success: true, output: '文件内容', durationMs: 1, data: null } },
+      ]);
 
-      expect(spy).toHaveBeenCalled();
-      // 低风险工具不应该触发审批UI
+      await loop.run('读取文件');
+
+      expect(mockRegistry.dispatch).toHaveBeenCalled();
+      expect(approvalEmitted).toBe(false);
     });
 
-    it('高风险工具应该触发审批', async () => {
-      mockRouter.chat.mockResolvedValue({
-        content: '',
-        tool_calls: [{
-          id: 'call-1',
-          function: {
-            name: 'delete_file', // 高风险工具
-            arguments: JSON.stringify({ path: '/important.txt' }),
-          },
-        }],
+    it('planning 模式下删除文件应该触发审批, 批准后才 dispatch', async () => {
+      const { loop, mockRouter, mockRegistry } = createLoop({ mode: 'planning' });
+      const approvalIds: string[] = [];
+      loop.on('approval:required', (info: any) => {
+        approvalIds.push(info.id);
+        // 用户在下一个事件循环拍批准 (事件先于 waitForApproval 注册发出)
+        setImmediate(() => loop.resolveApproval(info.id, true));
       });
 
-      const spy = vi.spyOn(loop as any, 'requestApproval');
-      
-      await loop.processMessage({
-        content: '删除文件',
-        sessionId: 'test-session',
-        userId: 'test-user',
+      mockRouter.chat.mockResolvedValueOnce({
+        content: null,
+        provider: 'agentai',
+        toolCalls: [{ id: 'call-del', name: 'delete_file', args: { path: '/important.txt' } }],
       });
+      mockRegistry.dispatch.mockResolvedValueOnce([
+        { id: 'call-del', name: 'delete_file', result: { success: true, output: '已删除', durationMs: 1, data: null } },
+      ]);
 
-      // 高风险工具应该触发审批
-      expect(spy).toHaveBeenCalled();
+      await loop.run('删除文件');
+
+      expect(approvalIds.length).toBeGreaterThan(0);
+      expect(mockRegistry.dispatch).toHaveBeenCalledTimes(1);
     });
   });
 
   // ═══════════════════════════════════════════════════════════
-  // 测试3: 错误处理
+  // 测试 3: 错误处理
   // ═══════════════════════════════════════════════════════════
 
   describe('错误处理', () => {
-    it('LLM调用失败应该优雅降级', async () => {
-      mockRouter.chat.mockRejectedValue(new Error('API Error'));
+    it('LLM 调用失败应该优雅降级而不是抛出异常', async () => {
+      const { loop } = createLoop();
+      (loop as any)._testRouterError = true;
+      const router = (loop as any).router;
+      router.chat.mockRejectedValue(new Error('API Error'));
 
-      // 应该有fallback机制
-      const result = await loop.processMessage({
-        content: '测试',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
+      const result = await loop.run('测试');
 
-      // 即使失败也应该返回结果，而不是抛出
+      // 即使失败也应该返回结果对象，而不是抛出
       expect(result).toBeDefined();
+      expect(typeof result.content).toBe('string');
     });
 
-    it('工具执行失败应该记录错误', async () => {
-      mockRouter.chat.mockResolvedValue({
-        content: '',
-        tool_calls: [{
-          id: 'call-1',
-          function: {
-            name: 'read_file',
-            arguments: JSON.stringify({ path: '/nonexistent.txt' }),
-          },
-        }],
+    it('工具执行失败应该把错误写入工具日志且不中断整体流程', async () => {
+      const { loop, mockRouter, mockRegistry } = createLoop();
+
+      mockRouter.chat.mockResolvedValueOnce({
+        content: null,
+        provider: 'agentai',
+        toolCalls: [{ id: 'call-1', name: 'read_file', args: { file_path: '/nonexistent.txt' } }],
       });
+      mockRegistry.dispatch.mockResolvedValueOnce([
+        { id: 'call-1', name: 'read_file', result: { success: false, output: '[ERROR] 文件不存在', durationMs: 1, data: null } },
+      ]);
 
-      const result = await loop.processMessage({
-        content: '读取不存在的文件',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBeDefined();
-    });
-
-    it('应该处理超时情况', async () => {
-      mockRouter.chat.mockImplementation(() => 
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 100)
-        )
-      );
-
-      const result = await loop.processMessage({
-        content: '测试超时',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
+      const result = await loop.run('读取不存在的文件');
 
       expect(result).toBeDefined();
-      // 应该有超时处理逻辑
+      const toolMsgs = loop.getContext().appendOnlyLog.filter((m: any) => m.role === 'tool');
+      expect(toolMsgs.length).toBeGreaterThan(0);
+      expect(String(toolMsgs[0].content)).toContain('[ERROR]');
+    });
+
+    it('模型超时后重试成功应该正常返回', async () => {
+      const { loop, mockRouter } = createLoop({ maxIterations: 4 });
+
+      mockRouter.chat
+        .mockRejectedValueOnce(new Error('Timeout'))
+        .mockResolvedValueOnce({
+          content: LONG_REPLY,
+          provider: 'agentai',
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        });
+
+      const result = await loop.run('测试超时');
+
+      expect(result).toBeDefined();
+      expect(result.content).toBeTruthy();
     });
   });
 
   // ═══════════════════════════════════════════════════════════
-  // 测试4: 完成检测
+  // 测试 4: 完成与中断控制
   // ═══════════════════════════════════════════════════════════
 
-  describe('完成检测', () => {
-    it('应该正确检测任务完成', async () => {
-      mockRouter.chat.mockResolvedValue({
-        content: '任务已完成',
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
+  describe('完成与中断控制', () => {
+    it('歧义消息触发澄清, 用户响应后正常收敛', async () => {
+      const { loop } = createLoop();
+
+      // "完成这个任务" 命中歧义检测, 主循环会等待澄清; 模拟前端在事件循环下一拍回答
+      // (事件在 waitForClarification 注册前同步发出, 必须 setImmediate 延迟回复)
+      loop.on('clarify:required', (info: any) => {
+        setImmediate(() => loop.resolveClarification(info.id, {}));
       });
 
-      const result = await loop.processMessage({
-        content: '完成这个任务',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
+      const result = await loop.run('完成这个任务');
 
-      expect(result.isComplete).toBe(true);
-      expect(result.summary).toBeDefined();
+      expect(result.content).toBeTruthy();
+      expect(result.iterations).toBeGreaterThanOrEqual(0);
+    }, 20000);
+
+    it('abort() 后中断标志生效', async () => {
+      const { loop } = createLoop();
+      loop.abort();
+      expect((loop as any)._aborted || (loop as any).aborted).toBeTruthy();
     });
 
-    it('应该检测需要继续执行的情况', async () => {
-      mockRouter.chat.mockResolvedValue({
-        content: '我需要更多信息',
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
-      });
-
-      const result = await loop.processMessage({
-        content: '继续',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
-
-      expect(result.isComplete).toBe(false);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════
-  // 测试5: 上下文管理
-  // ═══════════════════════════════════════════════════════════
-
-  describe('上下文管理', () => {
-    it('应该维护会话上下文', async () => {
-      // 第一轮对话
-      mockRouter.chat.mockResolvedValue({
-        content: '你好，我是AI助手',
-      });
-
-      await loop.processMessage({
-        content: '你好',
-        sessionId: 'session-1',
-        userId: 'user-1',
-      });
-
-      // 第二轮对话，应该记住上下文
-      mockRouter.chat.mockResolvedValue({
-        content: '你刚才说你好',
-      });
-
-      const result = await loop.processMessage({
-        content: '我刚才说了什么',
-        sessionId: 'session-1',
-        userId: 'user-1',
-      });
-
-      // 验证上下文被传递
-      const callArgs = mockRouter.chat.mock.calls[1][0];
-      expect(callArgs.messages.length).toBeGreaterThan(2); // 包含历史消息
+    it('未知审批 ID 的 resolveApproval 返回 false', () => {
+      const { loop } = createLoop();
+      expect(loop.resolveApproval('non-existent-id', true)).toBe(false);
     });
 
-    it('应该限制上下文长度', async () => {
-      // 模拟大量历史消息
-      const longHistory = Array(50).fill(null).map((_, i) => ({
-        role: 'user',
-        content: `消息${i}`,
-      }));
-
-      mockRouter.chat.mockResolvedValue({
-        content: '回复',
-      });
-
-      await loop.processMessage({
-        content: '测试',
-        sessionId: 'test-session',
-        userId: 'test-user',
-        history: longHistory,
-      });
-
-      // 验证上下文被压缩或截断
-      const callArgs = mockRouter.chat.mock.calls[0][0];
-      expect(callArgs.messages.length).toBeLessThan(50);
+    it('waitForApproval 能被 resolveApproval 正确唤醒', async () => {
+      const { loop } = createLoop();
+      const pending = loop.waitForApproval('approval-test-1', 5000);
+      // 模拟用户在另一个并发回调中批准
+      setImmediate(() => loop.resolveApproval('approval-test-1', true));
+      await expect(pending).resolves.toBe(true);
     });
   });
 
   // ═══════════════════════════════════════════════════════════
-  // 测试6: 记忆系统
+  // 测试 5: 上下文日志
   // ═══════════════════════════════════════════════════════════
 
-  describe('记忆系统', () => {
-    it('应该记录重要信息到记忆', async () => {
-      const memorySpy = vi.spyOn(loop as any, 'writeMemory');
+  describe('上下文日志', () => {
+    it('run 后 appendOnlyLog 累积 assistant 消息', async () => {
+      const { loop } = createLoop();
 
-      mockRouter.chat.mockResolvedValue({
-        content: '我记住你喜欢用pnpm',
-      });
+      await loop.run('你好');
 
-      await loop.processMessage({
-        content: '我喜欢用pnpm而不是npm',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
-
-      // 验证记忆被写入
-      expect(memorySpy).toHaveBeenCalled();
+      const assistantMsgs = loop.getContext().appendOnlyLog.filter((m: any) => m.role === 'assistant');
+      expect(assistantMsgs.length).toBeGreaterThan(0);
     });
 
-    it('应该在后续对话中读取记忆', async () => {
-      // 先写入记忆
-      (loop as any).memory = {
-        read: vi.fn().mockResolvedValue(['用户偏好: pnpm']),
-        write: vi.fn(),
+    it('initialMessages 中的非 system 消息进入 appendOnlyLog', async () => {
+      const mockRouter: any = {
+        chat: vi.fn().mockResolvedValue({
+          content: LONG_REPLY,
+          provider: 'agentai',
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        }),
       };
+      const loop = new AgentAILoop(mockRouter as AgentAIRouter, { dispatch: vi.fn() } as any, [
+        { role: 'user', content: '历史消息 A' },
+      ], { maxIterations: 4, userId: 'test-user' });
 
-      mockRouter.chat.mockResolvedValue({
-        content: '好的，我用pnpm',
-      });
-
-      await loop.processMessage({
-        content: '安装依赖',
-        sessionId: 'test-session',
-        userId: 'test-user',
-      });
-
-      // 验证记忆被读取并用于上下文
-      const callArgs = mockRouter.chat.mock.calls[0][0];
-      expect(JSON.stringify(callArgs)).toContain('pnpm');
+      // 不 spy ensureContext, 仅验证 initialMessages 分流逻辑:
+      // 直接调用私有分流的等价路径成本过高, 这里验证构造器保存了初始消息
+      expect((loop as any).initialMessages).toHaveLength(1);
+      expect((loop as any).initialMessages[0].content).toBe('历史消息 A');
     });
   });
 });
 
 // ═══════════════════════════════════════════════════════════
-// 集成测试：端到端场景
+// 集成测试：端到端场景 (mock router/registry, 真实 loop 状态机)
 // ═══════════════════════════════════════════════════════════
 
 describe('AgentAILoop 集成测试', () => {
-  it('完整对话流程：问候 -> 任务 -> 完成', async () => {
-    // 这是一个完整的端到端测试
-    // 验证整个循环能正常工作
+  afterEach(() => {
+    vi.clearAllMocks();
   });
 
-  it('错误恢复流程：失败 -> 诊断 -> 重试 -> 成功', async () => {
-    // 验证错误处理和学习机制
+  it('完整对话流程：问候 -> 回复 -> 完成', async () => {
+    const { loop, mockRouter } = createLoop();
+
+    const result = await loop.run('你好，介绍一下你自己');
+
+    expect(mockRouter.chat).toHaveBeenCalled();
+    expect(result.content).toBeTruthy();
   });
 
-  it('多轮工具调用：工具A -> 结果 -> 工具B -> 完成', async () => {
-    // 验证复杂工具链
+  it('错误恢复流程：首轮失败 -> 重试 -> 成功', async () => {
+    const { loop, mockRouter } = createLoop();
+
+    mockRouter.chat
+      .mockRejectedValueOnce(new Error('网络抖动'))
+      .mockResolvedValueOnce({
+        content: LONG_REPLY,
+        provider: 'agentai',
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      });
+
+    const result = await loop.run('任务');
+
+    expect(result).toBeDefined();
+    expect(result.content).toBeTruthy();
+  });
+
+  it('多轮工具调用：工具 A -> 结果 -> 文本完成', async () => {
+    const { loop, mockRouter, mockRegistry } = createLoop();
+
+    mockRouter.chat
+      .mockResolvedValueOnce({
+        content: null,
+        provider: 'agentai',
+        toolCalls: [{ id: 'a', name: 'glob', args: { pattern: '*.ts' } }],
+      })
+      .mockResolvedValueOnce({
+        content: LONG_REPLY,
+        provider: 'agentai',
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      });
+    mockRegistry.dispatch.mockResolvedValueOnce([
+      { id: 'a', name: 'glob', result: { success: true, output: 'src/index.ts', durationMs: 1, data: null } },
+    ]);
+
+    const result = await loop.run('找一下 TS 文件');
+
+    expect(mockRegistry.dispatch).toHaveBeenCalledTimes(1);
+    expect(result.content).toBeTruthy();
   });
 });

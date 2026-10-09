@@ -9,9 +9,10 @@
   },
   "scripts": {
     "build": "tsc -p ./",
-    "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "vitest run"
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "axios": "^1.7.0",

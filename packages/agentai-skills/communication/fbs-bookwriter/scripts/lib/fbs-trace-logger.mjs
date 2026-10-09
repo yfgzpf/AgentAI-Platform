@@ -1,5 +1,5 @@
 /**
- * FBS 执行轨迹（JSONL，按日轮转，Hermes 式可审计最小集）
+ * FBS 执行轨迹（JSONL，按日轮转，PulseFlow 式可审计最小集）
  * 写入：bookRoot/.fbs/audit/trace-YYYY-MM-DD.jsonl
  */
 import fs from 'fs';

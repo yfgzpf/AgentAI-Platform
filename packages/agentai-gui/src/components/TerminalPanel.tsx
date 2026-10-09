@@ -1,6 +1,6 @@
 /**
  * TerminalPanel — 终端运行显示面板
- * 类似 Reasonix 的任务面板，显示终端命令执行过程和结果
+ * 类似 PulseFlow 的任务面板，显示终端命令执行过程和结果
  * 
  * 核心功能:
  * 1. 实时显示命令执行输出
@@ -313,7 +313,7 @@ const styles: Record<string, React.CSSProperties> = {
     right: 0,
     bottom: 0,
     background: 'rgba(0,0,0,0.5)',
-    zIndex: 1000,
+    zIndex: 'var(--z-modal)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',

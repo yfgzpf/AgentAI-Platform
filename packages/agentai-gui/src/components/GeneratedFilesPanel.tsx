@@ -45,12 +45,9 @@ export const GeneratedFilesPanel: React.FC = () => {
   }, [messages]);
 
   const handleOpen = (filePath: string) => {
-    // 触发全局事件, Editor 组件监听并打开文件
-    window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: filePath } }));
-    // 切换到编辑器视图
-    try {
-      window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
-    } catch {}
+    // P0: 先切换页面, 再走 pending 机制打开文件 (Editor 未挂载时事件不丢失)
+    window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
+    window.dispatchEvent(new CustomEvent('agentai:open-file-pending', { detail: { path: filePath } }));
     antdMsg.info(`正在打开: ${filePath.split(/[\\/]/).pop()}`);
   };
 

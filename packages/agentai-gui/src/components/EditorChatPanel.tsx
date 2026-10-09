@@ -202,11 +202,11 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
       <div
         onClick={() => openGlobalBrowser()}
         style={{
-          padding: '4px 10px', borderBottom: '1px solid #333',
+          padding: '4px 10px', borderBottom: '1px solid var(--border)',
           display: 'flex', alignItems: 'center', gap: 6,
           background: browserState.activeTabUrl
             ? 'linear-gradient(90deg, rgba(205, 122, 58, 0.12) 0%, rgba(26, 26, 34, 0.4) 100%)'
-            : '#161616',
+            : 'var(--bg)',
           cursor: 'pointer',
           fontSize: 10, color: '#999',
         }}
@@ -249,11 +249,11 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
 
       {/* 头部 */}
       <div style={{
-        padding: '6px 10px', borderBottom: '1px solid #333',
+        padding: '6px 10px', borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', gap: 4,
-        background: '#1a1a1a',
+        background: 'var(--bg-2)',
       }}>
-        <img src="./logo1.jpg" alt="AI" style={{ width: 16, height: 16, borderRadius: 3, objectFit: 'cover' }} />
+        <img src="/logo1.jpg" alt="AI" style={{ width: 16, height: 16, borderRadius: 3, objectFit: 'cover' }} />
         <span style={{ fontSize: 11, color: '#ccc', fontWeight: 600, marginRight: 4 }}>AI 对话</span>
         <Select
           size="small"
@@ -288,7 +288,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
       }}>
         {editorMsgs.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#666', fontSize: 11, padding: 20, marginTop: 20 }}>
-            <img src="./logo1.jpg" alt="AI" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover', marginBottom: 8 }} />
+            <img src="/logo1.jpg" alt="AI" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover', marginBottom: 8 }} />
             <div style={{ fontWeight: 600, color: '#888', fontSize: 12 }}>AI 对话</div>
             <div style={{ marginTop: 4, lineHeight: 1.6 }}>
               输入代码相关的问题<br />AI 可读取当前工作目录文件
@@ -356,8 +356,8 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
           disabled={loading}
           style={{
             width: '100%', padding: '6px 8px',
-            border: '1px solid #333', borderRadius: 8,
-            background: '#0f0f0f', color: '#ddd',
+            border: '1px solid var(--border)', borderRadius: 8,
+            background: 'var(--bg)', color: 'var(--fg)',
             fontSize: 12, lineHeight: 1.4,
             outline: 'none', resize: 'none', fontFamily: 'inherit',
             minHeight: 32, maxHeight: 80, boxSizing: 'border-box',

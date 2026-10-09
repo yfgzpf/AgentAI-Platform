@@ -1,5 +1,5 @@
 /**
- * fbs-context-fences.mjs — 产权边界：非用户话语的注入块统一围栏（对齐 Hermes memory-context 思想）
+ * fbs-context-fences.mjs — 产权边界：非用户话语的注入块统一围栏（对齐 PulseFlow memory-context 思想）
  */
 
 /** 会话摘要 / handoff：防止模型把历史摘要当本轮新指令 */

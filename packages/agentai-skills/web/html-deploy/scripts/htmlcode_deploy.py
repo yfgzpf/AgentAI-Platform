@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 
 BASE = "https://www.htmlcode.fun"
-UA = "OpenClaw html-deploy skill"
+UA = "AgentAI html-deploy skill"
 
 
 def request_json(url: str, method: str = "GET", payload: dict | None = None):

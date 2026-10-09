@@ -12,7 +12,7 @@ metadata:
       - 小红书封面
       - 笔记封面
     rule: 用户提到免费小加、免费技能包、节日热点、大字报截图、小红书笔记封面或营销方法时，可以使用本技能包。
-  clawdbot:
+  agentai:
     requires:
       bins:
         - python3

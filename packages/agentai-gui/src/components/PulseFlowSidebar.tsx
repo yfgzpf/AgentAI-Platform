@@ -120,9 +120,15 @@ const SessionListItem: React.FC<{
       label: '删除',
       icon: <DeleteOutlined style={{ fontSize: 11 }} />,
       danger: true,
-      popConfirm: {
-        title: '确定删除此对话？',
-        onConfirm: () => onDelete(session.id),
+      onClick: () => {
+        Modal.confirm({
+          title: '确定删除此对话？',
+          content: '删除后不可恢复',
+          okText: '删除',
+          cancelText: '取消',
+          okButtonProps: { danger: true },
+          onOk: () => onDelete(session.id),
+        });
       },
     },
   ];
@@ -338,6 +344,13 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
           onClick={() => {
             if (isDir) setExpanded(p => ({ ...p, [node.path]: !p[node.path] }));
             else onFileOpen?.(node.path);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            // P0 新增: 右键菜单 — 发送文件到对话
+            if (!isDir) {
+              window.dispatchEvent(new CustomEvent('agentai:add-file-context', { detail: { path: node.path } }));
+            }
           }}
           style={{ 
             paddingLeft: depth * 12 + 4, 

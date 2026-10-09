@@ -6,7 +6,7 @@ description_en: "Direct Playwright API browser automation: navigate, interact, s
 version: 2.0.0
 allowed-tools: Bash
 metadata:
-  openclaw:
+  agentai:
     emoji: "\U0001F3AD"
     os:
       - linux

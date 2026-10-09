@@ -1,7 +1,7 @@
 /**
  * FTS5Memory — SQLite FTS5 深层记忆检索
  * ----------------------------------------------------------------
- * 学自: Hermes Agent FTS5 session_search_tool.py
+ * Agent FTS5 session_search_tool.py
  * 
  * 架构:
  *   .agentai/memory.db (SQLite)

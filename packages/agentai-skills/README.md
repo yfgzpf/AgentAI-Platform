@@ -42,4 +42,4 @@ skills/
 
 ## 来源
 
-12 个可执行技能从 ZhiY.AI 项目 (`F:\openclaw迭代源码存放\智Y.AI\zhiy-ai\skills\`) 迁移。
+12 个可执行技能从 ZhiY.AI 项目 (`F:\agentai迭代源码存放\智Y.AI\zhiy-ai\skills\`) 迁移。

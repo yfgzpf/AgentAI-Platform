@@ -133,7 +133,7 @@ export const VoiceWakeIndicator: React.FC = () => {
           background: 'var(--card)', border: '1px solid var(--border)',
           borderRadius: 10, padding: '12px 14px',
           boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-          zIndex: 1000, width: 260,
+          zIndex: 'var(--z-modal)', width: 260,
           animation: 'msgSlideIn 0.2s ease',
         }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg-2)', marginBottom: 10 }}>

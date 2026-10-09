@@ -135,9 +135,9 @@ export const Avatar: React.FC<AvatarProps> = ({
         {state === 'error' && (
           <div
             style={{
-              position: 'absolute', right: -2, top: -2, zIndex: 5,
+              position: 'absolute', right: -2, top: -2, zIndex: 'var(--z-base)',
               width: 7, height: 7, borderRadius: '50%',
-              background: '#ef4444',
+              background: 'var(--danger)',
               border: '1.5px solid var(--panel, #141414)',
               boxShadow: '0 0 4px rgba(239,68,68,0.6)',
             }}
@@ -202,7 +202,7 @@ export const Avatar: React.FC<AvatarProps> = ({
               background: userPal!.grad,
               border: `${ringWidth}px solid ${userPal!.ring}`,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              color: '#fff',
+              color: 'var(--fg)',
               fontSize, fontWeight: 700, letterSpacing: 0,
               boxShadow: isPending
                 ? `0 0 6px 2px ${userPal!.ring}`
@@ -220,7 +220,7 @@ export const Avatar: React.FC<AvatarProps> = ({
                 pointerEvents: 'none',
               }}
             />
-            <span style={{ position: 'relative', zIndex: 1, textShadow: '0 1px 2px rgba(0,0,0,0.25)' }}>
+            <span style={{ position: 'relative', zIndex: 'var(--z-base)', textShadow: '0 1px 2px rgba(0,0,0,0.25)' }}>
               {userPal!.letter}
             </span>
           </div>

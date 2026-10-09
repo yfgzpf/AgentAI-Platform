@@ -1,21 +1,17 @@
 /**
  * Framework Adapter 接口
  * ----------------------------------------------------
- * 设计目的: 让 OpenClaw 和 Hermes 两个框架能在运行时热切换
+ * 自研双适配器运行时热切换: agentai (主框架) / pulseflow (强注入防御配置)
  *
- * 学自:
- *   - Hermes smart_model_routing.py (可插拔 provider 思路)
- *   - ZhiY.AI zhiy-agent-core.ts (多智能体角色注册)
- * 自创:
+ * 设计:
  *   - **runtime 切换**: 不重启 Gateway, 仅换 active adapter
- *   - **统一接口**: 抹平 OpenClaw AgentSession 和 Hermes AIAgent 的差异
- *
- * @see docs/INTEGRATION_ARCHITECTURE.md 第 5 节
+ *   - **统一接口**: 抹平两个适配器内部机制差异
+ *   - **能力查询**: 调用方按能力而非框架名选 adapter (decoupling)
  */
 
 import type { ChatMessage, ChatResponse } from '../llm-router.js';
 
-export type FrameworkId = 'openclaw' | 'hermes';
+export type FrameworkId = 'agentai' | 'pulseflow';
 
 export interface FrameworkCapabilities {
   /** 是否支持 parallel tool dispatch */
@@ -56,21 +52,19 @@ export interface FrameworkAdapter {
 
   /**
    * 初始化: 框架被激活时调用
-   * 学 Hermes AIAgent.__init__ + ZhiY zhiy-agent-core new AgentSession
    */
   init(ctx: FrameworkContext): Promise<void>;
 
   /**
    * 跑一轮对话
-   * 不同框架走不同内部机制:
-   *   - OpenClaw: AgentSession.messages 累加 + tool_calls 解析
-   *   - Hermes:  AIAgent.chat() with tool dispatcher
+   * 不同适配器走不同内部机制:
+   *   - agentai: 会话消息累加 + tool_calls 解析
+   *   - pulseflow: 4 段式提示 + 注入扫描
    */
   chat(messages: ChatMessage[], ctx: FrameworkContext): Promise<ChatResponse>;
 
   /**
    * 关闭: 框架被换下时调用
-   * 学 ZhiY AgentSession 销毁
    */
   shutdown(): Promise<void>;
 

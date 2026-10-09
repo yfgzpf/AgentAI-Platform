@@ -5,7 +5,7 @@
  * and the graceful degradation path (all providers unavailable).
  * No network calls — these are pure routing/state assertions.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentAIRouter, ChatRequest } from './llm-router.js';
 
 // Ensure deterministic state: no real keys present during tests.
@@ -92,24 +92,39 @@ describe('AgentAIRouter', () => {
 
   it('emits provider:failed when a locked provider throws', async () => {
     process.env.AGENTAI_API_KEY = 'invalid-test-key'; // present but invalid
-    const router = new AgentAIRouter();
-    router.recheckApiKeys();
-    let failedEmitted = false;
-    router.on('provider:failed', () => { failedEmitted = true; });
 
-    const req: ChatRequest = {
-      model: 'agentai',
-      messages: [{ role: 'user', content: 'hi' }],
-      userId: 'test',
-      workspace: '.',
-    };
+    // 拦截全局 fetch: 模拟服务端 401, 严禁真实外网访问
+    // (历史上该用例真实请求 api.agnes-ai.cn 并重试 3 次, 耗时 3~6s 且依赖网络)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { message: '无效的令牌', type: 'authentication_error' } }),
+        { status: 401, headers: { 'content-type': 'application/json' } },
+      ) as Response,
+    );
+
     try {
-      await router.chat(req);
-    } catch {
-      // expected — invalid key will fail; router may fall back to ranking
+      const router = new AgentAIRouter();
+      router.recheckApiKeys();
+      let failedEmitted = false;
+      router.on('provider:failed', () => { failedEmitted = true; });
+
+      const req: ChatRequest = {
+        model: 'agentai',
+        messages: [{ role: 'user', content: 'hi' }],
+        userId: 'test',
+        workspace: '.',
+      };
+      try {
+        await router.chat(req);
+      } catch {
+        // expected — invalid key will fail; router may fall back to ranking
+      }
+      // Whether it fell back or threw, an invalid key must surface a failure event.
+      expect(failedEmitted).toBe(true);
+      expect(fetchSpy).toHaveBeenCalled(); // 确认走的是 mock 而非真实网络
+    } finally {
+      fetchSpy.mockRestore();
+      restore();
     }
-    // Whether it fell back or threw, an invalid key must surface a failure event.
-    expect(failedEmitted).toBe(true);
-    restore();
-  });
+  }, 20000);
 });

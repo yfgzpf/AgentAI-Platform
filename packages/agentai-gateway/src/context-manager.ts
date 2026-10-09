@@ -1,7 +1,7 @@
 /**
  * ContextManager — 上下文压缩与缓存命中系统
  * ----------------------------------------------------
- * 学习 Hermes ContextCompressor + Reasonix 缓存策略:
+ * ContextCompressor + 缓存策略:
  *
  * 1. 上下文压缩: 当对话超过阈值时，用廉价模型压缩中间轮次
  *    - 保护头部 (system prompt + 首轮对话)
@@ -20,7 +20,7 @@ const FOLD_THRESHOLD = 0.60; // 60% 时触发压缩
 const TAIL_FRACTION = 0.25; // 尾部保留 25%
 const SUMMARY_TIMEOUT_MS = 15_000;
 
-// 结构化摘要模板 (学习 Hermes)
+// 结构化摘要模板
 const SUMMARY_TEMPLATE = `## 目标
 [用户正在尝试完成什么]
 
@@ -79,7 +79,7 @@ export function getCachedWorkspaceListing(workspace: string, freshListing: strin
 /**
  * 上下文压缩: 当对话超过阈值时压缩中间轮次
  *
- * 算法 (学习 Hermes ContextCompressor):
+ * 算法 (ContextCompressor):
  *   1. 估算总 token 数
  *   2. 如果超过阈值 → 保护头部 + 尾部
  *   3. 用廉价模型 (agentai) 生成结构化摘要
@@ -94,10 +94,28 @@ export async function maybeFold(
   userId: string,
 ): Promise<{ folded: boolean; beforeTokens: number; afterTokens: number; messagesRemoved: number }> {
   // 1. 估算总 token 数
+  // 2026-10-05 修复: 原实现只统计 `typeof m.content === 'string'` 的消息，
+  // 漏掉了 tool_calls 结构化内容 —— 而那恰恰是长任务里token 占用的大头
+  // （read_file 返回的代码、write_file 的 diff 都在结构化字段里）。
+  // 漏算导致 totalTokens 被严重低估 → 永远达不到 FOLD_THRESHOLD
+  // → maybeFold 形同虚设，实际保护工作全交给 agentai-loop:2771 那套粗暴逻辑
+  //（那条逻辑只看 messages.length > 30，压缩时会把工具记录整段丢掉）。
   let totalTokens = 0;
   for (const m of appendOnlyLog) {
     if (typeof m.content === 'string') {
       totalTokens += estimateTokens(m.content);
+    } else {
+      // 结构化内容（tool_calls / 多模态块）: 按序列化长度估算
+      try {
+        totalTokens += estimateTokens(JSON.stringify(m.content ?? ''));
+      } catch {
+        totalTokens += 500; // 序列化失败给个保守下限
+      }
+    }
+    // tool_calls 字段（OpenAI 协议）也可能挂在 message 上而非 content 里
+    const tcs = (m as any)?.tool_calls;
+    if (Array.isArray(tcs) && tcs.length > 0) {
+      try { totalTokens += estimateTokens(JSON.stringify(tcs)); } catch { /* ignore */ }
     }
   }
 
@@ -140,7 +158,23 @@ export async function maybeFold(
   }
 
   // 4. 生成结构化摘要 (使用免费模型 agentai)
-  const summary = await generateStructuredSummary(turnsToCompress, router, userId, workspace, previousSummary);
+  // P0 修复: 提取被压缩区域中 read_file 工具返回的文件内容, 附加到摘要请求中
+  // 避免压缩后 AI 丢失已读文件的具体内容 ("不重复读"纪律变成障碍)
+  const readFileContents: string[] = [];
+  for (const m of turnsToCompress) {
+    if (m.role === 'tool' && (m as any).name === 'read_file') {
+      const content = typeof m.content === 'string' ? m.content : '';
+      const args = (m as any).args || {};
+      const filePath = args.file_path || args.path || args.file || '(未知路径)';
+      // 截取文件内容前 800 字符作为关键内容缓存
+      const snippet = content.length > 800 ? content.slice(0, 600) + '\n...[截断]...\n' + content.slice(-200) : content;
+      readFileContents.push(`### ${filePath}\n\`\`\`\n${snippet}\n\`\`\``);
+    }
+  }
+  const fileCacheSection = readFileContents.length > 0
+    ? `\n\n## 已读文件内容缓存 (压缩前读取, 可直接引用无需重复读取)\n${readFileContents.join('\n\n')}`
+    : '';
+  const summary = await generateStructuredSummary(turnsToCompress, router, userId, workspace, previousSummary, fileCacheSection);
 
   // 5. 替换中间部分
   const summaryMsg = {
@@ -158,7 +192,7 @@ export async function maybeFold(
 }
 
 /**
- * 生成结构化摘要 (学习 Hermes 的结构化模板)
+ * 生成结构化摘要 (结构化模板)
  * 优先使用免费模型 agentai，不可用时降级
  */
 async function generateStructuredSummary(
@@ -167,6 +201,7 @@ async function generateStructuredSummary(
   userId: string,
   workspace: string,
   previousSummary: string | null,
+  fileCacheSection?: string,
 ): Promise<string> {
   // 序列化消息 (截断过长的工具输出)
   const serialized = messages
@@ -201,10 +236,14 @@ ${serialized}
     const timer = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
 
     // 优先使用免费模型 agentai 做摘要 (节省成本)
+    // P0 修复: 将已读文件内容缓存附加到摘要请求中, 避免压缩后 AI 丢失文件内容
+    const fullPrompt = fileCacheSection
+      ? `${prompt}\n\n${SUMMARY_TEMPLATE}\n${fileCacheSection}\n\n目标约3000 tokens。要具体——包含文件路径、命令输出、错误消息和具体值。"已读文件内容缓存"部分必须原样保留在摘要中, 不要省略。只输出摘要正文。`
+      : `${prompt}\n\n${SUMMARY_TEMPLATE}\n\n目标约2000 tokens。要具体——包含文件路径、命令输出、错误消息和具体值。只输出摘要正文。`;
     const res = await router.chat({
       model: 'agentai',
       messages: [
-        { role: 'system', content: `${prompt}\n\n${SUMMARY_TEMPLATE}\n\n目标约2000 tokens。要具体——包含文件路径、命令输出、错误消息和具体值。只输出摘要正文。` },
+        { role: 'system', content: fullPrompt },
       ],
       userId,
       workspace,
@@ -218,7 +257,7 @@ ${serialized}
 }
 
 /**
- * 工具输出修剪 (学习 Hermes 的廉价预处理)
+ * 工具输出修剪 (廉价预处理)
  * 在压缩前先修剪旧的工具输出，减少 token 消耗
  */
 export function pruneOldToolResults(messages: any[], protectTailCount: number = 10): { pruned: number; savedTokens: number } {

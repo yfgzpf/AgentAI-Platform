@@ -1,0 +1,246 @@
+/**
+ * WorkspaceManager — AI 工作目录动态配置与管理
+ * ----------------------------------------------------------------
+ * 核心概念:
+ *   1. AI 工作目录 (aiWorkDir)    = ~/.agentai  (存储 AI 运行时数据)
+ *      子目录: sessions/ memory/ skills/ worktrees/ cache/ config/
+ *   2. 项目操作目录 (projectDir)  = 用户选择 (AI 进行文件操作的工作区)
+ *
+ * 路径解析策略 (多层级):
+ *   1. 环境变量 AGENTAI_HOME — 部署时覆盖 (最高优先级)
+ *   2. 平台默认 ~/.agentai    — Windows: %USERPROFILE%\.agentai
+ *                                macOS/Linux: $HOME/.agentai
+ *   3. 回退 ./.agentai         — 无 home 目录时的 fallback
+ *
+ * 生命周期:
+ *   init() → 创建全部子目录 → ready
+ *   运行时: resolveAiPath() / resolveProjectPath() 路径解析
+ *   销毁时: (无特殊清理 — 数据持久化由上层控制)
+ *
+ * 跨平台兼容:
+ *   - Windows: os.homedir() → C:\Users\xxx 或 USERPROFILE
+ *   - macOS:   os.homedir() → /Users/xxx
+ *   - Linux:   os.homedir() → /home/xxx
+ *   - 路径分隔符: 始终用 path.join/path.resolve, 不硬编码 / 或 \
+ */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import { currentRequestWorkspace } from './request-scope.js';
+// ===== 标准化子目录结构 =====
+export const STANDARD_SUBDIRS = {
+    sessions: 'sessions', // 会话 checkpoint
+    memory: 'memory', // 全局记忆 (跨项目)
+    skills: 'skills', // 用户安装的技能
+    worktrees: 'worktrees', // Git worktree 缓存
+    cache: 'cache', // LLM 缓存 / embeddings
+    config: 'config', // sandbox rules, user-model, QQ config
+};
+// ===== 单例 =====
+let _instance = null;
+// ===== 工具函数 =====
+/** 获取用户主目录 (跨平台) */
+export function getUserHome() {
+    // 1. 环境变量 HOME (macOS/Linux/git-bash)
+    // 2. 环境变量 USERPROFILE (Windows)
+    // 3. os.homedir() (Node.js 内置, 最可靠)
+    // 4. 回退到 process.cwd()
+    const candidates = [
+        process.env.HOME,
+        process.env.USERPROFILE,
+        os.homedir(),
+    ];
+    for (const c of candidates) {
+        if (c && fs.existsSync(c))
+            return c;
+    }
+    // 极端回退: 在 cwd 下创建 .agentai
+    return process.cwd();
+}
+/** 确保目录存在 (递归创建) */
+function ensureDir(dir) {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+}
+// ===== WorkspaceManager 类 =====
+export class WorkspaceManager {
+    aiWorkDir;
+    projectDir;
+    _initialized = false;
+    _subdirs = new Map();
+    constructor(opts = {}) {
+        // 路径解析优先级: 构造参数 > 环境变量 > 平台默认
+        this.aiWorkDir = opts.aiWorkDir
+            || process.env.AGENTAI_HOME
+            || path.join(getUserHome(), '.agentai');
+        this.projectDir = opts.projectDir || process.cwd();
+    }
+    /** 初始化: 创建全部标准子目录 */
+    init() {
+        if (this._initialized)
+            return this;
+        ensureDir(this.aiWorkDir);
+        for (const [key, sub] of Object.entries(STANDARD_SUBDIRS)) {
+            const fullPath = path.join(this.aiWorkDir, sub);
+            ensureDir(fullPath);
+            this._subdirs.set(key, fullPath);
+        }
+        this._initialized = true;
+        return this;
+    }
+    // ========================
+    // 持久化: 工作区路径跨进程保存
+    // ========================
+    /** 持久化工作区配置到文件 (重启后恢复) */
+    _saveWorkspaceConfig() {
+        const configDir = path.join(this.aiWorkDir, 'config');
+        try {
+            if (!fs.existsSync(configDir))
+                fs.mkdirSync(configDir, { recursive: true });
+            fs.writeFileSync(path.join(configDir, 'workspace.json'), JSON.stringify({ projectDir: this.projectDir }, null, 2), 'utf-8');
+        }
+        catch (e) {
+            console.error('[workspace-manager] persist workspace config failed:', e);
+        }
+    }
+    /** 从持久化文件恢复工作区路径 */
+    _loadWorkspaceConfig() {
+        const configPath = path.join(this.aiWorkDir, 'config', 'workspace.json');
+        try {
+            if (fs.existsSync(configPath)) {
+                const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+                return data.projectDir || null;
+            }
+        }
+        catch { /* ignore */ }
+        return null;
+    }
+    /** 是否已初始化 */
+    get initialized() { return this._initialized; }
+    // ========================
+    // 路径解析 API
+    // ========================
+    /** 获取 AI 工作目录下的标准子目录完整路径 */
+    subdir(key) {
+        return this._subdirs.get(key) || path.join(this.aiWorkDir, key);
+    }
+    /**
+     * 解析相对于 AI 工作目录的路径
+     * @param relativePath 相对路径 (相对于 aiWorkDir)
+     * @returns 绝对路径
+     */
+    resolveAiPath(relativePath) {
+        return path.resolve(this.aiWorkDir, relativePath);
+    }
+    /**
+     * 解析相对于项目操作目录的路径 (文件操作用)
+     * @param relativePath 相对路径 (相对于 projectDir)
+     * @returns 绝对路径
+     */
+    resolveProjectPath(relativePath) {
+        // 2026-10-06 P0跨请求串扰修复: 绝对路径的越界校验与相对路径的基准
+        //   **必须用请求级工作区**，不是全局单例。
+        //   之前两者都用 this.projectDir，而该值会被routes/chat.ts 的请求体改写
+        //   → A 请求传进来的绝对路径可能因 projB 的 projectDir 而被误判为"越界"
+        //   → 反之 B 请求传 projA 的路径会被"合法"放行 → 直接读写他人项目。
+        //不在请求上下文中（后台任务/单测）→ 回退 projectDir，行为不变。
+        const base = currentRequestWorkspace() || this.projectDir;
+        if (!relativePath)
+            return base;
+        // 绝对路径: 验证是否在 projectDir 内
+        if (path.isAbsolute(relativePath)) {
+            const rel = path.relative(base, relativePath);
+            if (rel.startsWith('..') || path.isAbsolute(rel)) {
+                throw new Error(`Path "${relativePath}" is outside project directory "${base}". Use a relative path.`);
+            }
+            return relativePath;
+        }
+        return path.resolve(base, relativePath);
+    }
+    /**
+     * 设置当前项目目录 (前端选择后调用)
+     * 自动创建项目级 .agentai/ 子目录, 并持久化到磁盘
+     */
+    setProjectDir(dir) {
+        if (!fs.existsSync(dir)) {
+            throw new Error(`Project directory does not exist: ${dir}`);
+        }
+        this.projectDir = path.resolve(dir);
+        // 创建项目级记忆目录
+        ensureDir(path.join(this.projectDir, '.agentai', 'memory'));
+        // 持久化 (重启后恢复)
+        this._saveWorkspaceConfig();
+    }
+    // ========================
+    // 配置路径 (便捷方法)
+    // ========================
+    /** 沙箱规则文件路径 */
+    get sandboxRulesPath() {
+        return path.join(this.subdir('config'), 'sandbox-rules.json');
+    }
+    /** 用户模型文件路径 */
+    get userModelPath() {
+        return path.join(this.subdir('config'), 'user-model.json');
+    }
+    /** QQ 配置路径 */
+    get qqConfigPath() {
+        return path.join(this.subdir('config'), 'qq-config.json');
+    }
+    /** 全局记忆文件路径 */
+    get globalMemoryPath() {
+        return path.join(this.subdir('memory'), 'global-memory.json');
+    }
+    /** 项目记忆目录 */
+    get projectMemoryDir() {
+        return path.join(this.projectDir, '.agentai', 'memory');
+    }
+    /** LLM 缓存目录 */
+    get cacheDir() {
+        return this.subdir('cache');
+    }
+    /** 会话 checkpoint 目录 */
+    get sessionsDir() {
+        return this.subdir('sessions');
+    }
+    /** 技能根目录 */
+    get skillsDir() {
+        return this.subdir('skills');
+    }
+    // ========================
+    // 工具方法
+    // ========================
+    /** 获取状态摘要 (供前端 /status 查询) */
+    toJSON() {
+        const subdirs = {};
+        for (const [k, v] of this._subdirs) {
+            subdirs[k] = v;
+        }
+        return {
+            aiWorkDir: this.aiWorkDir,
+            projectDir: this.projectDir,
+            initialized: this._initialized,
+            subdirs,
+        };
+    }
+    /** 获取单例 (全局复用, 避免多处 new) */
+    static getInstance() {
+        if (!_instance) {
+            _instance = new WorkspaceManager();
+            // 尝试从持久化文件恢复上次的工作区路径
+            try {
+                const saved = _instance._loadWorkspaceConfig();
+                if (saved && fs.existsSync(saved)) {
+                    _instance.projectDir = saved;
+                    console.log(`[workspace-manager] 已从配置文件恢复工作区: ${saved}`);
+                }
+            }
+            catch { /* ignore */ }
+        }
+        return _instance;
+    }
+    /** 设置单例 */
+    static setInstance(instance) {
+        _instance = instance;
+    }
+}

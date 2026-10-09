@@ -116,7 +116,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
         right: 24,
         width: 380,
         maxWidth: 'calc(100vw - 48px)',
-        zIndex: 9999,
+        zIndex: 'var(--z-dragging)',
         borderRadius: 14,
         border: `2px solid ${theme.border}`,
         background: theme.bg,

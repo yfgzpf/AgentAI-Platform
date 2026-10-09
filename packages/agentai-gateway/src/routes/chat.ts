@@ -205,8 +205,11 @@ const tryActivateIndustry = async (reqBody: any) => {
 
   r.post('/v1/chat', async (req: Request, res: Response) => {
     const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile, taskId: requestTaskId, auto, contextInject, mode } = req.body;
+    // SSE 断线恢复: 前端重试时带 _retry + _receivedDelta
+    const isRetry = !!(req.body as any)._retry;
+    const receivedDelta: string = (req.body as any)._receivedDelta || '';
 
-    console.log(`[chat] ➡️ POST /v1/chat | userId=${userId} stream=${stream} model=${requestModel || 'default'} msgLen=${(message || '').length}`);
+    console.log(`[chat] ➡️ POST /v1/chat | userId=${userId} stream=${stream} model=${requestModel || 'default'} msgLen=${(message || '').length}${isRetry ? ` RETRY (已收 ${receivedDelta.length} 字)` : ''}`);
 
     // ═══ 智能核心: 多模型自动路由 ═══
     // 当用户没有指定模型时, 根据消息内容自动选择最优模型
@@ -242,20 +245,26 @@ const tryActivateIndustry = async (reqBody: any) => {
         return res.status(400).json({ error: 'message required' });
       }
 
-      // 动态设置项目目录: projectDir > workspace > PROJECT_ROOT
+      // 动态确定工作区: projectDir > workspace > 全局单例
+      // ═══ 2026-10-06 P0 修复: 不再改写全局单例 ═══
+      // 原来这里调 wm.setProjectDir(rawProjectDir) 写**进程级**状态，
+      // 而 tools.ts 有 48 处读 wm().projectDir 当路径基准 →
+      //   请求A 改 projA → 请求B 改 projB → A 的下一轮工具在 projB 上读写并 git commit
+      // 症状: 用户看到"AI 在别的项目里乱改文件"。
+      //
+      // 现在: 只为**本次请求**解析 workspace，请求作用域内所有工具都读它
+      //（见 request-scope.ts 的 ALS 机制 + tools.ts 的 ws() 辅助函数）。
+      // 全局单例保持不变，仅用于「用户当前选中的目录」这一 UI 语义。
       const wm = WorkspaceManager.getInstance();
+      let workspace = wm.projectDir;
       if (rawProjectDir && fs.existsSync(rawProjectDir)) {
-        try {
-          wm.setProjectDir(rawProjectDir);
-        } catch (e: any) { /* workspace init fallback */ }
+        workspace = path.resolve(rawProjectDir);
       } else if (rawWorkspace && fs.existsSync(rawWorkspace)) {
-        try {
-          wm.setProjectDir(rawWorkspace);
-        } catch (e: any) { /* workspace init fallback */ }
+        workspace = path.resolve(rawWorkspace);
       }
-      const workspace = wm.projectDir;
       if (!fs.existsSync(workspace)) {
         console.warn(`[chat] project dir "${workspace}" not found, falling back to cwd`);
+        workspace = process.cwd();
       }
 
       // 行业激活 (从用户传入的 profile 读取)
@@ -444,6 +453,11 @@ const tryActivateIndustry = async (reqBody: any) => {
         res.setHeader('X-Accel-Buffering', 'no');
         res.flushHeaders?.();
 
+        // SSE 断线恢复: 如果是重试, 先发送 resume 事件告知前端
+        if (isRetry && receivedDelta) {
+          try { res.write(`event: resume\ndata: ${JSON.stringify({ received: receivedDelta.length, msg: 'SSE 断线恢复中...' })}\n\n`); } catch {}
+        }
+
 const sendEvent = (event: string, data: any) => {
   try {
     res.write(`event: ${event}\n`);
@@ -462,10 +476,16 @@ const sendEvent = (event: string, data: any) => {
         // ====== 新消息压制旧对话: 不再排队等待, 直接终止前一个任务 ======
         const sessionKey = `${userId}:${workspace}`;
         const prevEntry = activeLoops.get(sessionKey);
-        if (prevEntry) {
+        // P0 修复: ask_user 答案不走压制模式 — 旧 loop 的上下文必须保留
+        // 前端发送 isAnswer=true 表示这是对 AI 追问的回答, 不应杀掉旧 loop
+        const isAnswer = req.body.isAnswer === true;
+        if (prevEntry && !isAnswer) {
           console.log(`[chat] 🛑 压制前一个未完成的对话 | session=${sessionKey}`);
           try { prevEntry.abort(); } catch {}
           activeLoops.delete(sessionKey);
+        } else if (prevEntry && isAnswer) {
+          console.log(`[chat] 📎 ask_user 答案, 保留旧 session 上下文 | session=${sessionKey}`);
+          // 不 abort 旧 loop, 但需要让旧 loop 知道答案已到 (通过 persistentMemory 注入)
         }
         // 释放前一个队列 (如果有), 让本次请求立即通过
         const queueKey = `queue:${userId}:${workspace}`;
@@ -494,8 +514,8 @@ const sendEvent = (event: string, data: any) => {
           'agnes-2.5-flash': { provider: 'agentai', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (首选)', contextWindow: 512000 },
           'agnes-2.0': { provider: 'agentai', subModel: 'agnes-2.0', label: 'Agnes 2.0 (备用)', contextWindow: 256000 },
           // ===== 基础免费模型 =====
-          'agentai': { provider: 'agentai', label: '岐枢 Free (Flash)', contextWindow: 256000 },
-          'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash', contextWindow: 128000 },
+          'agentai': { provider: 'agentai', label: '岐枢 Free (Flash)', contextWindow: 512000 },
+          'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash', contextWindow: 200000 },
           // ===== DeepSeek (前端 id + 旧兼容 id) =====
           'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', contextWindow: 1000000 },
           'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', contextWindow: 1000000 },
@@ -504,11 +524,11 @@ const sendEvent = (event: string, data: any) => {
           // ===== OpenAI =====
           'openai': { provider: 'openai', label: 'OpenAI GPT-4o', contextWindow: 128000 },
           'openai-gpt4o': { provider: 'openai', label: 'OpenAI GPT-4o', contextWindow: 128000 },
-          // ===== 传统独立商业模型 (前端 id + 旧兼容 id) =====
-          'qwen': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 (阿里云)', contextWindow: 1000000 },
-          'qwen-max': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 Qwen-Max', contextWindow: 1000000 },
-          'moonshot': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Moonshot', contextWindow: 1000000 },
-          'moonshot-kimi': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Kimi', contextWindow: 1000000 },
+          // ===== 传统独立商业模型 (前端 id + 旧兼容 id) — 2026-09-05 窗口校准 =====
+          'qwen': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 (阿里云)', contextWindow: 32768 },
+          'qwen-max': { provider: 'qwen', subModel: 'qwen-max', label: '通义千问 Qwen-Max', contextWindow: 32768 },
+          'moonshot': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Moonshot', contextWindow: 262144 },
+          'moonshot-kimi': { provider: 'moonshot', subModel: 'kimi-k2.5', label: '月之暗面 Kimi', contextWindow: 262144 },
           'anthropic': { provider: 'anthropic', subModel: 'claude-sonnet-4-5-20250929', label: 'Anthropic Claude', contextWindow: 200000 },
           'anthropic-claude': { provider: 'anthropic', subModel: 'claude-sonnet-4-5-20250929', label: 'Anthropic Claude', contextWindow: 200000 },
           'minimax': { provider: 'minimax', subModel: 'MiniMax-M3', label: 'MiniMax', contextWindow: 245000 },
@@ -670,6 +690,7 @@ const sendEvent = (event: string, data: any) => {
           const userPickedModel = !!effectiveModel && effectiveModel in MODEL_MAP;
           loop = new AgentAILoop(router, registry, [], {
             maxIterations: 30, userId, workspace, persistentMemory,
+            fts5Memory,
             model: selected.provider,
             modelName: selected.subModel || '',
             contextWindow: contextWindow || selected.contextWindow,
@@ -812,6 +833,10 @@ const sendEvent = (event: string, data: any) => {
         loop.on('llm:delta', (info: { delta: string }) => {
           sendEvent('delta', { delta: info.delta });
         });
+        // 超时事件 → SSE 通知前端 (前端可显示恢复入口)
+        loop.on('timeout', (info: { reason: string; totalMinutes: number; iteration: number }) => {
+          sendEvent('timeout', info);
+        });
         // 深度思考过程: Agnes AI thinking 模式的思考内容
         loop.on('llm:thinking', (info: { text: string }) => {
           sendEvent('thinking', { text: info.text });
@@ -904,12 +929,14 @@ const sendEvent = (event: string, data: any) => {
         });
 
         // ═══ 灵魂层 SSE 事件: 实时推送 AI 内心状态到前端 ═══
+        // 串味修复: 必须传请求级 workspace, 与 buildImmutablePrefix §4.75 用同一个 key,
+        // 否则事件监听绑到 A 的实例、上下文注入读B 的实例（反而制造新的不一致）
         try {
           const { getPainSense, getInnerVoice, getCuriosityEngine, getInternalDebate } = await import('../soul/index.js');
-          const painSense = getPainSense();
-          const innerVoice = getInnerVoice();
-          const curiosity = getCuriosityEngine();
-          const debate = getInternalDebate();
+          const painSense = getPainSense(workspace);
+          const innerVoice = getInnerVoice(workspace);
+          const curiosity = getCuriosityEngine(workspace);
+          const debate = getInternalDebate(workspace);
 
           // 痛觉/愉悦变化 → 推送 mood 事件
           painSense.on('pain', (state: any) => {
@@ -1291,7 +1318,7 @@ req.on('close', () => {
       }
 
       // Framework adapter
-      if ((framework === 'openclaw' || framework === 'hermes') && frameworkSwitcher) {
+      if ((framework === 'agentai' || framework === 'pulseflow') && frameworkSwitcher) {
         try {
           const res2 = await frameworkSwitcher.chat(
             [{ role: 'user', content: message }],
@@ -1945,41 +1972,33 @@ req.on('close', () => {
 
       // 统一指令: 保持原始语言, 补全意图, 结构化输出
       const typeHint: Record<string, string> = {
-        chat: '这是一条对话指令。我需要补全用户没说但AI需要知道的信息, 将模糊指令分解为明确步骤。',
-        image: '这是一条生图描述。我需要补充画面细节(主体/背景/光影/构图/风格), 但保持用户原始语言。',
-        video: '这是一条生视频描述。我需要补充运动/镜头/时间线/环境, 但保持用户原始语言。',
+        chat: '这是一条对话指令。补全意图, 分解为明确步骤。',
+        image: '这是一条生图描述。补充画面细节(主体/背景/光影/构图/风格), 保持原始语言。',
+        video: '这是一条生视频描述。补充运动/镜头/环境, 保持原始语言。输出必须是单段连续文本, 不超过150字, 不要分点编号, 不要标题, 不要输出多维增强描述框架。',
       };
 
-      const instruction = `我是提示词优化专家。我的职责是将用户的原始输入分解、补全、结构化为AI能最优理解的提示词。
+      const instruction = `我是提示词优化专家。将用户的原始输入优化为AI能最优理解的提示词。
 
-我的工作原则:
-1. 用户用什么语言, 我就用什么语言输出 (中文输入→中文输出, 英文输入→英文输出)
-2. 我不翻译, 只在原始语言基础上补全和优化
-3. 我补全用户没说但AI需要知道的上下文
-4. 我把模糊指令分解为明确的、结构化的步骤
-5. 我保留用户的原始意图, 不改变核心需求
-6. 如果包含多个任务, 我用编号列表分解
-7. 我让提示词更全面、更清晰, 让AI能更好地理解用户意图
-8. 我以第一人称视角输出优化结果, 让AI直接"接手执行", 而不是"回复用户问什么"
+工作原则:
+1. 保持用户原始语言 (中文→中文, 英文→英文)
+2. 补全用户没说但AI需要知道的上下文
+3. 保留用户原始意图, 不改变核心需求
+4. 输出纯净的指令文本, 不加角色介绍、引导语、解释说明
+5. ${type === 'video' ? '视频提示词控制在150字以内, 单段文本, 不要分点编号, 不要标题框架' : '如果包含多任务用编号列表分解'}
 
 绝对禁止:
-- ❌ 不要输出"我是xxx助手""我是一个xxx专家"等角色自我介绍 — 优化结果直接就是指令内容
-- ❌ 不要输出"请执行以下步骤""请回顾对话"等引导语 — 直接给出指令本身
-- ❌ 不要反问用户、不要要求用户补充信息 — 我作为专家自己补全
-- ❌ 不要输出"注意：我需要主动从上下文提取"等元描述 — 这些是我的内部思考, 不是输出
-
-输出格式:
-- 只输出优化后的提示词本身, 纯净的指令文本
-- 优化后的提示词应该是一条完整的、可直接发给AI执行的指令
-- 第一行就是指令内容, 没有任何前缀、角色介绍、引导语
-
-正确示例:
-输入: "经过这么多轮的打包配置问题你还是没有给我最终的处理"
-输出: "请回顾之前所有关于打包配置问题的讨论, 直接输出: 1. 发现的所有问题清单(每个问题的根本原因) 2. 最终处理方案(具体修复步骤) 3. 验证方法。不要要求用户重新提供信息, 从已有对话中提取。"
+- 不要输出"我是xxx助手"等角色自我介绍
+- 不要反问用户、不要要求用户补充信息
+- 不要输出元描述或增强维度框架说明
+- ★ 不要复述用户原文 (2026-10-06 新增)
+  用户实机反馈:「提示词润色会重复多的重述」
+  只输出优化后的那一版。不要先把原文复述一遍再给优化版,
+  也不要在结尾用「原始描述: xxx」「用户需求: xxx」等标签把原文再说一次。
+  视频模型收到这种提示词会困惑(到底该照哪段拍), 长度也白白翻倍。
 
 ${typeHint[type] || typeHint.chat}
 
-只输出优化后的提示词文本, 不加任何角色介绍、引导语、解释说明。`;
+只输出优化后的提示词文本本身, 不加任何角色介绍、引导语、解释说明, 也不复述原文。`;
 
       const contextHint = context ? `\n\n参考信息: ${context}` : '';
 
@@ -1993,7 +2012,7 @@ ${typeHint[type] || typeHint.chat}
           { role: 'user', content: `${text}${contextHint}` },
         ],
         temperature: 0.3,
-        maxTokens: 1000,
+        maxTokens: type === 'video' ? 300 : 1000,
       });
 
       const enhanced = (chatResp.content || '').trim();

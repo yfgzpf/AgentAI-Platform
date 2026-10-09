@@ -45,7 +45,16 @@ export class Sandbox {
     private audit: (e: SandboxAuditEvent) => void | Promise<void>;
     private reloadMs: number;
     private reloadTimer?: NodeJS.Timeout;
-    private lastMtime: number = 0;
+    /**
+     * 热重载判变状态（2026-10-06 修正）
+     *
+     * 设计: 快路径用 stat 元数据（mtimeMs + size），慢路径每秒一次内容指纹兜底。
+     *这样既覆盖 Windows 上 mtime 精度不足（同一窗口内两次写入 mtime 相同），
+     * 又不会在高频轮询（reloadIntervalMs=50）下反复 readFileSync 拖慢事件循环。
+     */
+    private lastFingerprint: string = '';
+    private lastStat: { m: number; s: number } | null = null;
+    private lastFingerprintAt: number = 0;
     private lastSource: 'file' | 'default' | 'invalid' = 'default';
     private lastErrors: string[] = [];
     private enabled: boolean;
@@ -72,7 +81,7 @@ export class Sandbox {
         this.lastSource = r.source;
         this.lastErrors = r.errors || [];
         await this.audit({ type: 'load', verdict: r.source, reason: `source=${r.source}` });
-        this.updateMtime();
+        this.updateFingerprint();
         // 启动热重载
         this.reloadTimer = setInterval(() => this.maybeReload(), this.reloadMs);
     }
@@ -92,7 +101,7 @@ export class Sandbox {
                 this.rules = r.rules;
                 this.lastSource = r.source;
                 this.lastErrors = r.errors || [];
-                this.updateMtime();
+                this.updateFingerprint();
                 this.reloadTimer = setInterval(() => this.maybeReload(), this.reloadMs);
             }
         } else {
@@ -119,19 +128,75 @@ export class Sandbox {
         }
     }
 
-    private updateMtime(): void {
+    /**
+     * 记录当前规则文件指纹（用于热重载判变）
+     *
+     * 2026-10-05 修复的原始问题: 只记 mtimeMs 且用 `m > lastMtime` 判变。
+     * **Windows 上同一时间戳精度内连续两次写入，mtimeMs 完全相同**（实测差值 = 0）
+     * → 用户在设置页改规则后，若上一次写入落在同一窗口内，
+     *   热重载会**静默忽略**这次修改（没有报错，规则不生效）。
+     *
+     * 2026-10-06 修正: 第一版修法改成"每轮读全文算哈希"，虽然解决了精度问题，
+     *   但引入了新问题 —— reloadIntervalMs 可配到50ms（测试里就是），
+     *   等于每 50ms 同步 readFileSync 一次；多实例时把事件循环占满，
+     *   vitest 收集阶段直接超时（实测 sandbox/index.test.ts 间歇性 10s 超时）。
+     *
+     * 现在用 mtime + size 双条件（statSync 是元数据读取，比读全文便宜两个数量级），
+     * 并在「mtime 没变但距上次检查超过 1s」时做一次内容指纹兜底 ——
+     * 这样既覆盖了 Windows 精度问题，又把全量读取摊到低频路径上。
+     */
+    private updateFingerprint(): void {
+        this.lastStat = this.readStat();
+        this.lastFingerprintAt = Date.now();
+    }
+
+    /** 读元数据（mtimeMs + size），读不到返回 null */
+    private readStat(): { m: number; s: number } | null {
         try {
-            this.lastMtime = fs.statSync(this.rulesPath).mtimeMs;
+            const st = fs.statSync(this.rulesPath);
+            return { m: st.mtimeMs, s: st.size };
         } catch {
-            this.lastMtime = 0;
+            return null;
         }
     }
 
+    /** 读文件并计算轻量指纹；读不到返回空串 */
+    private readFingerprint(): string {
+        try {
+            const text = fs.readFileSync(this.rulesPath, 'utf-8');
+            // FNV-1a 32bit：够用且无需引入 crypto
+            let h = 0x811c9dc5;
+            for (let i = 0; i < text.length; i++) {
+                h ^= text.charCodeAt(i);
+                h = Math.imul(h, 0x01000193);
+            }
+            return `${text.length}:${(h >>> 0).toString(36)}`;
+        } catch {
+            return '';
+        }
+    }
+
+    /** 兜底全量指纹的最小间隔（ms）—— 避免高频轮询时反复读全文 */
+    private static readonly FP_FALLBACK_MS = 1000;
+
     private async maybeReload(): Promise<void> {
         try {
-            const m = fs.statSync(this.rulesPath).mtimeMs;
-            if (m > this.lastMtime) {
-                this.lastMtime = m;
+            // 快路径: mtime 或 size 变了 → 立刻重载
+            const st = this.readStat();
+            const statChanged = !!st && (!this.lastStat || st.m !== this.lastStat.m || st.s !== this.lastStat.s);
+            // 慢路径兜底: mtime 因Windows 精度没变，但已超过 1s 未做内容校验
+            const needFp = !statChanged && (Date.now() - this.lastFingerprintAt) >= Sandbox.FP_FALLBACK_MS;
+            if (!statChanged && !needFp) return;
+
+            if (statChanged) {
+                this.lastStat = st;
+            } else {
+                const fp = this.readFingerprint();
+                this.lastFingerprintAt = Date.now();
+                if (!fp || fp === this.lastFingerprint) return;
+                this.lastFingerprint = fp;
+            }
+            {
                 const r = await load(this.rulesPath);
                 this.rules = r.rules;
                 this.lastSource = r.source;
@@ -190,7 +255,7 @@ export class Sandbox {
         this.rules = r.rules;
         this.lastSource = r.source;
         this.lastErrors = [];
-        this.updateMtime();
+        this.updateFingerprint();
         await this.audit({ type: 'set', verdict: 'ok', ruleVersion: r.rules.version });
         return { ok: true };
     }

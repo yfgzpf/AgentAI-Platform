@@ -325,7 +325,7 @@ export const MusicPlayer: React.FC<{
       border: '1px solid var(--border)',
       borderRadius: 12,
       boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-      zIndex: 1000,
+      zIndex: 'var(--z-modal)',
       overflow: 'hidden',
       animation: 'msgSlideIn 0.25s cubic-bezier(0.16,1,0.3,1) forwards',
     }}>

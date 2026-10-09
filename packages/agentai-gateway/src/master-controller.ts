@@ -1,7 +1,7 @@
 /**
  * MasterController — 主控AI系统
  * ----------------------------------------------------
- * 学自: Reasonix subagent.ts + Hermes dynamic subagent + DeerFlow Plan Mode
+ * subagent.ts + dynamic subagent + DeerFlow Plan Mode
  * 核心: DeepSeek V4 Flash 作为主控"大脑"
  *   1. 意图理解 → 2. 任务规划 → 3. 子Agent分派 → 4. 结果汇总
  *

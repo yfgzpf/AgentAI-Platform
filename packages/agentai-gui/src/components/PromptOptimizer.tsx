@@ -62,7 +62,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
         marginBottom: 8,
         background: 'var(--card)', border: '1px solid var(--border)',
         borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-        maxHeight: 400, overflowY: 'auto', zIndex: 200,
+        maxHeight: 400, overflowY: 'auto', zIndex: 'var(--z-drawer)',
         animation: 'msgSlideIn 0.25s cubic-bezier(0.16,1,0.3,1) forwards',
       }}>
         {/* Header */}

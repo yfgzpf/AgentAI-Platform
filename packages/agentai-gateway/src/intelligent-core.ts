@@ -322,7 +322,8 @@ const SEMANTIC_MAP: Record<string, string[]> = {
 };
 
 export function semanticSearch(query: string, files: string[]): string[] {
-  const normalized = query.toLowerCase();
+if (!query || typeof query !== 'string') return [];
+const normalized = query.toLowerCase();
   // 扩展查询: 语义同义词
   const searchTerms = new Set<string>([normalized]);
   for (const [cn, en] of Object.entries(SEMANTIC_MAP)) {

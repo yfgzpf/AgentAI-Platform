@@ -74,7 +74,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 9999,
+      position: 'fixed', inset: 0, zIndex: 'var(--z-dragging)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -184,7 +184,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
           {step === 'done' && (
             <div style={{ textAlign: 'center', animation: 'fadeIn 0.5s ease' }}>
               <div style={{ fontSize: 64, marginBottom: 16 }}>{avatar}</div>
-              <h2 style={{ color: '#fff', margin: '0 0 12px', fontSize: 28, fontWeight: 700 }}>
+              <h2 style={{ color: 'var(--fg)', margin: '0 0 12px', fontSize: 28, fontWeight: 700 }}>
                 欢迎回来，{name.trim() || '用户'}！
               </h2>
               <p style={{ color: 'rgba(255,255,255,0.6)', margin: '0 0 32px', fontSize: 14 }}>

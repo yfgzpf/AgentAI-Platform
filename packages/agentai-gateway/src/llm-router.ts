@@ -2,15 +2,15 @@
 /**
  * AgentAI 智能路由门面
  * ----------------------------------------------------
- * 自创整合: 融合 3 框架精华
- *   - Hermes smart_model_routing.py  (按成本/延迟/成功率排序)
- *   - Reasonix Pillar 1 缓存          (immutable prefix 命中短路)
- *   - Reasonix Pillar 2 修复          (4 步修复管道)
- *   - WorkBuddy 三层记忆              (写入工作空间记忆)
+ * 自研设计:
+ *   - smart_model_routing (按成本/延迟/成功率排序)
+ *   - Pillar 1 缓存      (immutable prefix 命中短路)
+ *   - Pillar 2 修复      (4 步修复管道)
+ *   - 三层记忆           (写入工作空间记忆)
  *
- * 不照搬的:
- *   - 不抄 Hermes 30+ provider 配置 (我们只 4 个: agentai, deepseek, openai, zhipu)
- *   - 不抄 Reasonix `<<<NEEDS_PRO>>>` (我们有自动降级)
+ * 取舍:
+ *   - 不堆叠 30+ provider 配置 (精简为常用几个: agentai/deepseek/openai/zhipu 等)
+ *   - 不用占位符协议 (以自动降级替代)
  *
  * 核心创新:
  *   - 中文提示注入扫描 (20+ 正则, 覆盖 Chinese trick patterns)
@@ -23,7 +23,7 @@
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
 import { createRequire } from 'module';const _require = createRequire(import.meta.url);const { LRUCache } = _require('lru-cache');
-import { estimateMessagesTokens, estimateStringTokens, estimateToolCallsTokens } from './token-utils.js';
+import { estimateMessagesTokens, estimateStringTokens, estimateToolCallsTokens, estimateContentTokens } from './token-utils.js';
 import { routeByScore, getSubModel } from './model-classifier.js';
 import { getModelContextWindow, getDefaultContextWindow, getCapability } from './model-capabilities.js';
 import { modelMetrics } from './model-metrics-service.js';
@@ -189,7 +189,7 @@ export class AgentAIRouter extends EventEmitter {
   private providers = new Map<ProviderId, ProviderStats>();
   /** LRU 缓存: prefix hash -> 响应 */
   private cache: LRUCache<string, ChatResponse>;
-  /** append-only log (学 Reasonix Pillar 1) */
+  /** append-only log (Pillar 1) */
   private appendOnlyLog: Array<{ ts: number; req: ChatRequest; res: ChatResponse }> = [];
   /** circuit breaker cooldown (2 分钟, 商业模型更快恢复) */
   private static readonly CB_COOLDOWN_MS = 2 * 60 * 1000;
@@ -423,24 +423,21 @@ factory: 'FACTORY_CHAT_KEY',
 
   /**
    * 入口: 智能 chat
-   * 融合 3 框架:
-   *   1. 缓存命中短路 (学 Reasonix Pillar 1)
-   *   2. 智能路由选 provider (学 Hermes + Reasonix)
-   *   3. 提示注入扫描 (学 Hermes + 自创中文版)
-   *   4. 4 步修复管道 (学 Reasonix Pillar 2)
-   *   5. append-only log (学 Reasonix)
-   *   6. 反思门 (自创: 每 10 轮触发)
+   * 处理链:
+   *   1. 缓存命中短路 (Pillar 1)
+   *   2. 智能路由选 provider
+   *   3. 提示注入扫描 (含自创中文版)
+   *   4. 4 步修复管道 (Pillar 2)
+   *   5. append-only log
+   *   6. 反思门 (每 10 轮触发)
    */
   async chat(req: ChatRequest): Promise<ChatResponse> {
-    // === Step 1: cost guard (学 Reasonix Pillar 3) ===
+    // === Step 1: cost guard (Pillar 3) ===
     // 不再 throw, 仅标记超限, 免费模型继续可用
     const budgetOk = this.checkCostGuard();
     if (!budgetOk) {
       console.info('[cost-guard] 日预算已超限, 仅允许免费模型');
     }
-
-    // 跟踪指定模型是否已尝试失败 (用于降级时放开 forceProvider)
-    let specifiedModelFailed = false;
 
 // 免费模型池: 这些可以互相切换 (sensenova/longcat 有免费额度, 也加入)
 const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat']);
@@ -448,59 +445,23 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
     // 用户选了付费模型 → 只锁该 provider, 不 fallback 到免费池
     const isPremiumModel = req.model && !isFreeModel(req.model);
 
-    // === Step 1.5: 如果调用方指定 model, 锁定到该 provider (不跑 rank) ===
-    //     但如果该 provider 失败, 自动降级到 ranking 里的下一个
-    if (req.model) {
-      // 动态注册自定义 provider (不在内置 providers Map 中的)
-      if (!this.providers.has(req.model) && req.modelConfig) {
-        this.providers.set(req.model, {
-          id: req.model,
-          costPer1kInput: 0.0,
-          costPer1kOutput: 0.0,
-          totalCalls: 0,
-          successCount: 0,
-          failureCount: 0,
-          recentLatencyMs: [],
-          tripped: false,
-        });
-      }
-      const target = this.providers.get(req.model);
-      if (target) {
-        // 付费模型不在 ranking 中兜底 — circuit open 时返回空内容让 loop 救场链处理
-        const premiumEmpty = (): ChatResponse => ({
-          content: '',
-          provider: req.model as ProviderId,
-          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
-          durationMs: 0,
-        });
-        if (this.isCircuitOpen(target)) {
-          this.tryRecoverCircuit(target);
-          if (this.isCircuitOpen(target)) {
-            console.warn(`[router] requested provider ${req.model} is tripped`);
-            if (isPremiumModel) return premiumEmpty();
-            specifiedModelFailed = true;
-          } else {
-            try {
-              return await this.tryOne(target, req, req.subModel);
-            } catch (err) {
-              console.warn(`[router] ${req.model} failed (${(err as Error).message?.slice(0, 80)}`);
-              if (isPremiumModel) return premiumEmpty();
-              specifiedModelFailed = true;
-            }
-          }
-        } else {
-          try {
-            return await this.tryOne(target, req, req.subModel);
-          } catch (err) {
-            console.warn(`[router] ${req.model} failed (${(err as Error).message?.slice(0, 80)}`);
-            if (isPremiumModel) return premiumEmpty();
-            specifiedModelFailed = true;
-          }
-        }
-      }
+    // === Step 1.5 (简化 2026-09-04): 动态注册自定义 provider; 请求收敛到 Step 4 统一发送 ===
+    // 修复: 原 Step1.5"同模型先试一次" + Step4"再对同模型重试 MAX_RETRY=3" = 同模型最多连打 4 次,
+    // 429/超时场景还会各自叠加等冷却时间。现改为只负责注册, 由 Step 4 做 ≤3 次尝试, 行为一致、少 1 次重复调用。
+    if (req.model && !this.providers.has(req.model) && req.modelConfig) {
+      this.providers.set(req.model, {
+        id: req.model,
+        costPer1kInput: 0.0,
+        costPer1kOutput: 0.0,
+        totalCalls: 0,
+        successCount: 0,
+        failureCount: 0,
+        recentLatencyMs: [],
+        tripped: false,
+      });
     }
 
-    // === Step 2: 缓存命中 (学 Reasonix Pillar 1) ===
+    // === Step 2: 缓存命中 (Pillar 1) ===
     const requestHash = this.hashRequest(req);
     // 检索所有 provider 的缓存 (key 格式: ${provider}:${hash})
     for (const [providerId, cached] of this.cache.entries()) {
@@ -636,11 +597,25 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
 
     // ═══ 单模型优先策略: 用户选择的模型优先, 失败后才尝试其他模型 ═══
     // 2026-07-26 重构: 参考 ZCode, Agnes AI 运行稳定不需要频繁切换
+    // 2026-09-04: 合并 Step1.5 后在此恢复 premiumEmpty 语义 —
+    //   付费模型"熔断/重试耗尽 → 空响应交 loop 救援链 (不轮换到免费池)"; 免费模型 → 走下方备用轮换
 
     // 如果用户指定了模型, 先尝试该模型 (带重试)
     if (req.model) {
       const targetProvider = this.providers.get(req.model as ProviderId);
-      if (targetProvider && !this.isCircuitOpen(targetProvider)) {
+      // 付费模型固定调用: 失败不轮换 → 空响应交 loop 救援链处理
+      const premiumEmpty = (): ChatResponse => ({
+        content: '',
+        provider: req.model as ProviderId,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+        durationMs: 0,
+      });
+      // isCircuitOpen() 内部已先自动尝试恢复; 若仍熔断 →
+      //   付费模型直接空返; 免费指定模型跳过直接尝试 (走下方备用轮换)
+      if (targetProvider && this.isCircuitOpen(targetProvider)) {
+        console.warn(`[router] requested provider ${req.model} is tripped`);
+        if (isPremiumModel) return premiumEmpty();
+      } else if (targetProvider) {
         // 对用户指定的模型进行最多 MAX_RETRY 次重试
         for (let retry = 0; retry < MAX_RETRY; retry++) {
           try {
@@ -667,7 +642,6 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
         console.warn(`[router] ${req.model} failed after ${MAX_RETRY} retries, trying fallback`);
         this.recordFailure(targetProvider, new Error(`${MAX_RETRY} retries exhausted`));
         // 付费模型: 重试失败后不轮换到其他模型, 返回空响应让 loop 链处理
-        // 只有免费模型 (agnes/zhipu) 才 fallback 到其他免费模型
         if (isPremiumModel) {
           console.info(`[router] 付费模型 ${req.model} 重试失败, 不轮换到其他模型 (付费模型固定调用)`);
           return premiumEmpty();
@@ -714,7 +688,9 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
     }
 
     // All providers failed — emergency recovery
-    // 尝试强制恢复免费 provider, 尊重冷却但不完全跳过
+    // 尝试兜底免费 provider, 尊重熔断冷却, 不强制解除
+    // 2026-09-04: 移除 force-untrip — 原逻辑对宕机/被熔断 provider 每请求强试一次,
+    //   完全绕过 2 分钟熔断冷却; 现仅尝试"未被熔断且未限流"的免费池 (补 ranked 未覆盖的 alias)
     const freeProviders = ['agnes', 'zhipu', 'agentai'] as ProviderId[];
     let allCooling = true;
     let shortestCooldown = Infinity;
@@ -728,13 +704,9 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
         if (remaining > 0 && remaining < shortestCooldown) shortestCooldown = remaining;
         continue;
       }
+      if (this.isCircuitOpen(p)) continue; // 熔断中, 尊重冷却 (isCircuitOpen 已尝试自动恢复)
       allCooling = false;
 
-      // 强制解除熔断, 给一次机会
-      p.tripped = false;
-      p.trippedAt = undefined;
-      p.failureCount = 0;
-      console.log(`[router] emergency recovery: force-untripped ${fp}`);
       try {
         return await this.tryOne(p, req);
       } catch (err) {
@@ -743,7 +715,7 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
       }
     }
 
-    // 所有免费 provider 都在冷却 — 等待最短冷却后重试
+    // 所有免费 provider 都在限流冷却 — 等待最短冷却后重试一次
     if (allCooling && shortestCooldown < Infinity) {
       const wait = Math.min(shortestCooldown, 5000);
       console.info(`[router] all free providers cooling, waiting ${wait}ms...`);
@@ -752,9 +724,7 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
       for (const fp of freeProviders) {
         const p = this.providers.get(fp);
         if (!p || this.isRateLimited(p)) continue;
-        p.tripped = false;
-        p.trippedAt = undefined;
-        p.failureCount = 0;
+        if (this.isCircuitOpen(p)) continue; // 尊重熔断冷却
         try {
           return await this.tryOne(p, req);
         } catch (err) {
@@ -770,11 +740,8 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
         const wait = Math.min((deepseekProvider.rateLimitCooldownUntil ?? Date.now()) - Date.now(), 3000);
         if (wait > 0) await new Promise(r => setTimeout(r, wait));
       }
-      if (!this.isRateLimited(deepseekProvider)) {
+      if (!this.isRateLimited(deepseekProvider) && !this.isCircuitOpen(deepseekProvider)) {
         console.info('[router] lightning swap: all free failed, trying deepseek-v4-flash');
-        deepseekProvider.tripped = false;
-        deepseekProvider.trippedAt = undefined;
-        deepseekProvider.failureCount = 0;
         try {
           // 降级时关闭 thinking 模式 (避免 reasoning_content 兼容性问题)
           const fallbackReq = { ...req, thinking: false };
@@ -793,11 +760,8 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
         const wait = Math.min((dxntProvider.rateLimitCooldownUntil ?? Date.now()) - Date.now(), 3000);
         if (wait > 0) await new Promise(r => setTimeout(r, wait));
       }
-      if (!this.isRateLimited(dxntProvider)) {
+      if (!this.isRateLimited(dxntProvider) && !this.isCircuitOpen(dxntProvider)) {
         console.info('[router] emergency fallback: trying dxnt free-route');
-        dxntProvider.tripped = false;
-        dxntProvider.trippedAt = undefined;
-        dxntProvider.failureCount = 0;
         try {
           return await this.tryOne(dxntProvider, req, 'free-route');
         } catch (err) {
@@ -1013,7 +977,7 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
     console.log('[cost-guard] 已手动重置, 日预算清零');
   }
 
-  // ===== 工具调用 4 步修复管道 (学 Reasonix Pillar 2) =====
+  // ===== 工具调用 4 步修复管道 (Pillar 2) =====
   private async repairPipeline(raw: any): Promise<{ content: string; toolCalls?: ToolCall[] }> {
     // Step 1: flatten - 把嵌套对象压成点号 notation
     let repaired = this.flattenToolCalls(raw);
@@ -1269,7 +1233,7 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
   }
 
   private flattenToolCalls(raw: any): any {
-    // 学自: Reasonix repair/flatten.ts
+    // repair/flatten.ts
     if (raw.toolCalls) {
       raw.toolCalls = raw.toolCalls.map((tc: ToolCall) => ({
         ...tc,
@@ -1294,7 +1258,7 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
   }
 
   private scavengeFromThink(raw: any): any {
-    // 学自: Reasonix repair/scavenge.ts
+    // repair/scavenge.ts
     // 从 LLM 输出的 <think> 块里找被吞的 tool_call JSON
     if (typeof raw.content === 'string') {
       const thinkMatch = raw.content.match(/<think>([\s\S]*?)<\/think>/);
@@ -1315,7 +1279,7 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
   }
 
   private detectCallStorm(raw: any): any {
-    // 学自: Reasonix repair/storm.ts
+    // repair/storm.ts
     // 同一 tool + 同样 args 连续调 3 次以上, 警告
     if (raw.toolCalls && raw.toolCalls.length >= 3) {
       const signatures = raw.toolCalls.map((tc: ToolCall) => `${tc.name}:${JSON.stringify(tc.args)}`);
@@ -1398,16 +1362,16 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
     // ================================================
     
     // 真接 5 个内置 provider (OpenAI 兼容协议)
-    // agentai: apihub.agnes-ai.com/v1/chat/completions (支持 tools / thinking / image_url)
+    // agentai: apihub.agnes-ai.cn/v1/chat/completions (支持 tools / thinking / image_url)
     // deepseek: api.deepseek.com/v1/chat/completions
     // openai: api.openai.com/v1/chat/completions
     // zhipu: open.bigmodel.cn/api/paas/v4 (GLM-4.7-Flash 免费)
     // Provider 配置 (默认值可通过 .env 环境变量覆盖)
     const PROVIDER_DEFAULTS: Record<string, { keyEnv: string; baseEnv: string; defaultBase: string; modelEnv: string; defaultModel: string }> = {
-      // Agnes AI (agnes-2.5-flash 首选, agnes-2.0 备用)
-      agnes: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://api.agnes-ai.cn/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-2.5-flash' },
+      // Agnes AI (agnes-3.0-flash 首选, agnes-2.5 备用)
+      agnes: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://api.agnes-ai.cn/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-3.0-flash' },
       // 兼容旧版 agentai provider
-      agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://api.agnes-ai.cn/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-2.5-flash' },
+      agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://api.agnes-ai.cn/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-3.0-flash' },
       deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-v4-flash' },
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
       zhipu:   { keyEnv: 'ZHIPU_API_KEY',   baseEnv: 'ZHIPU_BASE_URL',   defaultBase: 'https://open.bigmodel.cn/api/paas/v4', modelEnv: 'ZHIPU_MODEL', defaultModel: 'glm-4.7-flash' },
@@ -1558,29 +1522,41 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
       // ═══ 2026-08-03: system 消息预算上限 = 80K tokens ═══
       // 原因: buildImmutablePrefix 拼接 30+ 个 system 块 (工具描述+规则+记忆+项目文档),
       //       容易吃光 token 预算, 导致对话历史的 user 消息被截断 → API 返回 "No user query found"
-      // 策略: 从旧到新裁剪 system 消息, 保留最近追加的 (演化规则/最新记忆)
+      // ═══ 2026-09-04 P0 修复 (两处) ═══
+      // 1) token 估算: 原 char.length*0.7 对中文低估约 2 倍 (中文≈1.5token/字) → 实际超窗 API 400;
+      //    对英文又高估 ~3 倍 → 过早截断历史。统一改用 estimateContentTokens 启发式 (CJK 感知)。
+      // 2) 裁剪方向: 原"从旧到新、超限即 break"实际保留最旧、丢弃最新追加的 [SYSTEM] 指令/记忆,
+      //    与注释"保留最近追加的"相反 → 长任务 AI 失忆。改为: 恒保留首条身份消息 + 从最新往前保留。
       const SYSTEM_BUDGET = 80_000; // system 消息最多 80K tokens
-      let sysTotal = 0;
-      const trimmedSystem: ChatMessage[] = [];
-      for (const m of systemMsgs) {
-        const est = Math.ceil((typeof m.content === 'string' ? m.content : '').length * 0.7);
-        if (sysTotal + est > SYSTEM_BUDGET && trimmedSystem.length > 0) {
-          console.warn(`[truncate] system budget ${sysTotal} > ${SYSTEM_BUDGET}, dropping ${trimmedSystem.length} system msgs`);
-          break;
+      const sysMsgEst = (m: ChatMessage) => Math.ceil(estimateContentTokens(m.content));
+      if (systemMsgs.length === 0) {
+        totalEst = 0;
+      } else {
+        let sysTotal = 0;
+        const keepIdx = new Set<number>([0]); // 首条身份/system 引导恒保留
+        sysTotal += sysMsgEst(systemMsgs[0]);
+        for (let i = systemMsgs.length - 1; i >= 1; i--) {
+          const est = sysMsgEst(systemMsgs[i]);
+          if (sysTotal + est > SYSTEM_BUDGET) break;
+          sysTotal += est;
+          keepIdx.add(i);
         }
-        sysTotal += est;
-        trimmedSystem.push(m);
+        const trimmedSystem: ChatMessage[] = [];
+        systemMsgs.forEach((m, i) => { if (keepIdx.has(i)) trimmedSystem.push(m); });
+        if (trimmedSystem.length < systemMsgs.length) {
+          console.warn(`[truncate] system budget exceeded (est ${sysTotal}), dropped ${systemMsgs.length - trimmedSystem.length} oldest system msgs`);
+        }
+        systemMsgs.length = 0;
+        systemMsgs.push(...trimmedSystem);
+        totalEst = sysTotal;
       }
-      systemMsgs.length = 0;
-      systemMsgs.push(...trimmedSystem);
-      totalEst = sysTotal;
       // 从最新消息往前保留, 直到超限
       // ═══ 关键修复: 必须确保至少保留一条 user 消息, 否则 API 返回 "No user query found" ═══
       const kept: ChatMessage[] = [];
       const dropped: ChatMessage[] = [];
       let hasUserMsg = false;
       for (let i = otherMsgs.length - 1; i >= 0; i--) {
-        const est = Math.ceil((typeof otherMsgs[i].content === 'string' ? otherMsgs[i].content : '').length * 0.7);
+        const est = Math.ceil(estimateContentTokens(otherMsgs[i].content));
         // 条件: 超出 token 限制 && 已保留至少2条消息 && (已有user消息 || 当前是最后一条消息)
         const canDrop = totalEst + est > maxInputTokens && kept.length > 2 && (hasUserMsg || i === 0);
         if (canDrop) {
@@ -1849,18 +1825,10 @@ if (id === 'agentai') {
           console.warn(`[router] auto-detect: ${id} 不支持 stream_options, 标记后重试`);
           return await this.executeProvider(id, req, modelName);
         }
-        // 402/5xx → 标记 provider 熔断, 触发自动降级
-        // 429 由 recordFailure() 统一处理为指数退避冷却, 不在此处熔断
-        if (r.status === 402 || r.status >= 500) {
-          const provider = this.providers.get(id);
-          if (provider) {
-            provider.tripped = true;
-            provider.trippedAt = Date.now();
-            provider.failureCount++;
-            this.emit('provider:tripped', { provider: id, status: r.status, reason: errText.slice(0, 100) });
-            console.warn(`[router] provider ${id} tripped (HTTP ${r.status}), auto-fallback triggered`);
-          }
-        }
+        // 402/5xx → 不在此处立即熔断, 统一交由 recordFailure() 统计
+        // 2026-09-04: 原逻辑对首次 5xx 立即熔断 2 分钟 → 一次瞬断(上游重启/网关抖动)
+        //   就锁死 provider, 后续请求全部跳过它空转。现改为: 单次失败不熔断 (下次请求自然重试),
+        //   连续失败 ≥3 次才由 recordFailure 的连续失败黑名单锁定 (见 recordFailure)。
         // ═══ 修复: 401 密钥无效 → 临时标记不可用 (60秒), 触发降级到其他 provider ═══
         // 不永久熔断 (用户可能中途换 key), 但当前会话内跳过此 provider
         if (r.status === 401) {
@@ -2112,6 +2080,10 @@ if (id === 'sensenova') {
     p.rateLimitRetryCount = Math.max(0, p.rateLimitRetryCount - 1);
     // 记录调用时间 (用于主动调速)
     p.lastCallAt = Date.now();
+    // 2026-09-04: 真实成功调用也复位连续失败计数 (原只靠 60s 健康检查清零,
+    //   成功被忽略 → 连续失败黑名单在"偶发失败+大量成功"下仍被错误触发)
+    this._consecutiveFailures.set(p.id, 0);
+    this._lastSuccessAt.set(p.id, Date.now());
   }
 
   private recordFailure(p: ProviderStats, _err: Error): void {
@@ -2164,15 +2136,15 @@ if (id === 'sensenova') {
 
     // === 非 429 错误 — 正常熔断 ===
     // 失败率超过 30% 熔断
-    if (p.failureCount / p.totalCalls > 0.30) {
-      // 失败率只算非 429 错误
-      const non429Total = p.totalCalls - p.rateLimitRetryCount;
-      const non429Failures = p.failureCount - p.rateLimitRetryCount;
-      if (non429Total > 0 && non429Failures / non429Total > 0.30) {
-        p.tripped = true;
-        p.trippedAt = Date.now();
-        this.emit('circuit:tripped', { provider: p.id });
-      }
+    // 2026-09-04: 需 ≥3 个非 429 样本才按比例熔断 — 单次失败不再锁死 provider 2 分钟
+    //   (配合 emergency 移除 force-untrip: 避免"一次 500 → 熔断 → 全池跳过多轮空转");
+    //   持续宕机由下方"连续失败 ≥3 次 → 黑名单"机制接管
+    const non429Total = p.totalCalls - p.rateLimitRetryCount;
+    const non429Failures = p.failureCount - p.rateLimitRetryCount;
+    if (non429Total >= 3 && non429Failures / non429Total > 0.30) {
+      p.tripped = true;
+      p.trippedAt = Date.now();
+      this.emit('circuit:tripped', { provider: p.id });
     }
 
     // ═══ 连续失败追踪: 连续 N 次失败 → 额外锁定 ═══

@@ -121,38 +121,45 @@ export async function writeMemory(entry: Omit<MemoryEntry, 'ts'>): Promise<Memor
   // ══════════════════════════════════════════════════════
   // 4. 反向镜像到 MemoryManager KV (双轨制合并 2/2)
   //    所有 workspace 级记忆都镜像到 KV, 使用自动生成的 key 或 entityId
-  //    异步 fire-and-forget, 静默失败
+  //    异步 fire-and-forget, 带重试保护
   // ══════════════════════════════════════════════════════
   if (full.workspace) {
     (async () => {
-      try {
-        const mod = await import('./memory-manager.js');
-        const mgr = mod.getMemoryManager(full.workspace);
-        const md = full.metadata || {};
-        // 优先使用已有的 kvKey, 否则自动生成
-        const kvKey = ((md as any).kvKey as string) || full.entityId || `mem:${full.source}:${full.role}:${full.ts}`;
-        const scope = (((md as any).kvScope as string) || 'project') as 'user' | 'session' | 'project' | 'global';
-        const priority = (full.importance || 0) >= 0.8 ? 'high' : 'normal';
-        // 只镜像重要记忆 (importance >= 0.5) 或已有 entityId 的记忆
-        if ((full.importance || 0) >= 0.5 || full.entityId) {
-          await mgr.remember({
-            key: kvKey,
-            value: (full.content || '').slice(0, 500),
-            scope,
-            metadata: {
-              priority,
-              mirroredFromJSONL: true,
-              entityId: full.entityId,
-              source: full.source,
-              role: full.role,
-              importance: full.importance,
-              userId: full.userId,
-              ts: full.ts,
-            },
-          });
+      const MAX_RETRIES = 3;
+      for (let i = 0; i < MAX_RETRIES; i++) {
+        try {
+          const mod = await import('./memory-manager.js');
+          const mgr = mod.getMemoryManager(full.workspace);
+          const md = full.metadata || {};
+          const kvKey = ((md as any).kvKey as string) || full.entityId || `mem:${full.source}:${full.role}:${full.ts}`;
+          const scope = (((md as any).kvScope as string) || 'project') as 'user' | 'session' | 'project' | 'global';
+          const priority = (full.importance || 0) >= 0.8 ? 'high' : 'normal';
+          if ((full.importance || 0) >= 0.5 || full.entityId) {
+            await mgr.remember({
+              key: kvKey,
+              value: (full.content || '').slice(0, 500),
+              scope,
+              metadata: {
+                priority,
+                mirroredFromJSONL: true,
+                entityId: full.entityId,
+                source: full.source,
+                role: full.role,
+                importance: full.importance,
+                userId: full.userId,
+                ts: full.ts,
+              },
+            });
+          }
+          break; // 成功则退出重试循环
+        } catch (e: any) {
+          if (i < MAX_RETRIES - 1) {
+            console.warn(`[memory] reverseMirror 重试 ${i + 1}/${MAX_RETRIES}: ${e?.message}`);
+            await new Promise(r => setTimeout(r, 100 * (i + 1)));
+          } else {
+            console.warn(`[memory] reverseMirror 失败 (${MAX_RETRIES}次重试): ${e?.message}`);
+          }
         }
-      } catch {
-        /* 静默失败: 镜像总是可选的 */
       }
     })();
   }

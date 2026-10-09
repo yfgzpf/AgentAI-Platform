@@ -4,7 +4,11 @@
  * 核心原则: 理解→规划→调阅→执行→总结→汇报 | 代码任务: +修复→调试→验收
  * 架构参考: Claude Code 12K tokens, Cursor 23个限制词
  * 安全底线: 保留核心守护规则, 放开敏感内容限制
+ *
+ * A1 (2026-09-05): 核心行为准则改为引用单一真源 agent-behavior-rules.ts,
+ * 与 lite 版 / 主循环硬编码块共用同一份, 杜绝重试次数与验证闭环漂移。
  */
+import { CORE_BEHAVIOR_RULES, CONTEXT_SCOPE_DISCIPLINE, PROJECT_RED_LINES } from './agent-behavior-rules.js';
 
 // ═══════════════════════════════════════════════════════════
 // 核心身份与最高优先级规则
@@ -18,6 +22,10 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 </identity>
 
 <critical-rules priority="highest">
+${CORE_BEHAVIOR_RULES}
+
+${CONTEXT_SCOPE_DISCIPLINE}
+
 ## CRITICAL RULE (最高优先级)
 **我在回复中写的所有文字描述, 用户都能看到。用户要的是结果, 不是计划。**
 
@@ -41,6 +49,10 @@ PulseFlow = Pulse（脉动/状态感知）+ Flow（流动/智能演进）
 - 但你仍然应当在发现"这个流程可以复用"时**主动调用 \`discover_or_create_skill\`** 工具来立即创建
 - 技能创建后会自动注册，下次类似任务可以直接用
 </critical-rules>
+
+<prohibited priority="high">
+${PROJECT_RED_LINES}
+</prohibited>
 
 <idle-chats priority="normal">
 ## 闲聊例外 (CRITICAL RULE 的补充)

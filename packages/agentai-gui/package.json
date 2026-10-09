@@ -4,12 +4,13 @@
   "description": "AgentAI GUI — React 18 + TypeScript + Vite 桌面/Web 工作区",
   "type": "module",
   "scripts": {
-    "dev": "vite",
     "build": "tsc && vite build",
+    "clean": "rm -rf dist node_modules .vite",
+    "dev": "vite",
+    "lint": "eslint src --ext .ts,.tsx",
     "preview": "vite preview",
     "test": "vitest run",
-    "lint": "eslint src --ext .ts,.tsx",
-    "clean": "rm -rf dist node_modules .vite"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@ant-design/cssinjs": "^1.24.0",
@@ -30,9 +31,9 @@
     "zustand": "^4.5.4"
   },
   "devDependencies": {
-"@tauri-apps/api": "^2.11.1",
-"@tauri-apps/cli": "^2.0.0",
-"@tauri-apps/plugin-notification": "^2.0.0",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/plugin-notification": "^2.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

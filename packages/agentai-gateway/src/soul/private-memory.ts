@@ -16,6 +16,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { WorkspaceManager } from '../workspace-manager.js';
+import { getScoped, resetScoped } from './workspace-scope.js';
 
 const ALGO = 'aes-256-gcm';
 
@@ -41,8 +42,9 @@ export class PrivateMemory {
   private dataPath: string;
   private maxThoughts = 30;
 
-  constructor() {
-    const ws = WorkspaceManager.getInstance().projectDir;
+  constructor(workspace?: string) {
+    // 串味修复: 优先用传入的请求级 workspace；未传时才回退全局单例
+    const ws = workspace || WorkspaceManager.getInstance().projectDir;
     this.dataPath = path.join(ws, '.agentai', 'private-memory.enc');
     this.load();
   }
@@ -132,8 +134,16 @@ export class PrivateMemory {
   }
 }
 
-let _instance: PrivateMemory | null = null;
-export function getPrivateMemory(): PrivateMemory {
-  if (!_instance) _instance = new PrivateMemory();
-  return _instance;
+// ===== workspace 作用域单例 =====
+// 串味修复: 原为进程级单例 + 构造时固化全局 projectDir,
+// 导致 projA 的加密私密记忆被注入 projB 的任务上下文（最严重的串味路径）。
+
+/** 按 workspace 返回 PrivateMemory 实例（传请求级 workspace） */
+export function getPrivateMemory(workspace?: string): PrivateMemory {
+  return getScoped<PrivateMemory>('privateMemory', workspace, () => new PrivateMemory(workspace));
+}
+
+/** 重置指定 workspace 的实例；不传则重置全部 */
+export function resetPrivateMemory(workspace?: string): void {
+  resetScoped<PrivateMemory>('privateMemory', workspace);
 }

@@ -14,7 +14,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Card, Tag, Tooltip, Button, Collapse, Spin, Empty, Badge, Progress } from 'antd';
 import {
   MoonOutlined, BulbOutlined, ThunderboltOutlined, MessageOutlined,
-  ReloadOutlined, PlayCircleOutlined, HeartOutlined,
+  ReloadOutlined, PlayCircleOutlined,
 } from '@ant-design/icons';
 
 interface SoulStatus {

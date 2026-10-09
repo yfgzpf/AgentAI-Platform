@@ -84,37 +84,23 @@ export const MODELS: ModelMeta[] = [
     supportsThinking: true,
     supportsJsonMode: true,
   },
-  {
-    id: 'agentai:agnes-v4',
-    label: 'Agnes AI',
-    provider: 'agentai',
-    subModel: 'agnes-2.0-flash',
-    complexityRange: ['ultraSimple', 'hard'],
-    maxContext: 1_000_000,
-    costPer1kInput: 0,
-    costPer1kOutput: 0,
-    isFree: true,
-    supportsTools: true,
-    supportsImages: true,
-    priority: 3,
-    reasoningLevel: 'advanced',
-    speedTier: 'fast',
-    maxOutputTokens: 8192,
-    supportsStreaming: true,
-    supportsThinking: true,
-    supportsJsonMode: true,
-  },
+  // (2026-09-04 已删: agentai:agnes-v4 实为 agnes-2.0-flash 的重复别名且虚标 1M 窗口,
+  //  造成"免费+大窗口"模型在评分中恒定胜出, 深度任务也被派给轻模型; 保留单一真实条目)
 
   // --- DeepSeek (付费, 强力推理) ---
+  // ═══ 2026-09-05 校准 (官方 api-docs.deepseek.com) ═══
+  // V4-Flash/Pro 官方均 1M 上下文; 8/16 起 peak/off-peak 计价。
+  // 成本 = off-peak cache-miss USD/1K (flash 0.00022/0.00066, pro 0.00066/0.00198)。
+  // 同步改动: model-capabilities.ts / routes/chat.ts / GUI modelStore.ts
   {
     id: 'deepseek:v4-flash',
     label: 'DS Flash',
     provider: 'deepseek',
     subModel: 'deepseek-v4-flash',
     complexityRange: ['ultraSimple', 'complex'],
-    maxContext: 128_000,
-    costPer1kInput: 0,
-    costPer1kOutput: 0,
+    maxContext: 1_000_000,
+    costPer1kInput: 0.00022,
+    costPer1kOutput: 0.00066,
     isFree: false,
     supportsTools: true,
     supportsImages: false,  // 实测: HTTP 400, 不支持多模态 (2026-07-13 run-vision-test.ts)
@@ -133,8 +119,8 @@ export const MODELS: ModelMeta[] = [
     subModel: 'deepseek-v4-pro',
     complexityRange: ['complex', 'hard'],
     maxContext: 1_000_000,
-    costPer1kInput: 0.00014,
-    costPer1kOutput: 0.00028,
+    costPer1kInput: 0.00066,
+    costPer1kOutput: 0.00198,
     isFree: false,
     supportsTools: true,
     supportsImages: true,
@@ -155,8 +141,8 @@ export const MODELS: ModelMeta[] = [
     subModel: 'gpt-4o-mini',
     complexityRange: ['medium', 'hard'],
     maxContext: 128_000,
-    costPer1kInput: 0.0025,
-    costPer1kOutput: 0.01,
+    costPer1kInput: 0.00015,
+    costPer1kOutput: 0.0006,
     isFree: false,
     supportsTools: true,
     supportsImages: true,
@@ -169,27 +155,7 @@ export const MODELS: ModelMeta[] = [
     supportsJsonMode: true,
   },
 
-  // --- OpenAI (付费兜底) ---
-  {
-    id: 'openai:gpt-4o-mini',
-    label: 'GPT-4o mini',
-    provider: 'openai',
-    subModel: 'gpt-4o-mini',
-    complexityRange: ['medium', 'hard'],
-    maxContext: 128_000,
-    costPer1kInput: 0.0025,
-    costPer1kOutput: 0.01,
-    isFree: false,
-    supportsTools: true,
-    supportsImages: true,
-    priority: 5,
-    reasoningLevel: 'advanced',
-    speedTier: 'balanced',
-    maxOutputTokens: 16384,
-    supportsStreaming: true,
-    supportsThinking: false,
-    supportsJsonMode: true,
-  },
+  // (2026-09-04 已删: 下方曾重复一份完全相同的 openai:gpt-4o-mini 条目, 保留上方唯一项)
 
   // --- 通义千问 Qwen (付费, DashScope) ---
   {
@@ -198,9 +164,9 @@ export const MODELS: ModelMeta[] = [
     provider: 'qwen',
     subModel: 'qwen-max',
     complexityRange: ['medium', 'hard'],
-    maxContext: 131_072,
-    costPer1kInput: 0,
-    costPer1kOutput: 0,
+    maxContext: 32_768,
+    costPer1kInput: 0.00034,
+    costPer1kOutput: 0.00137,
     isFree: false,
     supportsTools: true,
     supportsImages: true,
@@ -219,9 +185,9 @@ export const MODELS: ModelMeta[] = [
     provider: 'moonshot',
     subModel: 'kimi-k2.5',
     complexityRange: ['simple', 'complex'],
-    maxContext: 128_000,
-    costPer1kInput: 0,
-    costPer1kOutput: 0,
+    maxContext: 262_144,
+    costPer1kInput: 0.0006,
+    costPer1kOutput: 0.003,
     isFree: false,
     supportsTools: true,
     supportsImages: true,
@@ -241,8 +207,8 @@ export const MODELS: ModelMeta[] = [
     subModel: 'claude-sonnet-4-5-20250929',
     complexityRange: ['complex', 'hard'],
     maxContext: 200_000,
-    costPer1kInput: 0,
-    costPer1kOutput: 0,
+    costPer1kInput: 0.003,
+    costPer1kOutput: 0.015,
     isFree: false,
     supportsTools: true,
     supportsImages: true,
@@ -303,7 +269,7 @@ export const MODELS: ModelMeta[] = [
     provider: 'zhipu',
     subModel: 'glm-4.7-flash',
     complexityRange: ['ultraSimple', 'complex'],
-    maxContext: 128_000,
+    maxContext: 200_000,
     costPer1kInput: 0,
     costPer1kOutput: 0,
     isFree: true,
@@ -312,7 +278,7 @@ export const MODELS: ModelMeta[] = [
     priority: 1,
     reasoningLevel: 'basic',
     speedTier: 'fast',
-    maxOutputTokens: 4096,
+    maxOutputTokens: 8192,
     supportsStreaming: true,
     supportsThinking: false,
   },
@@ -629,8 +595,14 @@ function computeScore(
   const contextFit = Math.min(model.maxContext / 1_000_000, 1.0) * W_CONTEXT;
 
   // 3. 成本分数: 免费的 1.0, 付费的按比例
+  // 2026-09-04 修复: 部分付费模型 (qwen/kimi/anthropic/minimax/doubao) cost 字段未填 = 0,
+  //   原公式会让它们 costScore 与免费模型同拿满分 → "付费当免费"参与竞争。改为: 未配置价格的
+  //   付费模型给中性分 (0.5), 不再假装免费。
   const avgCost = (model.costPer1kInput + model.costPer1kOutput) / 2;
-  const costScore = model.isFree ? 1.0 * W_COST : (1.0 - Math.min(avgCost * 200, 1.0)) * W_COST;
+  let costScore: number;
+  if (model.isFree) costScore = 1.0 * W_COST;
+  else if (avgCost <= 0) costScore = 0.5 * W_COST; // 未定价付费模型: 中性
+  else costScore = (1.0 - Math.min(avgCost * 200, 1.0)) * W_COST;
 
   // 4. 历史成功率
   let successRate = 0.5 * W_SUCCESS; // 默认 0.5

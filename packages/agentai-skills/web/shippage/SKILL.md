@@ -7,7 +7,7 @@ version: 1.2.0
 homepage: https://shippage.ai
 allowed-tools: Bash,Read
 metadata:
-  openclaw:
+  agentai:
     requires:
       bins:
         - curl

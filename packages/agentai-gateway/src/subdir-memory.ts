@@ -1,7 +1,7 @@
 /**
  * SubdirMemory — 子目录记忆系统
  * ----------------------------------------------------------------
- * 学自: Reasonix subdir.ts (findSubdirMemoryAncestors)
+ * subdir.ts (findSubdirMemoryAncestors)
  * 
  * 机制: 从当前工作文件所在目录向上遍历，收集沿途的 .agentai.md
  *       按 innermost-first 顺序注入 system prompt

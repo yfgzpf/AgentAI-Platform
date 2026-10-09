@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * EmbeddedBrowser — 智能体内嵌浏览器 (对标美团 Tabbit)
  * =====================================================
@@ -22,6 +21,7 @@ import {
   GlobalOutlined, SafetyCertificateOutlined, ThunderboltOutlined,
   StarOutlined, StarFilled,
   VideoCameraOutlined, StopOutlined, PlayCircleOutlined,
+  DesktopOutlined, MobileOutlined,
 } from '@ant-design/icons';
 import { io, type Socket } from 'socket.io-client';
 import { gatewayFallback } from '../services/GatewayFallback';
@@ -166,7 +166,7 @@ const SCAN_SCRIPT = `
 `;
 
 export const EmbeddedBrowser: React.FC<Props> = ({
-  initialUrl, compact = false, aiControlled = false, style, onElementsDetected, autoScan: autoScanProp, zoom = 1.0,
+  initialUrl, compact = false, hideToolbar = false, aiControlled = false, style, onElementsDetected, autoScan: autoScanProp, zoom = 1.0,
 }) => {
   const autoScan = autoScanProp ?? aiControlled;
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
@@ -847,7 +847,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
     <div ref={containerRef} style={{
       borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--card)',
       display: 'flex', flexDirection: 'column', height: '100%',
-      ...(fullscreen ? { position: 'fixed', inset: 0, zIndex: 9999, background: '#000' } : {}),
+      ...(fullscreen ? { position: 'fixed', inset: 0, zIndex: 'var(--z-dragging)', background: '#000' } : {}),
       ...style,
     }}>
       {/* ===== 标签栏 + 书签（合并为一行） ===== */}

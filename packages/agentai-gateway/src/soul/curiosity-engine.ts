@@ -25,6 +25,7 @@ import * as path from 'node:path';
 import { EventEmitter } from 'events';
 import { WorkspaceManager } from '../workspace-manager.js';
 import { writeEvolutionAsync } from '../evolution.js';
+import { getScoped, resetScoped } from './workspace-scope.js';
 
 // ===== 类型定义 =====
 
@@ -100,9 +101,10 @@ export class CuriosityEngine extends EventEmitter {
   private maxQuestions = 100;
   private maxInsights = 50;
 
-  constructor() {
+  constructor(workspace?: string) {
     super();
-    const ws = WorkspaceManager.getInstance().projectDir;
+    // 串味修复: 优先用传入的请求级 workspace；未传时才回退全局单例
+    const ws = workspace || WorkspaceManager.getInstance().projectDir;
     this.dataPath = path.join(ws, '.agentai', 'curiosity.jsonl');
     this.loadData();
   }
@@ -640,11 +642,15 @@ export class CuriosityEngine extends EventEmitter {
 
 // ===== 单例 =====
 
-let _instance: CuriosityEngine | null = null;
+// ===== workspace 作用域单例 =====
+// 串味修复: 原为进程级单例 + 构造时固化全局 projectDir。
 
-export function getCuriosityEngine(): CuriosityEngine {
-  if (!_instance) {
-    _instance = new CuriosityEngine();
-  }
-  return _instance;
+/** 按 workspace 返回 CuriosityEngine 实例（传请求级 workspace） */
+export function getCuriosityEngine(workspace?: string): CuriosityEngine {
+  return getScoped<CuriosityEngine>('curiosity', workspace, () => new CuriosityEngine(workspace));
+}
+
+/** 重置指定 workspace 的实例；不传则重置全部 */
+export function resetCuriosityEngine(workspace?: string): void {
+  resetScoped<CuriosityEngine>('curiosity', workspace);
 }

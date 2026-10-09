@@ -26,6 +26,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { currentRequestWorkspace } from './request-scope.js';
 
 // ===== 类型定义 =====
 
@@ -176,18 +177,26 @@ export class WorkspaceManager {
    * @returns 绝对路径
    */
   resolveProjectPath(relativePath: string): string {
-    if (!relativePath) return this.projectDir;
+    // 2026-10-06 P0跨请求串扰修复: 绝对路径的越界校验与相对路径的基准
+    //   **必须用请求级工作区**，不是全局单例。
+    //   之前两者都用 this.projectDir，而该值会被routes/chat.ts 的请求体改写
+    //   → A 请求传进来的绝对路径可能因 projB 的 projectDir 而被误判为"越界"
+    //   → 反之 B 请求传 projA 的路径会被"合法"放行 → 直接读写他人项目。
+    //不在请求上下文中（后台任务/单测）→ 回退 projectDir，行为不变。
+    const base = currentRequestWorkspace() || this.projectDir;
+
+    if (!relativePath) return base;
     // 绝对路径: 验证是否在 projectDir 内
     if (path.isAbsolute(relativePath)) {
-      const rel = path.relative(this.projectDir, relativePath);
+      const rel = path.relative(base, relativePath);
       if (rel.startsWith('..') || path.isAbsolute(rel)) {
         throw new Error(
-          `Path "${relativePath}" is outside project directory "${this.projectDir}". Use a relative path.`
+          `Path "${relativePath}" is outside project directory "${base}". Use a relative path.`
         );
       }
       return relativePath;
     }
-    return path.resolve(this.projectDir, relativePath);
+    return path.resolve(base, relativePath);
   }
 
   /**

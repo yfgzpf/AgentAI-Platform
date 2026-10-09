@@ -8,7 +8,7 @@
  *
  * AI 通过工具调用管理整个系统, 无需人工编辑配置。
  *
- * 学自: Reasonix cron + autonomous systems 设计理念
+ * cron + autonomous systems 设计理念
  */
 
 import * as fs from 'fs';

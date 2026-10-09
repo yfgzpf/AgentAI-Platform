@@ -1,5 +1,5 @@
 /**
- * DeepSeekCacheStrategy — 前缀缓存策略 (学 Reasonix ImmutablePrefix)
+ * DeepSeekCacheStrategy — 前缀缓存策略 (ImmutablePrefix)
  * ----------------------------------------------------------------
  * 核心理念:
  *   DeepSeek API 对重复前缀只收取低价缓存token费用 (约10%).
@@ -8,11 +8,11 @@
  * 实现:
  *   - 启动时构建 immutableSystem (含完整 SKILL.md)
  *   - fingerprint 机制: 内容变 → hash 变 → 需要重建
- *   - Frozen Snapshot (Hermes): 会话中记忆变更不影响 system prompt
+ *   - Frozen Snapshot: 会话中记忆变更不影响 system prompt
  *   - 工具列表如果未变, 复用上次 hash
  * 
- * 学自: Reasonix ImmutablePrefix (fingerprintCache + replaceSystem)
- * 学自: Hermes Frozen Snapshot
+ * ImmutablePrefix (fingerprintCache + replaceSystem)
+ * Frozen Snapshot
  */
 
 import { createHash } from 'node:crypto';

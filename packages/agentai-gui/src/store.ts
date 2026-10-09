@@ -41,11 +41,11 @@ export const useUserName = (): string => {
   return useProfileStore.getState().profile?.name || '你';
 };
 
-// 1. Framework 状态 (agentai / hermes + A/B 灰度)
+// 1. Framework 状态 (agentai / pulseflow + A/B 灰度)
 interface FrameworkState {
-  active: 'agentai' | 'hermes';
+  active: 'agentai' | 'pulseflow';
   abRatio: number;
-  setActive: (f: 'agentai' | 'hermes') => void;
+  setActive: (f: 'agentai' | 'pulseflow') => void;
   setAbRatio: (r: number) => void;
 }
 export const useFrameworkStore = create<FrameworkState>()(

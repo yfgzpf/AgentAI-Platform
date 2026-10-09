@@ -9,20 +9,20 @@
  * 接入: Onboarding (首次启动) + StatusBar (底部)
  * 主题: 5 套 (dark/light/porcelain/midnight/ember)
  */
-import React, { useState, useEffect, useMemo, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense, lazy } from 'react';
 import { ConfigProvider, App as AntApp, theme, Tooltip, Dropdown, Tag, Modal, Button, Alert, Checkbox } from 'antd';
 import { StyleProvider } from '@ant-design/cssinjs';
 import zhCN from 'antd/locale/zh_CN';
 import {
   MessageOutlined, EditOutlined, PictureOutlined, VideoCameraOutlined,
-  CodeOutlined, AppstoreOutlined, RobotOutlined, MessageOutlined as QQIcon,
+  CodeOutlined, AppstoreOutlined, RobotOutlined,
   SettingOutlined, BgColorsOutlined, UserOutlined, ThunderboltOutlined,
   ExperimentOutlined, PartitionOutlined, SmileOutlined, GithubOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, InfoCircleOutlined, BulbOutlined,
   LeftOutlined, RightOutlined, SunOutlined, MoonOutlined, BookOutlined,
   WechatOutlined, ClockCircleOutlined, BellOutlined, MedicineBoxOutlined,
   DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined, SyncOutlined, DownloadOutlined,
-  GlobalOutlined, MinusOutlined, BorderOutlined, CloseOutlined, MobileOutlined,
+  GlobalOutlined, MinusOutlined, BorderOutlined, CloseOutlined,
   HomeOutlined, KeyOutlined, HeartOutlined,
 } from '@ant-design/icons';
 /* P0-4: 代码分割 — 首屏组件同步加载，其他页面延迟加载 */
@@ -31,14 +31,12 @@ import { ChatView } from './components/ChatView';
 
 // 其他页面组件 - 懒加载
 const WritePage = lazy(() => import('./components/WritePage').then(m => ({ default: m.WritePage })));
-const ImageGen = lazy(() => import('./components/ImageGen').then(m => ({ default: m.ImageGen })));
 const ImageStudio = lazy(() => import('./components/ImageStudio').then(m => ({ default: m.ImageStudio })));
 const VideoGen = lazy(() => import('./components/VideoGen').then(m => ({ default: m.VideoGen })));
 const Model3DGen = lazy(() => import('./components/Model3DGen').then(m => ({ default: m.Model3DGen })));
 const Editor = lazy(() => import('./components/Editor').then(m => ({ default: m.Editor })));
 const Settings = lazy(() => import('./components/Settings').then(m => ({ default: m.Settings })));
 const QQBotPanel = lazy(() => import('./components/QQBotPanel').then(m => ({ default: m.QQBotPanel })));
-const CleanerPanel = lazy(() => import('./components/CleanerPanel').then(m => ({ default: m.CleanerPanel })));
 const KnowledgeBasePanel = lazy(() => import('./components/KnowledgeBasePanel').then(m => ({ default: m.KnowledgeBasePanel })));
 const SkillLibrary = lazy(() => import('./components/SkillLibrary').then(m => ({ default: m.SkillLibrary })));
 const WechatSetup = lazy(() => import('./components/WechatSetup').then(m => ({ default: m.WechatSetup })));
@@ -51,9 +49,7 @@ const AutomationPanel = lazy(() => import('./components/AutomationPanel').then(m
 const TaskCenterPanel = lazy(() => import('./components/TaskCenterPanel').then(m => ({ default: m.TaskCenterPanel })));
 const TaskBoard = lazy(() => import('./components/TaskBoard').then(m => ({ default: m.TaskBoard })));
 const EvolutionPanel = lazy(() => import('./components/EvolutionPanel').then(m => ({ default: m.EvolutionPanel })));
-const SandboxRulesEditor = lazy(() => import('./components/SandboxRulesEditor').then(m => ({ default: m.SandboxRulesEditor })));
-import { KnowledgeGraphPanelChunk, preloadLazyChunks } from './lazyChunks';
-const KnowledgeGraphPanel = KnowledgeGraphPanelChunk;
+import { preloadLazyChunks } from './lazyChunks';
 const MonitoringPanel = lazy(() => import('./components/MonitoringPanel').then(m => ({ default: m.default })));
 const KnowledgeDashboard = lazy(() => import('./components/KnowledgeDashboard').then(m => ({ default: m.KnowledgeDashboard })));
 const SoulPanel = lazy(() => import('./components/SoulPanel').then(m => ({ default: m.SoulPanel })));
@@ -64,7 +60,6 @@ import { StatusBar } from './components/StatusBar';
 import { GitStatusBar } from './components/GitStatusBar';
 import { SimpleGitPanel } from './components/SimpleGitPanel';  // 使用简化版 Git 面板
 import { TerminalPanel, terminalTaskManager, TerminalTask } from './components/TerminalPanel';  // 终端任务面板
-import { Onboarding } from './components/Onboarding';
 import { IdentityOnboarding } from './components/IdentityOnboarding';
 import { SetupWizard } from './components/SetupWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -76,6 +71,7 @@ import { useFontSizeStore, FONT_SIZE_MAP, type FontSize } from './store';
 import { useModelStore } from './store/modelStore';
 import { ModelSelector } from './components/ModelSelector';
 import { gatewayFallback } from './services/GatewayFallback';
+import { GATEWAY_HTTP } from './services/config';
 import FloatingSuggestionToast from './components/FloatingSuggestionToast';
 import { useSuggestionSSE } from './hooks/useSuggestionSSE';
 import { useSuggestionStore } from './store/suggestionStore';
@@ -83,6 +79,7 @@ import { Splash } from './components/Splash';
 import { ReuseIdentityPrompt } from './components/ReuseIdentityPrompt';
 import { GlobalBrowserDrawer, openGlobalBrowser } from './components/GlobalBrowserDrawer';
 import { useIdeState } from './hooks/useIdeState';
+import { useResizable } from './hooks/useResizable';
 import { useUpdaterStore, mountUpdaterEventBus } from './store/updaterStore';
 import { useSubscriptionStore } from './store/subscriptionStore';
 
@@ -116,7 +113,7 @@ const FeatureGuide: React.FC<{
       {/* 顶部提示条 */}
       <div style={{
         padding: '10px 16px',
-        background: 'linear-gradient(90deg, rgba(99, 102, 241, 0.1), rgba(236, 72, 153, 0.1))',
+        background: 'var(--accent-soft)',
         borderBottom: '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
@@ -189,7 +186,7 @@ const ChatModeToggle: React.FC = () => {
 };
 
 /* ════════════════ PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'pascal' | 'decorai' | 'editor' | 'skills' | 'cleaner' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'notification' | 'workflow' | 'suggestions' | 'governor' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'sandbox' | 'knowledge-graph' | 'external-connections' | 'monitoring' | 'knowledge-explore' | 'soul';
+type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'pascal' | 'decorai' | 'editor' | 'skills' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'notification' | 'workflow' | 'suggestions' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'monitoring' | 'knowledge-explore' | 'soul';
 
 interface PageMeta {
   key: PageKey;
@@ -208,9 +205,7 @@ interface PageMeta {
   hidden?: boolean;
 }
 
-const GovernorPanel = lazy(() => import('./components/GovernorPanel').then(m => ({ default: m.GovernorPanel })));
 const StatsPanel = lazy(() => import('./components/StatsPanel').then(m => ({ default: m.StatsPanel })));
-const ExternalConnectionsPanel = lazy(() => import('./components/ExternalConnectionsPanel').then(m => ({ default: m.ExternalConnectionsPanel })));
 const PascalEditor = lazy(() => import('./components/PascalEditor').then(m => ({ default: m.PascalEditor })));
 const DecorAI = lazy(() => import('./components/DecorAI/index').then(m => ({ default: m.DecorAI })));
 
@@ -218,44 +213,40 @@ const PAGES: PageMeta[] = [
   { key: 'chat',     label: '对话',     icon: <MessageOutlined />,    comp: ChatView,      group: 'core',   desc: '智能对话 · 多模型 · 工具调用' },
   { key: 'editor',   label: '编辑器',   icon: <CodeOutlined />,       comp: Editor,        group: 'core',   desc: '代码编辑 · 改写 · 文件管理' },
   { key: 'xuanji',   label: '医案',     icon: <MedicineBoxOutlined />, comp: XuanjiPanel,   group: 'core',   desc: '四诊合参 · 辨证论治 · 经验积累', badge: 'NEW' },
-  { key: 'external-connections', label: '外部连接', icon: <MobileOutlined />, comp: ExternalConnectionsPanel, group: 'system', desc: 'Android 设备 · SketchUp · 公众号自动化', badge: 'NEW', hidden: true },
   { key: 'image',    label: '生图',     icon: <PictureOutlined />,    comp: ImageStudio,   group: 'media',  desc: 'AI 图像工作室 · 5种创作模式', requireSubscription: true },
   { key: 'video',    label: '生视频',   icon: <VideoCameraOutlined />,comp: VideoGen,      group: 'media',  desc: '文生视频 · 图生视频 · 首尾帧', requireSubscription: true },
   { key: '3d',       label: '3D建模',   icon: <AppstoreOutlined />,   comp: Model3DGen,    group: 'media',  desc: '文/图生3D · 混元 · 豆包' },
-  { key: 'pascal',   label: '建筑编辑', icon: <HomeOutlined />,       comp: PascalEditor,  group: 'media',  desc: 'AI 驱动 3D 建筑模型 · 墙体/门窗/屋顶', badge: 'NEW' },
-  { key: 'decorai',  label: '建筑装饰', icon: <ExperimentOutlined />, comp: DecorAI,        group: 'media',  desc: '对话画布 · 效果图 · 改图 · 报价 · 视频', badge: 'NEW' },
+  { key: 'pascal',   label: '建筑编辑', icon: <HomeOutlined />,       comp: PascalEditor,  group: 'media',  desc: 'AI 驱动 3D 建筑模型 · 墙体/门窗/屋顶', badge: 'NEW', hidden: true },
+  { key: 'decorai',  label: '建筑装饰', icon: <ExperimentOutlined />, comp: DecorAI,        group: 'media',  desc: '对话画布 · 效果图 · 改图 · 报价 · 视频', badge: 'NEW', hidden: true },
   { key: 'write',    label: '写作',     icon: <EditOutlined />,       comp: WritePage,     group: 'media',  desc: '长文写作 · 模板 · 一键导出' },
   { key: 'skills',   label: '技能库',   icon: <AppstoreOutlined />,   comp: SkillLibrary,  group: 'system', desc: '25+ 技能 · 7 分类' },
-  { key: 'cleaner',  label: '智能清理', icon: <ThunderboltOutlined />,comp: CleanerPanel,  group: 'system', desc: '扫描 / 分类 / 安全清理', hidden: true },
-  { key: 'qq',       label: 'QQ Bot',   icon: <QQIcon />,             comp: QQBotPanel,    group: 'system', desc: '反向 WS · 自动回复' },
-  { key: 'wechat',   label: '微信',     icon: <SmileOutlined />,      comp: WechatSetup,   group: 'system', desc: 'ClawBot 插件 · 扫码绑定' },
+  { key: 'qq',       label: 'QQ Bot',   icon: <MessageOutlined />,             comp: QQBotPanel,    group: 'system', desc: '反向 WS · 自动回复' },
+  { key: 'wechat',   label: '微信',     icon: <SmileOutlined />,      comp: WechatSetup,   group: 'system', desc: '微信助手插件 · 扫码绑定' },
   { key: 'knowledge', label: '知识库', icon: <BookOutlined />,       comp: KnowledgeBasePanel, group: 'system', desc: '行业知识库 · 文档上传 · BM25 检索' },
   { key: 'automation',   label: '自动化',   icon: <ThunderboltOutlined />, comp: AutomationPanel, group: 'system', desc: 'Cron 调度 · RPA 自动化 · AI 任务 · 成功率统计 · 执行监控', badge: 'NEW' },
   { key: 'workflow',     label: '工作流',   icon: <PartitionOutlined />,   comp: WorkflowPanel,     group: 'system', desc: 'DAG 多步骤自动化 · 行业模板 · 变量管道' },
   { key: 'notification', label: '通知中心', icon: <BellOutlined />,        comp: NotificationPanel, group: 'system', desc: 'SSE · Webhook · 邮件 · 桌面弹窗' },
-  { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system',   desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持', hidden: true },
-  { key: 'governor', label: '管控员',   icon: <DashboardOutlined />,  comp: GovernorPanel, group: 'system', desc: '动态能力矩阵 · 系统健康 · 模型治理', hidden: true },
-  { key: 'stats',    label: '用量',     icon: <ThunderboltOutlined />, comp: StatsPanel,    group: 'system', desc: '工具调用统计 · 成功率 · 省时报告', badge: 'NEW', hidden: true },
+  { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system',   desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持' },
+  { key: 'stats',    label: '用量',     icon: <ThunderboltOutlined />, comp: StatsPanel,    group: 'system', desc: '工具调用统计 · 成功率 · 省时报告', badge: 'NEW' },
   { key: 'tasks',    label: '任务中心', icon: <SyncOutlined />,       comp: TaskCenterPanel, group: 'system', desc: '长任务快照 · 跨会话恢复 · 进度跟踪', badge: 'NEW' },
   { key: 'evolution', label: '自进化',  icon: <ExperimentOutlined />, comp: EvolutionPanel,  group: 'system', desc: '跨会话规则自修改 · 技能自动创建 · 行为优化', badge: 'NEW' },
-  { key: 'sandbox',   label: '沙箱规则', icon: <PartitionOutlined />, comp: SandboxRulesEditor, group: 'system', desc: '可视化编辑沙箱规则的 deny/prompt/allow', hidden: true },
-  { key: 'knowledge-graph', label: '知识图谱', icon: <BulbOutlined />, comp: KnowledgeGraphPanel, group: 'system', desc: '知识关系可视化 · 实体链接 · 概念网络', hidden: true },
-  { key: 'monitoring', label: '监控面板', icon: <DashboardOutlined />, comp: MonitoringPanel, group: 'system', desc: '进化系统 · 审批策略 · 反馈闭环 实时监控', badge: 'NEW', hidden: true },
-  { key: 'knowledge-explore', label: '知识探索', icon: <ExperimentOutlined />, comp: KnowledgeDashboard, group: 'system', desc: 'AI 自主学习 · GitHub 探索 · 知识蒸馏', badge: 'NEW', hidden: true },
+  { key: 'monitoring', label: '监控面板', icon: <DashboardOutlined />, comp: MonitoringPanel, group: 'system', desc: '进化系统 · 审批策略 · 反馈闭环 实时监控', badge: 'NEW' },
+  { key: 'knowledge-explore', label: '知识探索', icon: <ExperimentOutlined />, comp: KnowledgeDashboard, group: 'system', desc: 'AI 自主学习 · GitHub 探索 · 知识蒸馏', badge: 'NEW' },
   { key: 'soul', label: '灵魂', icon: <HeartOutlined />, comp: SoulPanel, group: 'system', desc: '梦境 · 好奇心 · 内心独白 · 痛觉 · 辩论 — AI 的内心世界', badge: 'NEW' },
   { key: 'settings', label: '设置',     icon: <SettingOutlined />,    comp: Settings,      group: 'system', desc: '密钥 · 框架 · 模型 · 主题' },
 ];
 
-/* ════════════════ 主题 (5 套) ════════════════ */
-type ThemeStyle = 'graphite' | 'sandstone' | 'porcelain' | 'midnight' | 'ember';
+/* ════════════════ 主题 (5 套 + 跟随系统) ════════════════ */
+type ThemeStyle = 'graphite' | 'sandstone' | 'porcelain' | 'midnight' | 'ember' | 'system';
 type ThemeMode = 'dark' | 'light';
 
 const THEME_OPTIONS: { value: ThemeStyle; label: string; swatch: string }[] = [
-  { value: 'graphite',  label: '石墨 (默认)', swatch: 'linear-gradient(135deg, #1a1a22 0%, #2a1f1a 100%)' },
-  { value: 'midnight',  label: '午夜紫',     swatch: 'linear-gradient(135deg, #16162a 0%, #2a1a4a 100%)' },
-  { value: 'ember',     label: '余烬橙',     swatch: 'linear-gradient(135deg, #1f1815 0%, #4a2a18 100%)' },
-  { value: 'sandstone', label: '砂岩 (亮)',  swatch: 'linear-gradient(135deg, #f5f1ea 0%, #e8d8b8 100%)' },
-  { value: 'porcelain', label: '瓷白 (亮)',  swatch: 'linear-gradient(135deg, #fafafa 0%, #e0e0e8 100%)' },
+  { value: 'system',    label: '跟随系统',     swatch: 'linear-gradient(135deg, #1a1a22 0%, #f5f1ea 100%)' },
+  { value: 'graphite',  label: '石墨 (暗)',   swatch: 'linear-gradient(135deg, #1a1a22 0%, #2a1f1a 100%)' },
+  { value: 'midnight',  label: '午夜紫 (暗)', swatch: 'linear-gradient(135deg, #16162a 0%, #2a1a4a 100%)' },
+  { value: 'ember',     label: '余烬橙 (暗)', swatch: 'linear-gradient(135deg, #1f1815 0%, #4a2a18 100%)' },
+  { value: 'sandstone', label: '砂岩 (亮)',   swatch: 'linear-gradient(135deg, #f5f1ea 0%, #e8d8b8 100%)' },
+  { value: 'porcelain', label: '瓷白 (亮)',   swatch: 'linear-gradient(135deg, #fafafa 0%, #e0e0e8 100%)' },
 ];
 
 /* ════════════════ App 主组件 ════════════════ */
@@ -301,14 +292,165 @@ function getAllUserProfiles(): Array<UserProfile & { userId: string }> {
   return profiles;
 }
 
+/* ════════════════ NavGroupDropdown — 内联下拉 (替代 antd Dropdown) ════════════════ */
+/**
+ * 修复: 桌面端 (Tauri transparent 模式) antd Dropdown 的 portal popup 不可见
+ * 原因: Tauri `transparent: true` 窗口下, antd 把 popup 渲染到 document.body,
+ *       被 native compositor 裁剪到窗口外, 看不到
+ * 解决: 用内联 position:absolute 弹出面板, 完全不离开 webview DOM 树
+ */
+interface NavGroupItem {
+  key: string;
+  icon: React.ReactNode;
+  label: string;
+  desc: string;
+  active?: boolean;
+  badge?: string;
+}
+const NavGroupDropdown: React.FC<{
+  label: string;
+  icon: React.ReactNode;
+  active: boolean;
+  items: NavGroupItem[];
+  onSelect: (key: string) => void;
+}> = ({ label, icon, active, items, onSelect }) => {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+
+  // 点击外部关闭
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+
+  return (
+    <span
+      ref={wrapRef}
+      className={`app-tab ${active ? 'active' : ''}`}
+      onClick={() => setOpen(v => !v)}
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+    >
+      {icon}
+      <span>{label}</span>
+      <DownOutlined style={{ fontSize: 9, marginLeft: 2, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      {open && (
+        <div
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            minWidth: 200,
+            maxHeight: 480,
+            overflowY: 'auto',
+            background: 'var(--panel)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 4,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+            zIndex: 'var(--z-toast)',
+          }}
+        >
+          {items.map(item => (
+            <div
+              key={item.key}
+              role="menuitem"
+              onClick={() => { onSelect(item.key); setOpen(false); }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 10px',
+                borderRadius: 6,
+                cursor: 'pointer',
+                background: item.active ? 'var(--accent-soft)' : 'transparent',
+                transition: 'background 0.12s',
+              }}
+              onMouseEnter={(e) => { if (!item.active) (e.currentTarget as HTMLElement).style.background = 'var(--card-hover)'; }}
+              onMouseLeave={(e) => { if (!item.active) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center', color: item.active ? 'var(--accent)' : 'var(--fg-2)' }}>
+                {item.icon}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: item.active ? 600 : 500, color: 'var(--fg)' }}>
+                  {item.label}
+                  {item.badge && (
+                    <span style={{ fontSize: 9, padding: '0 5px', borderRadius: 8, background: 'var(--accent)', color: '#fff', lineHeight: '14px' }}>
+                      {item.badge}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {item.desc}
+                </div>
+              </div>
+              {item.active && <CheckCircleFilled style={{ color: 'var(--accent)', fontSize: 12 }} />}
+            </div>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+};
+
+/**
+ * 读取并验证持久化的 page key。
+ * 仅接受已知 PageKey 列表, 任何异常值 (含旧版本残留) 都视为 'chat' 默认。
+ */
+function resolveStoredPage(): PageKey {
+  try {
+    const VALID: PageKey[] = ['chat', 'write', 'image', 'video', '3d', 'pascal', 'decorai',
+      'editor', 'skills', 'qq', 'wechat', 'knowledge', 'settings', 'notification',
+      'workflow', 'suggestions', 'xuanji', 'automation', 'tasks', 'stats',
+      'evolution', 'monitoring', 'knowledge-explore', 'soul'];
+    const raw = localStorage.getItem('agentai.lastPage');
+    if (raw && VALID.includes(raw as PageKey)) return raw as PageKey;
+  } catch { /* localStorage 不可用 */ }
+  return 'chat';
+}
+
 export const App: React.FC = () => {
-  const [page, setPage] = useState<PageKey>('chat');
+  // ✅ 修复: 桌面端启动默认页错误 (Tauri transparent 模式下 webview 状态残留导致进入编辑器页)
+  // 防御性初始化: 始终从 'chat' 开始, 忽略 localStorage 中可能残留的 page 状态
+  const [page, setPageState] = useState<PageKey>(() => {
+    // P0 修复: 恢复上次页面持久化 — resolveStoredPage 定义了但从未调用
+    try {
+      const saved = localStorage.getItem('agentai.lastPage');
+      if (saved) {
+        const VALID: PageKey[] = ['chat', 'write', 'image', 'video', '3d', 'pascal', 'decorai',
+        'editor', 'skills', 'qq', 'wechat', 'knowledge', 'settings', 'notification',
+        'workflow', 'suggestions', 'xuanji', 'automation', 'tasks', 'stats',
+        'evolution', 'monitoring', 'knowledge-explore', 'soul'];
+        if (VALID.includes(saved as PageKey)) return saved as PageKey;
+      }
+    } catch { /* ignore */ }
+    return 'chat';
+  });
+  const setPage = useCallback((next: PageKey) => {
+    setPageState(next);
+    try { localStorage.setItem('agentai.lastPage', next); } catch { /* ignore */ }
+  }, []);
   const { profile, setProfile } = useProfileStore();
   const { mode, setMode } = useModeStore();
   const [themeStyle, setThemeStyle] = useState<ThemeStyle>('graphite');
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [rightPanelVisible, setRightPanelVisible] = useState(true);
   const [fileTreeVisible, setFileTreeVisible] = useState(false);
+  // P0: 跨页面打开文件 — 当从非 editor 页跳转时, 先存 path, 等 Editor 挂载后重放
+  const [pendingFilePath, setPendingFilePath] = useState<string | null>(null);
   const [guideVisible, setGuideVisible] = useState(false);
   const [wechatModalVisible, setWechatModalVisible] = useState(false);
   const [setupWizardVisible, setSetupWizardVisible] = useState(false);
@@ -317,6 +459,44 @@ export const App: React.FC = () => {
   const [terminalPanelVisible, setTerminalPanelVisible] = useState(false);
   const [terminalTasks, setTerminalTasks] = useState<TerminalTask[]>([]);
   const { fontSize, setFontSize } = useFontSizeStore();
+
+  // P0: 监听 agentai:navigate (页面切换) + agentai:open-file-pending (跨页打开文件)
+  // 之前: 组件先 dispatch open-file 再 dispatch navigate, 但 Editor 未挂载 → 事件丢失
+  // 现在: 组件 dispatch navigate + open-file-pending, App 存 path, Editor 挂载后重放
+  useEffect(() => {
+    const navHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.page) {
+        setPage(detail.page as PageKey);
+      }
+    };
+    const filePendingHandler = (e: Event) => {
+      const path = (e as CustomEvent).detail?.path;
+      if (typeof path === 'string' && path) {
+        // 无论当前是否在 editor 页, 都先存起来
+        // 如果已在 editor 页, 下面的重放 useEffect 会立即触发
+        setPendingFilePath(path);
+      }
+    };
+    window.addEventListener('agentai:navigate', navHandler);
+    window.addEventListener('agentai:open-file-pending', filePendingHandler);
+    return () => {
+      window.removeEventListener('agentai:navigate', navHandler);
+      window.removeEventListener('agentai:open-file-pending', filePendingHandler);
+    };
+  }, [setPage]);
+
+  // P0: 当页面已切到 editor 且有 pendingFilePath 时, 延迟一帧 dispatch open-file
+  // Editor 组件此时已挂载, 其 useEffect 注册的监听器可以正常接收
+  useEffect(() => {
+    if (pendingFilePath && page === 'editor') {
+      const timer = setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: pendingFilePath } }));
+        setPendingFilePath(null);
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [pendingFilePath, page]);
 
   // Tauri 环境检测 (用于显示窗口控制按钮)
   const isTauriEnv = !!(window as any).__TAURI_INTERNALS__ || window.location.protocol === 'tauri:';
@@ -431,9 +611,26 @@ export const App: React.FC = () => {
   /* --- 主题 + 字体大小应用 --- */
   useEffect(() => {
     const root = document.documentElement;
-    const dark = THEME_OPTIONS.find(t => t.value === themeStyle)?.value === 'graphite' || themeStyle === 'midnight' || themeStyle === 'ember';
-    root.setAttribute('data-theme', dark ? 'dark' : 'light');
-    root.setAttribute('data-theme-style', themeStyle);
+
+    // P2: 跟随系统 — 监听 OS 暗色模式
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyTheme = () => {
+      let effective = themeStyle;
+      if (themeStyle === 'system') {
+        // 系统暗色 → graphite, 系统亮色 → sandstone
+        effective = media.matches ? 'graphite' : 'sandstone';
+      }
+      const dark = effective === 'graphite' || effective === 'midnight' || effective === 'ember';
+      root.setAttribute('data-theme', dark ? 'dark' : 'light');
+      root.setAttribute('data-theme-style', effective);
+      root.style.colorScheme = dark ? 'dark' : 'light';
+    };
+    applyTheme();
+    // 监听系统主题变化 (仅当选择 "跟随系统" 时生效)
+    if (themeStyle === 'system') {
+      media.addEventListener('change', applyTheme);
+      return () => media.removeEventListener('change', applyTheme);
+    }
 
     // 字体大小
     const fontCfg = FONT_SIZE_MAP[fontSize] || FONT_SIZE_MAP.medium;
@@ -501,19 +698,6 @@ export const App: React.FC = () => {
     return () => gatewayFallback.stop();
   }, []);
 
-  /* --- 监听侧栏跨组件导航事件 (技能/设置) --- */
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const ce = e as CustomEvent<{ page?: PageKey }>;
-      const target = ce.detail?.page;
-      if (target && PAGES.some(p => p.key === target)) {
-        setPage(target);
-      }
-    };
-    window.addEventListener('agentai:navigate', handler);
-    return () => window.removeEventListener('agentai:navigate', handler);
-  }, []);
-
   /* --- 监听打开使用指南事件 (左侧栏底部入口触发) --- */
   useEffect(() => {
     const handler = () => setGuideVisible(true);
@@ -549,8 +733,6 @@ export const App: React.FC = () => {
   // 从 gateway 加载会话消息
   const loadSessionFromGateway = async (gatewaySessionId: string, localSessionId: string) => {
     try {
-      const GATEWAY_HTTP = (window as any).__GATEWAY_HTTP__
-        || `http://${window.location.hostname}:18789`;
       const resp = await fetch(`${GATEWAY_HTTP}/api/sessions/${gatewaySessionId}/messages`);
       const data = await resp.json();
       if (data.success && data.messages) {
@@ -621,10 +803,7 @@ export const App: React.FC = () => {
     if (!isTauri) return;
     if (localStorage.getItem('agentai.setupChecked')) return;
     const timer = setTimeout(async () => {
-      // ⚠️ 关键修复: 必须用 GATEWAY_HTTP 绝对路径, 不能用相对路径!
-      // 相对路径 /v1/... 在 Tauri 打包后 → tauri://localhost/v1/... → 404 (因为 Gateway 还没启动)
-      // 等待 GatewayFallback 先尝试自启 Gateway (quickStartGateway 在 gatewayFallback.start() 中调用)
-      const { GATEWAY_HTTP } = await import('./services/config');
+      // 统一使用顶部导入的 GATEWAY_HTTP (开发态走 Vite proxy, 生产态直连)
       const healthUrl = `${GATEWAY_HTTP}/v1/health`;
       
       // 先给 Gateway 自启留足时间 (Rust 端 setup 延迟 1s + Node 启动 ~2s + Gateway listen ~3s)
@@ -727,9 +906,7 @@ export const App: React.FC = () => {
       useSessionStore.getState().setCurrentUserId(profileToRestore.name);
 
       // 同步到 gateway (非阻塞, 确保后端也用缓存的行业/身份)
-      // 安全守护: H11 修复 — 端口改为 18789（gateway 默认端口），不再硬编码错误端口
-      const GATEWAY_HTTP = (window as any).__GATEWAY_HTTP__
-        || `http://${window.location.hostname}:18789`;
+      // 统一使用 config.ts 的 GATEWAY_HTTP (开发态走 Vite proxy, 生产态直连)
       fetch(`${GATEWAY_HTTP}/v1/profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -760,12 +937,29 @@ export const App: React.FC = () => {
   const showSessionSidebar = page === 'chat' && sidebarVisible;
   const showRightPanel = page === 'chat' && rightPanelVisible;
 
+  // ═══ 侧栏可拖拽（2026-10-06 L-Batch 1）═══
+  // 原为硬编码 width:260 / 320，1366px 屏下内容区只剩 786px 且无法调整。
+  // 现在可拖拽 + 双击复位 + 键盘←→ 调整 + localStorage 持久化。
+  const leftPane = useResizable({
+    storageKey: 'agentai.pane.left.width',
+    defaultWidth: 260, minWidth: 180, maxWidth: 480, side: 'right',
+    enabled: showSessionSidebar,
+  });
+  const rightPane = useResizable({
+    storageKey: 'agentai.pane.right.width',
+    defaultWidth: 320, minWidth: 240, maxWidth: 560, side: 'left',
+    enabled: showRightPanel,
+  });
+
   // 当前工作目录 (供 FileTreePanel 使用)
   const currentWorkspace = profile?.workspace || localStorage.getItem('agentai.workspace') || '';
 
-  /* --- 配置 antd 主题 (跟随 light/dark) --- */
-  const isDark = ['graphite', 'midnight', 'ember'].includes(themeStyle);
-  const accentColor = themeStyle === 'midnight' ? '#8b6bff' : themeStyle === 'ember' ? '#ff6b3d' : '#CD7A3A';
+/* --- 配置 antd 主题 (跟随 light/dark) --- */
+// P2: 跟随系统模式 — 检测 OS 暗色偏好
+const _systemDark = typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+const _effectiveTheme = themeStyle === 'system' ? (_systemDark ? 'graphite' : 'sandstone') : themeStyle;
+const isDark = ['graphite', 'midnight', 'ember'].includes(_effectiveTheme);
+const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme === 'ember' ? '#ff6b3d' : '#CD7A3A';
 
   /* ════════════════ 渲染 ════════════════ */
   /*
@@ -794,7 +988,7 @@ export const App: React.FC = () => {
         <div className="app-titlebar">
           {/* 品牌 (精简: 小图标 + 文字) */}
           <div className="app-brand" style={{ gap: 4 }}>
-            <img src="./favicon-32.png" alt="岐枢"
+            <img src="/favicon-32.png" alt="岐枢"
               style={{ width: 20, height: 20, borderRadius: 4 }} />
             <span className="app-brand-name" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ fontWeight: 600, color: 'var(--fg)' }}>岐枢</span>
@@ -804,7 +998,7 @@ export const App: React.FC = () => {
           </div>
 
           {/* 主导航 Tab (分组: core 直接显示, media/system 下拉) */}
-          <div style={{ display: 'flex', gap: 2, flex: 1, marginLeft: 16, overflow: 'auto', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 2, flex: 1, marginLeft: 16, overflow: 'visible', alignItems: 'center' }}>
             {/* Core 组: 直接显示 */}
             {PAGES.filter(p => p.group === 'core' && !p.hidden).map(p => (
               <span
@@ -831,65 +1025,28 @@ export const App: React.FC = () => {
               </span>
             </Tooltip>
 
-            {/* Media 组: 下拉菜单 */}
-            <Dropdown
-              trigger={['click']}
-              placement="bottomLeft"
-              menu={{
-                items: PAGES.filter(p => p.group === 'media' && !p.hidden).map(p => ({
-                  key: p.key,
-                  label: (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-                      {p.icon}
-                      <div>
-                        <div style={{ fontSize: 12, fontWeight: 500 }}>{p.label}</div>
-                        <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>{p.desc}</div>
-                      </div>
-                    </div>
-                  ),
-                })),
-                onClick: ({ key }) => setPage(key as PageKey),
-              }}
-            >
-              <span className={`app-tab ${PAGES.some(p => p.group === 'media' && p.key === page) ? 'active' : ''}`}>
-                <PictureOutlined />
-                <span>创作</span>
-                <DownOutlined style={{ fontSize: 9, marginLeft: 2 }} />
-              </span>
-            </Dropdown>
+            {/* Media 组: 内联下拉 (避免 Tauri transparent 模式下 antd Dropdown portal 不可见) */}
+            <NavGroupDropdown
+              label="创作"
+              icon={<PictureOutlined />}
+              active={PAGES.some(p => p.group === 'media' && p.key === page)}
+              items={PAGES.filter(p => p.group === 'media' && !p.hidden).map(p => ({
+                key: p.key, icon: p.icon, label: p.label, desc: p.desc, active: page === p.key,
+              }))}
+              onSelect={(k) => setPage(k as PageKey)}
+            />
 
-            {/* System 组: 下拉菜单 */}
-            <Dropdown
-              trigger={['click']}
-              placement="bottomLeft"
-              menu={{
-                items: PAGES.filter(p => p.group === 'system' && !p.hidden).map(p => ({
-                  key: p.key,
-                  label: (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', minWidth: 180 }}>
-                      {p.icon}
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          {p.label}
-                          {p.key === 'suggestions' && unreadSuggestionCount > 0 && (
-                            <Tag color="red" style={{ fontSize: 9, padding: '0 4px', lineHeight: '14px', margin: 0 }}>{unreadSuggestionCount}</Tag>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>{p.desc}</div>
-                      </div>
-                      {page === p.key && <CheckCircleFilled style={{ color: 'var(--accent)', fontSize: 12 }} />}
-                    </div>
-                  ),
-                })),
-                onClick: ({ key }) => setPage(key as PageKey),
-              }}
-            >
-              <span className={`app-tab ${PAGES.some(p => p.group === 'system' && p.key === page) ? 'active' : ''}`}>
-                <AppstoreOutlined />
-                <span>系统</span>
-                <DownOutlined style={{ fontSize: 9, marginLeft: 2 }} />
-              </span>
-            </Dropdown>
+            {/* System 组: 内联下拉 (同上, 避免 portal 不可见) */}
+            <NavGroupDropdown
+              label="系统"
+              icon={<AppstoreOutlined />}
+              active={PAGES.some(p => p.group === 'system' && p.key === page)}
+              items={PAGES.filter(p => p.group === 'system' && !p.hidden).map(p => ({
+                key: p.key, icon: p.icon, label: p.label, desc: p.desc, active: page === p.key,
+                badge: p.key === 'suggestions' && unreadSuggestionCount > 0 ? String(unreadSuggestionCount) : undefined,
+              }))}
+              onSelect={(k) => setPage(k as PageKey)}
+            />
           </div>
 
 {/* 模型选择 (TitleBar) */}
@@ -903,6 +1060,7 @@ export const App: React.FC = () => {
           <Tooltip title="主题 & 字体大小">
             <Dropdown
               trigger={['click']}
+              getPopupContainer={(trigger) => trigger.parentElement || document.body}
               menu={{
                 items: [
                   {
@@ -1140,15 +1298,36 @@ export const App: React.FC = () => {
         <div className="app-main fade-in" key={page /* 切页时重启动画 */}>
           {/* Left: 全能侧栏 (PulseFlowSidebar — Sessions / Files / Tasks) */}
           {showSessionSidebar && (
-            <div style={{ width: 260, borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', flexShrink: 0 }}>
+            // 2026-10-06: 宽度改为可拖拽（useResizable），样式抽到 layout.css
+            <div
+              ref={leftPane.paneRef}
+              className="app-pane app-pane-left"
+              style={{ width: leftPane.width }}
+            >
+              {/* 拖拽把手：键盘可达（←→ 调整 / Home 复位），双击复位 */}
+              <div
+                ref={leftPane.gripRef}
+                className={`pane-grip${leftPane.resizing ? ' is-dragging' : ''}`}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="调整左侧栏宽度（方向键调整，双击复位）"
+                aria-valuenow={leftPane.width}
+                aria-valuemin={180}
+                aria-valuemax={480}
+                tabIndex={0}
+                onKeyDown={leftPane.onGripKeyDown}
+                onDoubleClick={leftPane.onGripDoubleClick}
+              />
+              <div className="app-pane-body">
               <PulseFlowSidebar
-                width={260}
+                width={leftPane.width}
                 onFileOpen={(path: string) => {
-                  // Open file in editor mode
+                  // P0: 走 pending 机制, 避免 Editor 未挂载时事件丢失
                   setPage('editor');
-                  window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path } }));
+                  setPendingFilePath(path);
                 }}
               />
+              </div>
             </div>
           )}
 
@@ -1172,8 +1351,28 @@ export const App: React.FC = () => {
 
           {/* Right: 信息面板 (仅 chat) */}
           {showRightPanel && (
-            <div style={{ width: 320, borderLeft: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', flexShrink: 0 }}>
-              <RightPanel />
+            <div
+              ref={rightPane.paneRef}
+              className="app-pane app-pane-right"
+              style={{ width: rightPane.width }}
+            >
+              {/* 右侧栏把手在左边，拖拽方向与鼠标相反（side: 'left'） */}
+              <div
+                ref={rightPane.gripRef}
+                className={`pane-grip${rightPane.resizing ? ' is-dragging' : ''}`}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="调整右侧栏宽度（方向键调整，双击复位）"
+                aria-valuenow={rightPane.width}
+                aria-valuemin={240}
+                aria-valuemax={560}
+                tabIndex={0}
+                onKeyDown={rightPane.onGripKeyDown}
+                onDoubleClick={rightPane.onGripDoubleClick}
+              />
+              <div className="app-pane-body">
+                <RightPanel />
+              </div>
             </div>
           )}
         </div>
@@ -1242,7 +1441,7 @@ export const App: React.FC = () => {
           扫描二维码添加微信，获取技术支持
         </p>
         <img
-          src="./weixin.jpg"
+          src="/weixin.jpg"
           alt="开发者微信二维码"
           style={{
             width: 200,
@@ -1369,16 +1568,6 @@ export const App: React.FC = () => {
         </AntApp>
       </ConfigProvider>
     </StyleProvider>
-  );
-};
-
-/* ════════════════ Onboarding 包装 ════════════════
- * 把原 Onboarding 组件的 finish() 拆成 onFinish prop, 避免内部 reload
- */
-const OnboardingWrapper: React.FC<{ onFinish: (name: string) => void }> = ({ onFinish }) => {
-  const [open, setOpen] = useState(true);
-  return (
-    <Onboarding open={open} onClose={() => { /* 不可跳过 */ }} onFinish={(name) => { onFinish(name); setOpen(false); }} />
   );
 };
 

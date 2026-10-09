@@ -94,6 +94,8 @@ export class WorldModel extends EventEmitter {
   private experiences: Map<string, Experience> = new Map();
   private llmRouter: AgentAIRouter;
   private storeDir: string;
+  /** 2026-09-04: 历史知识异步加载的完成信号; 读取方查询前 await whenReady() 避免漏读 */
+  private readonly readyPromise: Promise<void>;
 
   constructor(llmRouter: AgentAIRouter, workspace?: string) {
     super();
@@ -102,7 +104,7 @@ export class WorldModel extends EventEmitter {
       ? path.join(workspace, '.agentai', 'world-model')
       : path.join(process.cwd(), '.agentai', 'world-model');
     // 异步加载历史知识, 不阻塞构造
-    this.loadFromStorage().catch(() => {});
+    this.readyPromise = this.loadFromStorage().catch(() => {});
   }
 
   // ══════════════════════════════════════════════════════
@@ -249,50 +251,82 @@ ${task.steps.map((s, i) => `${i + 1}. ${s.action} → ${s.result}`).join('\n')}
 
       const parsed = JSON.parse(jsonMatch[1] || jsonMatch[0]);
       
-      // 创建实体
-      const entities: Entity[] = [];
+      // 创建实体 (2026-09-04 P0: 同名+同类型实体去重复用, 不再逐任务生成新 id → 图谱/JSONL 不再膨胀)
+      const now = Date.now();
+      const entities: Entity[] = [];      // 本次涉及实体 (含复用的既有实体, 供关系关联与返回)
+      const newEntities: Entity[] = [];   // 真正新建实体 (仅这些需要落盘)
+      const entityByName = new Map<string, Entity>();
+      for (const ent of this.entities.values()) {
+        const ek = String(ent.name || '').toLowerCase();
+        if (ek && !entityByName.has(ek)) entityByName.set(ek, ent);
+      }
       for (const e of parsed.entities || []) {
-        const entity: Entity = {
-          id: `ent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: e.name,
-          type: e.type || 'concept',
-          properties: e.properties || {},
-          confidence: 0.7,
-          source: task.id,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        this.entities.set(entity.id, entity);
-        entities.push(entity);
+        const name = String(e.name || '').trim();
+        const key = name.toLowerCase();
+        const existing = key ? entityByName.get(key) : undefined;
+        if (existing && (!e.type || existing.type === e.type)) {
+          // 复用: 合并新属性 + 刷新时间, 不重复写盘
+          if (e.properties && typeof e.properties === 'object') Object.assign(existing.properties, e.properties);
+          existing.updatedAt = now;
+          entities.push(existing);
+        } else {
+          const entity: Entity = {
+            id: `ent-${now}-${Math.random().toString(36).slice(2, 8)}`,
+            name,
+            type: e.type || 'concept',
+            properties: e.properties || {},
+            confidence: 0.7,
+            source: task.id,
+            createdAt: now,
+            updatedAt: now,
+          };
+          this.entities.set(entity.id, entity);
+          entityByName.set(name.toLowerCase(), entity);
+          entities.push(entity);
+          newEntities.push(entity);
+        }
       }
 
-      // 创建关系
+      // 创建关系 (仅当两端实体已知; 相同 源|目标|类型 三元组不重复入库)
       const relations: Relation[] = [];
+      const newRelations: Relation[] = [];
+      const relKey = (sId: string, tId: string, type: string) => `${sId}||${tId}||${type}`;
+      const existingRelKeys = new Set(Array.from(this.relations.values()).map(r => relKey(r.sourceId, r.targetId, r.type)));
       for (const r of parsed.relations || []) {
-        const sourceEnt = entities.find(e => e.name === r.source);
-        const targetEnt = entities.find(e => e.name === r.target);
+        const sourceEnt = entities.find(e => e.name.toLowerCase() === String(r.source || '').toLowerCase());
+        const targetEnt = entities.find(e => e.name.toLowerCase() === String(r.target || '').toLowerCase());
         
         if (sourceEnt && targetEnt) {
+          const key = relKey(sourceEnt.id, targetEnt.id, r.type || 'depends-on');
+          if (existingRelKeys.has(key)) continue;
+          existingRelKeys.add(key);
           const relation: Relation = {
-            id: `rel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            id: `rel-${now}-${Math.random().toString(36).slice(2, 8)}`,
             sourceId: sourceEnt.id,
             targetId: targetEnt.id,
             type: r.type || 'depends-on',
             strength: r.strength || 0.5,
             evidence: [task.id],
             confidence: 0.6,
-            createdAt: Date.now(),
+            createdAt: now,
           };
           this.relations.set(relation.id, relation);
           relations.push(relation);
+          newRelations.push(relation);
         }
       }
 
-      // 创建因果规则
+      // 创建因果规则 (cause+effect 相同视为同一规则, 不再重复入库)
       const rules: CausalRule[] = [];
+      const newRules: CausalRule[] = [];
+      const ruleKey = (cause: string, effect: string) => `${String(cause || '').toLowerCase()}||${String(effect || '').toLowerCase()}`;
+      const existingRuleKeys = new Set(Array.from(this.causalRules.values()).map(r => ruleKey(r.cause, r.effect)));
       for (const cr of parsed.causalRules || []) {
+        const key = ruleKey(cr.cause, cr.effect);
+        if (existingRuleKeys.has(key)) continue;
+        existingRuleKeys.add(key);
         const rule: CausalRule = {
-          id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          id: `rule-${now}-${Math.random().toString(36).slice(2, 8)}`,
           cause: cr.cause,
           effect: cr.effect,
           conditions: cr.conditions || [],
@@ -300,34 +334,35 @@ ${task.steps.map((s, i) => `${i + 1}. ${s.action} → ${s.result}`).join('\n')}
           exceptions: cr.exceptions || [],
           sourceTasks: [task.id],
           verified: false,
-          createdAt: Date.now(),
+          createdAt: now,
         };
         this.causalRules.set(rule.id, rule);
         rules.push(rule);
+        newRules.push(rule);
       }
 
       // 创建经验记录
       const experience: Experience = {
-        id: `exp-${Date.now()}`,
+        id: `exp-${now}-${Math.random().toString(36).slice(2, 6)}`,
         taskType: task.type,
         situation: task.input,
         action: task.steps.map(s => s.action).join(' → '),
         outcome: task.output,
         entities: entities.map(e => e.id),
         lessons: this.extractLessons(task),
-        createdAt: Date.now(),
+        createdAt: now,
       };
       this.experiences.set(experience.id, experience);
 
       this.emit('knowledge:extracted', { task: task.id, entities, relations, rules });
 
-      // 异步持久化, 不阻塞返回
+      // 异步持久化, 不阻塞返回 (只写真正新增的条目, 已复用/已存在的不再追加到 JSONL)
       (async () => {
         try {
-          for (const e of entities) await this.persistEntity(e);
-          for (const r of relations) await this.persistRelation(r);
-          for (const cr of rules) await this.persistRule(cr);
-          if (experience) await this.persistExperience(experience);
+          for (const e of newEntities) await this.persistEntity(e);
+          for (const r of newRelations) await this.persistRelation(r);
+          for (const cr of newRules) await this.persistRule(cr);
+          await this.persistExperience(experience);
         } catch { /* 静默失败 */ }
       })();
 
@@ -548,6 +583,65 @@ ${task.steps.map((s, i) => `${i + 1}. ${s.action} → ${s.result}`).join('\n')}
       relationTypes,
       verifiedRules: Array.from(this.causalRules.values()).filter(r => r.verified).length,
     };
+  }
+
+  /**
+   * 等待历史知识加载完成 (读取方在查询前调用, 避免刚构造就查询漏读磁盘数据)
+   */
+  async whenReady(): Promise<void> {
+    await this.readyPromise;
+  }
+
+  /**
+   * 用任务关键词召回与当前任务相关的实体/因果规则, 格式化后供注入 system prompt。
+   * 2026-09-04: 世界模型"只写不读"问题的读回入口 — 完成 写入→召回→影响决策 闭环。
+   * @returns 格式化文本; 无匹配返回 ''
+   */
+  buildWorldContext(keywords: string[], limit: number = 6): string {
+    const kws = (keywords || [])
+      .map(k => String(k).toLowerCase().trim())
+      .filter(k => k.length >= 2);
+    if (kws.length === 0) return '';
+
+    // 实体命中 (名称/类型/属性值含任一关键词, 按命中数排序)
+    type Hit<T> = { item: T; hits: number };
+    const entityHits: Hit<Entity>[] = [];
+    for (const ent of this.entities.values()) {
+      const text = `${ent.name} ${ent.type} ${Object.values(ent.properties || {}).join(' ')}`.toLowerCase();
+      const hits = kws.filter(k => text.includes(k)).length;
+      if (hits > 0) entityHits.push({ item: ent, hits });
+    }
+    entityHits.sort((a, b) => b.hits - a.hits);
+
+    // 因果规则命中
+    const ruleHits: Hit<CausalRule>[] = [];
+    for (const rule of this.causalRules.values()) {
+      const text = `${rule.cause} ${rule.effect} ${(rule.conditions || []).join(' ')}`.toLowerCase();
+      const hits = kws.filter(k => text.includes(k)).length;
+      if (hits > 0) ruleHits.push({ item: rule, hits });
+    }
+    ruleHits.sort((a, b) => b.hits - a.hits);
+
+    if (entityHits.length === 0 && ruleHits.length === 0) return '';
+
+    const lines: string[] = ['# World Memory (跨任务结构化经验, 仅与当前任务相关的 Top 召回)'];
+    let budget = 1400; // 字符预算, 防止拖垮上下文
+    for (const { item: ent } of entityHits.slice(0, limit)) {
+      const props = Object.entries(ent.properties || {}).slice(0, 3)
+        .map(([k, v]) => `${k}=${v}`).join(', ');
+      const line = `- [实体:${ent.type}] ${String(ent.name).slice(0, 60)}${props ? ` (${props.slice(0, 120)})` : ''}`;
+      if (budget - line.length < 0) break;
+      budget -= line.length;
+      lines.push(line);
+    }
+    for (const { item: rule } of ruleHits.slice(0, limit)) {
+      const prob = Math.round((rule.probability || 0) * 100);
+      const line = `- [经验] ${String(rule.cause).slice(0, 80)} → ${String(rule.effect).slice(0, 80)}${rule.conditions?.length ? ` (条件: ${rule.conditions.join(', ').slice(0, 100)})` : ''} [概率${prob}%${rule.verified ? ', 已验证' : ''}]`;
+      if (budget - line.length < 0) break;
+      budget -= line.length;
+      lines.push(line);
+    }
+    return lines.join('\n');
   }
 
   // ═══════════════════════════════════════════════════════════

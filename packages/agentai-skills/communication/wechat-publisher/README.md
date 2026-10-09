@@ -2,7 +2,7 @@
 
 **一键发布 Markdown 到微信公众号草稿箱 🚀**
 
-基于 [wenyan-cli](https://github.com/caol64/wenyan-cli) 封装的 OpenClaw skill。
+基于 [wenyan-cli](https://github.com/caol64/wenyan-cli) 封装的 AgentAI skill。
 
 ---
 
@@ -34,7 +34,7 @@ cd wechat-publisher
 
 ### 3. 配置 API 凭证
 
-在 OpenClaw workspace 的 `TOOLS.md` 中添加：
+在 AgentAI workspace 的 `TOOLS.md` 中添加：
 
 ```markdown
 ## 🔐 WeChat Official Account (微信公众号)
@@ -147,7 +147,7 @@ cover: ./assets/cover.jpg  # 封面图（必填！推荐 1080×864）
 
 ```
 wechat-publisher/
-├── SKILL.md                     # OpenClaw skill 完整文档
+├── SKILL.md                     # AgentAI skill 完整文档
 ├── README.md                    # 本文件
 ├── example.md                   # 测试文章示例
 ├── .gitignore                   # Git 忽略文件
@@ -215,7 +215,7 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 ## 🙏 致谢
 
 - [wenyan-cli](https://github.com/caol64/wenyan-cli) - 优秀的微信公众号发布工具
-- [OpenClaw](https://openclaw.ai) - 强大的 AI Agent 框架
+- AgentAI - 强大的 AI Agent 框架
 
 ---
 

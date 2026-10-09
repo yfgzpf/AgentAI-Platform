@@ -26,7 +26,21 @@ export interface SessionManagerOptions {
 }
 
 const DEFAULT_MAX_CAPACITY = 200;
-const DEFAULT_TTL_MS = 30 * 60 * 1000; // 30 分钟
+/**
+ * 2026-10-05:30 分钟 → 2 小时
+ * ==================================================================
+ * 原 30 分钟对长任务明显偏短:
+ *   - `get()` 只在**请求进入时**刷新一次 lastAccessedAt;
+ *   - 一个跑 40 分钟的单次长任务, 在第 30-35 分钟时 lastAccessedAt 已超期,
+ *     正好撞上 5 分钟周期的清理扫描 → session 被删
+ *   - 下一次 run() 走sessionManager miss → **new AgentAILoop()**
+ *     → iteration / _toolCallHistory / 工作记忆 / appendOnlyLog 全部归零
+ *   → 表现为: 长任务跑到一半, AI 突然"失忆", 彻底从头开始。
+ *
+ * 2 小时覆盖绝大多数深度重构/调研任务; 且 200 容量上限仍在, 不会无界增长。
+ * 如需为超长任务兜底, 可通过 opts.ttlMs 单独配置。
+ */
+const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000; // 2 小时
 const DEFAULT_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 分钟
 
 export class SessionManager {

@@ -5,7 +5,7 @@ version: 2.4.1
 homepage: https://workrally.qq.com
 author: WorkRally Team
 metadata:
-  openclaw:
+  agentai:
     emoji: "\U0001F3AC"
     requires:
       bins:

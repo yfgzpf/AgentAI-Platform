@@ -25,6 +25,43 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+// ===== 重试工具函数 =====
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 100;
+
+async function retryAsync<T>(fn: () => Promise<T>, label: string): Promise<T | undefined> {
+  let lastErr: any;
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+      if (i < MAX_RETRIES - 1) {
+        console.warn(`[memory] ${label} 重试 ${i + 1}/${MAX_RETRIES}: ${e?.message}`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS * (i + 1)));
+      }
+    }
+  }
+  console.warn(`[memory] ${label} 失败 (${MAX_RETRIES}次重试): ${lastErr?.message}`);
+  return undefined;
+}
+
+function retrySync<T>(fn: () => T, label: string): T | undefined {
+  let lastErr: any;
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      return fn();
+    } catch (e: any) {
+      lastErr = e;
+      if (i < MAX_RETRIES - 1) {
+        console.warn(`[memory] ${label} 重试 ${i + 1}/${MAX_RETRIES}: ${e?.message}`);
+      }
+    }
+  }
+  console.warn(`[memory] ${label} 失败 (${MAX_RETRIES}次重试): ${lastErr?.message}`);
+  return undefined;
+}
+
 // ===== Types =====
 export interface MemoryFact {
   key: string;
@@ -88,12 +125,14 @@ export class MemoryManager {
     } catch {}
   }
 
-  /** 持久化 */
+  /** 持久化 (带重试保护) */
   private save(): void {
-    try {
+    retrySync(() => {
+      const dir = path.dirname(this.storePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const data = { facts: [...this.facts.values()], updatedAt: Date.now() };
       fs.writeFileSync(this.storePath, JSON.stringify(data, null, 2), 'utf-8');
-    } catch {}
+    }, `save memory.json`);
   }
 
   /** 记住一个事实 */
@@ -129,13 +168,13 @@ export class MemoryManager {
   }
 
   /**
-   * 镜像写入 memory.ts 高级 JSONL 系统
+   * 镜像写入 memory.ts 高级 JSONL 系统 (带重试保护)
    * - KV key → entityId (用于冲突检测/去重)
    * - scope → role/source
    * - metadata 保留
    */
   private async mirrorToAdvancedMemory(fact: MemoryFact): Promise<void> {
-    try {
+    await retryAsync(async () => {
       const { writeMemory } = await import('./memory.js');
       await writeMemory({
         userId: 'default',
@@ -153,9 +192,7 @@ export class MemoryManager {
           ...fact.metadata,
         },
       });
-    } catch {
-      // 静默失败
-    }
+    }, `mirrorToAdvancedMemory ${fact.key}`);
   }
 
   /** 查询记忆 */
@@ -313,15 +350,15 @@ async recall(query: MemoryQuery): Promise<MemoryFact[]> {
     await this.remember({ key: `fix:${pattern.replace(/\s+/g, '-').slice(0, 60)}`, value: solution, scope: 'project', metadata: { type: 'fix-pattern' } });
   }
 
-  /** 同步到 project-memory.json (兼容旧接口) */
+  /** 同步到 project-memory.json (兼容旧接口, 带重试保护) */
   private syncToProjectMemory(fact: MemoryFact): void {
-    try {
+    retrySync(() => {
       const pmPath = path.join(this.workspace, '.agentai', 'project-memory.json');
       if (!fs.existsSync(pmPath)) return;
       const pm = JSON.parse(fs.readFileSync(pmPath, 'utf-8'));
       pm.updatedAt = Date.now();
       fs.writeFileSync(pmPath, JSON.stringify(pm, null, 2), 'utf-8');
-    } catch {}
+    }, `syncToProjectMemory ${fact.key}`);
   }
 
   /** 清空所有 */

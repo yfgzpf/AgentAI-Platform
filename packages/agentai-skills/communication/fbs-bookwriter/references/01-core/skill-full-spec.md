@@ -140,8 +140,8 @@ disk_cache → offline_cache → local_rule → no_pack
 
 - `npm run pack:workbuddy`：生成 WorkBuddy 审核包
 - `npm run pack:codebuddy`：生成 CodeBuddy 插件包
-- `npm run pack:openclaw`：生成 OpenClaw 技能包（`fbs_bookwriter/` 根目录）
-- `npm run pack:release`：一次生成 WorkBuddy、CodeBuddy、OpenClaw **三种**发布物
+- `npm run pack:openclaw`：生成 AgentAI 技能包（`fbs_bookwriter/` 根目录）
+- `npm run pack:release`：一次生成 WorkBuddy、CodeBuddy、AgentAI **三种**发布物
 - `dist/` 为分发产物目录，送审以 `verification.json` 为最终校验真值
 
 ---

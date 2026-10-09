@@ -1,0 +1,217 @@
+/**
+ * Session Manager - LRU + 定时清理
+ * ----------------------------------------------------
+ * 解决 sessions Map 无限增长问题
+ * - LRU 淘汰: 超过 maxCapacity 淘汰最久未使用
+ * - TTL 清理:   超过 ttl 毫秒未访问自动清理
+ * - 定时任务:   每 intervalMs 扫描过期 session
+ */
+const DEFAULT_MAX_CAPACITY = 200;
+/**
+ * 2026-10-05:30 分钟 → 2 小时
+ * ==================================================================
+ * 原 30 分钟对长任务明显偏短:
+ *   - `get()` 只在**请求进入时**刷新一次 lastAccessedAt;
+ *   - 一个跑 40 分钟的单次长任务, 在第 30-35 分钟时 lastAccessedAt 已超期,
+ *     正好撞上 5 分钟周期的清理扫描 → session 被删
+ *   - 下一次 run() 走sessionManager miss → **new AgentAILoop()**
+ *     → iteration / _toolCallHistory / 工作记忆 / appendOnlyLog 全部归零
+ *   → 表现为: 长任务跑到一半, AI 突然"失忆", 彻底从头开始。
+ *
+ * 2 小时覆盖绝大多数深度重构/调研任务; 且 200 容量上限仍在, 不会无界增长。
+ * 如需为超长任务兜底, 可通过 opts.ttlMs 单独配置。
+ */
+const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000; // 2 小时
+const DEFAULT_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 分钟
+export class SessionManager {
+    map = new Map();
+    cleanupTimer = null;
+    capacity;
+    ttl;
+    interval;
+    constructor(opts = {}) {
+        this.capacity = opts.maxCapacity ?? DEFAULT_MAX_CAPACITY;
+        this.ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
+        this.interval = opts.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL;
+        // 启动清理定时器
+        this.startCleanup();
+    }
+    /**
+     * 获取或创建 session
+     * 使用 LRU 策略: 访问时移到 Map 末尾 (最久未用在前)
+     */
+    getOrCreate(key, factory) {
+        const existing = this.map.get(key);
+        if (existing) {
+            existing.lastAccessedAt = Date.now();
+            existing.callCount++;
+            // 重新插入到 Map 末尾 (LRU 语义)
+            this.map.delete(key);
+            this.map.set(key, existing);
+            return existing.loop;
+        }
+        // 容量检查
+        if (this.map.size >= this.capacity) {
+            this.evictLeastRecentlyUsed();
+        }
+        // 创建新 session
+        const { loop, userId, workspace } = factory();
+        const meta = {
+            loop,
+            lastAccessedAt: Date.now(),
+            createdAt: Date.now(),
+            userId,
+            workspace,
+            callCount: 1,
+        };
+        this.map.set(key, meta);
+        return loop;
+    }
+    /**
+     * 直接获取 (不创建)
+     * 注意: 返回对象不包含 master 等扩展字段 — 路由需要 master 时请用 getWithExtra。
+     */
+    get(key) {
+        const meta = this.map.get(key);
+        if (!meta)
+            return undefined;
+        meta.lastAccessedAt = Date.now();
+        this.map.delete(key);
+        this.map.set(key, meta);
+        return { loop: meta.loop, userId: meta.userId, workspace: meta.workspace };
+    }
+    /**
+     * 显式写入/覆盖一个 session (含扩展字段, 如 MasterController 引用)。
+     * 取代路由层直接操作 sessionManager['map'].set(...) 的写法,
+     * 由 SessionManager 统一负责容量管理与 LRU 语义。
+     */
+    set(key, data) {
+        // 容量检查 (新建 key 时)
+        if (!this.map.has(key) && this.map.size >= this.capacity) {
+            this.evictLeastRecentlyUsed();
+        }
+        const prev = this.map.get(key);
+        const meta = {
+            loop: data.loop,
+            lastAccessedAt: Date.now(),
+            createdAt: prev?.createdAt ?? Date.now(),
+            userId: data.userId,
+            workspace: data.workspace,
+            callCount: data.callCount ?? prev?.callCount ?? 1,
+            ...(data.master !== undefined ? { master: data.master } : {}),
+        };
+        this.map.set(key, meta);
+    }
+    /**
+     * 获取 session 及其扩展字段 (master 等), 用于路由层复用已创建的编排器。
+     */
+    getWithExtra(key) {
+        const meta = this.map.get(key);
+        if (!meta)
+            return undefined;
+        meta.lastAccessedAt = Date.now();
+        this.map.delete(key);
+        this.map.set(key, meta);
+        return { loop: meta.loop, userId: meta.userId, workspace: meta.workspace, ...(meta.master !== undefined ? { master: meta.master } : {}) };
+    }
+    /**
+     * 删除指定 session
+     */
+    delete(key) {
+        return this.map.delete(key);
+    }
+    /**
+     * 清空所有
+     */
+    clear() {
+        this.map.clear();
+    }
+    size() {
+        return this.map.size;
+    }
+    /**
+     * 获取统计信息
+     */
+    stats() {
+        let oldest = Date.now();
+        let totalCalls = 0;
+        for (const m of this.map.values()) {
+            if (m.createdAt < oldest)
+                oldest = m.createdAt;
+            totalCalls += m.callCount;
+        }
+        return {
+            size: this.map.size,
+            capacity: this.capacity,
+            ttlMs: this.ttl,
+            oldestAgeMs: this.map.size > 0 ? Date.now() - oldest : 0,
+            totalCalls,
+        };
+    }
+    /**
+     * 淘汰最久未用
+     */
+    evictLeastRecentlyUsed() {
+        // Map 迭代顺序 = 插入顺序, 第一个就是最久未用
+        const firstKey = this.map.keys().next().value;
+        if (firstKey) {
+            this.map.delete(firstKey);
+        }
+    }
+    /**
+     * 清理过期 session
+     */
+    cleanupExpired() {
+        const now = Date.now();
+        let deleted = 0;
+        for (const [key, meta] of this.map.entries()) {
+            if (now - meta.lastAccessedAt > this.ttl) {
+                this.map.delete(key);
+                deleted++;
+            }
+        }
+        return deleted;
+    }
+    startCleanup() {
+        if (this.cleanupTimer)
+            return;
+        this.cleanupTimer = setInterval(() => {
+            const removed = this.cleanupExpired();
+            if (removed > 0) {
+                console.log(`[session-mgr] 清理 ${removed} 个过期 session, 剩余 ${this.map.size}`);
+            }
+        }, this.interval);
+        // 防止 unref 错误: 不阻止进程退出
+        this.cleanupTimer.unref?.();
+    }
+    /**
+     * 遍历所有 session (不更新 LRU 顺序, 用于 cron 检查)
+     */
+    iterate() {
+        const out = [];
+        for (const m of this.map.values()) {
+            out.push({ loop: m.loop, userId: m.userId, workspace: m.workspace });
+        }
+        return out;
+    }
+    stop() {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
+    }
+}
+/** 全局单例 */
+let _instance = null;
+export function getSessionManager() {
+    if (!_instance) {
+        _instance = new SessionManager();
+    }
+    return _instance;
+}
+export function resetSessionManager() {
+    if (_instance) {
+        _instance.stop();
+        _instance = null;
+    }
+}

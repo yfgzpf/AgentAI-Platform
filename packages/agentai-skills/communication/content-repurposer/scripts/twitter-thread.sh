@@ -70,7 +70,7 @@ Before you begin writing, please think step-by-step to ensure you follow all con
 Begin."
 
 # --- Call LLM ---
-# This uses the built-in Clawdbot LLM tool.
+# This uses the built-in AgentAI LLM tool.
 # In a real scenario, this would be `clawdbot llm --system "$LLM_SYSTEM_PROMPT" "$PROMPT"`
 # For this simulation, I will output a placeholder.
 

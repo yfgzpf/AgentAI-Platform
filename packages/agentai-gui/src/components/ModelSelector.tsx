@@ -39,8 +39,8 @@ function hasApiKey(m: ModelConfig, commercialKeys: Record<string, string>): bool
 }
 
 function isFreeModel(m: ModelConfig): boolean {
-  // 只保留2个免费模型
-  return m.id === 'agnes-2.5-flash' || m.id === 'zhipu';
+  // Agnes AI 全系免费 + 智谱免费
+  return m.id === 'agnes-3.0-flash' || m.id === 'agnes-2.5-flash' || m.id === 'agnes-2.0' || m.id === 'agentai' || m.id === 'zhipu';
 }
 
 /** 从 baseURL 提取渠道简称 */

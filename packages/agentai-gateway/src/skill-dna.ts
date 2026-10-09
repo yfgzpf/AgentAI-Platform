@@ -90,6 +90,8 @@ export interface HybridizationRequest {
 export interface HybridizationResult {
   success: boolean;
   newGenome?: SkillGenome;
+  /** 参与杂交的父代技能 ID (测试与调用方依赖该字段, 历史上只存在于 newGenome.parents) */
+  parents?: string[];
   dnaUsed: string[];
   mutations: DNAMutation[];
   estimatedFitness: number;
@@ -202,12 +204,18 @@ export class SkillDNAEvolution extends EventEmitter {
       }
       
       // 选择相关DNA
-      const selectedDNA = this.selectRelevantDNA(
+      let selectedDNA = this.selectRelevantDNA(
         Array.from(allDNA),
         targetCapability,
         constraints
       );
-      
+
+      // 保底: 目标能力与父代 DNA 词面无关时 (如 document-converter vs PDF处理),
+      // 不应返回空 DNA 组 — 杂交本身就是为了跨域重组, 此时保留全部父代素材
+      if (selectedDNA.length === 0) {
+        selectedDNA = Array.from(allDNA);
+      }
+
       // 生成变异
       const mutations = this.generateMutations(selectedDNA, targetCapability);
       
@@ -236,6 +244,7 @@ export class SkillDNAEvolution extends EventEmitter {
       return {
         success: true,
         newGenome,
+        parents: parentSkillIds,
         dnaUsed: selectedDNA,
         mutations,
         estimatedFitness,
@@ -354,21 +363,46 @@ export class SkillDNAEvolution extends EventEmitter {
   // 私有方法
   // ═══════════════════════════════════════════════════════════
 
+  /**
+   * 评估代码复杂度:
+   * 主要依据 await 步骤数 (真实的多步异步流程), 代码长度作为辅助信号。
+   * 历史实现只看 code.length (>500 才 complex), 导致 4~5 个 await 的多步技能被误判为 simple,
+   * optimize 变异因此找不到可优化片段。
+   */
+  private assessComplexity(code: string): 'simple' | 'medium' | 'complex' {
+    const awaitCount = (code.match(/\bawait\s+/g) || []).length;
+    if (awaitCount >= 4 || code.length > 500) return 'complex';
+    if (awaitCount >= 2 || code.length > 200) return 'medium';
+    return 'simple';
+  }
+
   private extractCapabilityDNA(skillId: string, code: string, description: string): SkillDNA | null {
-    // 提取主要功能逻辑
-    const mainFunction = code.match(/async\s+function\s+(\w+)\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/);
-    if (!mainFunction) return null;
-    
+    // 提取主要功能逻辑 — 优先匹配具名 async function (闭合括号允许缩进)
+    let codeSnippet: string | null = null;
+    const namedFn = code.match(/async\s+function\s+(\w+)\s*\([^)]*\)\s*\{([\s\S]*?)\n\s*\}/);
+    if (namedFn) {
+      codeSnippet = namedFn[0];
+    } else {
+      // 回退: 箭头函数风格 (module.exports = async (...) => ... / const x = async () => ...)
+      // 历史上这类技能 (如 module.exports = async () => ({...})) 提取不到任何 capability DNA
+      const arrow = code.match(/(?:module\.exports\s*=\s*)?async\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*[\s\S]{0,400}/);
+      if (arrow) {
+        codeSnippet = arrow[0];
+      } else {
+        return null;
+      }
+    }
+
     return {
       id: `dna-cap-${skillId}-${Date.now()}`,
       name: `${skillId}-capability`,
       type: 'capability',
       description: `核心能力: ${description.slice(0, 100)}`,
-      code: mainFunction[0],
+      code: codeSnippet,
       metadata: {
         language: 'javascript',
         dependencies: this.extractDependencies(code),
-        complexity: code.length > 500 ? 'complex' : code.length > 200 ? 'medium' : 'simple',
+        complexity: this.assessComplexity(code),
         reusability: 0.7,
       },
       stats: {
@@ -378,7 +412,7 @@ export class SkillDNAEvolution extends EventEmitter {
       },
       versions: [{
         version: 1,
-        code: mainFunction[0],
+        code: codeSnippet,
         changeDescription: '初始提取',
         createdAt: Date.now(),
       }],
@@ -469,7 +503,8 @@ export class SkillDNAEvolution extends EventEmitter {
 
   private extractConstraintDNA(skillId: string, code: string): SkillDNA | null {
     // 提取约束条件（安全检查、限制等）
-    const constraints = code.match(/if\s*\([^)]*(?:check|validate|limit|max|min|size|length)\)[^;]*;/gi);
+    // 注: 关键词后允许继续出现比较表达式 (如 args.input.length > 1000), 旧正则要求关键词紧贴 ")" 导致漏检
+    const constraints = code.match(/if\s*\([^)]*(?:check|validate|limit|max|min|size|length)[^)]*\)[^;]*;/gi);
     if (!constraints || constraints.length === 0) return null;
     
     return {

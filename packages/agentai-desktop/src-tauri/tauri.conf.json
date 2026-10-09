@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ws: http://127.0.0.1:18789; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: blob: https: asset: http://asset.localhost; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com; connect-src 'self' ws: ipc: http://127.0.0.1:18789 http://ipc.localhost https://apihub.agnes-ai.com https://api.deepseek.com https://mp.weixin.qq.com https://runware.ai https://volcengine.com https: https://api.weixin.qq.com https://github.com https://objects.githubusercontent.com https://api.github.com; worker-src 'self' blob:; frame-src 'self' https:"
+      "csp": "default-src 'self' ws: wss: http://127.0.0.1:18789 http://localhost:18789; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: blob: https: asset: http://asset.localhost http://127.0.0.1:18789; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com; connect-src 'self' ws: wss: ipc: http://127.0.0.1:18789 http://localhost:18789 http://ipc.localhost https://apihub.agnes-ai.cn https://api.agnes-ai.cn https://api.deepseek.com https://mp.weixin.qq.com https://runware.ai https://volcengine.com https: https://api.weixin.qq.com https://github.com https://objects.githubusercontent.com https://api.github.com; worker-src 'self' blob:; frame-src 'self' https:"
     },
     "trayIcon": {
       "id": "main-tray",

@@ -127,7 +127,7 @@ export const WechatSetup: React.FC = () => {
             开始绑定
           </Button>
           <div style={{ marginTop: 12, fontSize: 11, color: 'var(--muted-2)' }}>
-            支持微信 ≥ 8.0.70 · 需要 ClawBot 插件
+            支持微信 ≥ 8.0.70 · 需要微信助手插件
           </div>
         </Card>
       </div>

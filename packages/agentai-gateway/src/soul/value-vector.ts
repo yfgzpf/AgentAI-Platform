@@ -20,6 +20,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { getScoped, resetScoped } from './workspace-scope.js';
 
 export interface ValueVector {
   caution: number;       // -1(大胆) ~ +1(谨慎)
@@ -112,8 +113,16 @@ export class ValueSystem extends EventEmitter {
   }
 }
 
-let _instance: ValueSystem | null = null;
-export function getValueSystem(): ValueSystem {
-  if (!_instance) _instance = new ValueSystem();
-  return _instance;
+// ===== workspace 作用域单例 =====
+// 串味修复: 原为进程级单例，vector(价值倾向) 跨任务累积，
+// 来自上一任务的成功/失败经验会影响当前任务的决策倾向。
+
+/** 按 workspace 返回 ValueSystem 实例（传请求级 workspace） */
+export function getValueSystem(workspace?: string): ValueSystem {
+  return getScoped<ValueSystem>('valueSystem', workspace, () => new ValueSystem());
+}
+
+/** 重置指定 workspace 的实例；不传则重置全部 */
+export function resetValueSystem(workspace?: string): void {
+  resetScoped<ValueSystem>('valueSystem', workspace);
 }

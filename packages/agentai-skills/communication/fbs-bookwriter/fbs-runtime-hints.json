@@ -22,7 +22,7 @@
       "book-root-switch"
     ],
     "firstResponseJsonPath": "firstResponseContext.promptLayerCacheContract",
-    "_note": "对齐 Hermes 分层提示构建：稳定层缓存 + 会话增量层实时拼接，减少首屏漂移"
+    "_note": "对齐 PulseFlow 分层提示构建：稳定层缓存 + 会话增量层实时拼接，减少首屏漂移"
   },
   "channelSessionDefaults": {
     "recursionLimit": 100,

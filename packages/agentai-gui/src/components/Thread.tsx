@@ -58,8 +58,9 @@ export const UserMsg: React.FC<{
   userAvatar?: string;
   onResend?: () => void;
   onEdit?: () => void;
+  onDelete?: () => void;
   onBookmark?: () => void;
-}> = ({ text, time, status, messageId, onNavigate, segments, userName, userAvatar, onResend, onEdit, onBookmark }) => {
+}> = ({ text, time, status, messageId, onNavigate, segments, userName, userAvatar, onResend, onEdit, onDelete, onBookmark }) => {
   const [copied, setCopied] = useState(false);
   // 过滤出图片段 + 文件标记
   const imageSegments = segments?.filter(s => s.kind === 'image') || [];
@@ -120,6 +121,7 @@ export const UserMsg: React.FC<{
             text={[text, ...fileTags.map(s => (s as any).text)].filter(Boolean).join('\n')}
             onResend={onResend}
             onEdit={onEdit}
+            onDelete={onDelete}
             onBookmark={onBookmark}
           />
         </div>
@@ -134,11 +136,46 @@ export const UserMsg: React.FC<{
 
 /* ======================== Assistant Text ======================== */
 
-export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = ({ text, streaming }) => {
+// 2026-09-04: 原在每条消息每次渲染时 getComputedStyle 读 CSS 变量 → 强制样式重算;
+// 改为惰性缓存一次 (值变化由 CSS 变量在 :root 上改动, 一般仅主题切换, 可用自定义事件刷新)。
+let _chatAvatarSize = 0;
+function getChatAvatarSize(): number {
+  if (_chatAvatarSize) return _chatAvatarSize;
+  try {
+    const v = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--chat-avatar-size'));
+    if (Number.isFinite(v) && v > 0) _chatAvatarSize = v;
+  } catch { /* 非浏览器环境 */ }
+  return _chatAvatarSize || 24;
+}
+
+// 2026-09-04 流畅度优化: Markdown 解析昂贵(cleanToolCalls/linkify/高亮全量正则);
+// 流式每帧 text 都在增长, 直接透传会让每帧对全文重解析 → O(总长度²)。
+// 这里用 React.memo 隔离 Markdown 子树: 仅当 content 真正变化才执行解析。
+const MemoMarkdown = React.memo(({ content }: { content: string }) => (
+  <Markdown content={content} />
+));
+
+export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = React.memo(({ text, streaming }) => {
   const [copied, setCopied] = useState(false);
+  const [display, setDisplay] = useState(text);
+  const lastCommit = useRef({ len: text.length, t: Date.now() });
   const handleCopy = () => {
     navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); });
   };
+
+  // 流式自节流: 增量≥48 字符或距上次提交 ≥120ms 才提交一次, 把解析次数从"每帧"降到"每块/每秒~8次";
+  // 非流式(完成/历史消息)无条件对齐最新文本, 保证最终渲染精确。
+  if (streaming && text !== display) {
+    const cur = lastCommit.current;
+    if (text.length - cur.len >= 48 || Date.now() - cur.t >= 120) {
+      lastCommit.current = { len: text.length, t: Date.now() };
+      setDisplay(text);
+    }
+  } else if (!streaming && text !== display) {
+    lastCommit.current = { len: text.length, t: Date.now() };
+    setDisplay(text);
+  }
+
   return (
     <div className="bubble-enter" style={{
       padding: '12px 16px',
@@ -151,9 +188,9 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = ({
       boxShadow: '0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)',
       position: 'relative',
     }}>
-      <Markdown content={text} />
+      <MemoMarkdown content={display} />
       {/* ★ 中医处方卡片自动渲染 (2026-08-10) */}
-      {!streaming && <PrescriptionCard content={text} />}
+      {!streaming && <PrescriptionCard content={display} />}
       {streaming && (
         <span style={{
           display: 'inline-block', width: 2, height: 16,
@@ -180,7 +217,7 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = ({
       </button>
     </div>
   );
-};
+});
 
 /* ======================== Tool Collapse Summary ======================== */
 
@@ -1253,7 +1290,7 @@ export const AssistantMsg: React.FC<{
         kind="ai"
         name={model || '岐黄'}
         state={pending ? 'pending' : status === 'error' ? 'error' : 'done'}
-        size={parseInt(getComputedStyle(document.documentElement).getPropertyValue('--chat-avatar-size')) || 24}
+        size={getChatAvatarSize()}
         messageId={messageId}
       />
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1530,7 +1567,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
         <div
           onClick={() => setSelectedIndex(null)}
           style={{
-            position: 'fixed', inset: 0, zIndex: 9999,
+            position: 'fixed', inset: 0, zIndex: 'var(--z-dragging)',
             background: 'rgba(0,0,0,0.9)', display: 'flex',
             alignItems: 'center', justifyContent: 'center', padding: 20,
           }}
@@ -1601,22 +1638,58 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
         </div>
       </div>
 
-      {/* 大图预览 */}
+      {/* 大图预览 — 支持下载保存 */}
       {showLarge && (
         <div
           onClick={() => setShowLarge(false)}
           style={{
-            position: 'fixed', inset: 0, zIndex: 9999,
+            position: 'fixed', inset: 0, zIndex: 'var(--z-dragging)',
             background: 'rgba(0,0,0,0.9)', display: 'flex',
             alignItems: 'center', justifyContent: 'center', padding: 20,
           }}
         >
           <img
             src={src}
-            alt={alt || '截图'}
-            style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 8, objectFit: 'contain' }}
+            alt={alt || '图片'}
+            style={{ maxWidth: '90%', maxHeight: '85%', borderRadius: 8, objectFit: 'contain' }}
             onClick={e => e.stopPropagation()}
           />
+          {/* 下载按钮 */}
+          <div style={{
+            position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+            display: 'flex', gap: 12, alignItems: 'center',
+          }}>
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!src) return;
+                try {
+                  const response = await fetch(src as string);
+                  const blob = await response.blob();
+                  const urlObj = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = urlObj;
+                  a.download = (alt || 'image') + '.png';
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(urlObj);
+                } catch {
+                  // fallback: 直接打开链接
+                  window.open(src, '_blank');
+                }
+              }}
+              style={{ padding: '8px 20px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}
+            >
+              ⬇ 保存图片
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowLarge(false); }}
+              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer', fontSize: 13 }}
+            >
+              关闭
+            </button>
+          </div>
         </div>
       )}
     </>

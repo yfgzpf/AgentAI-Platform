@@ -1,0 +1,13 @@
+HTTP/1.1 400 Bad Request
+X-Powered-By: Express
+Access-Control-Allow-Origin: http://localhost:5173
+Vary: Origin
+Access-Control-Allow-Credentials: true
+Content-Type: application/json; charset=utf-8
+Content-Length: 27
+ETag: W/"1b-KTHt2HCGXUXlq7FdrGKwDfHziRs"
+Date: Wed, 07 Oct 2026 14:21:52 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"prompt required"}

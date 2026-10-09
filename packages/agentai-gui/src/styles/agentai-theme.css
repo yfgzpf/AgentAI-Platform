@@ -64,6 +64,7 @@
   --chat-card-margin-y: 4px;            /* 卡片上下外边距 */
   --chat-card-margin-x: 36px;           /* 卡片左右外边距 (头像 + gap) */
   --chat-welcome-grid-max: 480px;        /* 欢迎页 demo 卡片宽度 */
+  --page-padding: 8px 12px;               /* 页面容器内边距 */
   --chat-turn-divider-padding: 16px;    /* 轮次分隔符内边距 */
 
   --titlebar-bg: linear-gradient(180deg, #242438 0%, #1e1e2a 100%);
@@ -79,6 +80,287 @@
   --editor-divider: #2e2e45;
   --editor-footer: #151520;
   --editor-comment: #3d3d55;
+
+  /* ── Monaco 编辑器 CSS 变量映射 (P1: 修复桌面端编辑器页面显示) ──
+   * Monaco editor-vendor CSS 大量使用 --vscode-* 变量.
+   * 在开发态: Monaco 会读取其内置的 vs-dark 默认值 → 看起来正常
+   * 在 Tauri 打包后: webview 环境差异可能导致部分组件降级, 显示异常
+   * 这里把关键的 --vscode-* 变量映射到我们的主题, 确保桌面端/开发态一致
+   */
+  --vscode-editor-background: var(--editor-bg);
+  --vscode-editor-foreground: var(--fg);
+  --vscode-sideBar-background: var(--editor-tree);
+  --vscode-sideBar-foreground: var(--fg);
+  --vscode-editorGutter-background: var(--editor-bg);
+  --vscode-editorWidget-background: var(--panel);
+  --vscode-editorWidget-border: var(--border);
+  --vscode-editorWidget-resizeBorder: var(--border);
+  --vscode-input-background: var(--bg-2);
+  --vscode-input-foreground: var(--fg);
+  --vscode-input-border: var(--border);
+  --vscode-input-placeholderForeground: var(--muted-2);
+  --vscode-focusBorder: var(--accent);
+  --vscode-textLink-foreground: var(--accent);
+  --vscode-textLink-activeForeground: var(--accent-strong);
+  --vscode-button-background: var(--accent);
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: var(--accent-strong);
+  --vscode-button-secondaryBackground: var(--bg-2);
+  --vscode-button-secondaryForeground: var(--fg);
+  --vscode-button-secondaryHoverBackground: var(--card-hover);
+  --vscode-button-border: var(--accent);
+  --vscode-toolbar-hoverBackground: var(--card-hover);
+  --vscode-menu-background: var(--panel);
+  --vscode-menu-foreground: var(--fg);
+  --vscode-menu-selectionBackground: var(--accent-soft);
+  --vscode-menu-selectionForeground: var(--fg);
+  --vscode-menu-selectionBorder: var(--border);
+  --vscode-menu-border: var(--border);
+  --vscode-menu-separatorBackground: var(--border);
+  --vscode-list-hoverBackground: var(--card-hover);
+  --vscode-list-activeSelectionBackground: var(--accent-soft);
+  --vscode-list-activeSelectionForeground: var(--fg);
+  --vscode-list-inactiveSelectionBackground: var(--card-hover);
+  --vscode-list-inactiveSelectionForeground: var(--fg);
+  --vscode-list-highlightForeground: var(--accent);
+  --vscode-list-focusHighlightForeground: var(--accent);
+  --vscode-list-focusBackground: var(--card-hover);
+  --vscode-editor-selectionBackground: var(--accent-soft);
+  --vscode-editor-inactiveSelectionBackground: var(--card-hover);
+  --vscode-editor-selectionHighlightBackground: var(--card-hover);
+  --vscode-editor-selectionHighlightBorder: var(--border);
+  --vscode-editor-findMatchBackground: var(--accent-soft);
+  --vscode-editor-findMatchHighlightBackground: var(--card-hover);
+  --vscode-editor-findRangeHighlightBackground: var(--card-hover);
+  --vscode-editor-hoverHighlightBackground: var(--card-hover);
+  --vscode-editor-rangeHighlightBackground: var(--card-hover);
+  --vscode-editor-rangeHighlightBorder: var(--border);
+  --vscode-editor-wordHighlightBackground: var(--card-hover);
+  --vscode-editor-wordHighlightBorder: var(--border);
+  --vscode-editor-wordHighlightStrongBackground: var(--accent-soft);
+  --vscode-editor-wordHighlightStrongBorder: var(--border);
+  --vscode-editor-wordHighlightTextBackground: var(--card-hover);
+  --vscode-editor-wordHighlightTextBorder: var(--border);
+  --vscode-editorBracketMatch-background: var(--accent-soft);
+  --vscode-editorBracketMatch-border: var(--accent);
+  --vscode-editorLineNumber-foreground: var(--muted);
+  --vscode-editorLineNumber-activeForeground: var(--fg);
+  --vscode-editorCursor-foreground: var(--fg);
+  --vscode-editorWhitespace-foreground: var(--muted-2);
+  --vscode-editorIndentGuide-background: var(--border);
+  --vscode-editorIndentGuide-activeBackground: var(--border-strong);
+  --vscode-editorRuler-foreground: var(--border);
+  --vscode-editorCodeLens-foreground: var(--muted-2);
+  --vscode-editorLightBulb-foreground: var(--warning);
+  --vscode-editorLightBulbAutoFix-foreground: var(--warning);
+  --vscode-editorSuggestWidget-background: var(--panel);
+  --vscode-editorSuggestWidget-border: var(--border);
+  --vscode-editorSuggestWidget-foreground: var(--fg);
+  --vscode-editorSuggestWidget-highlightForeground: var(--accent);
+  --vscode-editorSuggestWidget-focusHighlightForeground: var(--accent);
+  --vscode-editorSuggestWidget-selectedForeground: var(--fg);
+  --vscode-editorSuggestWidget-selectedIconForeground: var(--accent);
+  --vscode-editorSuggestWidget-statusBarBackground: var(--bg-2);
+  --vscode-editorHoverWidget-background: var(--panel);
+  --vscode-editorHoverWidget-border: var(--border);
+  --vscode-editorHoverWidget-foreground: var(--fg);
+  --vscode-editorHoverWidget-highlightForeground: var(--accent);
+  --vscode-editorHoverWidget-statusBarBackground: var(--bg-2);
+  --vscode-editorMarkerNavigation-background: var(--bg-2);
+  --vscode-editorMarkerNavigationError-background: var(--danger-soft);
+  --vscode-editorMarkerNavigationWarning-background: var(--warning-soft);
+  --vscode-editorMarkerNavigationInfo-background: var(--accent-soft);
+  --vscode-editorError-foreground: var(--danger);
+  --vscode-editorWarning-foreground: var(--warning);
+  --vscode-editorInfo-foreground: var(--accent);
+  --vscode-editorHint-foreground: var(--muted);
+  --vscode-editorError-background: var(--danger-soft);
+  --vscode-editorWarning-background: var(--warning-soft);
+  --vscode-editorInfo-background: var(--accent-soft);
+  --vscode-editorHint-background: var(--muted-soft);
+  --vscode-editorError-border: var(--danger);
+  --vscode-editorWarning-border: var(--warning);
+  --vscode-editorInfo-border: var(--accent);
+  --vscode-editorHint-border: var(--muted);
+  --vscode-banner-background: var(--bg-2);
+  --vscode-banner-foreground: var(--fg);
+  --vscode-banner-iconForeground: var(--accent);
+  --vscode-scrollbar-shadow: rgba(0, 0, 0, 0.5);
+  --vscode-scrollbarSlider-background: var(--border);
+  --vscode-scrollbarSlider-hoverBackground: var(--border-strong);
+  --vscode-scrollbarSlider-activeBackground: var(--accent);
+  --vscode-sash-hoverBorder: var(--accent);
+  --vscode-disabledForeground: var(--muted-2);
+  --vscode-contrastBorder: var(--border);
+  --vscode-contrastActiveBorder: var(--accent);
+  --vscode-foreground: var(--fg);
+  --vscode-background: var(--bg);
+  --vscode-icon-foreground: var(--fg);
+  --vscode-descriptionForeground: var(--muted-2);
+  --vscode-textSeparator-foreground: var(--border);
+  --vscode-textPreformat-foreground: var(--accent);
+  --vscode-textCodeBlock-background: var(--bg-2);
+  --vscode-symbolIcon-arrayForeground: var(--accent);
+  --vscode-symbolIcon-booleanForeground: var(--accent);
+  --vscode-symbolIcon-classForeground: var(--warning);
+  --vscode-symbolIcon-colorForeground: var(--violet);
+  --vscode-symbolIcon-constantForeground: var(--accent);
+  --vscode-symbolIcon-constructorForeground: var(--warning);
+  --vscode-symbolIcon-enumeratorForeground: var(--accent);
+  --vscode-symbolIcon-enumeratorMemberForeground: var(--accent);
+  --vscode-symbolIcon-eventForeground: var(--warning);
+  --vscode-symbolIcon-fieldForeground: var(--violet);
+  --vscode-symbolIcon-fileForeground: var(--fg);
+  --vscode-symbolIcon-folderForeground: var(--warning);
+  --vscode-symbolIcon-functionForeground: var(--violet);
+  --vscode-symbolIcon-interfaceForeground: var(--warning);
+  --vscode-symbolIcon-keyForeground: var(--accent);
+  --vscode-symbolIcon-keywordForeground: var(--accent);
+  --vscode-symbolIcon-moduleForeground: var(--fg);
+  --vscode-symbolIcon-namespaceForeground: var(--fg);
+  --vscode-symbolIcon-nullForeground: var(--muted);
+  --vscode-symbolIcon-numberForeground: var(--accent);
+  --vscode-symbolIcon-objectForeground: var(--warning);
+  --vscode-symbolIcon-operatorForeground: var(--accent);
+  --vscode-symbolIcon-packageForeground: var(--fg);
+  --vscode-symbolIcon-propertyForeground: var(--violet);
+  --vscode-symbolIcon-referenceForeground: var(--accent);
+  --vscode-symbolIcon-snippetForeground: var(--accent);
+  --vscode-symbolIcon-stringForeground: var(--success);
+  --vscode-symbolIcon-structForeground: var(--warning);
+  --vscode-symbolIcon-textForeground: var(--fg);
+  --vscode-symbolIcon-typeParameterForeground: var(--accent);
+  --vscode-symbolIcon-unitForeground: var(--accent);
+  --vscode-symbolIcon-variableForeground: var(--fg);
+  --vscode-peekViewResult-background: var(--panel);
+  --vscode-peekViewResult-lineForeground: var(--fg);
+  --vscode-peekViewResult-fileForeground: var(--fg-2);
+  --vscode-peekViewResult-selectionBackground: var(--accent-soft);
+  --vscode-peekViewResult-selectionForeground: var(--fg);
+  --vscode-peekViewResult-matchHighlightBackground: var(--warning-soft);
+  --vscode-peekViewEditor-background: var(--editor-bg);
+  --vscode-peekViewEditorGutter-background: var(--editor-tree);
+  --vscode-peekViewEditor-matchHighlightBackground: var(--warning-soft);
+  --vscode-peekViewEditor-matchHighlightBorder: var(--warning);
+  --vscode-editorStickyScroll-background: var(--editor-bg);
+  --vscode-editorStickyScrollHover-background: var(--card-hover);
+  --vscode-editorStickyScroll-border: var(--border);
+  --vscode-editor-linkedEditingBackground: var(--accent-soft);
+  --vscode-editorGhostText-foreground: var(--muted);
+  --vscode-editorGhostText-background: var(--bg-2);
+  --vscode-editorGhostText-border: var(--border);
+  --vscode-editor-snippetTabstopHighlightBackground: var(--accent-soft);
+  --vscode-editor-snippetTabstopHighlightBorder: var(--accent);
+  --vscode-editor-snippetFinalTabstopHighlightBackground: var(--accent-soft);
+  --vscode-editor-snippetFinalTabstopHighlightBorder: var(--accent);
+  --vscode-editorUnicodeHighlight-border: var(--border);
+  --vscode-editorUnicodeHighlight-background: var(--bg-2);
+  --vscode-editor-foldBackground: var(--card-hover);
+  --vscode-minimapSlider-background: var(--border);
+  --vscode-minimapSlider-hoverBackground: var(--border-strong);
+  --vscode-minimapSlider-activeBackground: var(--accent);
+  --vscode-multiDiffEditor-background: var(--editor-bg);
+  --vscode-multiDiffEditor-border: var(--border);
+  --vscode-multiDiffEditor-headerBackground: var(--bg-2);
+  --vscode-diffEditor-insertedTextBackground: var(--success-soft);
+  --vscode-diffEditor-insertedLineBackground: var(--success-soft);
+  --vscode-diffEditor-removedTextBackground: var(--danger-soft);
+  --vscode-diffEditor-removedLineBackground: var(--danger-soft);
+  --vscode-diffEditor-unchangedCodeBackground: var(--bg-2);
+  --vscode-diffEditor-unchangedRegionBackground: var(--bg-2);
+  --vscode-diffEditor-unchangedRegionForeground: var(--muted-2);
+  --vscode-diffEditor-unchangedRegionShadow: rgba(0, 0, 0, 0.4);
+  --vscode-diffEditor-move-border: var(--warning);
+  --vscode-diffEditor-moveActive-border: var(--accent);
+  --vscode-diffEditor-diagonalFill: var(--border);
+  --vscode-diffEditor-insertedTextBorder: var(--success);
+  --vscode-diffEditor-removedTextBorder: var(--danger);
+  --vscode-diffEditorGutter-insertedLineBackground: var(--success-soft);
+  --vscode-diffEditorGutter-removedLineBackground: var(--danger-soft);
+  --vscode-diffEditor-border: var(--border);
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.5);
+  --vscode-widget-border: var(--border);
+  --vscode-keybindingLabel-background: var(--bg-2);
+  --vscode-keybindingLabel-foreground: var(--fg);
+  --vscode-keybindingLabel-border: var(--border);
+  --vscode-keybindingLabel-bottomBorder: var(--border-strong);
+  --vscode-actionBar-toggledBackground: var(--accent-soft);
+  --vscode-quickInputList-focusBackground: var(--accent-soft);
+  --vscode-quickInputList-focusForeground: var(--fg);
+  --vscode-inputValidation-infoBorder: var(--accent);
+  --vscode-inputValidation-warningBorder: var(--warning);
+  --vscode-inputValidation-errorBorder: var(--danger);
+  --vscode-inputOption-activeBackground: var(--accent-soft);
+  --vscode-inputOption-hoverBackground: var(--card-hover);
+  --vscode-inputOption-activeBorder: var(--accent);
+  --vscode-inputOption-activeForeground: var(--accent);
+  --vscode-input-placeholderForeground: var(--muted-2);
+  --vscode-tab-activeBackground: var(--bg-2);
+  --vscode-tab-activeForeground: var(--fg);
+  --vscode-tab-inactiveBackground: var(--bg);
+  --vscode-tab-inactiveForeground: var(--muted-2);
+  --vscode-tab-border: var(--border);
+  --vscode-tab-activeBorder: var(--accent);
+  --vscode-tab-hoverBackground: var(--card-hover);
+  --vscode-tab-unfocusedActiveBackground: var(--bg-2);
+  --vscode-tab-unfocusedActiveForeground: var(--fg);
+  --vscode-tab-unfocusedInactiveBackground: var(--bg);
+  --vscode-tab-unfocusedInactiveForeground: var(--muted-2);
+  --vscode-editorGroupHeader-tabsBackground: var(--bg);
+  --vscode-editorGroupHeader-tabsBorder: var(--border);
+  --vscode-editorGroup-border: var(--border);
+  --vscode-editorGroupHeader-noTabsBackground: var(--bg);
+  --vscode-sideBarSectionHeader-background: var(--bg-2);
+  --vscode-sideBarSectionHeader-foreground: var(--fg);
+  --vscode-sideBarSectionHeader-border: var(--border);
+  --vscode-sideBarTitle-foreground: var(--fg);
+  --vscode-sideBar-dropBackground: var(--accent-soft);
+  --vscode-statusBar-background: var(--bg-2);
+  --vscode-statusBar-foreground: var(--fg);
+  --vscode-statusBar-noFolderBackground: var(--bg-2);
+  --vscode-statusBar-border: var(--border);
+  --vscode-statusBarItem-activeBackground: var(--accent-soft);
+  --vscode-statusBarItem-hoverBackground: var(--card-hover);
+  --vscode-statusBarItem-prominentBackground: var(--accent);
+  --vscode-statusBarItem-prominentForeground: #ffffff;
+  --vscode-statusBarItem-prominentHoverBackground: var(--accent-strong);
+  --vscode-titleBar-activeBackground: var(--titlebar-bg);
+  --vscode-titleBar-activeForeground: var(--fg);
+  --vscode-titleBar-inactiveBackground: var(--bg-2);
+  --vscode-titleBar-inactiveForeground: var(--muted-2);
+  --vscode-titleBar-border: var(--titlebar-border);
+  --vscode-toolbar-background: var(--bg-2);
+  --vscode-toolbar-foreground: var(--fg);
+  --vscode-toolbar-border: var(--border);
+  --vscode-toolbar-activeBackground: var(--accent-soft);
+  --vscode-breadcrumb-background: var(--bg-2);
+  --vscode-breadcrumb-foreground: var(--muted-2);
+  --vscode-breadcrumb-focusForeground: var(--fg);
+  --vscode-breadcrumb-activeSelectionForeground: var(--fg);
+  --vscode-breadcrumbPicker-background: var(--panel);
+  --vscode-notebook-cellBorderColor: var(--border);
+  --vscode-notebook-focusedEditorBorder: var(--accent);
+  --vscode-notebookSelectionBackground: var(--accent-soft);
+  --vscode-notebookSelectedLineBackground: var(--accent-soft);
+  --vscode-notebookEditorOverviewRuler-runningCellForeground: var(--accent);
+  --vscode-mergeEditor-change-background: var(--accent-soft);
+  --vscode-mergeEditor-change-word-background: var(--warning-soft);
+  --vscode-mergeEditor-conflict-unhandledBackground: var(--danger-soft);
+  --vscode-mergeEditor-conflict-handledBackground: var(--success-soft);
+  --vscode-mergeEditor-conflict-handledMinimapOverViewRuler: var(--success);
+  --vscode-mergeEditor-conflict-unhandledMinimapOverViewRuler: var(--danger);
+  --vscode-mergeEditor-conflict-handledFocused: var(--success-soft);
+  --vscode-mergeEditor-conflict-unhandledFocused: var(--danger-soft);
+  --vscode-mergeEditor-conflict-handledUnfocused: var(--success-soft);
+  --vscode-mergeEditor-conflict-unhandledUnfocused: var(--danger-soft);
+  --vscode-mergeEditor-currentHeaderBackground: var(--bg-2);
+  --vscode-mergeEditor-currentContentBackground: var(--bg);
+  --vscode-mergeEditor-incomingHeaderBackground: var(--bg-2);
+  --vscode-mergeEditor-incomingContentBackground: var(--bg);
+  --vscode-mergeEditor-splitterBackground: var(--border);
+  --vscode-problemsErrorIcon-foreground: var(--danger);
+  --vscode-problemsWarningIcon-foreground: var(--warning);
+  --vscode-problemsInfoIcon-foreground: var(--accent);
 
   /* ── 对话字体大小系统 (可调) ── */
   --chat-font-size: 12.5px;
@@ -300,115 +582,118 @@ html, body {
 
 #root { height: 100vh; }
 
-/* ====================== Ant Design dark override ====================== */
-.ant-btn-default { background: var(--bg-2) !important; border-color: var(--border) !important; color: var(--fg) !important; }
-.ant-btn-primary { background: var(--accent) !important; border-color: var(--accent) !important; }
-.ant-btn-primary:hover { background: var(--accent-strong) !important; }
-.ant-input { background: var(--bg-2) !important; border-color: var(--border) !important; color: var(--fg) !important; }
-.ant-tag { border-radius: 4px !important; }
-.ant-card { background: var(--card) !important; border-color: var(--border) !important; }
-.ant-card-head { border-bottom-color: var(--border) !important; color: var(--fg) !important; }
-.ant-card-body { color: var(--fg-2) !important; }
-.ant-layout { background: var(--bg) !important; }
-.ant-layout-header { background: var(--bg-2) !important; }
-.ant-layout-sider { background: var(--panel) !important; }
-.ant-modal-content { background: var(--bg-2) !important; }
-.ant-modal-header { background: transparent !important; }
-.ant-select-selector { background: var(--bg-2) !important; border-color: var(--border) !important; color: var(--fg) !important; }
-.ant-empty-description { color: var(--muted) !important; }
+/* ====================== Ant Design dark override ======================
+ * P0 修复: 移除所有 !important — hashPriority="high" 让 antd 用 :where() 选择器 (优先级 0)
+ * 普通 .ant-xxx 选择器 (优先级 10) 已经足够覆盖 antd 默认样式, 不需要 !important
+ * 之前: !important 在生产构建后覆盖了 antd 的布局属性 (display/flex) → 所有页面布局混乱
+ */
+.ant-btn-default { background: var(--bg-2); border-color: var(--border); color: var(--fg); }
+.ant-btn-primary { background: var(--accent); border-color: var(--accent); }
+.ant-btn-primary:hover { background: var(--accent-strong); }
+.ant-input { background: var(--bg-2); border-color: var(--border); color: var(--fg); }
+.ant-tag { border-radius: 4px; }
+.ant-card { background: var(--card); border-color: var(--border); }
+.ant-card-head { border-bottom-color: var(--border); color: var(--fg); }
+.ant-card-body { color: var(--fg-2); }
+.ant-layout { background: var(--bg); }
+.ant-layout-header { background: var(--bg-2); }
+.ant-layout-sider { background: var(--panel); }
+.ant-modal-content { background: var(--bg-2); }
+.ant-modal-header { background: transparent; }
+.ant-select-selector { background: var(--bg-2); border-color: var(--border); color: var(--fg); }
+.ant-empty-description { color: var(--muted); }
 
 /* ====================== Ant Design Tabs 覆盖 ====================== */
-.ant-tabs { color: var(--fg) !important; }
-.ant-tabs-tab { color: var(--muted) !important; }
-.ant-tabs-tab:hover { color: var(--fg-2) !important; }
-.ant-tabs-tab-active { color: var(--accent) !important; }
-.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--accent) !important; }
-.ant-tabs-ink-bar { background: var(--accent) !important; }
-.ant-tabs-top > .ant-tabs-nav::before { border-bottom: 1px solid var(--border) !important; }
-.ant-tabs-left > .ant-tabs-nav::before { border-right: 1px solid var(--border) !important; }
-.ant-tabs-content { color: var(--fg) !important; }
+.ant-tabs { color: var(--fg); }
+.ant-tabs-tab { color: var(--muted); }
+.ant-tabs-tab:hover { color: var(--fg-2); }
+.ant-tabs-tab-active { color: var(--accent); }
+.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--accent); }
+.ant-tabs-ink-bar { background: var(--accent); }
+.ant-tabs-top > .ant-tabs-nav::before { border-bottom: 1px solid var(--border); }
+.ant-tabs-left > .ant-tabs-nav::before { border-right: 1px solid var(--border); }
+.ant-tabs-content { color: var(--fg); }
 
 /* ====================== Ant Design Collapse 覆盖 ====================== */
-.ant-collapse { background: var(--panel) !important; border-color: var(--border) !important; }
-.ant-collapse > .ant-collapse-item { border-bottom-color: var(--border) !important; }
-.ant-collapse > .ant-collapse-item > .ant-collapse-header { color: var(--fg) !important; }
-.ant-collapse-content { background: var(--bg) !important; color: var(--fg-2) !important; }
-.ant-collapse-content > .ant-collapse-content-box { color: var(--fg-2) !important; }
-.ant-collapse-ghost > .ant-collapse-item > .ant-collapse-content { background: transparent !important; }
+.ant-collapse { background: var(--panel); border-color: var(--border); }
+.ant-collapse > .ant-collapse-item { border-bottom-color: var(--border); }
+.ant-collapse > .ant-collapse-item > .ant-collapse-header { color: var(--fg); }
+.ant-collapse-content { background: var(--bg); color: var(--fg-2); }
+.ant-collapse-content > .ant-collapse-content-box { color: var(--fg-2); }
+.ant-collapse-ghost > .ant-collapse-item > .ant-collapse-content { background: transparent; }
 
 /* ====================== Ant Design Divider 覆盖 ====================== */
-.ant-divider { border-color: var(--border) !important; }
-.ant-divider-horizontal { border-color: var(--border) !important; }
-.ant-divider-vertical { border-color: var(--border) !important; }
-.ant-divider-inner-text { color: var(--muted) !important; }
+.ant-divider { border-color: var(--border); }
+.ant-divider-horizontal { border-color: var(--border); }
+.ant-divider-vertical { border-color: var(--border); }
+.ant-divider-inner-text { color: var(--muted); }
 
 /* ====================== Ant Design Form 覆盖 ====================== */
-.ant-form { color: var(--fg) !important; }
-.ant-form-item-label > label { color: var(--fg) !important; }
-.ant-form-item-explain { color: var(--muted) !important; }
-.ant-form-item-extra { color: var(--muted-2) !important; }
+.ant-form { color: var(--fg); }
+.ant-form-item-label > label { color: var(--fg); }
+.ant-form-item-explain { color: var(--muted); }
+.ant-form-item-extra { color: var(--muted-2); }
 
 /* ====================== Ant Design Space 覆盖 ====================== */
-.ant-space { color: var(--fg) !important; }
-.ant-space-item { color: var(--fg) !important; }
+.ant-space { color: var(--fg); }
+.ant-space-item { color: var(--fg); }
 
 /* ====================== Ant Design Descriptions 覆盖 ====================== */
-.ant-descriptions { color: var(--fg) !important; }
-.ant-descriptions-item-label { color: var(--muted) !important; }
-.ant-descriptions-item-content { color: var(--fg) !important; }
-.ant-descriptions-bordered .ant-descriptions-item-label { background: var(--bg-2) !important; border-color: var(--border) !important; }
-.ant-descriptions-bordered .ant-descriptions-item-content { border-color: var(--border) !important; }
+.ant-descriptions { color: var(--fg); }
+.ant-descriptions-item-label { color: var(--muted); }
+.ant-descriptions-item-content { color: var(--fg); }
+.ant-descriptions-bordered .ant-descriptions-item-label { background: var(--bg-2); border-color: var(--border); }
+.ant-descriptions-bordered .ant-descriptions-item-content { border-color: var(--border); }
 
 /* ====================== Ant Design Table 覆盖 ====================== */
-.ant-table { background: var(--card) !important; color: var(--fg) !important; }
-.ant-table-thead > tr > th { background: var(--bg-2) !important; color: var(--fg) !important; border-color: var(--border) !important; }
-.ant-table-tbody > tr > td { border-color: var(--border) !important; }
-.ant-table-tbody > tr:hover > td { background: var(--card-hover) !important; }
+.ant-table { background: var(--card); color: var(--fg); }
+.ant-table-thead > tr > th { background: var(--bg-2); color: var(--fg); border-color: var(--border); }
+.ant-table-tbody > tr > td { border-color: var(--border); }
+.ant-table-tbody > tr:hover > td { background: var(--card-hover); }
 
 /* ====================== Ant Design Alert 覆盖 ====================== */
-.ant-alert { background: var(--bg-2) !important; border-color: var(--border) !important; }
-.ant-alert-message { color: var(--fg) !important; }
-.ant-alert-description { color: var(--fg-2) !important; }
+.ant-alert { background: var(--bg-2); border-color: var(--border); }
+.ant-alert-message { color: var(--fg); }
+.ant-alert-description { color: var(--fg-2); }
 
 /* ====================== Ant Design Tooltip 覆盖 ====================== */
-.ant-tooltip-inner { background: var(--panel-2) !important; color: var(--fg) !important; }
-.ant-tooltip-arrow-content { background: var(--panel-2) !important; }
+.ant-tooltip-inner { background: var(--panel-2); color: var(--fg); }
+.ant-tooltip-arrow-content { background: var(--panel-2); }
 
 /* ====================== Ant Design Dropdown 覆盖 ====================== */
-.ant-dropdown-menu { background: var(--panel) !important; }
-.ant-dropdown-menu-item { color: var(--fg) !important; }
-.ant-dropdown-menu-item:hover { background: var(--card-hover) !important; }
+.ant-dropdown-menu { background: var(--panel); }
+.ant-dropdown-menu-item { color: var(--fg); }
+.ant-dropdown-menu-item:hover { background: var(--card-hover); }
 
 /* ====================== Ant Design Menu 覆盖 ====================== */
-.ant-menu { background: var(--panel) !important; color: var(--fg) !important; }
-.ant-menu-item { color: var(--fg) !important; }
-.ant-menu-item:hover { background: var(--card-hover) !important; }
-.ant-menu-item-selected { background: var(--accent-soft) !important; color: var(--accent) !important; }
+.ant-menu { background: var(--panel); color: var(--fg); }
+.ant-menu-item { color: var(--fg); }
+.ant-menu-item:hover { background: var(--card-hover); }
+.ant-menu-item-selected { background: var(--accent-soft); color: var(--accent); }
 
 /* ====================== Ant Design Popover 覆盖 ====================== */
-.ant-popover-inner { background: var(--panel) !important; }
-.ant-popover-title { color: var(--fg) !important; border-color: var(--border) !important; }
-.ant-popover-inner-content { color: var(--fg-2) !important; }
+.ant-popover-inner { background: var(--panel); }
+.ant-popover-title { color: var(--fg); border-color: var(--border); }
+.ant-popover-inner-content { color: var(--fg-2); }
 
 /* ====================== Ant Design Drawer 覆盖 ====================== */
-.ant-drawer-content { background: var(--panel) !important; }
-.ant-drawer-header { background: var(--bg-2) !important; border-color: var(--border) !important; }
-.ant-drawer-title { color: var(--fg) !important; }
+.ant-drawer-content { background: var(--panel); }
+.ant-drawer-header { background: var(--bg-2); border-color: var(--border); }
+.ant-drawer-title { color: var(--fg); }
 
 /* ====================== Ant Design List 覆盖 ====================== */
-.ant-list { background: transparent !important; }
-.ant-list-item { border-color: var(--border) !important; }
+.ant-list { background: transparent; }
+.ant-list-item { border-color: var(--border); }
 
 /* ====================== Ant Design Input 覆盖 (防止溢出) ====================== */
-.ant-input-affix-wrapper { background: var(--bg-2) !important; border-color: var(--border) !important; }
-.ant-input-affix-wrapper > input.ant-input { background: transparent !important; }
+.ant-input-affix-wrapper { background: var(--bg-2); border-color: var(--border); }
+.ant-input-affix-wrapper > input.ant-input { background: transparent; }
 
 /* ====================== Ant Design Select 覆盖 ====================== */
-/* 移除 .ant-select { width: 100% !important; } — 它强制所有 Select 宽度 100%, 破坏布局 */
-.ant-select-dropdown { background: var(--panel) !important; }
-.ant-select-item { color: var(--fg) !important; }
-.ant-select-item-option-active { background: var(--card-hover) !important; }
-.ant-select-item-option-selected { background: var(--accent-soft) !important; }
+.ant-select-dropdown { background: var(--panel); }
+.ant-select-item { color: var(--fg); }
+.ant-select-item-option-active { background: var(--card-hover); }
+.ant-select-item-option-selected { background: var(--accent-soft); }
 
 /* ====================== 全局溢出保护 ====================== */
 /* 移除可能导致布局变化的 !important, 改用低优先级 */

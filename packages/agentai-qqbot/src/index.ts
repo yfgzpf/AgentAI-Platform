@@ -1,10 +1,10 @@
 /**
- * AgentAI Platform - QQ Bot 独立包 (重写: 对齐 reasonix)
+ * AgentAI Platform - QQ Bot 独立包
  * -----------------------------------------------------------
  * 架构:
  *   QQBot → wss://api.sgroup.qq.com → 消息处理 → Gateway /v1/qq/message
  *
- * 消息处理继承 reasonix channel.ts:
+ * 消息处理:
  *   - 消息去重 (200条环形队列)
  *   - 分片发送 (1500字节/条)
  *   - 远程命令 (/help /new /abort 等)
@@ -28,7 +28,7 @@ const QQ_MAX_CHUNK_BYTES = 1500;
 const DEDUP_QUEUE_MAX = 200;
 const QQ_GATEWAY_TIMEOUT_MS = 120_000;
 
-// ===== 消息去重 (reasonix channel.ts) =====
+// ===== 消息去重 (200 条环形队列) =====
 const processedMsgIds = new Set<string>();
 const processedMsgIdQueue: string[] = [];
 
@@ -43,7 +43,7 @@ function rememberMessage(id: string): boolean {
   return true;
 }
 
-// ===== 远程命令 (学自 reasonix) =====
+// ===== 远程命令 =====
 type QQRemoteCommand =
   | { kind: 'help' | 'new' | 'abort' | 'compact' | 'retry' }
   | { kind: 'model'; value?: string }
@@ -252,7 +252,7 @@ async function startOfficialMode() {
     console.error(chalk.red(`❌ ${msg}`));
   });
 
-  // ===== 启动 + 超时 race (reasonix 方式) =====
+  // ===== 启动 + 超时 race =====
   await bot.start();
 
   const readyOrError = await Promise.race([
@@ -268,7 +268,7 @@ async function startOfficialMode() {
     console.error(chalk.gray('     1. 在 q.qq.com 开启 "C2C消息" 和 "群聊@消息" 权限'));
     console.error(chalk.gray('     2. 机器人类型为 "QQ群机器人" (非 QQ频道)'));
     console.error(chalk.gray('     3. 沙箱环境需设置 AGENTAI_QQ_SANDBOX=true'));
-    // reasonix 不 exit, 继续重试
+    // 连接失败不 exit, 继续重试
   } else if (readyOrError === 'timeout') {
     console.error(chalk.yellow('⚠️   连接超时 (20s), 后台继续重试中...'));
   }

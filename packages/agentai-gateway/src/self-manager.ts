@@ -97,7 +97,7 @@ export class SelfManager extends EventEmitter {
   }
 
   /**
-   * 自动修复 — 只修复安全的、可逆的问题
+   * 自动修复 — 只修复安全的、可逆的问题 (带重试保护)
    */
   async autoFix(): Promise<Array<{ component: string; fixed: boolean; message: string }>> {
     const results: Array<{ component: string; fixed: boolean; message: string }> = [];
@@ -109,23 +109,53 @@ export class SelfManager extends EventEmitter {
     for (const check of this.lastDiagnosis!.checks) {
       if (check.status === 'healthy' || !check.autoFixAvailable) continue;
 
+      let fixed = false;
+      let message = '';
+
       switch (check.component) {
         case 'cache': {
-          const fixed = this.fixCorruptedCache();
-          results.push({ component: 'cache', fixed, message: fixed ? '缓存已清理' : '缓存清理失败' });
+          for (let i = 0; i < 3; i++) {
+            try {
+              fixed = this.fixCorruptedCache();
+              message = fixed ? '缓存已清理' : '缓存清理失败';
+              break;
+            } catch (e: any) {
+              if (i < 2) console.warn(`[self-manager] cache fix 重试 ${i + 1}/3: ${e?.message}`);
+              else { message = `缓存清理失败: ${e?.message}`; }
+            }
+          }
           break;
         }
         case 'memory': {
-          const fixed = this.fixMemoryOverflow();
-          results.push({ component: 'memory', fixed, message: fixed ? '记忆已压缩' : '记忆压缩失败' });
+          for (let i = 0; i < 3; i++) {
+            try {
+              fixed = this.fixMemoryOverflow();
+              message = fixed ? '记忆已压缩' : '记忆压缩失败';
+              break;
+            } catch (e: any) {
+              if (i < 2) console.warn(`[self-manager] memory fix 重试 ${i + 1}/3: ${e?.message}`);
+              else { message = `记忆压缩失败: ${e?.message}`; }
+            }
+          }
           break;
         }
         case 'disk': {
-          const cleaned = this.cleanupTempFiles();
-          results.push({ component: 'disk', fixed: cleaned.length > 0, message: `清理 ${cleaned.length} 类临时文件` });
+          for (let i = 0; i < 3; i++) {
+            try {
+              const cleaned = this.cleanupTempFiles();
+              fixed = cleaned.length > 0;
+              message = `清理 ${cleaned.length} 类临时文件`;
+              break;
+            } catch (e: any) {
+              if (i < 2) console.warn(`[self-manager] disk cleanup 重试 ${i + 1}/3: ${e?.message}`);
+              else { message = `磁盘清理失败: ${e?.message}`; }
+            }
+          }
           break;
         }
       }
+
+      results.push({ component: check.component, fixed, message });
     }
 
     this.emit('autofix:done', results);

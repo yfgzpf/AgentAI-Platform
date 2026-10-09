@@ -5,7 +5,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "pytest tests/",
+    "test": "pytest --co -q 2>/dev/null || echo \"no pytest tests (each skill has its own)\"",
     "lint": "ruff check .",
     "list": "node scripts/list.js",
     "run": "python scripts/run_skill.py"

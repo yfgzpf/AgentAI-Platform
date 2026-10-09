@@ -7,6 +7,8 @@
  * 3. 在 Tauri 桌面端自动启动网关进程
  */
 
+import { IS_DEV, IS_TAURI } from './config';
+
 const FALLBACK_DIRECT_URL = 'https://api.agnes-ai.cn';
 const HEALTH_CHECK_INTERVAL = 30000; // 在线后30秒检查一次
 const FAST_CHECK_INTERVAL = 2000;   // 启动时2秒检查一次
@@ -14,29 +16,18 @@ const FAST_CHECK_INTERVAL = 2000;   // 启动时2秒检查一次
 type GatewayStatus = 'online' | 'offline' | 'starting';
 
 /**
- * 判断是否 Tauri 桌面端环境
+ * 判断是否 Tauri 桌面端环境 — 统一用 config.ts 的 IS_TAURI
  */
 function isTauriEnv(): boolean {
-  if (typeof window === 'undefined') return false;
-  return !!(window as any).__TAURI_INTERNALS__ ||
-         !!(window as any).__TAURI__ ||
-         window.location?.protocol === 'tauri:' ||
-         window.location?.hostname === 'tauri.localhost';
+  return IS_TAURI;
 }
 
 /**
- * 判断是否开发模式 - 仅 Vite dev server 运行时为 true
+ * 判断是否开发模式 — 统一用 config.ts 的 IS_DEV
+ * 避免不同文件对开发态判断不一致导致生产态行为异常
  */
 function isDevMode(): boolean {
-  if (typeof window === 'undefined') return false;
-  if (isTauriEnv()) return false; // Tauri 环境绝不是 dev 模式
-  const host = window.location?.hostname || '';
-  const port = window.location?.port || '';
-  return host === 'localhost' || 
-         host === '127.0.0.1' || 
-         port === '5173' || 
-         port === '5174' || 
-         port === '5176';
+  return IS_DEV;
 }
 
 class GatewayFallbackImpl {
@@ -49,8 +40,6 @@ class GatewayFallbackImpl {
   get url(): string {
     // 开发模式下返回空字符串（使用相对路径，走 Vite 代理）
     // 生产/Tauri 模式下返回直连地址
-    // 注意：离线状态下也返回本地地址，不要返回 FALLBACK_DIRECT_URL
-    // 因为 FALLBACK_DIRECT_URL 是 LLM API 地址，不是网关地址
     if (isDevMode()) return '';
     return 'http://127.0.0.1:18789';
   }

@@ -6,7 +6,7 @@ description_en: "Search WeChat public account articles by keyword"
 version: 0.1.0
 allowed-tools: Bash,Read
 metadata:
-  clawdbot:
+  agentai:
     emoji: "\U0001F50E"
     requires:
       bins:

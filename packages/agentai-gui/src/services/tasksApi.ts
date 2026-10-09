@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * tasksApi.ts — 任务快照 API 客户端
  * =====================================
@@ -157,7 +156,8 @@ export async function cleanupTasks(maxAgeDays = 7, opts?: { maxTaskCount?: numbe
 /** 任务持续时间 (人类可读) */
 export function taskDuration(snap: TaskMeta | TaskSnapshot): string {
   const end = 'endedAt' in snap && snap.endedAt ? snap.endedAt : Date.now();
-  const ms = end - snap.startedAt;
+  const start = 'startedAt' in snap ? snap.startedAt : (snap as TaskMeta).createdAt;
+  const ms = end - start;
   if (ms < 60_000) return `${Math.round(ms / 1000)}秒`;
   if (ms < 3_600_000) return `${Math.round(ms / 60_000)}分钟`;
   if (ms < 86_400_000) return `${(ms / 3_600_000).toFixed(1)}小时`;

@@ -41,9 +41,15 @@ export function makeChatHandlers(
       // P1 修复: 重复回复去重 — 如果追加后文本末尾出现重复段落, 截断
       updateMessage(botId, (m: any) => {
         const segs = [...m.segments];
-        const lt = segs.filter((s: any) => s.kind === 'text').pop();
+        // 2026-09-04 修复: 原 lt.text = newText 就地改写共享 segment 对象 → 破坏 store 不可变快照语义,
+        // 影响 memo/增量渲染正确性。改为"定位 index + 复制替换"。
+        let lastTextIdx = -1;
+        for (let i = segs.length - 1; i >= 0; i--) {
+          if (segs[i].kind === 'text') { lastTextIdx = i; break; }
+        }
         let newText = '';
-        if (lt && lt.kind === 'text') {
+        if (lastTextIdx >= 0) {
+          const lt = segs[lastTextIdx];
           newText = lt.text + text;
           // 去重: 检查最后 50 字符是否在前面已出现过
           if (newText.length > 100) {
@@ -54,7 +60,7 @@ export function makeChatHandlers(
               newText = lt.text;
             }
           }
-          lt.text = newText;
+          segs[lastTextIdx] = { ...lt, text: newText };
         } else {
           newText = text;
           segs.push({ kind: 'text', text: newText });
@@ -72,7 +78,8 @@ export function makeChatHandlers(
         const segs = [...m.segments];
         const lastSeg = segs[segs.length - 1];
         if (lastSeg && lastSeg.kind === 'reasoning') {
-          lastSeg.text += text;
+          // 2026-09-04: 复制替换, 避免就地改写共享 segment
+          segs[segs.length - 1] = { ...lastSeg, text: lastSeg.text + text };
         } else {
           segs.push({ kind: 'reasoning', text });
         }
@@ -85,7 +92,8 @@ export function makeChatHandlers(
         const segs = [...m.segments];
         const lastSeg = segs[segs.length - 1];
         if (lastSeg && lastSeg.kind === 'thinking') {
-          lastSeg.text += text;
+          // 2026-09-04: 复制替换, 避免就地改写共享 segment
+          segs[segs.length - 1] = { ...lastSeg, text: lastSeg.text + text };
         } else {
           segs.push({ kind: 'thinking', text });
         }
@@ -115,7 +123,8 @@ export function makeChatHandlers(
         // 追加到已有 reasoning 或创建新的
         const lastSeg = segs[segs.length - 1];
         if (lastSeg && lastSeg.kind === 'reasoning') {
-          lastSeg.text += `\n🔧 ${label}`;
+          // 2026-09-04: 复制替换, 避免就地改写共享 segment
+          segs[segs.length - 1] = { ...lastSeg, text: lastSeg.text + `\n🔧 ${label}` };
         } else {
           segs.push({ kind: 'reasoning', text: `🔧 ${label}` });
         }
@@ -164,6 +173,22 @@ export function makeChatHandlers(
         }
         return { ...m, segments: segs };
       });
+
+      // D2: 广播 AI 代码变更事件 (lineRanges → 真实行号装饰)
+      const lr: any[] = (info as any).data?.lineRanges;
+      if (Array.isArray(lr) && lr.length > 0) {
+        const byFile = new Map<string, any[]>();
+        for (const range of lr) {
+          const arr = byFile.get(range.file) || [];
+          arr.push(range);
+          byFile.set(range.file, arr);
+        }
+        for (const [file, entries] of byFile) {
+          window.dispatchEvent(new CustomEvent('agentai:ai-change', {
+            detail: { file, tool: info.name, entries },
+          }));
+        }
+      }
     },
     onDone: (info: any) => {
       updateMessage(botId, (m: any) => {
@@ -198,13 +223,17 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
   const MAX_RETRIES = 3;
   let retries = 0;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  // 断线恢复: 记录已接收的 delta 文本, 重试时传给后端
+  let receivedDelta = '';
 
   while (retries <= MAX_RETRIES) {
     try {
+      // 重试时在 body 中注入 _retry 标记和已收到的文本, 让后端知道这是恢复
+      const reqBody = retries > 0 ? { ...body, _retry: true, _receivedDelta: receivedDelta } : body;
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(reqBody),
         signal,
       });
       if (!resp.ok) { handlers.onError?.(`HTTP ${resp.status}`); return; }
@@ -241,7 +270,7 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
           try {
             const data = JSON.parse(dataStr);
             switch (eventType) {
-              case 'delta': handlers.onDelta?.(data.delta || data.text || ''); break;
+              case 'delta': const _delta = data.delta || data.text || ''; receivedDelta += _delta; handlers.onDelta?.(_delta); break;
               case 'thinking': handlers.onThinking?.(data.text || data.delta || ''); break;
               case 'reasoning': handlers.onReasoning?.(data.text || ''); break;
               case 'auto_fix': handlers.onAutoFix?.(data); break;
@@ -269,6 +298,7 @@ case 'inner_voice': window.dispatchEvent(new CustomEvent('agentai:inner-voice', 
 case 'curiosity': window.dispatchEvent(new CustomEvent('agentai:curiosity', { detail: data })); break;
 case 'debate': window.dispatchEvent(new CustomEvent('agentai:debate', { detail: data })); break;
 case 'dream': window.dispatchEvent(new CustomEvent('agentai:dream', { detail: data })); break;
+              case 'timeout': window.dispatchEvent(new CustomEvent('agentai:timeout', { detail: data })); break;
               case 'done': handlers.onDone?.({ provider: data.provider, content: data.content, usage: data.usage, displayModel: data.displayModel }); return;
               case 'error': handlers.onError?.(data.error || data.text || 'Unknown error'); return;
             }
@@ -298,26 +328,15 @@ case 'dream': window.dispatchEvent(new CustomEvent('agentai:dream', { detail: da
  * API 服务 — 调用后端 Gateway
  * dev 模式走 Vite proxy ('/v1/*'), 打包后走 GATEWAY_HTTP 直连
  */
-import { GATEWAY_HTTP } from './config';
-import { gatewayFallback } from './GatewayFallback';
+import { GATEWAY_HTTP, IS_DEV } from './config';
 
-/** 判断是否开发模式 (非 Tauri + Vite dev server) */
-function isDevMode(): boolean {
-  if (typeof window === 'undefined') return false;
-  // Tauri 环境绝不是 dev 模式
-  if ((window as any).__TAURI_INTERNALS__ || window.location?.protocol === 'tauri:') return false;
-  return window.location?.hostname === 'localhost' || 
-         window.location?.hostname === '127.0.0.1' ||
-         window.location?.port === '5173' ||
-         window.location?.port === '5174' ||
-         window.location?.port === '5176';
-}
-
-/** 拼接完整 URL: 始终使用 gatewayFallback.url 获取正确地址 */
+/** 拼接完整 URL: 统一使用 GATEWAY_HTTP (与 fetchInterceptor 一致) */
 export function apiUrl(path: string): string {
-  // 始终使用 gatewayFallback.url，它已处理开发/生产环境
-  const base = gatewayFallback.isOnline ? GATEWAY_HTTP : gatewayFallback.url;
-  // 确保 path 以 / 开头
+  // GATEWAY_HTTP:
+  //   开发态 = '' (相对路径, 走 Vite proxy)
+  //   生产态 = 'http://127.0.0.1:18789' (直连)
+  // fetchInterceptor 也会处理相对路径, 两者一致, 不会双重重定向
+  const base = GATEWAY_HTTP;
   const normalizedPath = path.startsWith('/') ? path : '/' + path;
   return base + normalizedPath;
 }

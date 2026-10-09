@@ -1,0 +1,15 @@
+# Rust/Tauri 构建产物
+target/
+
+# Gateway 运行时副本 — 全部由构建脚本在打包时重新生成, 禁止入库:
+#   scripts/prepare-gateway.mjs      -> resources/gateway-dist-v2/
+#   scripts/build-for-desktop.mjs    -> 同步 gateway-dist-v2/ 到 gateway-dist/
+# 如需清理本地磁盘, 可安全删除以下目录 (下次 tauri build 自动重建):
+resources/gateway-dist/
+resources/gateway-dist-v2/
+resources/gateway-dist-backup-*/
+
+# 打包脚本的中转副本
+scripts/resources/
+
+# 注意: resources/lite.html 是真源文件, 必须保留在版本控制中

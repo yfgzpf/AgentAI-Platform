@@ -91,7 +91,7 @@
     "temperature": 0.7,
     "max_tokens": 2000,
     "system_prompt_prefix": "You are a content repurposing expert. Maintain the user's voice and tone while optimizing for each platform.",
-    "comment": "Uses Clawdbot's built-in LLM - no API key needed"
+    "comment": "Uses AgentAI's built-in LLM - no API key needed"
   },
   "advanced": {
     "generate_multiple_hooks": false,

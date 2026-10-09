@@ -34,7 +34,11 @@ export function useSessionAutoSave(
     const text = textSegs[0]?.text || '';
     if (!text) return;
     savedKeysRef.current.add(key);
-    addMessage(activeId!, { role: msg.role, content: text, ts: msg.ts });
+    // 2026-10-05 P0 修复: 透传 msg.id ——
+    //   ChatView 的会话隔离用 findIndex(m => m.id === id) 定位要更新的消息，
+    //   而这里的 id 来自流式响应的 botId/userId。若不传，store 会另生成一个 id
+    //   → 两者永远匹配不上 → 切会话时消息更新被丢弃 → 用户以为内容丢了。
+    addMessage(activeId!, { id: msg.id, role: msg.role, content: text, ts: msg.ts });
   };
 
   /* ---- 会话切换: 从 localStorage 加载历史消息 ---- */
@@ -78,4 +82,17 @@ export function useSessionAutoSave(
     const last = messages[messages.length - 1];
     if (!last.streaming) persistMessage(last);
   }, [messages, activeId, persistMessage]);
+
+  /* ---- P0 修复: beforeunload 强制刷盘 — 防止 F5 丢最后2秒消息 ---- */
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!activeId || messages.length === 0) return;
+      // 强制保存所有未持久化的消息
+      for (const msg of messages) {
+        if (!msg.streaming) persistMessage(msg);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [activeId, messages, persistMessage]);
 }

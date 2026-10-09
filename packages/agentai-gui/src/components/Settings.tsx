@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Input, Button, Space, Tag, Alert, Form, message, Tabs, Descriptions, Select, Divider, Modal, Switch, Typography, Collapse, Tooltip, Table, App, Progress } from 'antd';
 import { saveApiKey, getApiKey, removeApiKey } from '../services/secureKeyStorage';
-import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, DeleteOutlined, BellOutlined, SoundOutlined, AppstoreOutlined, SecurityScanOutlined, CheckOutlined, LinkOutlined, CrownOutlined, ExperimentOutlined, PartitionOutlined, SyncOutlined, InfoCircleOutlined, DownloadOutlined } from '@ant-design/icons';
+import { KeyOutlined, SaveOutlined, ApiOutlined, SettingOutlined, ThunderboltOutlined, RobotOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, DeleteOutlined, BellOutlined, SoundOutlined, AppstoreOutlined, SecurityScanOutlined, CheckOutlined, LinkOutlined, CrownOutlined, ExperimentOutlined, PartitionOutlined, SyncOutlined, InfoCircleOutlined, DownloadOutlined, VideoCameraOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 import { ModelSelector } from './ModelSelector';
 import { SandboxRulesEditor } from './SandboxRulesEditor';
@@ -303,8 +303,14 @@ const FACTORY_IMAGE_MODEL_LIST: { id: string; label: string; color: string; pric
 
 // ===== 免费模型内置列表 =====
 const FREE_MODELS = [
-  { id: 'agentai', label: 'ALTES | 岐黄 Free (Flash)', envVar: 'AGENTAI_API_KEY', baseURL: 'https://api.agnes-ai.cn/v1', color: '#4F46E5' },
+  { id: 'agentai', label: '岐枢 | Agnes Free (Flash)', envVar: 'AGENTAI_API_KEY', baseURL: 'https://api.agnes-ai.cn/v1', color: '#4F46E5' },
   { id: 'zhipu', label: '智谱 GLM-4.7 Flash', envVar: 'ZHIPU_API_KEY', baseURL: 'https://open.bigmodel.cn/api/paas/v4', color: '#3B82F6' },
+];
+
+// ===== 多媒体引擎密钥 (生视频/生图) =====
+const MEDIA_ENGINES = [
+  { id: 'agnes-video', label: 'Agnes Video 2.5 正式版', envVar: 'AGNES_VIDEO_API_KEY', baseURL: 'https://apihub.agnes-ai.cn/v1', color: '#4F46E5', desc: '支持图生视频/首尾帧/参考模式, 独立密钥', docsUrl: 'https://platform.agnes-ai.cn' },
+  { id: 'doubao', label: '火山引擎/豆包 (Seedance 2.5)', envVar: 'VOLCANO_API_KEY', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', color: '#FF7A45', desc: 'Seedance 2.5 1080p 视频生成', docsUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey' },
 ];
 
 export const Settings: React.FC = () => {
@@ -359,6 +365,7 @@ export const Settings: React.FC = () => {
   const loadAllKeyStatus = async () => {
     const allProviders = [
       ...FREE_MODELS.map(m => ({ id: m.id, envVar: m.envVar })),
+      ...MEDIA_ENGINES.map(m => ({ id: m.id, envVar: m.envVar })),
       ...MODEL_TEMPLATES.map(t => ({ id: t.id, envVar: `${t.id.toUpperCase()}_API_KEY` })),
       { id: 'alrc', envVar: 'ALRC_API_KEY' },
       { id: 'sensenova', envVar: 'SENSENOVA_API_KEY' },
@@ -434,7 +441,7 @@ export const Settings: React.FC = () => {
   };
 
   /** 保存 API Key 到 gateway */
-  const saveApiKeyToGateway = async (providerId: string, apiKey: string) => {
+  const saveApiKeyToGateway = async (providerId: string, apiKey: string, envVarOverride?: string) => {
     try {
       const r = await fetch(httpUrl() + '/v1/settings/keys', {
         method: 'POST',
@@ -444,7 +451,7 @@ export const Settings: React.FC = () => {
       if (r.ok) {
         message.success(`✅ ${providerId} Key 已保存`);
         // 同时缓存到本地（用 sessionStorage 替代 localStorage，关闭浏览器自动销毁）
-        const envVar = `${providerId.toUpperCase()}_API_KEY`;
+        const envVar = envVarOverride || `${providerId.toUpperCase()}_API_KEY`;
         setCommercialKey(envVar, apiKey);
         saveApiKey(envVar, apiKey);
         loadAllKeyStatus();
@@ -637,7 +644,7 @@ return (
           // ========== 通用设置 ==========
           {
             key: 'general',
-            label: <span><AppstoreOutlined /> 通用设置</span>,
+            label: <span><AppstoreOutlined /> 通用</span>,
             children: (
               <Card>
                 <Space direction="vertical" style={{ width: '100%' }} size={16}>
@@ -730,7 +737,7 @@ return (
           // ========== 模型配置 (免费 + 商用) ==========
           {
             key: 'models',
-            label: <span><ApiOutlined /> 模型配置</span>,
+            label: <span><ApiOutlined /> 模型</span>,
             children: (
               <Card>
                 <Space direction="vertical" style={{ width: '100%' }} size={20}>
@@ -786,6 +793,66 @@ return (
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, paddingLeft: 4 }}>
                       <ThunderboltOutlined /> 免费模型可用于主对话和子任务，自动切换，无速率限制担忧
+                    </div>
+                  </div>
+
+                  {/* ===== 多媒体引擎密钥区域 ===== */}
+                  <div>
+                    <Divider orientation="left" style={{ fontSize: 14, color: '#8B5CF6', margin: 0 }}>
+                      <VideoCameraOutlined style={{ color: '#8B5CF6', marginRight: 6 }} />
+                      视频生成引擎 (独立密钥)
+                    </Divider>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, marginBottom: 12 }}>
+                      Agnes Video 2.5 正式版使用独立密钥, 与 Flash 对话密钥分开配置。配置后在「生视频」页面选择对应模型即可使用。
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {MEDIA_ENGINES.map(m => {
+                        const status = allKeyStatus[m.id];
+                        return (
+                          <div key={m.id} style={{
+                            padding: '12px 16px', border: '1px solid var(--border)', borderRadius: 8,
+                            background: 'var(--panel)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <Space>
+                                <span style={{ width: 10, height: 10, borderRadius: '50%', background: m.color, display: 'inline-block' }} />
+                                <Text strong style={{ color: 'var(--fg)' }}>{m.label}</Text>
+                              </Space>
+                              <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4, marginLeft: 20 }}>
+                                {m.desc} · <code style={{ fontSize: 10 }}>{m.baseURL}</code>
+                              </div>
+                            </div>
+                            <Space>
+                              {status?.ok
+                                ? <Tag color="success">✓ 已配置 ({status.masked})</Tag>
+                                : <Tag color="warning">⚠ 未配置</Tag>
+                              }
+                              {editingProvider === m.id ? (
+                                <Space.Compact>
+                                  <Input.Password
+                                    size="small"
+                                    value={editApiKey}
+                                    onChange={e => setEditApiKey(e.target.value)}
+                                    placeholder="输入 API Key..."
+                                    style={{ width: 200 }}
+                                  />
+                                  <Button size="small" type="primary" icon={<SaveOutlined />} onClick={async () => {
+                                    if (await saveApiKeyToGateway(m.id, editApiKey, m.envVar)) setEditingProvider(null);
+                                  }}>保存</Button>
+                                  <Button size="small" onClick={() => setEditingProvider(null)}>取消</Button>
+                                </Space.Compact>
+                              ) : (
+                                <Space>
+                                  {m.docsUrl && <Button size="small" type="link" href={m.docsUrl} target="_blank" icon={<LinkOutlined />}>获取密钥</Button>}
+                                  <Button size="small" type="link" onClick={() => { setEditingProvider(m.id); setEditApiKey(''); }}>
+                                    配置 Key
+                                  </Button>
+                                </Space>
+                              )}
+                            </Space>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1091,7 +1158,16 @@ return (
                       </div>
                     )}
 
-                    <Form layout="vertical" size="small" style={{ marginTop: 12 }}>
+                    {/* P2: 自定义模型表单改为折叠, 默认收起 */}
+                    <Collapse
+                      ghost
+                      size="small"
+                      style={{ marginTop: 8 }}
+                      items={[{
+                        key: 'add-form',
+                        label: <span style={{ fontSize: 12, color: 'var(--muted)' }}><PlusOutlined style={{ marginRight: 4 }} />添加新的自定义模型</span>,
+                        children: (
+                    <Form layout="vertical" size="small" style={{ marginTop: 4 }}>
                       <Form.Item label="模型名称 (显示名)">
                         <Input value={newModel.label} onChange={e => setNewModel(p => ({ ...p, label: e.target.value }))} placeholder="例: 自定义 GPT-4o" />
                       </Form.Item>
@@ -1140,6 +1216,9 @@ return (
                         </Button>
                       </Form.Item>
                     </Form>
+                        ),
+                      }]}
+                    />
                   </div>
 
                 </Space>
@@ -1190,22 +1269,22 @@ return (
           // ========== 框架切换 ==========
           {
             key: 'framework',
-            label: <span><ThunderboltOutlined /> 框架切换</span>,
+            label: <span><ThunderboltOutlined /> 框架</span>,
             children: (
               <Card>
                 <Space direction="vertical" style={{ width: '100%' }} size={16}>
                   <div>
                     <div style={{ color: 'var(--muted)', marginBottom: 8 }}>当前框架</div>
                     <Space>
-                      <Button type={active === 'agentai' ? 'primary' : 'default'} onClick={() => setActive('agentai')}>岐枢 PulseFlow (自研框架)</Button>
-                      <Button type={active === 'hermes' ? 'primary' : 'default'} onClick={() => setActive('hermes')} style={active === 'hermes' ? { background: '#9333EA', borderColor: '#9333EA' } : undefined}>Hermes (多渠道网关)</Button>
+                      <Button type={active === 'agentai' ? 'primary' : 'default'} onClick={() => setActive('agentai')}>AgentAI (自研主框架)</Button>
+                      <Button type={active === 'pulseflow' ? 'primary' : 'default'} onClick={() => setActive('pulseflow')} style={active === 'pulseflow' ? { background: '#9333EA', borderColor: '#9333EA' } : undefined}>PulseFlow (强注入防御)</Button>
                     </Space>
                   </div>
                   <div>
                     <div style={{ color: 'var(--muted)' }}>A/B 灰度: {(abRatio * 100).toFixed(0)}% → {active}</div>
                     <input type="range" min={0} max={1} step={0.05} value={abRatio} onChange={(e) => setAbRatio(parseFloat(e.target.value))} style={{ width: '100%' }} />
                   </div>
-                  <Alert type="info" message="关于框架" description={<ul style={{ marginBottom: 0, paddingLeft: 18 }}><li>岐枢 PulseFlow: 自研系统提示 + 工具描述, 适合代码/工具调用</li><li>Hermes: 自研多渠道网关, 适合多平台对话</li><li>A/B 灰度: 1.0 = 全走岐枢, 0.0 = 全走 Hermes</li><li>切换后新建对话即生效, 无需重启</li></ul>} />
+                  <Alert type="info" message="关于框架" description={<ul style={{ marginBottom: 0, paddingLeft: 18 }}><li>AgentAI: 自研主框架, 并行工具 + 多智能体, 适合代码/工具调用</li><li>PulseFlow: 4 段式提示 + 中文注入强防御, 适合高风险对话</li><li>A/B 灰度: 1.0 = 全走 AgentAI, 0.0 = 全走 PulseFlow</li><li>切换后新建对话即生效, 无需重启</li></ul>} />
                   <Divider />
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 8 }}>⚙️ 灰度功能开关</div>
@@ -1289,7 +1368,7 @@ return (
           // ========== MCP 配置 ==========
           {
             key: 'mcp',
-            label: <span><ApiOutlined /> MCP 配置</span>,
+            label: <span><ApiOutlined /> MCP</span>,
             children: (
               <Card>
                 <Space direction="vertical" style={{ width: '100%' }} size={16}>
@@ -1307,7 +1386,7 @@ return (
           // ========== 自动更新 ==========
           {
             key: 'updater',
-            label: <span><SyncOutlined /> 自动更新</span>,
+            label: <span><SyncOutlined /> 更新</span>,
             children: <UpdaterPanel />,
           },
 
@@ -1324,12 +1403,16 @@ return (
                   <Descriptions.Item label="VSCode 扩展">.vsix 18.9 KB</Descriptions.Item>
                   <Descriptions.Item label="QQ 机器人">独立 agentai-qqbot 包</Descriptions.Item>
                   <Descriptions.Item label="多模态">Agnes Image 2.1 + Video v2.0</Descriptions.Item>
-                  <Descriptions.Item label="3 框架参照">自研岐枢 PulseFlow + Hermes 多渠道</Descriptions.Item>
+                  <Descriptions.Item label="框架">自研双适配器: AgentAI + PulseFlow</Descriptions.Item>
                 </Descriptions>
               </Card>
             ),
           },
-        ]}
+        ].filter(tab => {
+          // P0 优化: 隐藏空壳/低价值 tab — 保留核心功能
+          const HIDDEN_TABS = ['sandbox', 'evolution', 'pro-recommend', 'qq'];
+          return !HIDDEN_TABS.includes(tab.key as string);
+        })}
       />
     </div>
   );

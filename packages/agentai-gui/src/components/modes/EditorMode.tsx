@@ -9,7 +9,7 @@
  *   - 支持空状态引导（无文件时显示打开文件夹提示）
  *   - 保持与现有 Editor 相同的 API 和 Gateway 通信方式
  */
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
 import { Empty, Button, Tooltip, message } from 'antd';
 import {
   FolderOpenOutlined, CodeOutlined, PlusOutlined,
@@ -17,9 +17,7 @@ import {
 } from '@ant-design/icons';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { gatewayFallback } from '../../services/GatewayFallback';
-
-// 复用现有 Editor 的核心子组件
-import { MonacoEditor, detectLangFromPath } from '../MonacoEditor';
+import { MonacoEditor, detectLangFromPath, type AICodeDecoration } from '../MonacoEditor';
 
 const baseUrl = () => gatewayFallback.url || 'http://127.0.0.1:18789';
 
@@ -114,6 +112,45 @@ export const EditorMode: React.FC = () => {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msgApi, contextHolder] = message.useMessage();
+
+  // ═══ D2 (2026-09-05): AI 代码变更装饰 (真实行号, 来自 write_file/multi_edit 的 lineRanges) ═══
+  const [aiDecors, setAiDecors] = useState<AICodeDecoration[]>([]);
+  const currentPathRef = useRef<string | null>(currentFile?.path || null);
+  const dirtyRef = useRef<boolean>(dirty);
+  currentPathRef.current = currentFile?.path || null;
+  dirtyRef.current = dirty;
+
+  useEffect(() => {
+    const onAiChange = async (e: any) => {
+      const detail = e.detail || {};
+      const file: string = detail.file;
+      if (!file || !Array.isArray(detail.entries) || detail.entries.length === 0) return;
+      const decs: AICodeDecoration[] = detail.entries
+        .filter((en: any) => typeof en.startLine === 'number')
+        .map((en: any) => ({
+          filePath: file,
+          type: en.type === 'created' || en.type === 'deleted' ? en.type : 'modified',
+          startLine: Math.max(1, en.startLine),
+          endLine: Math.max(en.startLine, en.endLine || en.startLine),
+          summary: en.summary || `${detail.tool || 'AI'}: ${file.split(/[\\/]/).pop()}`,
+        }));
+      if (decs.length === 0) return;
+      setAiDecors((prev) => [...prev.filter((d) => d.filePath !== file), ...decs]);
+      // 当前打开文件被 AI 写入且用户无未保存改动 → 重载, 保证装饰行号与内容一致
+      if (file === currentPathRef.current && !dirtyRef.current) {
+        try {
+          const resp = await fetch(`${baseUrl()}/v1/files/read?path=${encodeURIComponent(file)}`);
+          const data = await resp.json();
+          if (!data.error) { setFileContent(data.content || ''); setDirty(false); }
+        } catch { /* best-effort reload */ }
+      }
+    };
+    window.addEventListener('agentai:ai-change', onAiChange);
+    return () => window.removeEventListener('agentai:ai-change', onAiChange);
+  }, []);
+
+  // 切换文件 → 清空装饰, 避免残留到其它文件
+  useEffect(() => { setAiDecors([]); }, [currentFile?.path]);
 
   // 当 currentFile 变化时加载文件内容
   useEffect(() => {
@@ -304,6 +341,7 @@ export const EditorMode: React.FC = () => {
             onSave={handleSave}
             language={detectLangFromPath(currentFile.name) || undefined}
             readOnly={false}
+            aiDecorations={aiDecors}
           />
         )}
       </div>

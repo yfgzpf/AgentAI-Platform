@@ -120,10 +120,9 @@ export const FileCard: React.FC<FileCardProps> = ({
    */
   const handleOpen = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    // 1. 触发 Editor 打开文件
-    window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path } }));
-    // 2. 切换到编辑器页面（自动的）
+    // P0: 走 pending 机制, 先切换页面再打开文件
     window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
+    window.dispatchEvent(new CustomEvent('agentai:open-file-pending', { detail: { path } }));
     
     if (onOpenInEditor) onOpenInEditor(path);
     antdMsg.info(`正在打开: ${filename}`);

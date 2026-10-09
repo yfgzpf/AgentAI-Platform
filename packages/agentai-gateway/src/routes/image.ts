@@ -36,6 +36,8 @@ async function downloadToTempFile(url: string): Promise<string | null> {
 
 /** 像素尺寸映射到档位尺寸 */
 function mapSizeToTier(size: string): { tier: string; ratio: string } {
+  // 支持档位式直接传入: 1K / 2K / 3K / 4K
+  if (/^[1234]K$/i.test(size)) return { tier: size.toUpperCase(), ratio: '1:1' };
   const sizeMap: Record<string, { tier: string; ratio: string }> = {
     // 1K 档位
     '1024x1024': { tier: '1K', ratio: '1:1' },
@@ -49,6 +51,12 @@ function mapSizeToTier(size: string): { tier: string; ratio: string } {
     '2304x1728': { tier: '2K', ratio: '4:3' },
     '2624x1472': { tier: '2K', ratio: '16:9' },
     '1472x2624': { tier: '2K', ratio: '9:16' },
+    // 4K 档位
+    '4096x4096': { tier: '4K', ratio: '1:1' },
+    '3072x4096': { tier: '4K', ratio: '3:4' },
+    '4096x3072': { tier: '4K', ratio: '4:3' },
+    '4096x2160': { tier: '4K', ratio: '16:9' },
+    '2160x4096': { tier: '4K', ratio: '9:16' },
     // 兼容旧版像素尺寸
     '512x512': { tier: '1K', ratio: '1:1' },
     '720x1280': { tier: '1K', ratio: '9:16' },
@@ -74,25 +82,28 @@ export function createImageRouter() {
       let effectiveModel = reqModel;
 
       // 图生图模式
+      // 图生图/风格迁移/编辑模式: ALRC 模型 (gpt-image-2, nano-banana 等) 原生支持, 不强制覆盖
+      // 只有非 ALRC 模型才回退到 agnes
+      const isAlrcRequested = effectiveModel?.startsWith('alrc-') || effectiveModel?.startsWith('factory-');
       if (image && mode === 'img2img') {
         extraTags.push('img2img');
-        effectiveModel = 'agnes'; // 图生图仅 Agnes 支持
+        if (!isAlrcRequested) effectiveModel = 'agnes'; // 非 ALRC 回退到 agnes
       }
       // 风格迁移
       if (mode === 'style_transfer') {
         extraTags.push('style_transfer');
-        effectiveModel = 'agnes';
+        if (!isAlrcRequested) effectiveModel = 'agnes';
       }
-      // 编辑模式
+      // 编辑模式 — ALRC 模型 (gpt-image-2/nano-banana) 指令邏辑性最强, 不覆盖
       if (mode === 'edit') {
         extraTags.push('edit');
-        effectiveModel = 'agnes';
+        if (!isAlrcRequested) effectiveModel = 'agnes';
       }
 
       // ---- 引擎 1.5: ALRC 图像模型 (gpt-image-2 / nano-banana) ----
       // 注意：如果用户明确选择了付费模型，但调用失败，应该报错而不是静默降级
-      const isAlrcModel = effectiveModel?.startsWith('alrc-');
-      const alrcKey = process.env['ALRC_API_KEY'];
+      const isAlrcModel = effectiveModel?.startsWith('alrc-') || effectiveModel?.startsWith('factory-');
+      const alrcKey = process.env['ALRC_API_KEY'] || process.env['FACTORY_IMAGE_KEY'];
       
       if (isAlrcModel) {
         if (!alrcKey) {
@@ -104,14 +115,27 @@ export function createImageRouter() {
         }
         
         try {
+          // ALRC 模型支持图生图/编辑 — 传入 image 参数
+          const alrcBody: any = {
+            model: effectiveModel.replace(/^(alrc-|factory-)/, ''),
+            prompt: finalPrompt,
+            size,
+          };
+          // 图生图/编辑模式: 传入参考图
+          if (image && (mode === 'img2img' || mode === 'edit' || mode === 'style_transfer')) {
+            const images = Array.isArray(image) ? image : [image];
+            // ALRC API 接受 image 数组 (公共 URL 或 base64)
+            alrcBody.image = images.map((img: string) => {
+              if (img.startsWith('data:')) return img; // Data URI
+              if (img.startsWith('http')) return img;  // 公共 URL
+              return `data:image/png;base64,${img}`;   // 纯 base64
+            });
+            if (strength !== undefined) alrcBody.strength = strength;
+          }
           const resp = await fetch('https://alro.huazhiweilai.com/v1/images/generations', {
             method: 'POST',
             headers: { Authorization: `Bearer ${alrcKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: effectiveModel.replace('alrc-', ''),
-              prompt: finalPrompt,
-              size,
-            }),
+            body: JSON.stringify(alrcBody),
             signal: AbortSignal.timeout(60000),
           });
           
@@ -212,16 +236,51 @@ export function createImageRouter() {
       const finalRatio = ratio || defaultRatio;
 
       if (image) {
-        // 图生图/风格迁移/改图: 使用 agnes-image-2.1-flash + extra_body
+        // 图生图/风格迁移/改图: 使用 agnes-image-2.5-flash + extra_body
         const images = Array.isArray(image) ? image : [image];
+        // Agnes Image API 支持: 公共 URL 或 Data URI Base64
+        // localhost/内网 URL → 下载转 Data URI (Agnes 无法访问 localhost)
+        const cleanImages: string[] = [];
+        for (const img of images) {
+          if (img.startsWith('data:')) {
+            cleanImages.push(img); // 已经是 Data URI, 保留
+          } else if (img.startsWith('http://') || img.startsWith('https://')) {
+            // 检测 localhost/内网 IP — 用 URL.hostname 精确检测, 不误伤公网 /api/ 路径
+            let isLocal = false;
+            try {
+              const urlObj = new URL(img);
+              const hostname = urlObj.hostname;
+              isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.startsWith('172.');
+            } catch { isLocal = false; }
+            if (isLocal) {
+              // localhost URL → 下载转 Data URI
+              try {
+                const resp = await fetch(img, { signal: AbortSignal.timeout(10000) });
+                if (resp.ok) {
+                  const buf = Buffer.from(await resp.arrayBuffer());
+                  const contentType = resp.headers.get('content-type') || 'image/png';
+                  cleanImages.push(`data:${contentType};base64,${buf.toString('base64')}`);
+                } else {
+                  console.warn(`[agnes-image] 下载本地图片失败: HTTP ${resp.status}`);
+                }
+              } catch (e: any) {
+                console.warn(`[agnes-image] 下载本地图片失败: ${e.message}`);
+              }
+            } else {
+              cleanImages.push(img); // 公共 URL, Agnes 可以访问
+            }
+          } else {
+            cleanImages.push(`data:image/png;base64,${img}`); // 纯 base64 → 补成 Data URI
+          }
+        }
         const body: any = {
-          model: 'agnes-image-2.1-flash',
+          model: 'agnes-image-2.5-flash',
           prompt: finalPrompt,
           size: tier,
           ratio: finalRatio,
           extra_body: {
             tags: extraTags.length > 0 ? extraTags : ['img2img'],
-            image: images,
+            image: cleanImages,
             response_format: 'url',
           },
         };
@@ -236,22 +295,27 @@ export function createImageRouter() {
         });
         if (!resp.ok) {
           const errText = await resp.text().catch(() => '');
-          return res.status(resp.status).json({ error: `HTTP ${resp.status}: ${errText.slice(0, 200)}` });
-        }
+          // 错误分类: 429 限流 / 402 余额不足 → 明确提示; 其他 → 降级到文生图
+          if (resp.status === 429) return res.status(429).json({ error: 'API 限流, 请稍后重试', code: 'RATE_LIMITED' });
+          if (resp.status === 402) return res.status(402).json({ error: '余额不足, 请充值', code: 'INSUFFICIENT_BALANCE' });
+          console.warn('[agnes-image] img2img failed, falling back to text2img:', resp.status);
+          // 降级: 去掉参考图, 用文生图继续
+        } else {
         const data: any = await resp.json();
         const imageUrl = data.data?.[0]?.url || data.url || data.image_url;
         if (imageUrl) {
           const localPath = await downloadToTempFile(imageUrl);
           if (localPath) {
-            return res.json({ url: `/api/files/download?path=${encodeURIComponent(localPath)}`, localPath, originalUrl: imageUrl, prompt, size: tier, ratio: finalRatio, provider: 'agnes-image-2.1 (图生图)' });
+            return res.json({ url: `/api/files/download?path=${encodeURIComponent(localPath)}`, localPath, originalUrl: imageUrl, prompt, size: tier, ratio: finalRatio, provider: 'agnes-image-2.5 (图生图)' });
           }
-          return res.json({ url: imageUrl, prompt, size: tier, ratio: finalRatio, provider: 'agnes-image-2.1 (图生图)' });
+          return res.json({ url: imageUrl, prompt, size: tier, ratio: finalRatio, provider: 'agnes-image-2.5 (图生图)' });
         }
         return res.json({ url: '', provider: 'none', ...(data || {}) });
+        } // end else (img2img resp.ok)
       } else {
-        // 纯文生图: 使用 agnes-image-2.1-flash
+        // 纯文生图: 使用 agnes-image-2.5-flash
         const body: any = {
-          model: 'agnes-image-2.1-flash',
+          model: 'agnes-image-2.5-flash',
           prompt: finalPrompt,
           size: tier,
           ratio: finalRatio,
@@ -269,6 +333,31 @@ export function createImageRouter() {
         });
         if (!resp.ok) {
           const errText = await resp.text().catch(() => '');
+          // 错误分类: 429 限流 / 402 余额不足 → 明确提示; 其他 → 降级到智谱 CogView
+          if (resp.status === 429) return res.status(429).json({ error: 'API 限流, 请稍后重试', code: 'RATE_LIMITED' });
+          if (resp.status === 402) return res.status(402).json({ error: '余额不足, 请充值', code: 'INSUFFICIENT_BALANCE' });
+          console.warn('[agnes-image] text2img failed, falling back to zhipu cogview:', resp.status);
+          // 降级到智谱
+          const zhipuKey2 = process.env['ZHIPU_API_KEY'];
+          if (zhipuKey2) {
+            try {
+              const cogSize = ['1024x1024','768x1344','864x1152','1344x768','1152x864','1440x720','720x1440'].includes(size) ? size : '1024x1024';
+              const zr = await fetch('https://open.bigmodel.cn/api/paas/v4/images/generations', {
+                method: 'POST', headers: { Authorization: `Bearer ${zhipuKey2}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: 'cogview-3-flash', prompt: finalPrompt, size: cogSize }),
+                signal: AbortSignal.timeout(60000),
+              });
+              if (zr.ok) {
+                const zd: any = await zr.json();
+                const zu = zd.data?.[0]?.url;
+                if (zu) {
+                  const lp = await downloadToTempFile(zu);
+                  if (lp) return res.json({ url: `/api/files/download?path=${encodeURIComponent(lp)}`, localPath: lp, originalUrl: zu, prompt, size, provider: 'cogview-3-flash (降级)' });
+                  return res.json({ url: zu, prompt, size, provider: 'cogview-3-flash (降级)' });
+                }
+              }
+            } catch (e: any) { console.warn('[cogview] fallback error:', e.message); }
+          }
           return res.status(resp.status).json({ error: `HTTP ${resp.status}: ${errText.slice(0, 200)}` });
         }
         const data: any = await resp.json();
@@ -282,6 +371,92 @@ export function createImageRouter() {
         }
         return res.json({ url: '', provider: 'none', ...(data || {}) });
       }
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // POST /v1/image/remove-bg — 抠图 (去背景)
+  // 输入: { image: string (URL 或 Data URI) }
+  // 输出: { url: string (透明背景 PNG 的 Data URI 或本地文件 URL) }
+  // 方案: 使用 Agnes Image API edit 模式, prompt="remove background, make transparent"
+  // ════════════════════════════════════════════════════════════════════════
+  router.post('/v1/image/remove-bg', async (req, res) => {
+    try {
+      const { image } = req.body;
+      if (!image) return res.status(400).json({ error: 'image required' });
+
+      const apiKey = process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY'];
+      if (!apiKey) return res.status(500).json({ error: '需要 AGENTAI_API_KEY' });
+
+      // 准备图片: localhost URL → 下载转 Data URI
+      let imageDataUri = image;
+      if (image.startsWith('http://') || image.startsWith('https://')) {
+        let isLocal = false;
+        try {
+          const urlObj = new URL(image);
+          const hostname = urlObj.hostname;
+          isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.startsWith('172.');
+        } catch { isLocal = false; }
+        if (isLocal) {
+          const resp = await fetch(image, { signal: AbortSignal.timeout(10000) });
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const ct = resp.headers.get('content-type') || 'image/png';
+            imageDataUri = `data:${ct};base64,${buf.toString('base64')}`;
+          }
+        }
+      } else if (!image.startsWith('data:')) {
+        // 纯 base64 → 补成 Data URI
+        imageDataUri = `data:image/png;base64,${image}`;
+      }
+
+      // 调用 Agnes Image API — edit 模式, 去背景
+      const body: any = {
+        model: 'agnes-image-2.5-flash',
+        prompt: 'Remove the background completely, make it fully transparent. Keep only the person/character with clean edges. Preserve all hair details, clothing edges, and shadows on the subject. Output as PNG with transparency.',
+        size: '2K',
+        ratio: '1:1',
+        extra_body: {
+          tags: ['edit', 'remove-bg'],
+          image: [imageDataUri],
+          response_format: 'b64_json',
+        },
+      };
+
+      const resp = await fetch('https://api.agnes-ai.cn/v1/images/generations', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        return res.status(resp.status).json({ error: `Agnes API HTTP ${resp.status}: ${errText.slice(0, 300)}` });
+      }
+
+      const data: any = await resp.json();
+      // 优先取 b64_json, 其次取 URL
+      let b64Data = data.data?.[0]?.b64_json || data.b64_json || null;
+      let imageUrl = data.data?.[0]?.url || data.url || null;
+
+      if (b64Data) {
+        // 返回 Data URI 给前端
+        return res.json({ url: `data:image/png;base64,${b64Data}`, provider: 'agnes-remove-bg' });
+      }
+
+      if (imageUrl) {
+        // 下载到本地, 返回本地 URL
+        const localPath = await downloadToTempFile(imageUrl);
+        if (localPath) {
+          return res.json({ url: `/api/files/download?path=${encodeURIComponent(localPath)}`, localPath, provider: 'agnes-remove-bg' });
+        }
+        return res.json({ url: imageUrl, provider: 'agnes-remove-bg' });
+      }
+
+      return res.json({ error: '抠图失败: API 未返回图片', raw: JSON.stringify(data).slice(0, 500) });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }

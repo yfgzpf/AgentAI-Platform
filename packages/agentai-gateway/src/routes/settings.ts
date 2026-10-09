@@ -9,6 +9,7 @@ import path from 'path';
 
 const ENV_KEY_MAP: Record<string, string> = {
   agentai: 'AGENTAI_API_KEY',
+  'agnes-video': 'AGNES_VIDEO_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
   openai: 'OPENAI_API_KEY',
   zhipu: 'ZHIPU_API_KEY',
@@ -24,6 +25,36 @@ const ENV_KEY_MAP: Record<string, string> = {
   doubao: 'VOLCANO_API_KEY',
   dxnt: 'DXNT_API_KEY',
 };
+
+/**
+ * 2026-10-06 P0 安全修复: 环境变量名白名单校验
+ * =================================================
+ * 原实现:
+ *   const envVar = ENV_KEY_MAP[provider] || `${provider.toUpperCase()}_API_KEY`;
+ *   writeEnvKey(envVar, apiKey);process.env[envVar] = apiKey;
+ *
+ * provider 完全由请求体控制且无校验，而 envVar 会:
+ *   1) 被写入 .env 文件（持久化到磁盘）
+ *   2) 被赋值到 process.env（影响同进程所有后续代码）
+ *
+ * 可利用输入:
+ *   provider 含 `=` 或换行时，写入 .env 的那一行会被拆成两条赋值:
+ *      EVIL_KEY=x
+ *      NODE_OPTIONS=--require evil.js   ← 注入了新的环境变量
+ *   下次任何 `node` 子进程启动都会执行攻击者指定的代码。
+ *
+ * 现在: envVar 必须严格匹配 /^[A-Z][A-Z0-9_]*$/、长度 <= 64，
+ * 且拒绝 PATH / COMSPEC / __PROTO__ 等敏感名。
+ */
+const ENV_NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+const FORBIDDEN_ENV_NAMES = new Set([
+  '__PROTO__', 'CONSTRUCTOR', 'PROTOTYPE',
+  'PATH', 'COMSPEC', 'SYSTEMROOT', 'WINDIR', 'PATHEXT', 'LD_PRELOAD',
+]);
+
+function isValidEnvName(name: string): boolean {
+  return ENV_NAME_RE.test(name) && !FORBIDDEN_ENV_NAMES.has(name);
+}
 
 /** 掩码 API Key, 只保留前 2 + 后 4 位 */
 function maskKey(key: string | undefined): string {
@@ -105,6 +136,10 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
   r.get('/v1/settings/keys', (req: Request, res: Response) => {
     const provider = (req.query.provider as string) || 'agentai';
     const envVar = ENV_KEY_MAP[provider] || `${provider.toUpperCase()}_API_KEY`;
+    // 2026-10-06 P0: 同样校验 —— 否则 GET 也能探测任意环境变量是否存在
+    if (!isValidEnvName(envVar)) {
+      return res.status(400).json({ error: 'provider 非法' });
+    }
 
     // 优先从 process.env 读取（运行时已加载）
     const envValue = process.env[envVar] || readEnvKey(envVar);
@@ -123,6 +158,7 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
   r.get('/v1/settings/keys/status', (_req: Request, res: Response) => {
     const allKeys: Record<string, string> = {
       AGENTAI_API_KEY: 'AGENTAI_API_KEY', ZHIPU_API_KEY: 'ZHIPU_API_KEY',
+      AGNES_VIDEO_API_KEY: 'AGNES_VIDEO_API_KEY',
       DEEPSEEK_API_KEY: 'DEEPSEEK_API_KEY', OPENAI_API_KEY: 'OPENAI_API_KEY',
       SUPERAPI_API_KEY: 'SUPERAPI_API_KEY', SENSENOVA_API_KEY: 'SENSENOVA_API_KEY',
       LONGCAT_API_KEY: 'LONGCAT_API_KEY',
@@ -149,8 +185,16 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
     if (!provider || !apiKey) {
       return res.status(400).json({ error: 'provider 和 apiKey 必填' });
     }
+    // 2026-10-06 P0: provider 必须是已知项，或至少能推导出合法 envVar 名
+    if (typeof provider !== 'string' || provider.length > 64) {
+      return res.status(400).json({ error: 'provider 非法' });
+    }
 
     const envVar = ENV_KEY_MAP[provider] || `${provider.toUpperCase()}_API_KEY`;
+    // P0: 防止 provider 含 `=` / 换行 / 路径分隔符 → 向 .env 注入任意变量赋值
+    if (!isValidEnvName(envVar)) {
+      return res.status(400).json({ error: `非法的环境变量名: ${envVar.slice(0, 40)}` });
+    }
 
     try {
       // 写入 .env
@@ -180,8 +224,15 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
     if (!provider) {
       return res.status(400).json({ error: 'provider 必填' });
     }
+    // 2026-10-06 P0: 不校验则可删除 PATH / COMSPEC 等系统变量
+    if (typeof provider !== 'string' || provider.length > 64) {
+      return res.status(400).json({ error: 'provider 非法' });
+    }
 
     const envVar = ENV_KEY_MAP[provider] || `${provider.toUpperCase()}_API_KEY`;
+    if (!isValidEnvName(envVar)) {
+      return res.status(400).json({ error: 'provider 非法' });
+    }
 
     try {
       // 从 .env 文件删除
@@ -211,6 +262,10 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
     const { provider, baseURL, modelName, apiKey } = req.body || {};
     if (!provider || !baseURL) {
       return res.status(400).json({ error: 'provider 和 baseURL 必填' });
+    }
+    // 2026-10-06 P0: 同上，避免用合法 provider 名读出任意变量的值
+    if (typeof provider !== 'string' || provider.length > 64) {
+      return res.status(400).json({ error: 'provider 非法' });
     }
 
     const envVar = ENV_KEY_MAP[provider] || `${provider.toUpperCase()}_API_KEY`;

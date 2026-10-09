@@ -19,11 +19,11 @@ if (includeOpenClaw) {
 }
 
 if (includeAll) {
-  console.log('发布包构建完成（WorkBuddy + CodeBuddy + OpenClaw）。');
+  console.log('发布包构建完成（WorkBuddy + CodeBuddy + AgentAI）。');
 } else if (includeCodeBuddy || includeOpenClaw) {
   const extras = [
     includeCodeBuddy ? 'CodeBuddy' : null,
-    includeOpenClaw ? 'OpenClaw' : null,
+    includeOpenClaw ? 'AgentAI' : null,
   ].filter(Boolean);
   console.log(`发布包构建完成（WorkBuddy + ${extras.join(' + ')}）。`);
 } else {

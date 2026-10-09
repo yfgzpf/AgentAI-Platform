@@ -22,6 +22,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EventEmitter } from 'events';
 import { WorkspaceManager } from '../workspace-manager.js';
+import { getScoped, resetScoped } from './workspace-scope.js';
 
 export interface InnerThought {
   id: string;
@@ -41,9 +42,10 @@ export class InnerVoice extends EventEmitter {
   private thoughtPath: string;
   private maxThoughts = 50;
 
-  constructor() {
+  constructor(workspace?: string) {
     super();
-    const ws = WorkspaceManager.getInstance().projectDir;
+    // 串味修复: 优先用传入的请求级 workspace；未传时才回退全局单例
+    const ws = workspace || WorkspaceManager.getInstance().projectDir;
     this.thoughtPath = path.join(ws, '.agentai', 'inner-voice.jsonl');
     this.loadThoughts();
   }
@@ -171,11 +173,16 @@ export class InnerVoice extends EventEmitter {
 
 // ===== 单例 =====
 
-let _instance: InnerVoice | null = null;
+// ===== workspace 作用域单例 =====
+//串味修复: 原为进程级单例 + 构造时固化全局 projectDir,
+// 导致 projA 的内心独白被注入 projB。改为 per-workspace 实例。
 
-export function getInnerVoice(): InnerVoice {
-  if (!_instance) {
-    _instance = new InnerVoice();
-  }
-  return _instance;
+/** 按 workspace 返回 InnerVoice 实例（传请求级 workspace） */
+export function getInnerVoice(workspace?: string): InnerVoice {
+  return getScoped<InnerVoice>('innerVoice', workspace, () => new InnerVoice(workspace));
+}
+
+/** 重置指定 workspace 的实例；不传则重置全部 */
+export function resetInnerVoice(workspace?: string): void {
+  resetScoped<InnerVoice>('innerVoice', workspace);
 }

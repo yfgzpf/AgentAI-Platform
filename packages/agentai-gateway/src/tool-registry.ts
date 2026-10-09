@@ -1,15 +1,15 @@
 /**
  * AgentAI 工具注册中心
  * ----------------------------------------------------
- * 自创整合: 融合 3 框架精华
- *   - Hermes tools/registry.py  (统一注册, schema/handler/dispatch)
- *   - Reasonix parallelSafe 声明 (并发安全)
- *   - Reasonix Pillar 2 修复     (call storm 防护)
+ * 整合多框架机制:
+ *   - tools/registry.py  (统一注册, schema/handler/dispatch)
+ *   - parallelSafe 声明 (并发安全)
+ *   - Pillar 2 修复     (call storm 防护)
  *
- * 自创:
+ * 特性:
  *   - **风险等级 + 安全门** (riskLevel: low/medium/high/critical)
- *   - **Skills 索引** (学 Hermes AGENTS.md 提到的 skills/ + 注入到系统提示)
- *   - **chokidar 热加载** (学 Hermes skill_commands)
+ *   - **Skills 索引** (AGENTS.md 提到的 skills/ + 注入到系统提示)
+ *   - **chokidar 热加载** (skill_commands)
  *
  * @see docs/INTEGRATION_ARCHITECTURE.md 第 3.1 节
  */
@@ -20,6 +20,7 @@ import * as path from 'path';
 import { EventEmitter } from 'events';
 import { parseToolError, formatStructuredError, isFixSafe, StructuredError } from './error-parser.js';
 import { hookCapture } from './hook-capture.js';
+import { runWithWorkspace } from './request-scope.js';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
@@ -45,7 +46,7 @@ export interface ToolResult {
   error?: string;
   /** 结构化错误信息（2026-06-24 新增） */
   structuredError?: StructuredError;
-  /** 给 Reasonix 4 步修复的元数据 */
+  /** 给 4 步修复管道的元数据 */
   durationMs?: number;
 }
 
@@ -54,7 +55,7 @@ export interface ToolEntry {
   description: string;
   parameters: any; // JSON Schema
   handler: ToolHandler;
-  /** 学自: Reasonix parallelSafe */
+  /** parallelSafe */
   parallelSafe: boolean;
   /** 自创: 风险等级, 用于安全门 */
   riskLevel: RiskLevel;
@@ -64,13 +65,13 @@ export interface ToolEntry {
     version: string;
     author?: string;
     tags: string[];
-    /** 学自: Hermes skill_conditions (按平台启用) */
+    /** skill_conditions (按平台启用) */
     conditions?: string[];
   };
 }
 
 /**
- * 学自 Hermes _CONTEXT_THREAT_PATTERNS: 工具名/参数也要扫
+ * _CONTEXT_THREAT_PATTERNS: 工具名/参数也要扫
  * 防止用户通过工具调用来"间接注入"
  */
 const TOOL_NAME_BLACKLIST = [
@@ -103,7 +104,7 @@ export class ToolRegistry extends EventEmitter {
 
   /**
    * 注册工具
-   * 学自: Hermes tools/registry.py register()  (但加入 parallelSafe + riskLevel)
+   * tools/registry.py register()  (但加入 parallelSafe + riskLevel)
    */
   register(entry: ToolEntry): void {
     // 1. 验证工具名不在黑名单
@@ -121,7 +122,7 @@ export class ToolRegistry extends EventEmitter {
         throw new Error(`Tool "${entry.name}" parameter has blacklisted key: ${k}`);
       }
     }
-    // 3. 学自 Reasonix: >10 leaf params 自动 flatten 提示
+    // 3. >10 leaf params 自动 flatten 提示
     const leafCount = this.countLeaves(entry.parameters);
     if (leafCount > 10) {
       console.warn(`[tool-registry] ${entry.name} has ${leafCount} leaf params, consider flattening`);
@@ -202,10 +203,31 @@ export class ToolRegistry extends EventEmitter {
   }
 
   /**
-   * 学自: Reasonix parallelSafe + Promise.allSettled 串行屏障
+   * parallelSafe + Promise.allSettled 串行屏障
    * 关键: 连续 parallelSafe 调用并发, 遇到非 parallelSafe 串行
    */
   async dispatch(
+    calls: Array<{ id: string; name: string; args: Record<string, any> }>,
+    ctx: ToolContext,
+  ): Promise<Array<{ id: string; result: ToolResult }>> {
+    // ═══ 2026-10-06 P0: 建立请求级工作区作用域（跨请求串扰修复）═══
+    // 之前 38 个工具 handler 直接读全局 WorkspaceManager.projectDir，
+    // 而 routes/chat.ts:252 会用请求体改写它 → A 请求的工具可能作用在B 的目录上。
+    //
+    // 这里在 dispatch 入口开一个 ALS 作用域：作用域内任意深度的代码都能读到
+    // 本次请求的 workspace，且请求之间天然隔离。
+    // 不传 ctx 的 handler（git_* 等 20 个）无需改签名即可受益。
+    //
+    // 传空 workspace 时 runWithWorkspace 直接透传（保持后台任务零行为变化）。
+    return runWithWorkspace(
+      ctx.workspace,
+      () => this.dispatchInternal(calls, ctx),
+      { userId: ctx.userId },
+    );
+  }
+
+  /** dispatch 的真实实现（由 dispatch 包在请求作用域内调用） */
+  private async dispatchInternal(
     calls: Array<{ id: string; name: string; args: Record<string, any> }>,
     ctx: ToolContext,
   ): Promise<Array<{ id: string; result: ToolResult }>> {
@@ -216,7 +238,7 @@ export class ToolRegistry extends EventEmitter {
       }
     }
 
-    // 2. 学自 Reasonix: 检测 call storm
+    // 2. 检测 call storm
     const stormSignatures = new Map<string, number>();
     for (const c of calls) {
       const sig = `${c.name}:${JSON.stringify(c.args)}`;
@@ -302,21 +324,26 @@ export class ToolRegistry extends EventEmitter {
       }
     }
     // 额外检查：参数值中是否包含危险代码模式
-    const dangerousPatterns = [
-      /eval\s*\(/i,
-      /Function\s*\(/i,
-      /child_process/i,
-      /require\s*\(\s*['"]fs['"]\s*\)/i,
-      /require\s*\(\s*['"]child_process['"]\s*\)/i,
-    ];
-    for (const pattern of dangerousPatterns) {
-      if (pattern.test(argsStr)) {
-        return { success: false, output: '', error: `Tool call blocked: dangerous code pattern detected` };
+    // P2 修复 (D7): run_code 工具豁免 — 它有自己的沙箱安全检查 (code-runner.ts)
+    // 原来对 run_code 的 code 参数做正则匹配, 导致纯 fs 探测脚本被误报为 "dangerous code pattern"
+    const DANGEROUS_TOOL_EXEMPT = new Set(['run_code', 'skill_forge', 'create_tool']);
+    if (!DANGEROUS_TOOL_EXEMPT.has(call.name)) {
+      const dangerousPatterns = [
+        /eval\s*\(/i,
+        /Function\s*\(/i,
+        /child_process/i,
+        /require\s*\(\s*['"]fs['"]\s*\)/i,
+        /require\s*\(\s*['"]child_process['"]\s*\)/i,
+      ];
+      for (const pattern of dangerousPatterns) {
+        if (pattern.test(argsStr)) {
+          return { success: false, output: '', error: `Tool call blocked: dangerous code pattern detected (${call.name})` };
+        }
       }
     }
 
     // ═══ 拦截器链: 按序执行, 任一返回 string 则拒绝 ═══
-    // 学自 Reasonix ToolRegistry interceptor chain
+    // ToolRegistry interceptor chain
     if (this._interceptors.length > 0) {
       for (const interceptor of this._interceptors) {
         try {
@@ -464,7 +491,7 @@ export class ToolRegistry extends EventEmitter {
     });
   }
 
-  // ===== Skills 热加载 (学 Hermes + ZhiY.AI) =====
+  // ===== Skills 热加载 =====
   async startWatcher(): Promise<void> {
     await fs.mkdir(this.skillsDir, { recursive: true });
     this.watcher = chokidar.watch(this.skillsDir, {

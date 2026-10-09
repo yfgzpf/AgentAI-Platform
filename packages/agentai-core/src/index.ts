@@ -12,8 +12,8 @@
 
 export const CORE_VERSION = '0.2.0-alpha';
 
-/** 框架标识 */
-export type FrameworkId = 'openclaw' | 'hermes' | 'reasonix';
+/** 自研框架标识 (agentai = 主框架, pulseflow = 强注入防御配置) */
+export type FrameworkId = 'agentai' | 'pulseflow';
 
 /** 模型标识 */
 export type ModelId = 'agentai' | 'deepseek' | 'openai';

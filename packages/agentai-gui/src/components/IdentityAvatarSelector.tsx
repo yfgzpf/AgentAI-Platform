@@ -69,7 +69,7 @@ export const IdentityAvatarSelector: React.FC<Props> = ({ selected, onSelect, on
                 animation: 'avatarGlow 2s ease-in-out infinite alternate',
               }} />
             )}
-            <span style={{ position: 'relative', zIndex: 1 }}>{a}</span>
+            <span style={{ position: 'relative', zIndex: 'var(--z-base)' }}>{a}</span>
           </button>
         ))}
       </div>

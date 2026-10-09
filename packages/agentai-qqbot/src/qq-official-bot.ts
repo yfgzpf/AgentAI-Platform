@@ -1,5 +1,5 @@
 /**
- * QQ 官方机器人 SDK (严格对齐 reasonix src/qq/bot.ts)
+ * QQ 官方机器人 SDK
  * ----------------------------------------------------
  * 只做 3 件事:
  *   1. Token 管理
@@ -7,9 +7,7 @@
  *   3. 事件分发 (message.private / message.group / online / bot_error)
  *
  * 协议: QQ Bot API v2 (QQ群机器人)
- * 参照:
- *   - reasonix src/qq/bot.ts (已验证可用的实现)
- *   - QQ 开放平台文档
+ * 参照: QQ 开放平台文档
  */
 
 import { EventEmitter } from 'node:events';

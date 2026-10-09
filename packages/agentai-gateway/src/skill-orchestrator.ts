@@ -1,7 +1,7 @@
 /**
  * SkillOrchestrator — 通用技能调度器
  * ----------------------------------------------------------------
- * 学自: OpenClaw Unified Orchestrator (handler.py)
+ * Unified Orchestrator (handler.py)
  * 
  * 架构:
  *   - 动态技能发现 (扫描技能目录)

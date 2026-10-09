@@ -140,10 +140,9 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
           onClick={isBinary ? undefined : (e) => {
             e.preventDefault();
             if (filePath) {
-              window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: filePath } }));
-              try {
-                window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
-              } catch {}
+              // P0: 走 pending 机制
+              window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'editor' } }));
+              window.dispatchEvent(new CustomEvent('agentai:open-file-pending', { detail: { path: filePath } }));
             }
           }}
           style={{
@@ -183,7 +182,7 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
     if (child?.props?.className?.includes('language-') || child?.props?.className === undefined) {
       return <CollapsibleCodeBlock className={child?.props?.className}>{child?.props?.children}</CollapsibleCodeBlock>;
     }
-    return <pre style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, margin: '8px 0', overflow: 'auto' }}>{children}</pre>;
+    return <pre style={{ background: 'var(--bg-2)', color: 'var(--fg)', padding: 12, borderRadius: 6, margin: '8px 0', overflow: 'auto' }}>{children}</pre>;
   },
   code: ({ className, children, ...props }: any) => {
     if (className?.includes('language-')) {
@@ -193,14 +192,14 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
   },
   ul: (props) => <ul style={{ paddingLeft: 20, margin: '4px 0' }} {...props} />,
   ol: (props) => <ol style={{ paddingLeft: 20, margin: '4px 0' }} {...props} />,
-  blockquote: (props) => <blockquote style={{ borderLeft: '4px solid #4F46E5', paddingLeft: 12, margin: '8px 0', color: '#888' }} {...props} />,
+  blockquote: (props) => <blockquote style={{ borderLeft: '4px solid var(--accent)', paddingLeft: 12, margin: '8px 0', color: 'var(--muted-2)' }} {...props} />,
   table: (props) => (
     <div style={{ overflow: 'auto', margin: '8px 0' }}>
       <table style={{ borderCollapse: 'collapse', width: '100%' }} {...props} />
     </div>
   ),
-  th: (props) => <th style={{ border: '1px solid #333', padding: 8, background: '#1e1e1e', textAlign: 'left' }} {...props} />,
-  td: (props) => <td style={{ border: '1px solid #333', padding: 8 }} {...props} />,
+  th: (props) => <th style={{ border: '1px solid var(--border)', padding: 8, background: 'var(--bg-2)', textAlign: 'left' }} {...props} />,
+  td: (props) => <td style={{ border: '1px solid var(--border)', padding: 8 }} {...props} />,
 };
 
 const MARKDOWN_PROPS = {

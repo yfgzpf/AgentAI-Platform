@@ -5,7 +5,7 @@ description_zh: "通过 LibTV AI 平台生成和编辑图片/视频，支持文�
 description_en: "Generate and edit images/videos via LibTV AI platform (text-to-image, text-to-video, style transfer)"
 user-invocable: true
 metadata:
-  openclaw:
+  agentai:
     emoji: "\U0001F4AC"
     requires:
       bins:
@@ -211,7 +211,7 @@ python3 {baseDir}/scripts/download_results.py --urls URL1 URL2 URL3 --output-dir
 }
 ```
 
-## 最终向用户展示时（OpenClaw）
+## 最终向用户展示时（AgentAI）
 
 - **视频地址**：来自 `query_session` 返回的 `messages` 中 assistant 消息的 content 或结果里的视频/图片 URL，即「返回的结果」。
 - **项目地址**：使用 `create_session` 返回的 `projectUrl`，或自行拼接 `https://www.liblib.tv/canvas?projectId=` + `projectUuid`。查询进展时若传入 `--project-id PROJECT_UUID`，`query_session` 会直接返回 `projectUrl`，便于一并展示。

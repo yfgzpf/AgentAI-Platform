@@ -11,6 +11,7 @@ import { createServer } from 'http';
 import { Server as IOServer } from 'socket.io';
 
 import { createChatRouter, ChatRouterDeps } from './routes/chat.js';
+import { runWithWorkspace, workspaceFromRequest } from './request-scope.js';
 import { createAdminRouter } from './routes/admin.js';
 import { createSessionsRouter, memoryRouter } from './routes/sessions.js';
 import { createProfileRouter, setIndustryEngine } from './routes/profile.js';
@@ -94,9 +95,38 @@ app.use(cors({
     },
     credentials: true,
   }));
-  app.use(express.json({ limit: '50mb' }));
-  // 全局 token 认证（默认 disabled，通过 AGENTAI_AUTH_ENABLED=true 开启）
+  // ===== 中间件顺序（2026-10-06 调整）=====
+  // 原顺序: express.json({limit:`50mb`}) → authMiddleware
+  // 问题: body 解析发生在认证**之前** —— 未认证请求可以先让 gateway 为它
+  //       分配最多 50MB 内存再被拒绝。这是明确的内存耗尽向量；
+  //       且认证默认关闭（AGENTAI_AUTH_ENABLED 未设）时该保护形同虚设。
+  //
+  // 现在: 认证先行 → 再解析 body。
+  //   authMiddleware 只读 header（token 来自 env 或文件），不依赖 req.body，
+  //   因此前置不会破坏功能。
+  //
+  // 注: 50mb 上限本身偏大，但改小会破坏附件上传，属产品决策，
+  //   留待单独评估。此处只修顺序缺陷。
   app.use(authMiddleware);
+  app.use(express.json({ limit: '50mb' }));
+
+  // ===== 请求级工作区作用域（2026-10-06 P0）=====
+  // 目的: 让所有 REST 端点也能拿到请求级工作区，而不必各自解析请求体。
+  //
+  // 背景: chat.ts / goal.ts 已经在自己的业务代码里包了作用域（它们需要从
+  // body 读 workspace，且在 ALS 生效后才能解析 body）。但 files.ts 的
+  // /v1/files/backup、profile.ts 的 devPrefs 等端点直接读全局单例
+  //   → 用户在 A 项目保存偏好，文件却写到 B 项目的 .agentai/profile.json。
+  //
+  // 这里从 header / query 提取（body 此刻还没解析，且 body 里带 workspace
+  // 的端点会自己再包一层，内层优先，不会冲突）。
+  //
+  // 若客户端没带 workspace 头 → 不建作用域，全局单例行为不变（零破坏）。
+  app.use((req, _res, next) => {
+    const ws = workspaceFromRequest(req as any);
+    if (!ws) return next();
+    runWithWorkspace(ws, () => next(), { userId: (req as any)?.headers?.['x-user-id'] as string });
+  });
 
   // ===== 静态资源 =====
   // 修复: 区分 dev / prod 环境的 /media 路径
@@ -164,7 +194,7 @@ app.use(cors({
     } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
   });
   app.use(createImageRouter());
-  app.use(createVideoRouter());
+  app.use(createVideoRouter(deps.io));
   app.use('/v1/subscription', createSubscriptionRouter());
   app.use('/v1/auth', createAuthRouter());
   register3DRoutes(app);
@@ -648,10 +678,13 @@ app.use('/v1/agent-tasks', createAgentTaskRouter());  // Agent 任务板 API (�
   });
 
   // ===== 任务计划 API =====
-  app.get('/v1/plan', async (_req, res) => {
+  // 2026-10-06: 支持按 workspace 查询（原来读模块级变量，多会话互相覆盖）
+  app.get('/v1/plan', async (req, res) => {
     try {
-      const { _active_plan } = await import('./tools.js');
-      res.json({ plan: _active_plan || null });
+      const { getActivePlan } = await import('./tools.js');
+      const q = (req.query.workspace as string) || (req.headers['x-workspace'] as string) || '';
+      const plan = getActivePlan(q || undefined);
+      res.json({ plan: plan || null });
     } catch (e: any) {
       res.json({ plan: null });
     }
@@ -745,7 +778,7 @@ app.use('/v1/agent-tasks', createAgentTaskRouter());  // Agent 任务板 API (�
   const appDirname = path.dirname(fileURLToPath(import.meta.url));
   const guiDist = path.resolve(appDirname, '../../agentai-gui/dist');
   if (fs.existsSync(guiDist)) {
-    app.use(express.static(guiDist, { maxAge: 0, etag: true }));
+    app.use(express.static(guiDist, { maxAge: 0, etag: true, index: 'index.html' }));
     console.log(`[static] ✅ 前端静态资源已挂载: ${guiDist}`);
     // SPA 回退: 所有非 API 路径返回 index.html (支持前端路由)
     app.get('*', (req, res, next) => {

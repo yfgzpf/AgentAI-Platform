@@ -1,6 +1,6 @@
 # Humanizer
 
-A Clawdbot skill that removes signs of AI-generated writing from text, making it sound more natural and human.
+An AgentAI skill that removes signs of AI-generated writing from text, making it sound more natural and human.
 
 ## Installation
 

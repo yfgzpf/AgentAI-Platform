@@ -25,7 +25,7 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
   return (
     <div style={{ animation: 'fadeIn 0.5s ease', textAlign: 'center' }}>
       <div style={{ fontSize: 48, marginBottom: 16 }}>{industry.icon}</div>
-      <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 22, fontWeight: 700 }}>
+      <h2 style={{ color: 'var(--fg)', margin: '0 0 8px', fontSize: 22, fontWeight: 700 }}>
         {industry.label} 身份激活中
       </h2>
       <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 32px', fontSize: 14 }}>

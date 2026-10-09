@@ -254,6 +254,7 @@ export const TaskCenterPanel: React.FC = () => {
   const handleDelete = async (taskId: string) => {
     const ok = await deleteTask(taskId);
     if (ok) message.success('已删除');
+    else message.error('删除失败，请检查任务是否被占用');
   };
 
   // 清理

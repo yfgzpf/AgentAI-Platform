@@ -61,7 +61,7 @@ Before you begin writing, please think step-by-step to ensure you follow all con
 Begin."
 
 # --- Call LLM ---
-# This uses the built-in Clawdbot LLM tool.
+# This uses the built-in AgentAI LLM tool.
 # For now, let's create a mock response to demonstrate the skill
 MOCK_RESPONSE="Just had a thought about content creation. We spend 80% of our time on the core piece and then rush the distribution. It feels backward.
 

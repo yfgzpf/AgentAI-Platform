@@ -99,3 +99,38 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+  brand-guard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 防回归: 系统代码/配置中不得残留第三方旧品牌标识
+      # 范围: 自研系统的 6 个包源码与其 package.json
+      # 例外(有意不扫): packages/agentai-skills (含第三方 vendored 技能素材)、
+      #   dist/ 构建产物、.cache/huggingface 模型缓存、references/ 外部参考原文
+      - name: Ensure no legacy brand identifiers (openclaw/hermes/reasonix/clawbot)
+        run: |
+          set -e
+          HITS=$(grep -rniE 'openclaw|reasonix|clawbot|hermes' \
+            packages/agentai-core/src \
+            packages/agentai-gateway/src \
+            packages/agentai-gui/src \
+            packages/agentai-gui/e2e \
+            packages/agentai-qqbot/src \
+            packages/agentai-vscode/src \
+            packages/agentai-core/package.json \
+            packages/agentai-gateway/package.json \
+            packages/agentai-gui/package.json \
+            packages/agentai-qqbot/package.json \
+            packages/agentai-vscode/package.json \
+            --include='*.ts' --include='*.tsx' --include='*.js' \
+            --include='*.json' --include='*.md' || true)
+          if [ -n "$HITS" ]; then
+            echo "$HITS"
+            echo "::error::系统代码发现旧品牌标识 (openclaw/hermes/reasonix/clawbot), 请使用自研品牌 agentai/pulseflow"
+            exit 1
+          fi
+          echo "brand-guard passed"

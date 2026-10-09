@@ -1,7 +1,7 @@
 /**
- * QQ Bot Routes - API v2 接入 (对齐 reasonix + socket.io 桥接)
+ * QQ Bot Routes - API v2 接入 (socket.io 桥接)
  * ==================================================================
- * 使用 reasonix QQBot 类 (正确的 WebSocket Gateway 协议)
+ * QQBot 类 (正确的 WebSocket Gateway 协议)
  *
  * 新功能 (2026-06-15):
  *   - socket.io 实时桥接: QQ 消息推送到前端对话窗口
@@ -25,7 +25,7 @@ import { resolve as resolveChannel, setWebActiveSession, getMapping, type Channe
 import * as customerStore from '../customer-store.js';
 import { userModel } from '../user-model.js';
 
-// ===== reasonix 对齐: QQBot 核心类 =====
+// ===== QQBot 核心类 =====
 
 const TOKEN_URL = 'https://bots.qq.com/app/getAppAccessToken';
 const BASE_URL = 'https://api.sgroup.qq.com';

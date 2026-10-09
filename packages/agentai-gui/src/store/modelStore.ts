@@ -77,19 +77,21 @@ interface ModelState {
 }
 
 // ===== Agnes AI 模型 (首选) =====
+// agnes-3.0-flash: 最新 3.0 Flash, 更可靠的端到端任务交付, 支持 thinking + tools
 // agnes-2.5-flash: 512K 长上下文, 免费但非最弱, 可作为首选/商用
 // agnes-2.0: 256K 上下文, 备用模型
 const AGNES_MODELS: ModelConfig[] = [
-  { id: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (首选 · 512K)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#4F46E5', enabled: true, isDefault: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-2.5-flash'], contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
-  { id: 'agnes-2.0', label: 'Agnes 2.0 (备用 · 256K)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#6366F1', enabled: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-2.0'], contextWindow: 256000, groupLabel: 'Agnes AI', modelType: 'chat' },
+  { id: 'agnes-3.0-flash', label: 'Agnes 3.0 Flash (最新 · 推荐)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#4F46E5', enabled: true, isDefault: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-3.0-flash'], contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
+  { id: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (512K)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#6366F1', enabled: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-2.5-flash'], contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
+  { id: 'agnes-2.0', label: 'Agnes 2.0 (备用 · 256K)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#818CF8', enabled: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-2.0'], contextWindow: 256000, groupLabel: 'Agnes AI', modelType: 'chat' },
   // 兼容旧版 agentai id
-  { id: 'agentai', label: 'Agnes AI (兼容)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#8B5CF6', enabled: false, isBuiltIn: true, provider: 'agnes', contextWindow: 256000, groupLabel: 'Agnes AI', modelType: 'chat' },
+  { id: 'agentai', label: 'Agnes AI (兼容)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#A78BFA', enabled: false, isBuiltIn: true, provider: 'agnes', contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
 ];
 
 // ===== 免费文本模型 =====
-const FREE_CHAT_MODELS: ModelConfig[] = [
-  { id: 'zhipu', label: '智谱 GLM-4.7 Flash (免费)', baseURL: 'https://open.bigmodel.cn/api/paas/v4', apiKeyEnv: 'ZHIPU_API_KEY', color: '#3B82F6', enabled: true, isBuiltIn: true, provider: 'zhipu', contextWindow: 128000, groupLabel: '免费模型', modelType: 'chat' },
-];
+// P0: 免费模型只保留 Agnes 2.5 (已在内置模型中), 移除其他免费模型
+// Agnes 2.5 Flash 已在 AGNES_MODELS 中, 无需额外的 FREE_CHAT_MODELS
+const FREE_CHAT_MODELS: ModelConfig[] = [];
 
 // ===== 官方文本模型 (独立 API) =====
 const OFFICIAL_CHAT_MODELS: ModelConfig[] = [
@@ -104,7 +106,7 @@ const OFFICIAL_CHAT_MODELS: ModelConfig[] = [
   { id: 'doubao-seed-2.0-pro', label: '豆包 Seed-2.0 Pro (火山引擎)', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', apiKeyEnv: 'VOLCANO_API_KEY', color: '#06B6D4', enabled: false, isBuiltIn: true, provider: 'doubao', models: ['doubao-seed-2.0-pro-250728'], contextWindow: 128000, isCommercial: true, groupLabel: '豆包(火山引擎)', modelType: 'chat', freeQuotaNote: '50万Token免费' },
   { id: 'doubao-1.5-thinking', label: '豆包 1.5 视觉深度思考', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', apiKeyEnv: 'VOLCANO_API_KEY', color: '#0891b2', enabled: false, isBuiltIn: true, provider: 'doubao', models: ['doubao-1.5-thinking-vision-pro'], contextWindow: 128000, isCommercial: true, groupLabel: '豆包(火山引擎)', modelType: 'chat' },
   // 月之暗面 Moonshot/Kimi (支持多模型选择)
-  { id: 'moonshot-kimi', label: '月之暗面 Kimi (Moonshot)', baseURL: 'https://api.moonshot.cn/v1', apiKeyEnv: 'MOONSHOT_API_KEY', color: '#6466F1', enabled: false, isBuiltIn: true, provider: 'moonshot', models: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k3'], contextWindow: 128000, isCommercial: true, groupLabel: '月之暗面', modelType: 'chat' },
+  { id: 'moonshot-kimi', label: '月之暗面 Kimi (Moonshot)', baseURL: 'https://api.moonshot.cn/v1', apiKeyEnv: 'MOONSHOT_API_KEY', color: '#6466F1', enabled: false, isBuiltIn: true, provider: 'moonshot', models: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k3'], contextWindow: 262144, isCommercial: true, groupLabel: '月之暗面', modelType: 'chat' },
   // Anthropic Claude
   { id: 'anthropic-claude', label: 'Anthropic Claude Sonnet/Opus/Haiku', baseURL: 'https://api.anthropic.com/v1', apiKeyEnv: 'ANTHROPIC_API_KEY', color: '#D97706', enabled: false, isBuiltIn: true, provider: 'anthropic', models: ['claude-sonnet-4-5-20250929'], contextWindow: 200000, isCommercial: true, groupLabel: 'Anthropic', modelType: 'chat' },
   // MiniMax
@@ -116,7 +118,6 @@ const OFFICIAL_IMAGE_MODELS: ModelConfig[] = [
   { id: 'cogview', label: 'CogView-3-Flash (智谱免费)', baseURL: 'https://open.bigmodel.cn/api/paas/v4', apiKeyEnv: 'ZHIPU_API_KEY', color: '#3B82F6', enabled: false, isBuiltIn: true, provider: 'zhipu', modelType: 'image', isCommercial: true, groupLabel: '官方生图模型', freeQuotaNote: '免费' },
   { id: 'wanx-image', label: '通义万相 Wanx2.1 (阿里云)', baseURL: 'https://dashscope.aliyuncs.com/api/v1', apiKeyEnv: 'DASHSCOPE_API_KEY', color: '#FF6A00', enabled: false, isBuiltIn: true, provider: 'dashscope', modelType: 'image', isCommercial: true, groupLabel: '官方生图模型', freeQuotaNote: '500张免费' },
   { id: 'seedream', label: 'Seedream 4.0 (火山引擎)', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', apiKeyEnv: 'VOLCANO_API_KEY', color: '#06B6D4', enabled: false, isBuiltIn: true, provider: 'doubao', models: ['doubao-seedream-4.0-250828'], modelType: 'image', isCommercial: true, groupLabel: '官方生图模型', freeQuotaNote: '50次/天免费' },
-  { id: 'nvidia-qwen-image', label: 'NVIDIA Qwen Image (免费)', baseURL: 'https://integrate.api.nvidia.com/v1', apiKeyEnv: 'NVIDIA_API_KEY', color: '#76B900', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['qwen/qwen-image'], modelType: 'image', isCommercial: true, groupLabel: '官方生图模型', freeQuotaNote: '免费' },
 ];
 
 // ===== 官方生视频模型 =====
@@ -125,10 +126,10 @@ const OFFICIAL_VIDEO_MODELS: ModelConfig[] = [
   { id: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', baseURL: 'https://open.bigmodel.cn/api/paas/v4', apiKeyEnv: 'ZHIPU_API_KEY', color: '#3B82F6', enabled: false, isBuiltIn: true, provider: 'zhipu', modelType: 'video', isCommercial: true, groupLabel: '智谱(生视频)', freeQuotaNote: '免费' },
   // 通义万相 Wanx (阿里云)
   { id: 'wanx-video', label: '通义万相 Wanx2.0 视频 (阿里云)', baseURL: 'https://dashscope.aliyuncs.com/api/v1', apiKeyEnv: 'DASHSCOPE_API_KEY', color: '#FF6A00', enabled: false, isBuiltIn: true, provider: 'dashscope', modelType: 'video', isCommercial: true, groupLabel: '通义千问(生视频)', freeQuotaNote: '50次/天免费' },
-  // 豆包 Seedance 系列 (火山引擎) - 完整版
-  { id: 'seedance-1.0-lite', label: '豆包 Seedance 1.0 Lite (轻量版)', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', apiKeyEnv: 'VOLCANO_API_KEY', color: '#06B6D4', enabled: false, isBuiltIn: true, provider: 'doubao', models: ['seedance-1.0-lite'], contextWindow: 128000, isCommercial: true, groupLabel: '豆包Seedance(视频)', modelType: 'video' },
-  { id: 'seedance-1.0-pro', label: '豆包 Seedance 1.0 Pro (专业版)', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', apiKeyEnv: 'VOLCANO_API_KEY', color: '#0891b2', enabled: false, isBuiltIn: true, provider: 'doubao', models: ['seedance-1.0-pro'], contextWindow: 128000, isCommercial: true, groupLabel: '豆包Seedance(视频)', modelType: 'video' },
-  { id: 'seedance-2.0', label: '豆包 Seedance 2.0 (即梦版)', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', apiKeyEnv: 'VOLCANO_API_KEY', color: '#7C3AED', enabled: false, isBuiltIn: true, provider: 'doubao', models: ['seedance-2.0'], contextWindow: 128000, isCommercial: true, groupLabel: '豆包Seedance(视频)', modelType: 'video' },
+// P1: Agnes Video 2.5 正式版 (独立 key, 非_flash) — 支持图生视频/首尾帧/参考模式
+{ id: 'agnes-video-2.5', label: 'Agnes Video 2.5 (正式版·30秒)', baseURL: 'https://apihub.agnes-ai.cn/v1', apiKeyEnv: 'AGNES_VIDEO_API_KEY', color: '#4F46E5', enabled: false, isBuiltIn: true, provider: 'agnes-video', models: ['agnes-video-2.5'], contextWindow: 128000, isCommercial: true, groupLabel: 'Agnes(生视频)', modelType: 'video', freeQuotaNote: '正式版' },
+// P1: 只保留 Seedance 2.5, 移除 2.0 系列
+{ id: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎·1080p)', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', apiKeyEnv: 'VOLCANO_API_KEY', color: '#6D28D9', enabled: false, isBuiltIn: true, provider: 'doubao', models: ['doubao-seedance-2.5'], contextWindow: 128000, isCommercial: true, groupLabel: '豆包Seedance(视频)', modelType: 'video' },
   // 第三方视频
   { id: 'runway-gen3', label: 'Runway Gen-3 (专业级)', baseURL: 'https://api.runwayml.com/v1', apiKeyEnv: 'RUNWAY_API_KEY', color: '#00D4FF', enabled: false, isBuiltIn: true, provider: 'runway', modelType: 'video', isCommercial: true, groupLabel: '第三方(视频)' },
   { id: 'pika-labs', label: 'Pika Labs (AI视频新秀)', baseURL: 'https://api.pika.art/v1', apiKeyEnv: 'PIKA_API_KEY', color: '#A855F7', enabled: false, isBuiltIn: true, provider: 'pika', modelType: 'video', isCommercial: true, groupLabel: '第三方(视频)' },
@@ -191,7 +192,7 @@ const FACTORY_IMAGE_MODELS: ModelConfig[] = [
   { id: 'factory-gpt-image-2-vip', label: 'GPT Image 2 VIP', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_IMAGE_KEY', color: '#1D4ED8', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['gpt-image-2-vip'], modelType: 'image', isCommercial: true, groupLabel: '模型工厂·生图' },
 ];
 
-// ===== 第三方免费聚合 (SenseNova/LongCat/NVIDIA) =====
+// ===== 第三方免费聚合 (SenseNova/LongCat) =====
 const SENSENOVA_BASE = 'https://token.sensenova.cn/v1';
 const SENSENOVA_MODELS: ModelConfig[] = [
   { id: 'sensenova-6.7-flash-lite', label: 'SenseNova 6.7 Flash-Lite', baseURL: SENSENOVA_BASE, apiKeyEnv: 'SENSENOVA_API_KEY', color: '#2563EB', enabled: false, isBuiltIn: true, provider: 'sensenova', models: ['sensenova-6.7-flash-lite'], contextWindow: 262144, isCommercial: true, groupLabel: '商汤 SenseNova', modelType: 'chat', freeQuotaNote: '每5小时1500次' },
@@ -201,21 +202,6 @@ const SENSENOVA_MODELS: ModelConfig[] = [
 const LONGCAT_BASE = 'https://api.longcat.chat/openai';
 const LONGCAT_MODELS: ModelConfig[] = [
   { id: 'longcat-2.0', label: 'LongCat-2.0 (多模态)', baseURL: LONGCAT_BASE, apiKeyEnv: 'LONGCAT_API_KEY', color: '#FFD700', enabled: false, isBuiltIn: true, provider: 'longcat', models: ['LongCat-2.0'], contextWindow: 1000000, isCommercial: true, groupLabel: '美团 LongCat', modelType: 'chat', freeQuotaNote: '1M上下文' },
-];
-
-const NVIDIA_BASE = 'https://integrate.api.nvidia.com/v1';
-const NVIDIA_MODELS: ModelConfig[] = [
-  // Chat 模型
-  { id: 'nvidia-glm-5.2', label: 'GLM-5.2 (NVIDIA)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#3B82F6', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['z-ai/glm-5.2'], contextWindow: 128000, isCommercial: true, groupLabel: 'NVIDIA NIM Chat', modelType: 'chat' },
-  { id: 'nvidia-deepseek-v4-flash', label: 'DeepSeek V4 Flash (NVIDIA)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['deepseek-ai/deepseek-v4-flash'], contextWindow: 1000000, isCommercial: true, groupLabel: 'NVIDIA NIM Chat', modelType: 'chat' },
-  { id: 'nvidia-deepseek-v4-pro', label: 'DeepSeek V4 Pro (NVIDIA)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#059669', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['deepseek-ai/deepseek-v4-pro'], contextWindow: 1000000, isCommercial: true, groupLabel: 'NVIDIA NIM Chat', modelType: 'chat' },
-  { id: 'nvidia-kimi-k2.6', label: 'Kimi K2.6 (NVIDIA)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#6466F1', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['moonshotai/kimi-k2.6'], contextWindow: 128000, isCommercial: true, groupLabel: 'NVIDIA NIM Chat', modelType: 'chat' },
-  { id: 'nvidia-nemotron-ultra', label: 'Nemotron 3 Ultra (NVIDIA)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#7C3AED', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['nvidia/nemotron-3-ultra-550b-a55b'], contextWindow: 128000, isCommercial: true, groupLabel: 'NVIDIA NIM Chat', modelType: 'chat' },
-  { id: 'nvidia-step-3.7-flash', label: 'Step 3.7 Flash (NVIDIA)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#F59E0B', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['stepfun-ai/step-3.7-flash'], contextWindow: 128000, isCommercial: true, groupLabel: 'NVIDIA NIM Chat', modelType: 'chat' },
-  { id: 'nvidia-minimax-m3', label: 'MiniMax M3 (NVIDIA)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#EC4899', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['minimaxai/minimax-m3'], contextWindow: 128000, isCommercial: true, groupLabel: 'NVIDIA NIM Chat', modelType: 'chat' },
-  // Image 生成模型
-  { id: 'nvidia-qwen-image', label: 'Qwen Image (NVIDIA 生图)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#76B900', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['qwen/qwen-image'], modelType: 'image', isCommercial: true, groupLabel: 'NVIDIA NIM Image', freeQuotaNote: '免费' },
-  { id: 'nvidia-sdxl', label: 'SDXL (NVIDIA 生图)', baseURL: NVIDIA_BASE, apiKeyEnv: 'NVIDIA_API_KEY', color: '#9333EA', enabled: false, isBuiltIn: true, provider: 'nvidia', models: ['stabilityai/sdxl-turbo'], modelType: 'image', isCommercial: true, groupLabel: 'NVIDIA NIM Image', freeQuotaNote: '免费' },
 ];
 
 // ===== 合并 =====
@@ -231,17 +217,16 @@ const DEFAULT_MODELS = [
   ...SUPERAPI_MODELS,
   ...SENSENOVA_MODELS,
   ...LONGCAT_MODELS,
-  ...NVIDIA_MODELS,
 ];
 
 /** 辅助: 判断是否为免费模型 (by id) */
 function isFreeModelById(id: string): boolean {
-  return id === 'agentai' || id === 'zhipu';
+  return id === 'agnes-3.0-flash' || id === 'agnes-2.5-flash' || id === 'agnes-2.0' || id === 'agentai' || id === 'zhipu';
 }
 
 // ===== [P1-2] 合并自 autoModelStore: 自动模型选择 Tier 定义 =====
 export const MODEL_TIERS = [
-  { label: 'Free (PulseFlow)', apiProvider: 'agentai', model: 'agnes-2.5-flash', strength: 3, keywords: [] },
+  { label: 'Free (Agnes 3.0)', apiProvider: 'agentai', model: 'agnes-3.0-flash', strength: 3, keywords: [] },
   { label: 'DeepSeek Flash', apiProvider: 'deepseek', model: 'deepseek-v4-flash', strength: 4, keywords: ['review', 'analyze', 'refactor', 'implement'] },
   { label: 'DeepSeek Pro', apiProvider: 'deepseek', model: 'deepseek-v4-pro', strength: 8, keywords: ['architecture', 'security', 'optimization'] },
 ];
@@ -391,10 +376,10 @@ export const useModelStore = create<ModelState>()(
     }),
     {
       name: 'agentai-models',
-      version: 12,
+      version: 13,
       migrate: (persisted: any, version: number) => {
-        // v12: 引入模型工厂 + 工作区隔离
-        if (version < 12 && persisted?.models) {
+        // v13: 新增 agnes-3.0-flash, 强制用最新 DEFAULT_MODELS 覆盖内置模型
+        if (version < 13 && persisted?.models) {
           const oldEnabled: string[] = (persisted.models || [])
             .filter((m: any) => m.enabled).map((m: any) => m.id);
           const userCustomModels = (persisted.models || []).filter((m: any) => !m.isBuiltIn);
@@ -403,11 +388,13 @@ export const useModelStore = create<ModelState>()(
             ...userCustomModels,
           ];
           if (!persisted.chatMode) persisted.chatMode = 'chat';
-          // 旧 activeModelId 若不在新列表中, 回退到 agnes-2.5-flash (新首选)
+          // 旧 activeModelId 若不在新列表中, 回退到 agnes-3.0-flash (新首选)
           const newIds = new Set(DEFAULT_MODELS.map((m: any) => m.id));
           if (persisted.activeModelId && !newIds.has(persisted.activeModelId)) {
-            persisted.activeModelId = 'agnes-2.5-flash';
+            persisted.activeModelId = 'agnes-3.0-flash';
           }
+          // 强制切换默认模型到 3.0
+          persisted.activeModelId = 'agnes-3.0-flash';
         }
         return {
           ...persisted,

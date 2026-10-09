@@ -56,6 +56,45 @@ export class SystemDirectiveManager {
     return top.content;
   }
 
+  /**
+   * 刷新即时队列，返回全部 critical + high 指令（按优先级排序）
+   * ────────────────────────────────────────────────────────────────────
+   * 2026-10-06 新增。原 `flush()` 只返回 1 条、其余 `pending = []` 静默丢弃，
+   * 而 loop 每轮都会 `add('task_progress', 工作摘要, 'high')`，
+   * 竞争对手是同一轮 add 的 fail_strategy / auto_fix_* / dup_fail 等 20+ 个 high。
+   *
+   * 后果（用户实机反馈「工作摘要看不见、一直重复读文件」）：
+   *   工作摘要绝大多数轮次**根本没进 messages**，AI 每轮都像第一次见到任务。
+   *
+   * 现在返回全部 critical + high；medium/low 仍不参与每轮注入（避免噪音）。
+   * maxChars 兜底防止指令刷屏撑爆上下文。
+   */
+  flushAll(maxChars = 1600): string[] {
+    if (this.pending.length === 0) return [];
+    const order: Record<PendingDirective['priority'], number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    // 同 source 只保留最新一条（add() 只对 deferred 队列去重，即时队列会堆积同源指令）
+    const latest = new Map<string, PendingDirective>();
+    for (const d of this.pending) {
+      if (d.priority === 'critical' || d.priority === 'high') latest.set(d.source, d);
+    }
+    const picked = [...latest.values()].sort((a, b) => order[a.priority] - order[b.priority]);
+    this.pending = [];
+
+    const out: string[] = [];
+    let used = 0;
+    for (const d of picked) {
+      const room = maxChars - used;
+      if (room <= 40) {
+        out.push('(指令预算已满，其余高优先级指令本轮延后)');
+        break;
+      }
+      const text = d.content.length > room ? d.content.slice(0, room) + '…(截断)' : d.content;
+      out.push(text);
+      used += text.length;
+    }
+    return out;
+  }
+
   /** v3.2 修复: 按 source 读取最新一条指令 (含延迟队列) */
   get(source: string): string | null {
     const inPending = this.pending.find(d => d.source === source);

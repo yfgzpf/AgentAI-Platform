@@ -1,29 +1,23 @@
 /**
  * Framework Switcher (框架切换器)
  * ----------------------------------------------------
- * 让 OpenClaw 和 Hermes 在运行时热切换, 不重启 Gateway
+ * 让 agentai 和 pulseflow 两套适配器在运行时热切换, 不重启 Gateway
  *
- * 学自:
- *   - Hermes smart_model_routing.py (按场景动态路由)
- *   - ZhiY.AI gateway.ts (中间件链式注入)
- *
- * 自创:
- *   - **零停机切换**: 用 Map + 双写缓存, 切换瞬间把 in-flight 请求留在旧框架
+ * 能力:
+ *   - **零停机切换**: 用 Map + in-flight 计数, 切换瞬间把未完成请求留在旧适配器
  *   - **能力查询**: 调用方按能力而非框架名选 adapter (decoupling)
- *   - **A/B 灰度**: 可设 0-100% 流量到指定框架 (用于 shadow test)
+ *   - **A/B 灰度**: 可设 0-100% 流量到指定适配器 (用于 shadow test)
  *
- * 切换原则 (来自 Reasonix 8 步对冲):
+ * 切换原则:
  *   1. 切换前先 health() 检查
- *   2. 切换时双写 100ms, 让 in-flight 完结
- *   3. 切换后新请求走新框架
+ *   2. 切换时等待 in-flight 完结 (默认 5s 上限)
+ *   3. 切换后新请求走新适配器
  *   4. 切换全程不丢任何请求
- *
- * @see docs/INTEGRATION_ARCHITECTURE.md 第 5.4 节
  */
 
 import type { FrameworkAdapter, FrameworkId, FrameworkContext, FrameworkCapabilities } from './types.js';
-import { OpenClawAdapter } from './openclaw-adapter.js';
-import { HermesAdapter } from './hermes-adapter.js';
+import { AgentaiAdapter } from './agentai-adapter.js';
+import { PulseflowAdapter } from './pulseflow-adapter.js';
 import type { ChatMessage, ChatResponse } from '../llm-router.js';
 
 export interface SwitchOptions {
@@ -48,16 +42,16 @@ export interface FrameworkStatus {
 
 export class FrameworkSwitcher {
   private adapters = new Map<FrameworkId, FrameworkAdapter>();
-  private active: FrameworkId = 'openclaw';
+  private active: FrameworkId = 'agentai';
   private abRatio = 1;
   private inFlight = 0;
   private lastSwitchAt: number | null = null;
   private switches = 0;
 
   constructor() {
-    // 默认注册两个真实框架 (学自 references)
-    this.adapters.set('openclaw', new OpenClawAdapter());
-    this.adapters.set('hermes', new HermesAdapter());
+    // 默认注册两个自研适配器
+    this.adapters.set('agentai', new AgentaiAdapter());
+    this.adapters.set('pulseflow', new PulseflowAdapter());
   }
 
   /**
@@ -90,7 +84,7 @@ export class FrameworkSwitcher {
       return { ok: false, detail: `Init failed: ${e.message}` };
     }
 
-    // 2. 健康检查 (Reasonix 8 步第 1 步)
+    // 2. 健康检查
     const health = await target.health();
     if (!health.ok) {
       return { ok: false, detail: `Target framework unhealthy: ${health.detail}` };
@@ -99,15 +93,13 @@ export class FrameworkSwitcher {
     const timeout = opts.timeoutMs ?? 5000;
     const drain = opts.drain ?? true;
 
-    // 3. 准备双写 (Reasonix 8 步第 2 步)
+    // 3. 记录切换并生效
     const startedAt = Date.now();
     const oldActive = this.active;
     this.abRatio = opts.abRatio ?? 1;
     this.active = opts.to;
     this.lastSwitchAt = startedAt;
     this.switches++;
-
-    // 4. 不再重复 init (已在步骤 1 做过)
 
     // 4. 关闭旧框架 (如果 drain=true, 等 in-flight 完结)
     if (drain) {
@@ -149,7 +141,7 @@ export class FrameworkSwitcher {
 
   /**
    * 按能力查询最佳框架
-   * 找第一个声明该能力的框架 (注册顺序决定优先级: openclaw > hermes)
+   * 找第一个声明该能力的适配器 (注册顺序决定优先级: agentai > pulseflow)
    */
   pickByCapability(need: keyof FrameworkCapabilities): FrameworkId | null {
     for (const [id, a] of this.adapters) {
@@ -170,8 +162,8 @@ export class FrameworkSwitcher {
   }
 
   /**
-   * 找"唯一最强"框架: 只有 1 个框架声明该能力时返回它
-   * (用于"只有 Hermes 才有"的硬需求)
+   * 找"唯一最强"适配器: 只有 1 个框架声明该能力时返回它
+   * (用于"只有 pulseflow 才有"的硬需求)
    */
   pickExclusive(need: keyof FrameworkCapabilities): FrameworkId | null {
     const all = this.pickAllByCapability(need);
@@ -208,7 +200,7 @@ export class FrameworkSwitcher {
   // === 内部 ===
 
   private altOf(id: FrameworkId): FrameworkId {
-    return id === 'openclaw' ? 'hermes' : 'openclaw';
+    return id === 'agentai' ? 'pulseflow' : 'agentai';
   }
 
   private async _wrap(usedId: FrameworkId, p: Promise<ChatResponse>): Promise<ChatResponse> {

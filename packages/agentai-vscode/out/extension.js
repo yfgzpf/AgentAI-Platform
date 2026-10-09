@@ -235,7 +235,7 @@ function activate(context) {
     }));
     // 切换 AgentAI 框架
     context.subscriptions.push(vscode.commands.registerCommand('agentai.switchFramework', async () => {
-        const frameworks = ['openclaw', 'hermes'];
+        const frameworks = ['agentai', 'pulseflow'];
         const picked = await vscode.window.showQuickPick(frameworks, { placeHolder: '选择智能体框架' });
         if (picked) {
             await vscode.workspace.getConfiguration('agentai').update('framework', picked, vscode.ConfigurationTarget.Global);

@@ -1,6 +1,6 @@
 ---
 name: agent-browser-core
-description: OpenClaw skill for the agent-browser CLI (Rust-based with Node.js fallback) enabling AI-friendly web automation with snapshots, refs, and structured commands.
+description: AgentAI skill for the agent-browser CLI (Rust-based with Node.js fallback) enabling AI-friendly web automation with snapshots, refs, and structured commands.
 description_zh: "基于 agent-browser CLI 的 AI 友好型网页自动化"
 description_en: "AI-friendly web automation via agent-browser CLI with snapshots & refs"
 version: 1.0.2

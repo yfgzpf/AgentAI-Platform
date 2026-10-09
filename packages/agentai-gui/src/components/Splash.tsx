@@ -75,7 +75,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 9999,
+        zIndex: 'var(--z-dragging)',
         opacity: fadeOut ? 0 : 1,
         transition: 'opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
         overflow: 'hidden',
@@ -155,7 +155,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
       </div>
 
       {/* 主容器 */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', zIndex: 2 }} onClick={e => e.stopPropagation()}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', zIndex: 'var(--z-base)' }} onClick={e => e.stopPropagation()}>
         
         {/* ─── Stage 1: LOGO 心跳脉冲 (增强版) ─── */}
         <div
@@ -198,12 +198,12 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
           }} />
           {/* LOGO 图片 */}
           <img
-            src="./logo.jpg"
+            src="/logo.jpg"
             alt="PulseFlow"
             style={{
               width: 92, height: 92,
               animation: 'splash-pulse 2.2s ease-in-out infinite',
-              zIndex: 2,
+              zIndex: 'var(--z-base)',
               borderRadius: 18,
               objectFit: 'cover',
               boxShadow: '0 8px 32px rgba(205, 122, 58, 0.55), 0 0 60px rgba(205, 122, 58, 0.2)',

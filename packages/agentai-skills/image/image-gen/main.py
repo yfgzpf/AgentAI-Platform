@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-API_BASE = os.environ.get("AGNES_BASE_URL", "https://apihub.agnes-ai.com")
+API_BASE = os.environ.get("AGNES_BASE_URL", "https://apihub.agnes-ai.cn")
 ENDPOINT = f"{API_BASE}/v1/images/generations"
 DEFAULT_MODEL = "agnes-image-2.1-flash"
 

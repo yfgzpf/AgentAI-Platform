@@ -5,7 +5,7 @@ description_zh: "邮件管理与自动化，支持多邮件服务商收发搜索
 description_en: "Email management and automation across multiple providers"
 version: 0.1.0
 metadata:
-  clawdbot:
+  agentai:
     emoji: "\U0001F4E7"
     always: true
     requires:
@@ -41,7 +41,7 @@ Create a configuration file `email_config.json` in your workspace:
   "smtp_port": 587,
   "username": "your-email@gmail.com",
   "password": "your-app-password",
-  "sender_name": "OpenClaw Assistant",
+  "sender_name": "AgentAI Assistant",
   "use_tls": true,
   "use_ssl": false
 }
@@ -66,14 +66,14 @@ set SMTP_SERVER=smtp.gmail.com
 set SMTP_PORT=587
 set EMAIL_USERNAME=your-email@gmail.com
 set EMAIL_PASSWORD=your-app-password
-set EMAIL_SENDER_NAME="OpenClaw Assistant"
+set EMAIL_SENDER_NAME="AgentAI Assistant"
 
 # macOS/Linux
 export SMTP_SERVER=smtp.gmail.com
 export SMTP_PORT=587
 export EMAIL_USERNAME=your-email@gmail.com
 export EMAIL_PASSWORD=your-app-password
-export EMAIL_SENDER_NAME="OpenClaw Assistant"
+export EMAIL_SENDER_NAME="AgentAI Assistant"
 ```
 
 ## Usage Examples
@@ -93,7 +93,7 @@ python email_sender.py --to "recipient@example.com" --subject "Report" --body "P
 python email_sender.py --to "your-email@gmail.com" --test
 ```
 
-### Using with OpenClaw Commands
+### Using with AgentAI Commands
 ```
 "Send email to recipient@example.com with subject Meeting Notes and body Here are the notes from today's meeting"
 "Send test email to verify configuration"

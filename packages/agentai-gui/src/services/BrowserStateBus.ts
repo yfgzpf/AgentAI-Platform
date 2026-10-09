@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * BrowserStateBus — 全局浏览器状态总线
  * ==========================================
@@ -22,7 +21,7 @@
  *
  * v3.2 (2026-07-15) 新增
  */
-import type { IdentifiedElement } from './EmbeddedBrowser';
+import type { IdentifiedElement } from '../components/EmbeddedBrowser';
 
 export interface BrowserState {
   // 标签页

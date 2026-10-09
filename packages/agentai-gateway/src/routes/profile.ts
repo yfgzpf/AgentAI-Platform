@@ -13,6 +13,7 @@ import fs from 'fs';
 import { userModel } from '../user-model.js';
 import { industryEngine } from '../industry-engine.js';
 import { WorkspaceManager } from '../workspace-manager.js';
+import { currentRequestWorkspace } from '../request-scope.js';
 
 let _industryEngine: any = industryEngine;
 
@@ -82,7 +83,9 @@ export function createProfileRouter(): Router {
       const { devPrefs } = req.body || {};
       if (devPrefs && typeof devPrefs === 'object') {
         try {
-          const ws = WorkspaceManager.getInstance().projectDir;
+          // 2026-10-06: 请求级工作区（原来读全局单例 → 在 A 项目保存开发偏好，
+          // 文件却落到 B 项目的 .agentai/profile.json）
+          const ws = currentRequestWorkspace() || WorkspaceManager.getInstance().projectDir;
           const profileDir = path.join(ws, '.agentai');
           if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
           const profilePath = path.join(profileDir, 'profile.json');

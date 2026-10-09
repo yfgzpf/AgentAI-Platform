@@ -1,4 +1,4 @@
-# OpenClaw Email Skill Requirements
+# AgentAI Email Skill Requirements
 # Note: smtplib and email are part of Python's standard library
 # No additional packages required for basic functionality
 

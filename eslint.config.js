@@ -52,6 +52,11 @@ export default [
       'output', 'reports', 'models', 'SkillOpt',   // 根目录生成/输出目录
       'coverage', 'reports/*', '.vite', '.turbo',
       '**/*.min.js.map', '**/*.js.map',
+      // ===== 第三方/参考代码 (非本项目维护范围) =====
+      // creatorhub/ 是引入的第三方 Python 项目, 其内含压缩后的 js 构建产物
+      // (app.js 1580 problems / workbench.js 1389 / xhs_rap.js 166) —— 不可修也不该修
+      'creatorhub',
+      'references',
     ],
   },
 

@@ -1,3 +1,12 @@
 packages:
   - "packages/*"
   - "apps/*"
+onlyBuiltDependencies:
+  - '@vscode/vsce-sign'
+  - better-sqlite3
+  - cpu-features
+  - esbuild
+  - keytar
+  - protobufjs
+  - sharp
+  - ssh2

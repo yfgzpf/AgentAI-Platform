@@ -71,7 +71,7 @@ FBS-BookWriter 采用三侧分层架构：
 - `codebuddy/channel-manifest.json` - CodeBuddy 通道清单
 - `workbuddy/channel-manifest.json` - WorkBuddy 通道清单
 - `scripts/pack-workbuddy-marketplace.mjs` - WorkBuddy 审核包入口
-- `scripts/pack-release.mjs` - 三通道打包入口（WorkBuddy + CodeBuddy + OpenClaw）
+- `scripts/pack-release.mjs` - 三通道打包入口（WorkBuddy + CodeBuddy + AgentAI）
 - `references/05-ops/release-checklist.md` - 发版与产物核对清单
 - `dist/` - 打包产物与 verification 报告目录
 

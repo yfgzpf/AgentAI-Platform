@@ -35,8 +35,8 @@ export function createAdminRouter(deps: AdminDeps): Router {
       return res.status(503).json({ error: 'FrameworkSwitcher not available' });
     }
     const { to, abRatio, drain, timeoutMs } = req.body;
-    if (!to || !['openclaw', 'hermes'].includes(to)) {
-      return res.status(400).json({ error: 'Invalid target framework. Must be openclaw or hermes' });
+    if (!to || !['agentai', 'pulseflow'].includes(to)) {
+      return res.status(400).json({ error: 'Invalid target framework. Must be agentai or pulseflow' });
     }
     deps.frameworkSwitcher.switch({ to, abRatio, drain, timeoutMs }).then((result: any) => {
       res.json(result);

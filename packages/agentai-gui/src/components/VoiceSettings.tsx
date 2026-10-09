@@ -340,7 +340,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
             borderRadius: 10,
             boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
             padding: '12px 14px',
-            zIndex: 1000,
+            zIndex: 'var(--z-modal)',
             display: 'flex', flexDirection: 'column', gap: 10,
           }}
         >

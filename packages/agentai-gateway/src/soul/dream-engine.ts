@@ -25,6 +25,7 @@ import { EventEmitter } from 'events';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { WorkspaceManager } from '../workspace-manager.js';
+import { getScoped, resetScoped } from './workspace-scope.js';
 
 // ===== 类型定义 =====
 
@@ -75,11 +76,12 @@ export class DreamEngine extends EventEmitter {
   private journal: DreamEntry[] = [];
   private journalPath: string;
 
-  constructor(config?: Partial<DreamConfig>) {
+  constructor(config?: Partial<DreamConfig>, workspace?: string) {
     super();
     this.setMaxListeners(20);
     this.config = { ...DEFAULT_CONFIG, ...config };
-    const ws = WorkspaceManager.getInstance().projectDir;
+    // 串味修复: 优先用传入的请求级 workspace；未传时才回退全局单例
+    const ws = workspace || WorkspaceManager.getInstance().projectDir;
     this.journalPath = path.join(ws, '.agentai', 'dream-journal.jsonl');
     this.loadJournal();
   }
@@ -538,20 +540,23 @@ ${localThoughts.slice(-3).join('\n')}
   }
 }
 
-// ===== 单例 =====
+// ===== workspace 作用域单例 =====
 
-let _instance: DreamEngine | null = null;
-
-export function getDreamEngine(config?: Partial<DreamConfig>): DreamEngine {
-  if (!_instance) {
-    _instance = new DreamEngine(config);
-  }
-  return _instance;
+/**
+ * 按 workspace 返回 DreamEngine 实例。
+ *
+ * 串味修复: 原实现是进程级单例，构造时固化读取全局
+ * `WorkspaceManager.getInstance().projectDir`，导致 projA 的梦境日志
+ * 会被注入 projB 的任务上下文。改为 per-workspace 实例后，
+ * 各工作区的梦境互相隔离。
+ *
+ * @param workspace 请求级 workspace（传 opts.workspace，不要传全局 projectDir）
+ */
+export function getDreamEngine(config?: Partial<DreamConfig>, workspace?: string): DreamEngine {
+  return getScoped<DreamEngine>('dream', workspace, () => new DreamEngine(config, workspace));
 }
 
-export function resetDreamEngine(): void {
-  if (_instance) {
-    _instance.stop();
-    _instance = null;
-  }
+/** 重置指定 workspace 的实例；不传 workspace 则重置全部 */
+export function resetDreamEngine(workspace?: string): void {
+  resetScoped<DreamEngine>('dream', workspace);
 }

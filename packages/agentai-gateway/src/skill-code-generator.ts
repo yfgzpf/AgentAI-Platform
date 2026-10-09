@@ -454,10 +454,24 @@ export class SkillCodeGenerator {
 
   /**
    * 验证生成的代码（双语言安全校验）
+   *
+   * 注意: language 必须有默认值。历史上当调用方只传 code 时, language 为 undefined,
+   * 导致禁止模式 (eval/Function/child_process) 与必需字段检查全部被跳过 —— 安全闸门失效。
    */
-  async validate(code: string, language: CodeLanguage): Promise<{ valid: boolean; error?: string }> {
+  async validate(code: string, language: CodeLanguage = 'javascript'): Promise<{ valid: boolean; error?: string }> {
+    // 1) 危险模式静态扫描 (优先于语法编译, 仅做字符串匹配, 绝不执行代码)
+    const forbidden = FORBIDDEN_PATTERNS[language] || [];
+    for (const pattern of forbidden) {
+      if (pattern.test(code)) {
+        return {
+          valid: false,
+          error: `代码包含禁止的模式: ${pattern} (${language})`,
+        };
+      }
+    }
+
     try {
-      // 基本语法检查
+      // 2) 基本语法检查 (new Function 只编译不执行, 不会运行用户代码)
       if (language === 'javascript') {
         new Function('return ' + code);
       } else {
@@ -468,18 +482,7 @@ export class SkillCodeGenerator {
         }
       }
 
-      // 检查是否包含禁止的模式
-      const forbidden = FORBIDDEN_PATTERNS[language] || [];
-      for (const pattern of forbidden) {
-        if (pattern.test(code)) {
-          return {
-            valid: false,
-            error: `代码包含禁止的模式: ${pattern} (${language})`,
-          };
-        }
-      }
-
-      // 检查是否包含必要的返回结构
+      // 3) 检查是否包含必要的返回结构
       const required = REQUIRED_FIELDS[language] || [];
       for (const field of required) {
         if (!code.includes(field)) {
@@ -494,7 +497,7 @@ export class SkillCodeGenerator {
     } catch (error: any) {
       return {
         valid: false,
-        error: `${language.toUpperCase()} 语法/结构错误: ${error.message}`,
+        error: `${language.toUpperCase()} 语法错误: ${error.message}`,
       };
     }
   }
@@ -598,11 +601,12 @@ ${template}
 
     if (language === 'javascript') {
       // Node.js require/import 检测
+      // 注: require 的内置模块用裸名 (与安装包依赖统一), fetch 是运行时全局, 标注 built-in
       const jsDeps: [string, string][] = [
-        ["require('fs')", 'fs (built-in)'],
-        ["require('path')", 'path (built-in)'],
-        ["require('http')", 'http (built-in)'],
-        ["require('https')", 'https (built-in)'],
+        ["require('fs')", 'fs'],
+        ["require('path')", 'path'],
+        ["require('http')", 'http'],
+        ["require('https')", 'https'],
         ["from '", 'ESM import'],
         ["fetch(", 'fetch (built-in)'],
       ];

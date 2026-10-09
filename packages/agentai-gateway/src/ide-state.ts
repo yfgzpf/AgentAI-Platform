@@ -43,19 +43,36 @@ let currentState: IdeState = {
   updatedAt: 0,
   isEditing: false,
 };
-/** P0 修复: 记录 IDE 状态所属的 workspace, 切换 workspace 时自动清理 */
+/** 记录 IDE 状态所属的 workspace, 切换 workspace 时自动清理 */
 let ideStateWorkspace: string = '';
+
+/**
+ * IDE 状态过期时间（毫秒）—— 串味修复
+ * ==============================================
+ * 原实现无TTL: updatedAt 被记录但从不检查。GUI 关标签页 / 切项目 / 退出应用后，
+ * currentState 永远保留最后一次推送的文件列表。
+ *→ AI 在新任务里看到"当前文件: xxx.tsx"，而那个文件属于上一个任务。
+ *
+ * 30 秒: 前端轮询间隔 5s, 30 秒 = 6 次轮询没收到更新就认为用户已关闭编辑器
+ * 之前 5 分钟太长 — 用户关了面板后 5 分钟内仍注入旧文件路径
+ */
+const IDE_STATE_TTL_MS = 30 * 1000;
+
+/** 导出供测试与诊断使用（测试需基于实际 TTL 断言，避免硬编码时间导致调参即红） */
+export const IDE_STATE_TTL = IDE_STATE_TTL_MS;
 
 /** 更新 IDE 状态 (由 GUI 推送) */
 export function updateIdeState(partial: Partial<IdeState>, workspace?: string): void {
-  // P0 修复: 如果 workspace 变了, 清空旧状态 (否则旧文件信息泄漏到新工作区)
-  if (workspace && workspace !== ideStateWorkspace) {
+  // 如果 workspace 变了, 清空旧状态 (否则旧文件信息泄漏到新工作区)
+  // 注意: 不能写成 `if (workspace && ...)` —— workspace 为空时会跳过比对，
+  // 导致 ideStateWorkspace 停在旧值或空串，守卫随之失效（见 buildIdeContext）
+  if ((workspace || '') !== ideStateWorkspace) {
     currentState = {
       openFiles: [],
       updatedAt: 0,
       isEditing: false,
     };
-    ideStateWorkspace = workspace;
+    ideStateWorkspace = workspace || '';
   }
   currentState = {
     ...currentState,
@@ -72,15 +89,31 @@ export function getIdeState(): IdeState {
 /**
  * 生成 IDE 上下文文本，注入 AI 系统提示
  * 格式简洁，避免占用过多 token
- * P0 修复: 接受 currentWorkspace 参数, 只返回属于该 workspace 的文件
+ *
+ * 串味修复（2026-10-03）: 加两道闸 —— TTL 过期 + workspace 严格匹配
  */
 export function buildIdeContext(currentWorkspace?: string): string {
   const s = currentState;
   if (s.openFiles.length === 0) return '';
 
-  // P0 修复: 如果 IDE 状态属于不同 workspace, 不注入 (避免旧工作区文件泄漏)
-  if (currentWorkspace && ideStateWorkspace && ideStateWorkspace !== currentWorkspace) {
-    return ''; // workspace 不匹配, 不注入
+  // === 串味修复四道闸 ===
+
+  // 闸1: TTL —— 状态过期则不注入（否则 AI 看到的是上一个任务的打开文件）
+  if (s.updatedAt === 0 || Date.now() - s.updatedAt > IDE_STATE_TTL_MS) {
+    return '';
+  }
+
+  // 闸 2: workspace 必须匹配 —— 原来写成三元合取，ideStateWorkspace 为空时
+  // 守卫整体失效（fail-open），任何工作区都能读到上一份状态。
+  // 现在改为 fail-closed: 不知道属于谁就不注入。
+  if ((currentWorkspace || '') !== ideStateWorkspace) {
+    return '';
+  }
+
+  // 闸 3: isEditing 必须为 true —— 用户关闭编辑器面板后不再推送状态,
+  // 但 30 秒 TTL 内缓存还在。加 isEditing 检查确保只有用户正在编辑时才注入
+  if (!s.isEditing) {
+    return '';
   }
 
   const lines: string[] = ['<ide-context>'];
@@ -135,11 +168,16 @@ export function buildIdeContext(currentWorkspace?: string): string {
   return lines.join('\n');
 }
 
-/** 重置 IDE 状态 */
+/**
+ * 重置 IDE 状态
+ * 串味修复: 原实现漏清 ideStateWorkspace，导致"文件列表清了、归属标记还在"，
+ * 下次同 workspace 命中时守卫放行，重新注入一份未知来源的状态。
+ */
 export function resetIdeState(): void {
   currentState = {
     openFiles: [],
     updatedAt: 0,
     isEditing: false,
   };
+  ideStateWorkspace = '';
 }

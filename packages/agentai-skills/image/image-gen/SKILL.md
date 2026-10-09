@@ -21,4 +21,4 @@ Docker 沙箱 512MB / 1 核 / 无网（仅 API 调用）
 
 ## 环境变量
 - `AGNES_API_KEY` 或 `AGENTAI_API_KEY`: Agnes AI API 密钥
-- `AGNES_BASE_URL`: 可选，默认 https://apihub.agnes-ai.com
+- `AGNES_BASE_URL`: 可选，默认 https://apihub.agnes-ai.cn

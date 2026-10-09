@@ -21,6 +21,7 @@ import {
   NodeIndexOutlined, CodeOutlined, ChromeOutlined, FolderOutlined,
   CloudServerOutlined, ExperimentOutlined, GithubOutlined,
 } from '@ant-design/icons';
+import { GATEWAY_HTTP } from '../services/config';
 
 const { Text, Link } = Typography;
 
@@ -43,7 +44,6 @@ interface DepStatus {
 /** 检测本地是否安装了某个命令 (走 Gateway check-dep) */
 async function checkDependency(cmd: string): Promise<{ installed: boolean; version?: string }> {
   try {
-    const { GATEWAY_HTTP } = await import('../services/config');
     const res = await fetch(`${GATEWAY_HTTP}/v1/system/check-dep?cmd=${encodeURIComponent(cmd)}`, {
       signal: AbortSignal.timeout(5000),
     });
@@ -65,7 +65,6 @@ async function autoInstall(depKey: string): Promise<{
   path?: string; note?: string;
 }> {
   try {
-    const { GATEWAY_HTTP } = await import('../services/config');
     const res = await fetch(`${GATEWAY_HTTP}/v1/system/auto-install`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -1,0 +1,198 @@
+/**
+ * MIMO TTS Service - 小米MIMO商业TTS服务
+ *
+ * 支持：
+ * - 高品质语音合成
+ * - 多种音色选择
+ * - 长文本自动分段
+ *
+ * API文档：https://api.xiaomimimo.com/v1
+ */
+// @ts-ignore - openai 模块可选依赖
+import { OpenAI } from 'openai';
+export class MimoTtsService {
+    client = null;
+    apiKey;
+    baseUrl;
+    model;
+    // 可用音色列表
+    voices = [
+        { id: 'mimo-zhinan', name: '米男', gender: 'male', description: '成熟稳重男声' },
+        { id: 'mimo-zhinv', name: '米女', gender: 'female', description: '温柔知性女声' },
+        { id: 'mimo-yujie', name: '御姐', gender: 'female', description: '成熟魅力女声' },
+        { id: 'mimo-qingnian', name: '青年', gender: 'male', description: '阳光活力男声' },
+        { id: 'mimo-shaonv', name: '少女', gender: 'female', description: '甜美可爱女声' },
+        { id: 'mimo-laonian', name: '老年', gender: 'male', description: '慈祥老年男声' },
+        { id: 'mimo-tongnian', name: '童年', gender: 'female', description: '天真童声' },
+        { id: 'mimo-dianshang', name: '电商', gender: 'female', description: '专业电商主播声' },
+    ];
+    constructor() {
+        // 内置密钥（项目级别）+ 环境变量覆盖（用户级别）
+        // 优先级: 环境变量 > 内置密钥
+        const BUILT_IN_KEY = 'sk-cp5szr1336c4uhfnwdbjpl4p8x9ydelvaz6wl42qv57vne49';
+        this.apiKey = process.env.MIMO_API_KEY || BUILT_IN_KEY;
+        this.baseUrl = process.env.MIMO_BASE_URL || 'https://api.xiaomimimo.com/v1';
+        this.model = process.env.MIMO_MODEL || 'mimo-tts-v2.5';
+        if (this.apiKey) {
+            this.client = new OpenAI({
+                apiKey: this.apiKey,
+                baseURL: this.baseUrl,
+            });
+        }
+    }
+    /**
+     * 检查服务是否可用
+     */
+    get isAvailable() {
+        return !!this.client && !!this.apiKey;
+    }
+    /**
+     * 获取服务状态
+     */
+    getStatus() {
+        if (!this.apiKey) {
+            return {
+                available: false,
+                message: '未配置 MIMO_API_KEY 环境变量'
+            };
+        }
+        if (!this.client) {
+            return {
+                available: false,
+                message: 'MIMO 客户端初始化失败'
+            };
+        }
+        return {
+            available: true,
+            message: 'MIMO TTS 服务就绪'
+        };
+    }
+    /**
+     * 合成语音
+     */
+    async synthesize(options) {
+        if (!this.client) {
+            throw new Error('MIMO TTS 服务未初始化');
+        }
+        const { text, voice = 'mimo-zhinv', speed = 1.0, pitch = 1.0, volume = 1.0 } = options;
+        // 限制文本长度（MIMO有长度限制）
+        const maxLength = 1000;
+        const truncatedText = text.length > maxLength ? text.slice(0, maxLength) + '...' : text;
+        try {
+            const startTime = Date.now();
+            // 调用MIMO TTS API
+            const completion = await this.client.chat.completions.create({
+                model: this.model,
+                messages: [
+                    {
+                        role: 'user',
+                        content: truncatedText,
+                    }
+                ],
+                // @ts-ignore - MIMO TTS specific options
+                extra_body: {
+                    tts_options: {
+                        voice: voice,
+                        speed: speed,
+                        pitch: pitch,
+                        volume: volume,
+                        format: 'mp3',
+                        sample_rate: 24000,
+                    }
+                }
+            });
+            // 从响应中提取音频数据
+            // 注意：实际API响应格式可能需要根据MIMO文档调整
+            const audioData = await this.extractAudioFromResponse(completion);
+            return {
+                audioBase64: audioData.base64,
+                duration: Date.now() - startTime,
+                format: 'mp3',
+                sampleRate: 24000,
+            };
+        }
+        catch (error) {
+            console.error('[MIMO TTS] 合成失败:', error);
+            throw new Error(`MIMO TTS 合成失败: ${error.message}`);
+        }
+    }
+    /**
+     * 从API响应中提取音频数据
+     * 注意：这里需要根据实际MIMO API响应格式调整
+     */
+    async extractAudioFromResponse(completion) {
+        // 如果MIMO返回的是base64编码的音频
+        if (completion.audio?.data) {
+            return { base64: completion.audio.data };
+        }
+        // 如果MIMO返回的是音频URL
+        if (completion.audio?.url) {
+            // 下载音频并转换为base64
+            const audioUrl = completion.audio.url;
+            const response = await fetch(audioUrl);
+            const arrayBuffer = await response.arrayBuffer();
+            const base64 = Buffer.from(arrayBuffer).toString('base64');
+            return { base64, url: audioUrl };
+        }
+        // 如果响应中包含choices（OpenAI标准格式）
+        if (completion.choices?.[0]?.message?.audio?.data) {
+            return { base64: completion.choices[0].message.audio.data };
+        }
+        throw new Error('无法从响应中提取音频数据');
+    }
+    /**
+     * 流式合成（用于长文本）
+     */
+    async *synthesizeStream(options) {
+        const { text, voice = 'mimo-zhinv' } = options;
+        // 将长文本分段
+        const segments = this.segmentText(text, 500);
+        for (const segment of segments) {
+            const result = await this.synthesize({
+                text: segment,
+                voice,
+            });
+            yield Buffer.from(result.audioBase64, 'base64');
+        }
+    }
+    /**
+     * 文本分段
+     */
+    segmentText(text, maxLength) {
+        const segments = [];
+        const sentences = text.split(/([。！？.!?])/);
+        let currentSegment = '';
+        for (let i = 0; i < sentences.length; i++) {
+            const sentence = sentences[i];
+            if ((currentSegment + sentence).length > maxLength && currentSegment.length > 0) {
+                segments.push(currentSegment.trim());
+                currentSegment = sentence;
+            }
+            else {
+                currentSegment += sentence;
+            }
+        }
+        if (currentSegment.trim()) {
+            segments.push(currentSegment.trim());
+        }
+        return segments;
+    }
+    /**
+     * 获取可用音色列表
+     */
+    getVoices() {
+        return this.voices;
+    }
+    /**
+     * 预览音色（生成示例音频）
+     */
+    async previewVoice(voiceId) {
+        const sampleText = '你好，我是小米MIMO语音助手，很高兴为您服务。';
+        return this.synthesize({
+            text: sampleText,
+            voice: voiceId,
+        });
+    }
+}
+// 单例导出
+export const mimoTtsService = new MimoTtsService();

@@ -287,7 +287,7 @@ export const BrowserMode: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             background: 'rgba(0,0,0,0.6)',
-            zIndex: 10,
+            zIndex: 'var(--z-sticky)',
             pointerEvents: 'none',
           }}>
             <div style={{

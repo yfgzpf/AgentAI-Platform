@@ -15,16 +15,48 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 
 // ═══════════════════════════════════════════════════════════
-// 测试隔离: 每个用例使用独立临时 workspace
+// ★ 必须在任何被测模块 import 之前设定 AGENTAI_HOME
+//
+// 根因链:
+//   memory.ts:48  `const userDir = getMemoryDir()`← 模块加载时求值
+//   memory.ts:45  getMemoryDir() → WorkspaceManager.getInstance().subdir('memory')
+//   workspace-manager.ts:103  aiWorkDir = opts || AGENTAI_HOME || ~/.agentai
+//
+// 所以必须在 import 之前设置 AGENTAI_HOME, 否则 memory.ts 加载时
+// 就把 userDir 定死到真实用户目录 (~/.agentai/memory/default.jsonl)。
+// 实测症状: 每个用例耗时 7s(真实磁盘 IO) + 污染工作区外的数据。
+// 与生产缺陷 P0-9(全局工作区串扰) 同根因。
+//
+// 注意: vi.hoisted 回调内不能引用外层变量(会被提升到import 之前),
+//所以这里用 os.tmpdir() 直接拼路径而非引用常量。
+// ═══════════════════════════════════════════════════════════
+vi.hoisted(() => {
+  process.env.AGENTAI_HOME =
+    require('path').join(require('os').tmpdir(), 'agentai-test-home-default');
+});
+
+// ═══════════════════════════════════════════════════════════
+// 测试隔离: 每个用例使用独立临时 workspace + 独立 AGENTAI_HOME
 // ═══════════════════════════════════════════════════════════
 
 let tmpWorkspace: string;
 
 beforeEach(async () => {
+  // 每次重置 AGENTAI_HOME 到独立目录, 防止用例间通过 userDir 串数据
+  const { mkdtempSync } = await import('fs');
+  process.env.AGENTAI_HOME = mkdtempSync(path.join(os.tmpdir(), 'agentai-home-'));
+
   // 创建临时工作目录
   tmpWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), 'agentai-test-'));
   // 动态导入被测模块 (每个测试重置模块状态)
   vi.resetModules();
+
+  // 单例在 import 时会读 _loadWorkspaceConfig() 恢复真实工作区,
+  // 这里强制改指向临时目录并桩掉持久化(否则会写真实配置文件)
+  const { WorkspaceManager } = await import('./workspace-manager.js');
+  const wm = WorkspaceManager.getInstance();
+  (wm as any).projectDir = tmpWorkspace;
+  (wm as any)._saveWorkspaceConfig = () => {};
 });
 
 afterEach(async () => {

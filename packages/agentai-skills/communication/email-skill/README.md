@@ -1,6 +1,6 @@
-# OpenClaw Email Skill 📧
+# AgentAI Email Skill 📧
 
-A comprehensive email management and automation skill for OpenClaw, enabling seamless email sending, configuration, and integration across multiple email providers.
+A comprehensive email management and automation skill for AgentAI, enabling seamless email sending, configuration, and integration across multiple email providers.
 
 ## Features
 
@@ -9,7 +9,7 @@ A comprehensive email management and automation skill for OpenClaw, enabling sea
 - **HTML & Plain Text**: Support for both HTML and plain text email formats
 - **CC/BCC Recipients**: Full recipient management capabilities
 - **Secure Connections**: TLS/SSL encryption for secure email transmission
-- **OpenClaw Integration**: Native integration with OpenClaw's skill system
+- **AgentAI Integration**: Native integration with AgentAI's skill system
 - **Test Functionality**: Built-in test email verification
 
 ## Quick Start
@@ -37,7 +37,7 @@ Create a configuration file `email_config.json`:
   "smtp_port": 587,
   "username": "your-email@gmail.com",
   "password": "your-app-password",
-  "sender_name": "OpenClaw Assistant",
+  "sender_name": "AgentAI Assistant",
   "use_tls": true,
   "use_ssl": false
 }
@@ -67,9 +67,9 @@ python email_sender.py --to "recipient@example.com" --subject "Report" --body "P
 python email_sender.py --to "your-email@gmail.com" --test
 ```
 
-### OpenClaw Integration
+### AgentAI Integration
 
-When installed as an OpenClaw skill, you can use natural language commands:
+When installed as an AgentAI skill, you can use natural language commands:
 
 ```
 "Send email to recipient@example.com with subject Meeting Notes and body Here are the notes from today's meeting"
@@ -117,7 +117,7 @@ openclaw-email-skill/
 ├── email_sender.py            # Core email functionality
 ├── config_template.json       # Configuration template
 ├── test_email.py              # Test script
-├── openclaw_integration.md    # OpenClaw integration guide
+├── agentai_integration.md    # AgentAI integration guide
 ├── _meta.json                 # Skill metadata
 ├── requirements.txt           # Python dependencies
 └── README.md                  # This file
@@ -126,7 +126,7 @@ openclaw-email-skill/
 ## Requirements
 
 - Python 3.7+
-- OpenClaw (for integration)
+- AgentAI (for integration)
 - Required Python packages:
   - `smtplib` (standard library)
   - `email` (standard library)
@@ -180,7 +180,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- Built for [OpenClaw](https://openclaw.ai) - The open-source AI assistant platform
+- Built for AgentAI - The open-source AI assistant platform
 - Inspired by the need for seamless email automation in AI workflows
 - Thanks to all contributors and users
 
@@ -188,8 +188,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For issues, questions, or feature requests:
 - Open an issue on [GitHub](https://github.com/awspace/openclaw-email-skill/issues)
-- Check the [OpenClaw documentation](https://docs.openclaw.ai)
-- Join the [OpenClaw community](https://discord.com/invite/clawd)
+- Check the AgentAI documentation
+- Join the AgentAI community
 
 ---
 

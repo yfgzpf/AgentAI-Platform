@@ -5,7 +5,7 @@ description_zh: "将长文内容转化为多平台优化的社交媒体片段"
 description_en: "Transform long-form content into platform-optimized social media snippets"
 version: 1.1.0
 metadata:
-  clawdbot:
+  agentai:
     emoji: "♻️"
 display_name: "content-repurposer"
 display_name_en: "content-repurposer"

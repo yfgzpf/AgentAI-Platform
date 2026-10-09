@@ -118,20 +118,24 @@ export function searchFileContent(
     glob?: string;
     context?: number;
     maxResults?: number;
+    regex?: boolean;
   },
 ): string {
   const escapedPattern = pattern.replace(/"/g, '\\"').replace(/'/g, "\\'");
   const maxResults = opts?.maxResults || 200;
+  // P0 修复: 始终默认 2 行上下文, 避免 AI 传 context:0 时丢失行号和内容
+  const contextLines = opts?.context ?? 2;
 
   if (IS_WIN) {
-    // Windows: Select-String
+    // Windows: Select-String — 始终输出 行号:内容, 默认带上下文
     const globFilter = opts?.glob ? ` -Include ${opts.glob}` : '';
-    const contextFlag = opts?.context ? ` -Context ${opts.context},${opts.context}` : '';
-    const command = `Get-ChildItem -Path "${basePath}" -Recurse -File${globFilter} | Select-String -Pattern "${escapedPattern}"${contextFlag} | Select-Object -First ${maxResults} | ForEach-Object { "$($_.Filename):$($_.LineNumber): $($_.Line)" }`;
+    const contextFlag = contextLines > 0 ? ` -Context ${contextLines},${contextLines}` : '';
+    // P0 修复: -ErrorAction SilentlyContinue 避免权限错误中断搜索
+    const command = `Get-ChildItem -Path "${basePath}" -Recurse -File${globFilter} -ErrorAction SilentlyContinue | Select-String -Pattern "${escapedPattern}"${contextFlag} | Select-Object -First ${maxResults} | ForEach-Object { "$($_.Filename):$($_.LineNumber): $($_.Line.TrimEnd())" }`;
     return shellExecSync(command, { cwd: basePath, timeout: 15000, maxBuffer: 10 * 1024 * 1024 }) || '(no matches)';
   } else {
-    // POSIX: grep
-    const contextFlag = opts?.context ? ` -C ${opts.context}` : '';
+    // POSIX: grep — 始终带 -n (行号) 和上下文
+    const contextFlag = contextLines > 0 ? ` -C ${contextLines}` : '';
     const globFlag = opts?.glob ? ` --include="${opts.glob}"` : '';
     const command = `grep -rn${contextFlag}${globFlag} --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build "${escapedPattern}" "${basePath}" 2>/dev/null | head -n ${maxResults}`;
     return shellExecSync(command, { cwd: basePath, timeout: 15000, maxBuffer: 10 * 1024 * 1024 }) || '(no matches)';

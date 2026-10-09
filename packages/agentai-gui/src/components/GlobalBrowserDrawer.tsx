@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * GlobalBrowserDrawer — 全局浏览器容器 (PulseFlow 核心能力)
  * ===========================================================
@@ -205,7 +204,7 @@ export const GlobalBrowserDrawer: React.FC = () => {
           body: { padding: 0, background: '#0e0e14' },
           header: { display: 'none' },
         }}
-        style={{ zIndex: 1002 }}
+        style={{ zIndex: 'var(--z-modal)' }}
       >
         {/* 自定义顶栏: 标题 + 状态 + 操作 */}
         <div style={{

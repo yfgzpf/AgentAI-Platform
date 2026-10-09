@@ -21,7 +21,9 @@ function textOf(m: ChatMessage | undefined): string {
   return seg && seg.kind === 'text' ? seg.text : '';
 }
 
-const flushMicrotasks = () => new Promise<void>((r) => setTimeout(r, 0));
+// 2026-09-04: updateMessage 合帧已从 queueMicrotask 改为 rAF+100ms 兜底;
+// 测试等待需超过兜底窗口以确保 flush 完成。
+const flushMicrotasks = () => new Promise<void>((r) => setTimeout(r, 150));
 
 describe('chatStore.appendMessage', () => {
   beforeEach(() => {

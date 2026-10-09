@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Email Sender Skill for OpenClaw
+Email Sender Skill for AgentAI
 Supports sending emails with attachments via SMTP
 """
 
@@ -38,7 +38,7 @@ class EmailSender:
             'smtp_port': int(os.getenv('SMTP_PORT', '587')),
             'username': os.getenv('EMAIL_USERNAME'),
             'password': os.getenv('EMAIL_PASSWORD'),
-            'sender_name': os.getenv('EMAIL_SENDER_NAME', 'OpenClaw Assistant'),
+            'sender_name': os.getenv('EMAIL_SENDER_NAME', 'AgentAI Assistant'),
             'use_tls': os.getenv('EMAIL_USE_TLS', 'true').lower() == 'true',
             'use_ssl': os.getenv('EMAIL_USE_SSL', 'false').lower() == 'true'
         }
@@ -90,7 +90,7 @@ class EmailSender:
         try:
             # Create message
             msg = MIMEMultipart('alternative')
-            msg['From'] = f"{self.config.get('sender_name', 'OpenClaw')} <{self.config['username']}>"
+            msg['From'] = f"{self.config.get('sender_name', 'AgentAI')} <{self.config['username']}>"
             msg['To'] = to_email if isinstance(to_email, str) else ', '.join(to_email)
             msg['Subject'] = subject
             
@@ -180,13 +180,13 @@ class EmailSender:
     def send_test_email(self, to_email: str = None) -> dict:
         """Send a test email to verify configuration"""
         test_to = to_email or self.config['username']
-        subject = "Test Email from OpenClaw"
-        body = """This is a test email sent from your OpenClaw assistant.
+        subject = "Test Email from AgentAI"
+        body = """This is a test email sent from your AgentAI assistant.
 
 If you're receiving this, your email configuration is working correctly!
 
 Best regards,
-OpenClaw Assistant"""
+AgentAI Assistant"""
         
         return self.send_email(test_to, subject, body)
 

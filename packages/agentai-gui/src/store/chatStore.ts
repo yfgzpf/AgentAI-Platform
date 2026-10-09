@@ -44,7 +44,7 @@ export type ChatSegment =
   | { kind: 'text'; text: string }
   | { kind: 'reasoning'; text: string }
   | { kind: 'thinking'; text: string }
-  | { kind: 'tool'; callId: string; name: string; args?: Record<string, unknown>; state?: string; result?: string; ok?: boolean; durationMs?: number }
+  | { kind: 'tool'; callId: string; name: string; args?: Record<string, unknown>; state?: string; result?: string; ok?: boolean; durationMs?: number; data?: Record<string, unknown> }
   | { kind: 'image'; url?: string; base64?: string; alt?: string; filePath?: string }
   | { kind: 'error'; error: string; details?: string; fix?: string }
   | { kind: 'video'; url: string; poster?: string; alt?: string }
@@ -115,27 +115,39 @@ interface ChatState {
   getInjectedFilesContent: () => { path: string; name: string; content: string }[];
 }
 
-// ═══ updateMessage 微任务刷新: SSE 高频 delta 更新合并, 减少 React 重渲染 ═══
-// 使用 Promise.resolve().then() 替代 requestAnimationFrame, 延迟从 ~16ms 降至 ~0ms
+// ═══ updateMessage 合帧刷新: SSE 高频 delta 更新合并, 减少 React 重渲染 ═══
+// 2026-09-04 优化: 原 queueMicrotask 只合并"同一宏任务内的同步帧"; SSE 每个网络包是独立任务,
+// 高频流式时仍每包渲染一次(整树 + 流式文本全量 Markdown 重解析)。改为 rAF 合帧(≤60次/秒),
+// 并用 100ms setTimeout 兜底, 避免后台标签页 rAF 被冻结时流式渲染卡死。
 const pendingUpdates = new Map<string, ((m: ChatMessage) => ChatMessage)[]>();
 let flushScheduled = false;
+let flushRafToken: number | null = null;
+let flushSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+
+function doFlush(set: (fn: (s: ChatState) => Partial<ChatState>) => void) {
+  flushScheduled = false;
+  if (flushRafToken !== null) { cancelAnimationFrame(flushRafToken); flushRafToken = null; }
+  if (flushSafetyTimer !== null) { clearTimeout(flushSafetyTimer); flushSafetyTimer = null; }
+  if (pendingUpdates.size === 0) return;
+  const updates = new Map(pendingUpdates);
+  pendingUpdates.clear();
+  set((s) => ({
+    messages: s.messages.map((m) => {
+      const fns = updates.get(m.id);
+      if (!fns) return m;
+      return fns.reduce((acc, fn) => fn(acc), m);
+    }),
+  }));
+}
 
 function scheduleFlush(set: (fn: (s: ChatState) => Partial<ChatState>) => void) {
   if (flushScheduled) return;
   flushScheduled = true;
-  queueMicrotask(() => {
-    flushScheduled = false;
-    if (pendingUpdates.size === 0) return;
-    const updates = new Map(pendingUpdates);
-    pendingUpdates.clear();
-    set((s) => ({
-      messages: s.messages.map((m) => {
-        const fns = updates.get(m.id);
-        if (!fns) return m;
-        return fns.reduce((acc, fn) => fn(acc), m);
-      }),
-    }));
-  });
+  if (typeof requestAnimationFrame === 'function') {
+    flushRafToken = requestAnimationFrame(() => doFlush(set));
+  }
+  // 兜底: rAF 在后台标签页不触发; 若 100ms 内未合帧则强制 flush 一次
+  flushSafetyTimer = setTimeout(() => doFlush(set), 100);
 }
 
 // ═══ [P1-2] 合并自 editorChatStore: 编辑器消息使用 requestAnimationFrame 批量更新 ═══

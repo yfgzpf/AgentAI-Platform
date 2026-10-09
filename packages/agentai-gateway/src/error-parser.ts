@@ -14,20 +14,84 @@
 export type ErrorType = 'TypeError' | 'ReferenceError' | 'SyntaxError' | 'NetworkError' | 'FileSystemError' | 'PermissionError' | 'TimeoutError' | 'UnknownError';
 
 export interface StructuredError {
-    type: ErrorType;
-    message: string;
-    context: {
-        variableName?: string;
-        expectedType?: string;
-        actualValue?: any;
-        callStack?: string;
-        executionStep?: string;
-        toolName?: string;
-        args?: Record<string, any>;
-    };
+  type: ErrorType;
+  message: string;
+  // ═══ P1-1 新增: 机器可读故障语义 ═══
+  /** 根因分类（机器可读，用于自动重试/修复决策） */
+  root_cause?: string;
+  /** 错误大类（用于统计看板分组） */
+  error_kind?: 'network' | 'timeout' | 'permission' | 'not_found' | 'syntax' | 'runtime' | 'rate_limit' | 'auth' | 'resource' | 'unknown';
+  /** 是否值得重试（网络超时=true，语法错误=false） */
+  retryable?: boolean;
+  /** 建议的下一步动作（机器可读，用于自动恢复决策） */
+  next_action?: 'retry' | 'retry_with_delay' | 'fix_args' | 'switch_tool' | 'ask_user' | 'abort';
+  /** 建议的重试延迟（毫秒，retryable=true 时有效） */
+  retry_delay_ms?: number;
+  context: {
+    variableName?: string;
+    expectedType?: string;
+    actualValue?: any;
+    callStack?: string;
+    executionStep?: string;
+    toolName?: string;
+    args?: Record<string, any>;
+  };
+  suggestedFix?: string;
+  confidence: number; // 0-1，修复建议的可信度
+  riskLevel: 'low' | 'medium' | 'high'; // 修复建议的风险等级
+}
+
+/**
+ * 快速创建结构化错误 — 供工具 handler 使用
+ * 用法: return { success: false, output: '...', structuredError: fail('timeout', 'HTTP 503', { retryable: true, next_action: 'retry_with_delay', retry_delay_ms: 5000 }) }
+ */
+export function fail(
+  errorKind: StructuredError['error_kind'] | undefined,
+  message: string,
+  opts?: {
+    root_cause?: string;
+    retryable?: boolean;
+    next_action?: StructuredError['next_action'];
+    retry_delay_ms?: number;
+    toolName?: string;
+    args?: Record<string, any>;
     suggestedFix?: string;
-    confidence: number; // 0-1，修复建议的可信度
-    riskLevel: 'low' | 'medium' | 'high'; // 修复建议的风险等级
+  },
+): StructuredError {
+  const defaults: Record<string, { retryable: boolean; next_action: StructuredError['next_action']; retry_delay_ms?: number }> = {
+    network: { retryable: true, next_action: 'retry_with_delay', retry_delay_ms: 5000 },
+    timeout: { retryable: true, next_action: 'retry_with_delay', retry_delay_ms: 10000 },
+    rate_limit: { retryable: true, next_action: 'retry_with_delay', retry_delay_ms: 60000 },
+    not_found: { retryable: false, next_action: 'fix_args' },
+    syntax: { retryable: false, next_action: 'fix_args' },
+    permission: { retryable: false, next_action: 'ask_user' },
+    auth: { retryable: false, next_action: 'ask_user' },
+    resource: { retryable: false, next_action: 'switch_tool' },
+    runtime: { retryable: false, next_action: 'fix_args' },
+    unknown: { retryable: false, next_action: 'abort' },
+  };
+  const d = (errorKind && defaults[errorKind]) || defaults['unknown'];
+  return {
+    type: errorKind === 'network' ? 'NetworkError'
+      : errorKind === 'timeout' ? 'TimeoutError'
+      : errorKind === 'syntax' ? 'SyntaxError'
+      : errorKind === 'permission' ? 'PermissionError'
+      : errorKind === 'not_found' ? 'FileSystemError'
+      : 'UnknownError',
+    message,
+    root_cause: opts?.root_cause || errorKind || 'unknown',
+    error_kind: errorKind || 'unknown',
+    retryable: opts?.retryable ?? d.retryable,
+    next_action: opts?.next_action || d.next_action,
+    retry_delay_ms: opts?.retry_delay_ms || d.retry_delay_ms,
+    context: {
+      toolName: opts?.toolName,
+      args: opts?.args,
+    },
+    suggestedFix: opts?.suggestedFix,
+    confidence: 0.8,
+    riskLevel: 'low',
+  };
 }
 
 /**

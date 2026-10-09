@@ -17,6 +17,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { getScoped, resetScoped } from './workspace-scope.js';
 
 export type DebateRole = 'devils_advocate' | 'optimist' | 'pragmatist';
 
@@ -241,11 +242,15 @@ export class InternalDebate extends EventEmitter {
 
 // ===== 单例 =====
 
-let _instance: InternalDebate | null = null;
+// ===== workspace 作用域单例 =====
+// 串味修复: 原为进程级单例，history(最近 20 条辩论结论) 跨任务累积。
 
-export function getInternalDebate(): InternalDebate {
-  if (!_instance) {
-    _instance = new InternalDebate();
-  }
-  return _instance;
+/** 按 workspace 返回 InternalDebate 实例（传请求级 workspace） */
+export function getInternalDebate(workspace?: string): InternalDebate {
+  return getScoped<InternalDebate>('internalDebate', workspace, () => new InternalDebate());
+}
+
+/** 重置指定 workspace 的实例；不传则重置全部 */
+export function resetInternalDebate(workspace?: string): void {
+  resetScoped<InternalDebate>('internalDebate', workspace);
 }

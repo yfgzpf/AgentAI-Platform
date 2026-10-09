@@ -26,12 +26,11 @@ console.log('\n[步骤1] 初始化线索转化系统...');
 
 const leadSystem = getLeadConversionSystem();
 
-// 配置微信自动化（使用模拟模式，真实环境可配置zyai路径）
+// 配置微信自动化（使用模拟模式，真实环境可配置 Python 脚本路径）
 const wechatAdapter = getWeChatAutomationAdapter({
   dataPath: './wechat-data',
   industry: 'decoration',
   llmProvider: 'deepseek',
-  // pythonScriptPath: 'F:/zyai/deepseek-reasonix/skills/wechat-bot/services/wechat_automation_service.py',
 });
 
 // 设置微信接口

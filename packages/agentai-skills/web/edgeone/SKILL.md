@@ -7,7 +7,7 @@ version: 1.0.0
 homepage: https://api.skillhub.cn/mcp/edgeone
 allowed-tools: Bash,Read
 metadata:
-  openclaw:
+  agentai:
     emoji: "\U0001F310"
     install:
       - id: node

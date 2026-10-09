@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Example script for using Playwright MCP server with OpenClaw.
+"""Example script for using Playwright MCP server with AgentAI.
 
 This script demonstrates how to programmatically interact with
 the Playwright MCP server for browser automation.
@@ -13,7 +13,7 @@ import sys
 def run_mcp_command(tool_name: str, params: dict) -> dict:
     """Run a single MCP tool command via playwright-mcp.
     
-    Note: In real usage with OpenClaw, the MCP server runs continuously
+    Note: In real usage with AgentAI, the MCP server runs continuously
     and tools are called via the MCP protocol. This script shows the
     conceptual flow.
     """
@@ -99,7 +99,7 @@ def main():
     print("=" * 50)
     print()
     print("Note: These are conceptual examples showing MCP tool calls.")
-    print("In practice, OpenClaw manages the MCP server lifecycle.")
+    print("In practice, AgentAI manages the MCP server lifecycle.")
     print()
     
     example_navigate_and_click()
@@ -107,7 +107,7 @@ def main():
     example_extract_data()
     
     print("\n" + "=" * 50)
-    print("For actual usage, configure MCP server in OpenClaw config.")
+    print("For actual usage, configure MCP server in AgentAI config.")
 
 
 if __name__ == "__main__":

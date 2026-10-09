@@ -138,6 +138,22 @@ export const Editor: React.FC = () => {
     }
   }, []);
   const [searchQ, setSearchQ] = useState('');
+// P1 修复: 搜索框过滤文件树 — 之前 searchQ 只声明不消费
+const filterTree = (nodes: any[], q: string): any[] => {
+  if (!q.trim()) return nodes;
+  const result: any[] = [];
+  for (const node of nodes) {
+    const name = node.title || node.key || '';
+    if (name.toLowerCase().includes(q.toLowerCase())) {
+      result.push(node);
+    } else if (node.children) {
+      const filtered = filterTree(node.children, q);
+      if (filtered.length > 0) result.push({ ...node, children: filtered });
+    }
+  }
+  return result;
+};
+const filteredTree = filterTree(tree, searchQ);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [openFolderModal, setOpenFolderModal] = useState(false);
@@ -600,7 +616,7 @@ export const Editor: React.FC = () => {
         <Button size="small" icon={<FileAddOutlined />} disabled={!workspace} onClick={() => newFile(workspace)} title="新建文件到根" />
         <Button size="small" icon={<FolderAddOutlined />} disabled={!workspace} onClick={() => newFolder(workspace)} title="新建文件夹到根" />
         <Button size="small" icon={<ReloadOutlined />} disabled={!workspace} onClick={() => loadWorkspace(workspace)} title="刷新" />
-        <div style={{ width: 1, height: 20, background: '#333' }} />
+        <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
         <Input
           size="small"
           prefix={<SearchOutlined />}
@@ -662,11 +678,11 @@ export const Editor: React.FC = () => {
               <div style={{ flex: 1, overflow: 'auto', padding: 4 }}>
                 {loading ? (
                   <div style={{ textAlign: 'center', padding: 20 }}><Spin /></div>
-                ) : tree.length > 0 ? (
+                ) : filteredTree.length > 0 ? (
                   <Tree
                     showLine={{ showLeafIcon: false }}
                     blockNode
-                    treeData={tree}
+                    treeData={filteredTree}
                     loadData={onLoadData}
                     onSelect={(keys, info) => { onTreeSelect(keys, info); }}
                     defaultExpandAll={false}
@@ -844,7 +860,7 @@ export const Editor: React.FC = () => {
             </div>
           )}
 
-          <div style={{ color: '#555', fontSize: 11, textAlign: 'center', padding: 8, background: '#1a1a1a', borderRadius: 4 }}>
+          <div style={{ color: 'var(--muted-2)', fontSize: 11, textAlign: 'center', padding: 8, background: 'var(--bg-2)', borderRadius: 4 }}>
             🛡️ 不会访问 node_modules / .git / dist / out 等构建产物目录
           </div>
         </Space>
@@ -899,12 +915,15 @@ const MonacoEditorWithAI: React.FC<React.ComponentProps<typeof MonacoEditor>> = 
  */
 const BottomPanelContent: React.FC<{ tab: string }> = ({ tab }) => {
   const messages = useChatStore(s => s.messages);
+  const editorMessages = useChatStore(s => s.editorMessages);
+  // 内嵌 AI 面板写 editorMessages, 主聊天写 messages — 合并展示 (problems/terminal 都能看到)
+  const allMsgs = [...(editorMessages || []), ...(messages || [])];
   const terminalRef = useRef<HTMLDivElement>(null);
   const [terminalReady, setTerminalReady] = useState(false);
 
   // 模拟终端功能 - 使用 styled pre 模拟真实终端
   if (tab === 'terminal') {
-    const recentRuns = messages
+    const recentRuns = allMsgs
       .flatMap(m => m.segments || [])
       .filter((s: any) => s.kind === 'tool' && (s.name === 'run_code' || s.name === 'Bash' || s.name === 'PowerShell' || s.name === 'execute_command') && s.state !== 'running')
       .slice(-10)
@@ -925,8 +944,8 @@ const BottomPanelContent: React.FC<{ tab: string }> = ({ tab }) => {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '4px 12px',
-          background: '#1e1e1e',
-          borderBottom: '1px solid #333',
+          background: 'var(--bg-2)',
+          borderBottom: '1px solid var(--border)',
           fontSize: 11,
           color: 'var(--muted-2)',
         }}>
@@ -1024,34 +1043,93 @@ const BottomPanelContent: React.FC<{ tab: string }> = ({ tab }) => {
   }
 
   if (tab === 'problems') {
-    // 从 write_file / multi_edit 工具结果中提取编译错误
-    const compileErrors = messages
+    // 从 write/edit 工具结果提取编译错误 (C1/D1 2026-09-05):
+    // 1) 优先结构化 data.diagnostics (gateway SSE tool:result 已附带)
+    // 2) 兼容旧文本解析 (⚠️ 编译错误 后 tsc 行 path(line,col): error TSxxxx: msg)
+    // 兼容 write_file ok:true 但带编译错误、以及 multi_edit 多文件错误
+    const WRITE_TOOLS = ['write_file', 'multi_edit', 'edit_file', 'create_file', 'apply_edit'];
+    const toolSegs: any[] = allMsgs
       .flatMap(m => m.segments || [])
-      .filter((s: any) => s.kind === 'tool' && (s.name === 'write_file' || s.name === 'multi_edit') && !s.ok)
-      .flatMap((s: any) => {
-        const resultText = typeof s.result === 'string' ? s.result : JSON.stringify(s.result || '');
-        if (!resultText.includes('编译错误')) return [];
-        const errorPart = resultText.split('编译错误')[1] || resultText;
-        return errorPart.split('\n').filter((l: string) => l.trim()).map((l: string) => ({
-          file: s.args?.file_path || s.args?.path || 'unknown',
-          message: l.replace(/⚠️|请立即修复|:/g, '').trim().slice(0, 200),
-        }));
-      });
-    if (compileErrors.length === 0) {
+      .filter((s: any) => s.kind === 'tool' && s.state && s.state !== 'running' && WRITE_TOOLS.includes(s.name));
+
+    type Problem = { file: string; line?: number; column?: number; code?: string; message: string };
+    const problems: Problem[] = [];
+    const seen = new Set<string>();
+    const basenameOf = (p: string) => String(p || '').split(/[\\/]/).pop() || p;
+
+    for (const s of toolSegs) {
+      const argsFile = s.args?.file_path || s.args?.path || '';
+      const add = (p: Problem) => {
+        const key = `${p.file}:${p.line ?? 0}:${p.message}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        problems.push(p);
+      };
+
+      // 结构化路径: write_file / multi_edit 返回 data.diagnostics
+      const dataDiags = (s as any).data?.diagnostics;
+      if (Array.isArray(dataDiags) && dataDiags.length > 0) {
+        for (const d of dataDiags) {
+          add({
+            file: (d.file as string) || argsFile,
+            line: d.line as number | undefined,
+            column: d.column as number | undefined,
+            code: d.code as string | undefined,
+            message: String(d.message || ''),
+          });
+        }
+        continue;
+      }
+
+      // 文本回退: 解析 tsc 行
+      const resultText = typeof s.result === 'string' ? s.result : JSON.stringify(s.result || '');
+      if (!resultText.includes('编译错误')) continue;
+      const errorPart = resultText.split('编译错误')[1] || resultText;
+      for (const rawLine of errorPart.split('\n')) {
+        const l = rawLine.trim();
+        const m = /^(.+?)\((\d+)(?:,(\d+))?\):\s+(?:error|warning)\s+(?:(TS\d+):\s*)?(.*)$/.exec(l);
+        if (!m) continue;
+        // tsc 报相对路径; 若 basename 与 AI 写入路径一致则用更完整的写入路径
+        const errBase = basenameOf(m[1]).toLowerCase();
+        const file = argsFile && basenameOf(argsFile).toLowerCase() === errBase
+          ? argsFile : m[1].trim();
+        const code = m[4];
+        const message = (m[5] && m[5].trim()) || code || l;
+        add({
+          file,
+          line: Number(m[2]),
+          column: m[3] ? Number(m[3]) : undefined,
+          code,
+          message: message.trim().slice(0, 200),
+        });
+      }
+    }
+
+    problems.sort((a, b) => a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0) || (a.column ?? 0) - (b.column ?? 0));
+
+    if (problems.length === 0) {
       return <div style={{ padding: 8, color: 'var(--success)' }}>✅ 当前无编译错误</div>;
     }
     return (
       <div style={{ padding: 4 }}>
-        {compileErrors.map((e: any, i: number) => (
-          <div key={i} style={{
-            display: 'flex', gap: 6, padding: '3px 8px',
-            borderBottom: '1px solid rgba(255,255,255,0.05)',
-            cursor: 'pointer',
-          }}
-            onClick={() => window.dispatchEvent(new CustomEvent('agentai:open-file', { detail: { path: e.file } }))}
+        {problems.map((e, i) => (
+          <div
+            key={i}
+            style={{
+              display: 'flex', gap: 6, padding: '3px 8px', alignItems: 'flex-start',
+              borderBottom: '1px solid rgba(255,255,255,0.05)',
+              cursor: 'pointer',
+            }}
+            onClick={() => window.dispatchEvent(new CustomEvent('agentai:open-file', {
+              detail: { path: e.file, line: e.line, column: e.column },
+            }))}
           >
-            <span style={{ color: '#ef4444', flexShrink: 0 }}>✕</span>
-            <span style={{ color: '#f87171', flex: 1, fontSize: 11 }}>{e.message}</span>
+            <span style={{ color: '#ef4444', flexShrink: 0, marginTop: 1 }}>✕</span>
+            <span style={{ color: '#f87171', flex: 1, fontSize: 11, wordBreak: 'break-all' }}>
+              {e.line != null ? `L${e.line}${e.column ? ':' + e.column : ''} ` : ''}
+              {e.code ? `[${e.code}] ` : ''}
+              {e.message}
+            </span>
             <span style={{ color: '#666', fontSize: 10, flexShrink: 0 }}>{e.file.split(/[\\/]/).pop()}</span>
           </div>
         ))}
