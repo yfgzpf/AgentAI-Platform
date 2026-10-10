@@ -39,12 +39,18 @@ export const FREE_PROVIDERS = new Set([
     'agnes-2.5-flash', 'agnes-2.0', 'deepseek-v4-flash',
 ]);
 
-/** 判定 provider/model id 是否属于免费档 (含 agnes 各版本别名)。 */
+/**
+ * 判定 provider/model id 是否属于免费档 (含 agnes 各免费别名)。
+ *
+ * ⚠️ 2026-10-11 修复: 原实现用 `id.startsWith('agnes')` 做兜底, 会把
+ * agnes-3.0-flash (付费强模型, 本文件 :1388/:1390 首选 defaultModel) 也误判为免费
+ * → 子智能体门控 (agentai-loop.ts isFreeModel 分支) 直接禁用, 强模型能力被锁死。
+ * 现在改为白名单精确匹配, 只有明确列出的免费别名才判免费; 未列出的 agnes 版本
+ * (如 3.0-flash 等付费档) 一律按付费处理, 安全默认。
+ */
 export function isFreeProvider(id: string | undefined | null): boolean {
     if (!id) return false;
-    if (FREE_PROVIDERS.has(id)) return true;
-    // agnes 系列带版本后缀 (agnes-2.5-flash / agnes-2.0 等) 一律归为免费档
-    return id.startsWith('agnes');
+    return FREE_PROVIDERS.has(id);
 }
 
 
