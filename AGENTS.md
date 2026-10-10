@@ -275,17 +275,18 @@ AI 经常做某操作 → create_tool({name:'diff_files', script:'...'})
 
 ⚠️ **元认知 / 置信度层对强模型 100% 静默**：
 ```
-agentai-loop.ts:4607  if (this._capabilityTier !== 'autonomous' && iteration < maxIterations*0.5)  // MetaCognitiveLoop
-agentai-loop.ts:4775  if (this._capabilityTier !== 'autonomous' && iteration < maxIterations*0.5)  // ConfidenceEstimator
+agentai-loop.ts:4702  if (this._capabilityTier !== 'autonomous' && iteration < maxIterations*0.5)  // MetaCognitiveLoop (实际门控行号, 2026-10-11 更正; 旧文档写 4607 是块内行)
+agentai-loop.ts:4791  if (this._capabilityTier !== 'autonomous')  // ConfidenceEstimator (无 iteration 上限)
 ```
 - 付费强模型（DeepSeek Pro / GPT-4o 等）**整个决策层永不执行**
-- 即使命中，也只有后 50% 迭代（90 轮里第 46-90 轮）
-- 且 `MetaCognitiveLoop` 的 `currentPlan: []` / `pendingQuestions: []` **恒为空数组硬编码**（:4615-4616, 4635-4636）
+- 即使命中，MetaCognitive 也只有前 50% 迭代（90 轮里第 1-45 轮，旧文档"后 50%"表述有误）
+- 且 `MetaCognitiveLoop` 的 `currentPlan: []` / `pendingQuestions: []` **恒为空数组硬编码**
 - 投入 159 + 220 + 278 = 657 行代码 + 5 个测试文件，生产主路径零执行
 
 tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 governor` 动态覆盖 → `:1873` 兜底 `'supervised'`
 
-**要么改门控，要么别在架构图里宣称决策层是核心机制。这是全项目最贵的技术债 —— 不是代码债，是认知债。**
+**处理决策 (2026-10-11)：暂不改门控，标注为有意设计。** 理由：强模型自带决策能力，外部元认知/置信度注入反而可能引入矛盾指令 (见上文"系统评价"第2点)；657 行为弱模型保留。
+⚠️ 但架构图/文档中宣称"决策层是核心机制"的表述必须与门控事实对齐 —— 这是认知债，已在本段落标注。若未来想让全 tier 生效，删除两处 `!== 'autonomous'` 条件即可，不要重构整个模块。
 
 ### 五、前端能力
 
@@ -406,7 +407,7 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
 | 指标 | 原文档 | 实际 | 核验方式 |
 |------|--------|------|---------|
 | LLM Provider | 4 | 8 | llm-router.ts |
-| 工具数量 | 57+ | **198 声明 / 203 实现** | `pnpm verify:tools`（AST） |
+| 工具数量 | 57+ | **201 声明 / 202 实现** (2026-10-11 补 get_symbols/knowledge_explore 声明后) | `pnpm verify:tools`（AST） |
 | 评分维度 | 3D | 5D | model-classifier.ts:511-515 |
 | MAX_AUTO_RESUME | 5 | 10 | agentai-loop.ts:2601 |
 | 绝对超时 | 3 分钟 | 60 分钟 | agentai-loop.ts:1963 |
@@ -415,6 +416,7 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
 | 上下文注入 | 8 层 | **8 层是目标，实际 49 处注入 / 17 个平铺 try-catch** | grep `systemMsgs.push` |
 | system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
 | 测试覆盖 | "无 E2E" | 65 文件 / ~790 测试，但 **agentai-loop.ts(6416行) 零覆盖** | vitest |
+| @ts-nocheck 文件 | - | **30 个** (22 源文件 + 8 测试文件, 2026-10-11 实测) | `grep -rl "@ts-nocheck" src/ \| wc -l` |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）
 
