@@ -790,7 +790,10 @@ ${originalPrompt}${storyInfo}${characterInfo}
       // 构建用户消息 — 有参考图用多模态
       const userContent: any[] = [{ type: 'text', text: prompt }];
       for (const img of refImages.slice(0, 5)) {
-        userContent.push({ type: 'image_url', image_url: { url: img.startsWith('http') ? img : `data:image/png;base64,${img}` } });
+        // 已是 Data URI 或 http URL → 直接使用; 纯 base64 → 补全前缀
+        // 修复: 之前漏判 data: 前缀, 导致 data:image/png;base64,data:image/png;base64,... 非法格式 ("图送形式错误")
+        const url = await urlToBase64(String(img));
+        userContent.push({ type: 'image_url', image_url: { url } });
       }
 
       const llmResp = await fetch('https://api.agnes-ai.cn/v1/chat/completions', {
@@ -980,9 +983,7 @@ async function submitSeedance(
     content: [{ type: 'text', text: prompt }],
   };
   if (image) {
-    const imgData = image.startsWith('data:') || image.startsWith('http')
-      ? image
-      : `data:image/png;base64,${image}`;
+    const imgData = await urlToBase64(image);
     volBody.content.push({ type: 'image_url', image_url: { url: imgData } });
   }
   try {
@@ -1264,8 +1265,29 @@ console.log(`[urlToBase64] data: URI 直接返回 (长度: ${trimmed.length})`);
 return trimmed;
 }
 // 纯 base64 (不以 http 开头) → 补全为 Data URI
+// 相对路径 (/api/files/download?path=xxx): 前端持久化的场景图/角色图常是相对路径,
+// 不处理会被误判为"纯 base64"拼出非法 Data URI, 导致 Agnes 400 (2026-10-10 修复)
+if (trimmed.startsWith('/')) {
+  const m = trimmed.match(/[?&]path=([^&]+)/);
+  if (m) {
+    const real = decodeURIComponent(m[1]);
+    if (real && fs.existsSync(real)) {
+      const buf = fs.readFileSync(real);
+      const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
+      console.log(`[urlToBase64] 相对路径 → 本地文件 → Data URI (长度: ${dataUri.length})`);
+      return dataUri;
+    }
+    console.warn(`[urlToBase64] 相对路径对应文件不存在: ${real}`);
+  }
+  throw new Error(`无法解析相对图片 URL "${trimmed.slice(0, 80)}" — 素材必须是公网 http(s) URL、/api/files 本地路径、或合法 Base64/Data URI`);
+}
 if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-const dataUri = `data:image/png;base64,${trimmed}`;
+  // 校验是否真的像 base64, 不像则立即报错, 不再盲目补前缀
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(trimmed) || trimmed.length < 64) {
+    throw new Error(`image 既不是合法 URL/Base64/Data URI: "${trimmed.slice(0, 80)}"`);
+  }
+  const mime = trimmed.startsWith('/9j/') ? 'image/jpeg' : 'image/png';
+  const dataUri = `data:${mime};base64,${trimmed}`;
 console.log(`[urlToBase64] 纯 base64 → 补全 Data URI (长度: ${dataUri.length})`);
 return dataUri;
 }
@@ -1295,6 +1317,6 @@ return dataUri;
     return dataUri;
   } catch (e: any) {
     console.warn(`[urlToBase64] 下载本地图片失败: ${trimmed} — ${e.message}`);
-    return trimmed; // 降级: 原样返回
+    throw new Error(`本地图片下载失败 (${trimmed.slice(0, 80)}): ${e.message} — 素材必须是公网 URL 或可本地解析的文件`);
   }
 }
