@@ -1378,6 +1378,10 @@ const [loading, setLoading] = useState(false);
       onSubagentError: (info: any) => {
         lastActivityTs = Date.now();
         setSubagents(prev => prev.map(a => a.id === info.id ? { ...a, status: 'error' as const, error: info.error } : a));
+        // 与 done 一致: 短暂可见(5s)后移除, 避免失败记录永久驻留
+        setTimeout(() => {
+          setSubagents(prev => prev.filter(a => a.id !== info.id));
+        }, 5000);
       },
       onSubagentProgress: (info: any) => {
         lastActivityTs = Date.now();
