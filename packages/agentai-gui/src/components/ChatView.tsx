@@ -2143,8 +2143,8 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         {/* 3D 可交互场景 (AI 调用 generate_3d_scene 生成) */}
         {scene3D && <Scene3DViewer scene={scene3D} />}
 
-        {/* 子智能体状态实时显示 (P2-9) */}
-        {subagents.length > 0 && <SubagentStatus agents={subagents} pending={subagents.some(a => a.status === 'running')} />}
+        {/* 子智能体状态实时显示 (P2-9) — 2026-10-11: 折叠摘要改造, 全部终态后自动清空消失 */}
+        {subagents.length > 0 && <SubagentStatus agents={subagents} pending={subagents.some(a => a.status === 'running')} onAllFinished={() => setSubagents([])} />}
 
         {/* Bottom padding */}
         <div style={{ height: 8 }} />
