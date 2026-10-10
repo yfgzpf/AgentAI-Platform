@@ -288,6 +288,8 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
 **处理决策 (2026-10-11)：暂不改门控，标注为有意设计。** 理由：强模型自带决策能力，外部元认知/置信度注入反而可能引入矛盾指令 (见上文"系统评价"第2点)；657 行为弱模型保留。
 ⚠️ 但架构图/文档中宣称"决策层是核心机制"的表述必须与门控事实对齐 —— 这是认知债，已在本段落标注。若未来想让全 tier 生效，删除两处 `!== 'autonomous'` 条件即可，不要重构整个模块。
 
+**★ 2026-10-11 更新 (commit df09461)：认知债已清偿一半。** 之前更严重的问题是 `_capabilityTier` 在 `run()` 里 `ensureContext()` **之后**才算，导致 `buildImmutablePrefix` 执行时 tier 恒为默认 `'supervised'` —— **所有 tier 分支 (lite prompt / 全量工具) 实际从未对强模型生效，强模型一直被当弱模型灌全套 51 处注入**。现已把 tier 检测抽成 `detectCapabilityTier()` 提前到 `ensureContext()` 之前调用；并在 `buildImmutablePrefix` 里新增 `isStrongModel` 门控，autonomous 模型跳过 evolution 记忆 / soul 人格七件套 / 上次工作记录 / 上次会话摘要 4 组弱模型脚手架注入。元认知/置信度 3 处 `!== 'autonomous'` 门控保留（强模型有意跳过外部决策层，注释已标注"非技术债"）。
+
 ### 五、前端能力
 
 | 组件 | 能力 |
