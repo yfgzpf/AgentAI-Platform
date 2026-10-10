@@ -579,12 +579,70 @@ export class AgentAILoop extends EventEmitter {
         this.contextReady = true;
     }
     /**
+     * 2026-10-11 P0: 提取自 run() 内联块 — 模型能力分层检测 (tier + 运行时参数).
+     * 必须在 buildImmutablePrefix 之前调用, 否则 tier 恒为默认 'supervised',
+     * 强模型会被当弱模型灌全套上下文 (lite prompt / 全量工具 / 分层门控全部失效)。
+     * 注意: 动态能力矩阵覆盖依赖 this._taskType, 调用方需先设置 _taskType。
+     */
+    async detectCapabilityTier() {
+        // ═══ 模型能力分层: 6维评分 → 自治等级 + 运行时参数适配 ═══
+        // 核心理念: 不是所有模型都需要手把手管。根据模型元数据自动计算 6 维能力评分
+        // (reasoning/context/speed/vision/toolCall/costScore), 综合得分决定能力等级,
+        // 同时驱动运行时参数 (迭代次数/thinking/温度/压缩阈值) 动态调整。
+        //   autonomous  — 付费强模型 (DeepSeek Pro, GPT-4o): 自主决策, 跳过大部分运行时干预
+        //   guided      — 中等模型 (免费但大窗口, 如 agnes-2.0-flash 256K): 轻度引导
+        //   supervised  — 弱模型 (免费小模型): 完整引导 (元认知/置信度/反摆烂)
+        try {
+            const { getCapabilitiesById, getRuntimeParamsById } = await import('./model-classifier.js');
+            const modelId = `${this.opts.model}:${this.opts.modelName || 'default'}`;
+            this._capabilities = getCapabilitiesById(this.opts.model, this.opts.modelName);
+            this._capabilityTier = this._capabilities.tier;
+            const rt = getRuntimeParamsById(this.opts.model, this.opts.modelName);
+            // ═══ 系统管控员: 使用动态能力矩阵覆盖静态等级 ═══
+            // 如果运行时数据充足, 用动态等级替代静态等级
+            try {
+                const { getTracker } = await import('./governor/runtime-capability-tracker.js');
+                const dynCap = getTracker().getDynamicCapabilities(modelId, this._taskType);
+                if (dynCap.hasRuntimeData) {
+                    this._capabilityTier = dynCap.dynamicTier;
+                    logger.info(`🧠 动态能力覆盖: static=${this._capabilities.tier} → dynamic=${dynCap.dynamicTier} ` +
+                        `(samples=${dynCap.sampleCount}, runtime=${dynCap.runtimeOverall.toFixed(2)}, weight=${(dynCap.runtimeWeight * 100).toFixed(0)}%)`);
+                }
+            }
+            catch { /* dynamic cap 容错 */ }
+            // 应用运行时参数 (仅当用户未显式设置时)
+            if (!this.opts.userPickedModel) {
+                this.opts.thinking = rt.thinking;
+                this.opts.thinkingBudget = rt.thinkingBudget;
+            }
+            // 上下文压缩阈值存储供压缩逻辑使用
+            this._contextCompressThreshold = rt.contextCompressThreshold;
+            const cap = this._capabilities;
+            logger.info(`🧠 模型能力: ${this.opts.model}:${this.opts.modelName || 'default'} → tier=${this._capabilityTier} | ` +
+                `reasoning=${cap.reasoning.toFixed(2)} toolCall=${cap.toolCall.toFixed(2)} speed=${cap.speed.toFixed(2)} ` +
+                `context=${cap.context.toFixed(2)} overall=${cap.overall.toFixed(2)} | ` +
+                `maxIter=${rt.maxIterations} thinking=${rt.thinking} temp=${rt.temperature}`);
+        }
+        catch {
+            this._capabilityTier = 'supervised'; // 保守默认
+        }
+    }
+    /**
      * 构建不可变前缀: AI 身份 + 规则 + 工具描述 + 记忆 + workspace
      *
      * 2026-06-24 升级：精简上下文 + 工具按需加载 + 进化记忆智能召回
      */
     async buildImmutablePrefix(messages) {
         const systemMsgs = [];
+        // ═══ 2026-10-11 P0: 强模型 (autonomous) 上下文分层门控 ═══
+        // 付费强模型自带推理/工具调用/自我纠错能力, 不需要"手把手教"型注入。
+        // 以下噪声类注入对强模型只做稀释 (浪费 token + 引入矛盾指令), 一律跳过:
+        //   - evolutionSystemBlock (跨会话进化记忆召回)
+        //   - soul 人格七件套 (梦境/内心独白/痛觉/好奇心/辩论/隐私记忆/价值向量)
+        //   - 上次工作记录 / 上次会话摘要 (强模型从对话历史自己判断是否需要)
+        //   - 行业知识库 RAG (强模型可直接读代码, 不需要预制行业模板)
+        // 保留给弱模型 (guided/supervised) — 这是它们真正需要的"脚手架"。
+        const isStrongModel = this._capabilityTier === 'autonomous';
         // === 0.1 上下文预算台账 (2026-10-10) ===
         // 背景: MAX_INJECTION_BUDGET 原先只作用在 appendOnlyLog, 而本函数产出的 49 条
         // system 消息从不进 appendOnlyLog (ensureContext:678 明确过滤掉 system),
@@ -687,48 +745,52 @@ export class AgentAILoop extends EventEmitter {
         // === 1.1 进化记忆智能召回（2026-06-24 新增，2026-06-26 整合治失忆症）===
         // 唯一的 evolution 注入点：智能召回 → 格式化 → 注入 system prompt
         // (原 §4.5 的全量读取已废弃，统一由此处管理，避免重复注入)
+        // 2026-10-11: 强模型跳过 — 跨会话进化记忆对 autonomous 模型只增噪 (强模型
+        // 当轮已有完整对话历史), 弱模型保留作为经验脚手架
         let evolutionPatterns = [];
         let evolutionSystemBlock = '';
-        try {
-            const relevantEvolution = recallEvolution({
-                taskType,
-                industry: userIndustry,
-                keywords,
-                userId: this.opts.userId,
-                workspace: this.opts.workspace,
-                limit: 30,
-                /** 【P0-4】有效性过滤：过滤已触发但有效性<0.3的噪声规则 */
-                minEffectiveness: 0.3,
-                /** 【P0-4】按有效性排序：已验证有效的规则优先返回 */
-                prioritizeEffective: true,
-            });
-            evolutionPatterns = extractPatterns(relevantEvolution);
-            // 格式化进化记忆供两种 prompt 共用
-            // P2-1.6: 只取 Top-3 最相关经验 (节省 ~1500 token)
-            // P0-4: 按有效性排序，已验证有效的优先展示
-            const valuable = relevantEvolution
-                .filter(e => e.type !== 'tool_stats')
-                .slice(0, 3);
-            if (valuable.length > 0) {
-                const lines = valuable.map(e => {
-                    const tag = e.type === 'meta_instruction' ? '[教练建议]'
-                        : e.type === 'failure' ? '[教训]'
-                            : e.type === 'preference' ? '[偏好]'
-                                : '[经验]';
-                    const content = (e.content || '').slice(0, 80);
-                    // P0-4: 有效性标记
-                    const tc = e.triggerCount || 0;
-                    const ec = e.effectCount || 0;
-                    const eff = tc > 0 ? Math.round(ec / tc * 100) : -1;
-                    const effTag = eff >= 0 ? ` [有效${eff}%]` : '';
-                    return `- ${tag} ${content}${effTag}`;
+        if (!isStrongModel) {
+            try {
+                const relevantEvolution = recallEvolution({
+                    taskType,
+                    industry: userIndustry,
+                    keywords,
+                    userId: this.opts.userId,
+                    workspace: this.opts.workspace,
+                    limit: 30,
+                    /** 【P0-4】有效性过滤：过滤已触发但有效性<0.3的噪声规则 */
+                    minEffectiveness: 0.3,
+                    /** 【P0-4】按有效性排序：已验证有效的规则优先返回 */
+                    prioritizeEffective: true,
                 });
-                evolutionSystemBlock = `# Evolution Memory (跨会话经验)\n${lines.join('\n')}`;
+                evolutionPatterns = extractPatterns(relevantEvolution);
+                // 格式化进化记忆供两种 prompt 共用
+                // P2-1.6: 只取 Top-3 最相关经验 (节省 ~1500 token)
+                // P0-4: 按有效性排序，已验证有效的优先展示
+                const valuable = relevantEvolution
+                    .filter(e => e.type !== 'tool_stats')
+                    .slice(0, 3);
+                if (valuable.length > 0) {
+                    const lines = valuable.map(e => {
+                        const tag = e.type === 'meta_instruction' ? '[教练建议]'
+                            : e.type === 'failure' ? '[教训]'
+                                : e.type === 'preference' ? '[偏好]'
+                                    : '[经验]';
+                        const content = (e.content || '').slice(0, 80);
+                        // P0-4: 有效性标记
+                        const tc = e.triggerCount || 0;
+                        const ec = e.effectCount || 0;
+                        const eff = tc > 0 ? Math.round(ec / tc * 100) : -1;
+                        const effTag = eff >= 0 ? ` [有效${eff}%]` : '';
+                        return `- ${tag} ${content}${effTag}`;
+                    });
+                    evolutionSystemBlock = `# Evolution Memory (跨会话经验)\n${lines.join('\n')}`;
+                }
             }
-        }
-        catch (e) {
-            logger.warn('[ctx:evolution] 进化记忆加载失败, 本轮不注入跨会话经验', e);
-        }
+            catch (e) {
+                logger.warn('[ctx:evolution] 进化记忆加载失败, 本轮不注入跨会话经验', e);
+            }
+        } // !isStrongModel
         if (useLitePrompt) {
             // 精简版 system prompt（50行）
             const litePrompt = buildLiteSystemPrompt({
@@ -1206,36 +1268,39 @@ export class AgentAILoop extends EventEmitter {
         // === 4.6 IDE 状态感知 ===
         // (已并入上方 §1.6 统一注入; 此处曾重复 buildIdeContext 造成同一 IDE 上下文出现两份, 已删除)
         // === 4.65 跨会话工作日志: 注入"上次在这个工作区做了什么" ===
-        try {
-            const ws = this.opts.workspace || process.cwd();
-            const logFile = path.join(ws, '.agentai', 'work-log.jsonl');
-            if (fs.existsSync(logFile)) {
-                const lines = fs.readFileSync(logFile, 'utf-8').trim().split('\n').filter(Boolean).slice(-3); // 最近 3 条
-                if (lines.length > 0) {
-                    const recent = lines.map(l => {
-                        try {
-                            const e = JSON.parse(l);
-                            const time = new Date(e.ts).toLocaleString();
-                            const reads = e.readFiles?.length ? `读: ${e.readFiles.slice(0, 4).join(', ')}` : '';
-                            const writes = e.writtenFiles?.length ? `写: ${e.writtenFiles.slice(0, 4).join(', ')}` : '';
-                            return `### ${time} (${e.iterations}轮)\n目标: ${e.userGoal}\n结果: ${(e.summary || '').slice(0, 200)}\n${reads}\n${writes}`;
+        // 2026-10-11: 强模型跳过 — 上轮工作记录对 autonomous 模型是噪声, 弱模型保留
+        if (!isStrongModel) {
+            try {
+                const ws = this.opts.workspace || process.cwd();
+                const logFile = path.join(ws, '.agentai', 'work-log.jsonl');
+                if (fs.existsSync(logFile)) {
+                    const lines = fs.readFileSync(logFile, 'utf-8').trim().split('\n').filter(Boolean).slice(-3); // 最近 3 条
+                    if (lines.length > 0) {
+                        const recent = lines.map(l => {
+                            try {
+                                const e = JSON.parse(l);
+                                const time = new Date(e.ts).toLocaleString();
+                                const reads = e.readFiles?.length ? `读: ${e.readFiles.slice(0, 4).join(', ')}` : '';
+                                const writes = e.writtenFiles?.length ? `写: ${e.writtenFiles.slice(0, 4).join(', ')}` : '';
+                                return `### ${time} (${e.iterations}轮)\n目标: ${e.userGoal}\n结果: ${(e.summary || '').slice(0, 200)}\n${reads}\n${writes}`;
+                            }
+                            catch {
+                                return '';
+                            }
+                        }).filter(Boolean).join('\n\n');
+                        if (recent.trim()) {
+                            systemMsgs.push({
+                                role: 'system',
+                                content: `# 上次工作记录 (跨会话恢复)\n以下是本工作区最近的工作历史, 如果用户说"继续"请基于此恢复:\n\n${recent}`,
+                            });
                         }
-                        catch {
-                            return '';
-                        }
-                    }).filter(Boolean).join('\n\n');
-                    if (recent.trim()) {
-                        systemMsgs.push({
-                            role: 'system',
-                            content: `# 上次工作记录 (跨会话恢复)\n以下是本工作区最近的工作历史, 如果用户说"继续"请基于此恢复:\n\n${recent}`,
-                        });
                     }
                 }
             }
-        }
-        catch (e) {
-            logger.warn('[ctx:work-log] 工作日志读取失败, 本轮不注入', e);
-        }
+            catch (e) {
+                logger.warn('[ctx:work-log] 工作日志读取失败, 本轮不注入', e);
+            }
+        } // !isStrongModel
         // === 4.7 自进化规则: 加载 AI 自己创建的行为规则 ===
         try {
             const rulesFile = path.join(this.opts.workspace || process.cwd(), '.agentai', 'evolved-rules.json');
@@ -1258,55 +1323,63 @@ export class AgentAILoop extends EventEmitter {
         // 串味修复: soul 7 模块已改为 per-workspace 实例, 必须传请求级 workspace。
         // 若传全局 WorkspaceManager.projectDir, 该值会被其他请求改写（P0-9），
         // 串味会原样复现。
-        try {
-            const { getDreamEngine, getInnerVoice, getPainSense, getCuriosityEngine, getInternalDebate } = await import('./soul/index.js');
-            const _soulWs = this.opts.workspace;
-            const dream = getDreamEngine(undefined, _soulWs);
-            const innerVoice = getInnerVoice(_soulWs);
-            const painSense = getPainSense(_soulWs);
-            const curiosity = getCuriosityEngine(_soulWs);
-            const debate = getInternalDebate(_soulWs);
-            // 梦境上下文: AI "醒来后记得的梦"
-            const dreamCtx = dream.getDreamContext();
-            if (dreamCtx)
-                systemMsgs.push({ role: 'system', content: dreamCtx });
-            track('soul:dream', 30);
-            // 内心独白: 影响 AI 回复的语气和方向
-            innerVoice.whisper('before_reply', typeof userMessage === 'string' ? userMessage : '');
-            const innerCtx = innerVoice.getInfluencingThoughts();
-            if (innerCtx)
-                systemMsgs.push({ role: 'system', content: innerCtx });
-            track('soul:inner', 20);
-            // 痛觉系统: 失败时的情感信号
-            const emotionCtx = painSense.getEmotionalContext();
-            if (emotionCtx)
-                systemMsgs.push({ role: 'system', content: emotionCtx });
-            track('soul:emotion', 20);
-            // 好奇心: 注入未解问题和近期洞察
-            const curiosityCtx = curiosity.getCuriosityContext();
-            if (curiosityCtx)
-                systemMsgs.push({ role: 'system', content: curiosityCtx });
-            track('soul:curiosity', 30);
-            // 内部辩论: 注入近期辩论结论
-            const debateCtx = debate.getDebateContext();
-            if (debateCtx)
-                systemMsgs.push({ role: 'system', content: debateCtx });
-            track('soul:debate', 30);
-            // 隐私记忆: AI 的加密内心记忆
-            const { getPrivateMemory, getValueSystem } = await import('./soul/index.js');
-            const privateCtx = getPrivateMemory(_soulWs).getPrivateContext();
-            if (privateCtx)
-                systemMsgs.push({ role: 'system', content: privateCtx });
-            track('soul:private', 30);
-            // 价值向量: AI 的直觉倾向
-            const valueCtx = getValueSystem(_soulWs).getValueContext();
-            if (valueCtx)
-                systemMsgs.push({ role: 'system', content: valueCtx });
-            track('soul:value', 30);
-        }
-        catch (e) {
-            logger.warn('[ctx:soul] soul层加载失败, 7 层人格上下文全部丢失', e);
-        }
+        //
+        // ═══ 2026-10-11 强模型门控: soul 人格七件套只对非 autonomous tier 注入 ═══
+        // 付费强模型 (autonomous) 自带推理/语气控制能力, soul 注入 (梦境/内心独白/痛觉/
+        // 好奇心/辩论/隐私记忆/价值向量) 只会稀释任务上下文、引入矛盾人格指令。
+        // 弱模型 (guided/supervised) 保留 soul — 这是给"不会自己掌控节奏"的模型的人格辅助。
+        const skipSoulForStrongModel = this._capabilityTier === 'autonomous';
+        if (!skipSoulForStrongModel) {
+            try {
+                const { getDreamEngine, getInnerVoice, getPainSense, getCuriosityEngine, getInternalDebate } = await import('./soul/index.js');
+                const _soulWs = this.opts.workspace;
+                const dream = getDreamEngine(undefined, _soulWs);
+                const innerVoice = getInnerVoice(_soulWs);
+                const painSense = getPainSense(_soulWs);
+                const curiosity = getCuriosityEngine(_soulWs);
+                const debate = getInternalDebate(_soulWs);
+                // 梦境上下文: AI "醒来后记得的梦"
+                const dreamCtx = dream.getDreamContext();
+                if (dreamCtx)
+                    systemMsgs.push({ role: 'system', content: dreamCtx });
+                track('soul:dream', 30);
+                // 内心独白: 影响 AI 回复的语气和方向
+                innerVoice.whisper('before_reply', typeof userMessage === 'string' ? userMessage : '');
+                const innerCtx = innerVoice.getInfluencingThoughts();
+                if (innerCtx)
+                    systemMsgs.push({ role: 'system', content: innerCtx });
+                track('soul:inner', 20);
+                // 痛觉系统: 失败时的情感信号
+                const emotionCtx = painSense.getEmotionalContext();
+                if (emotionCtx)
+                    systemMsgs.push({ role: 'system', content: emotionCtx });
+                track('soul:emotion', 20);
+                // 好奇心: 注入未解问题和近期洞察
+                const curiosityCtx = curiosity.getCuriosityContext();
+                if (curiosityCtx)
+                    systemMsgs.push({ role: 'system', content: curiosityCtx });
+                track('soul:curiosity', 30);
+                // 内部辩论: 注入近期辩论结论
+                const debateCtx = debate.getDebateContext();
+                if (debateCtx)
+                    systemMsgs.push({ role: 'system', content: debateCtx });
+                track('soul:debate', 30);
+                // 隐私记忆: AI 的加密内心记忆
+                const { getPrivateMemory, getValueSystem } = await import('./soul/index.js');
+                const privateCtx = getPrivateMemory(_soulWs).getPrivateContext();
+                if (privateCtx)
+                    systemMsgs.push({ role: 'system', content: privateCtx });
+                track('soul:private', 30);
+                // 价值向量: AI 的直觉倾向
+                const valueCtx = getValueSystem(_soulWs).getValueContext();
+                if (valueCtx)
+                    systemMsgs.push({ role: 'system', content: valueCtx });
+                track('soul:value', 30);
+            }
+            catch (e) {
+                logger.warn('[ctx:soul] soul层加载失败, 7 层人格上下文全部丢失', e);
+            }
+        } // skipSoulForStrongModel
         // === 4.8 启动感知: 首轮注入项目摘要 ===
         if (!this._startupGitInjected) {
             this._startupGitInjected = true;
@@ -1370,7 +1443,9 @@ export class AgentAILoop extends EventEmitter {
         }
         // === 4.9 跨会话连续记忆: 注入上次会话摘要 (支持 AI 控制是否注入) ===
         // P0 修复: 同会话内"继续"类消息 → 注入当前会话进度摘要 (429/空回复中断后恢复)
-        if (this.iteration === 0 && typeof userMessage === 'string' && /继续|接着|继续实现|继续完成|resume/i.test(userMessage)) {
+        // 2026-10-11: 强模型跳过 — "继续"类消息的进度摘要/上次会话注入对 autonomous 模型是噪声
+        // (它当轮已有完整对话历史), 弱模型保留作为"失忆"脚手架
+        if (!isStrongModel && this.iteration === 0 && typeof userMessage === 'string' && /继续|接着|继续实现|继续完成|resume/i.test(userMessage)) {
             const toolMsgs = this.context.appendOnlyLog.filter(m => m.role === 'tool');
             const assistantMsgs = this.context.appendOnlyLog.filter(m => m.role === 'assistant' && m.content);
             if (toolMsgs.length > 0 || assistantMsgs.length > 0) {
@@ -1792,6 +1867,14 @@ export class AgentAILoop extends EventEmitter {
      * @param userMessage 纯文本消息, 或含 text+image_url 块的结构化消息
      */
     async run(userMessage) {
+        const msgText = typeof userMessage === 'string' ? userMessage : '';
+        this._taskType = detectTaskType(msgText);
+        // ═══ 2026-10-11 P0: 先算 tier 再建上下文 — buildImmutablePrefix 依赖 _capabilityTier
+        // 做分层门控 (强模型精简注入), 之前 tier 在 ensureContext 之后才算, 导致首跑时
+        // tier 恒为默认 'supervised', 所有 tier 分支 (lite prompt / 全量工具 / 分层注入)
+        // 实际全部走"弱模型"路径 — 强模型被当弱模型灌了全套上下文。
+        // _taskType 必须先于 detectCapabilityTier (动态能力矩阵覆盖按 taskType 分维度)。
+        await this.detectCapabilityTier();
         await this.ensureContext();
         this.iteration = 0;
         this.context.volatileScratch = '';
@@ -1799,14 +1882,7 @@ export class AgentAILoop extends EventEmitter {
         this._fillerState = { confirmed: 0, lastTail: '' };
         // 安全守护: H5 修复 — 每次 run() 重置 metaLoop，防止 stepCount 跨消息累积导致元认知失效
         this.metaLoop = null;
-        // ═══ P0 修复: 任务隔离 — 每次 run() 重新检测任务类型, 清除上轮强制的技能 ═══
-        // 之前: _taskType 和 _forceSkill 在 buildImmutablePrefix 中设置一次后不再更新
-        //       → "报价表"任务串味到后续所有对话 (用户说"发布方案"也被匹配到报价技能)
-        // 现在: 每次新消息都重新检测, 清除旧任务上下文
-        const msgText = typeof userMessage === 'string' ? userMessage : '';
-        this._taskType = detectTaskType(msgText);
-        // ═══ 2026-10-06 P0: 任务目标写入台账 ═══
-        // 用户诉求是整个任务里最不能丢的东西 —— 压缩、裁剪、跨轮全部不碰它。
+        // ═══ P0 修复: 任务隔离 — 清除上轮强制的技能 (taskType 检测已提前到 tier 之前) ═══
         // 判定"换话题"用 detectTaskType 的结果，避免把闲聊也算成新任务覆盖掉真目标。
         if (msgText.trim().length > 0) {
             // detectTaskType 只有 coding/research/media/industry/general 五类（无 chat），
@@ -1819,52 +1895,14 @@ export class AgentAILoop extends EventEmitter {
         this.ledger.setIteration(0);
         this._forceSkill = null; // 清除上轮强制技能, 让 skillManager重新匹配
         this._skippedToolCalls = []; // 清空上一轮遗留的跳过记录
-        console.log(`[loop] task isolation: _taskType=${this._taskType}, _forceSkill cleared`);
+        logger.debug(`[loop] task isolation: _taskType=${this._taskType}, _forceSkill cleared`);
         // ═══ 任务自监督系统: 启动计时器 + 重置统计 ═══
         const supervisor = getTaskSupervisor();
         supervisor.reset();
         supervisor.startTimer();
-        // ═══ 模型能力分层: 6维评分 → 自治等级 + 运行时参数适配 ═══
-        // 核心理念: 不是所有模型都需要手把手管。根据模型元数据自动计算 6 维能力评分
-        // (reasoning/context/speed/vision/toolCall/costScore), 综合得分决定能力等级,
-        // 同时驱动运行时参数 (迭代次数/thinking/温度/压缩阈值) 动态调整。
-        //   autonomous  — 付费强模型 (DeepSeek Pro, GPT-4o): 自主决策, 跳过大部分运行时干预
-        //   guided      — 中等模型 (免费但大窗口, 如 agnes-2.0-flash 256K): 轻度引导
-        //   supervised  — 弱模型 (免费小模型): 完整引导 (元认知/置信度/反摆烂)
-        try {
-            const { getCapabilitiesById, getRuntimeParamsById } = await import('./model-classifier.js');
-            const modelId = `${this.opts.model}:${this.opts.modelName || 'default'}`;
-            this._capabilities = getCapabilitiesById(this.opts.model, this.opts.modelName);
-            this._capabilityTier = this._capabilities.tier;
-            const rt = getRuntimeParamsById(this.opts.model, this.opts.modelName);
-            // ═══ 系统管控员: 使用动态能力矩阵覆盖静态等级 ═══
-            // 如果运行时数据充足, 用动态等级替代静态等级
-            try {
-                const { getTracker } = await import('./governor/runtime-capability-tracker.js');
-                const dynCap = getTracker().getDynamicCapabilities(modelId, this._taskType);
-                if (dynCap.hasRuntimeData) {
-                    this._capabilityTier = dynCap.dynamicTier;
-                    logger.info(`🧠 动态能力覆盖: static=${this._capabilities.tier} → dynamic=${dynCap.dynamicTier} ` +
-                        `(samples=${dynCap.sampleCount}, runtime=${dynCap.runtimeOverall.toFixed(2)}, weight=${(dynCap.runtimeWeight * 100).toFixed(0)}%)`);
-                }
-            }
-            catch { /* dynamic cap 容错 */ }
-            // 应用运行时参数 (仅当用户未显式设置时)
-            if (!this.opts.userPickedModel) {
-                this.opts.thinking = rt.thinking;
-                this.opts.thinkingBudget = rt.thinkingBudget;
-            }
-            // 上下文压缩阈值存储供压缩逻辑使用
-            this._contextCompressThreshold = rt.contextCompressThreshold;
-            const cap = this._capabilities;
-            logger.info(`🧠 模型能力: ${this.opts.model}:${this.opts.modelName || 'default'} → tier=${this._capabilityTier} | ` +
-                `reasoning=${cap.reasoning.toFixed(2)} toolCall=${cap.toolCall.toFixed(2)} speed=${cap.speed.toFixed(2)} ` +
-                `context=${cap.context.toFixed(2)} overall=${cap.overall.toFixed(2)} | ` +
-                `maxIter=${rt.maxIterations} thinking=${rt.thinking} temp=${rt.temperature}`);
-        }
-        catch {
-            this._capabilityTier = 'supervised'; // 保守默认
-        }
+        // ═══ 模型能力分层: 已在 run() 开头调用 detectCapabilityTier() 完成
+        // (2026-10-11 P0 重构 — 之前内联在此处, 位于 ensureContext 之后, 导致
+        //  buildImmutablePrefix 读到的 tier 恒为默认值; 现已提前到 ensureContext 前)
         // ═══ 修复: 代际计数器 — 新 run() 分配新代际, 旧 run() 恢复后发现自己被取代 → 退出 ═══
         this._runGeneration++;
         this._aborted = false;
@@ -4524,8 +4562,9 @@ export class AgentAILoop extends EventEmitter {
                 }
             }
             // ═══ 元认知决策: 让 AI 自己判断是否继续 ═══
-            // 强模型跳过 — 它自己知道该不该继续, 不需要元认知循环替它决策
-            // 弱模型保留: 帮助弱模型判断何时停止/追问
+            // 2026-10-11 决策: 强模型有意跳过 (非 bug) — autonomous 模型自带停止/追问判断,
+            // 外部元认知循环注入的"停止/继续"指令反而可能与模型自身判断冲突 (见 AGENTS.md
+            // 元认知门控条目)。此门控保留, 已确认为有意设计, 非技术债。弱模型保留。
             if (this._capabilityTier !== 'autonomous' && this.iteration < this.opts.maxIterations * 0.5) {
                 try {
                     if (!this.metaLoop) {
@@ -4607,7 +4646,8 @@ export class AgentAILoop extends EventEmitter {
                 }
             } // end if (iter < maxIterations * 0.5)
             // ═══ 置信度评估: AI 知道自己"不知道什么" ═══
-            // 强模型跳过 — 它自己知道什么时候该搜索/追问, 不需要外部置信度打分
+            // 2026-10-11 决策: 强模型有意跳过 (非 bug) — autonomous 模型自带不确定性判断,
+            // 外部置信度打分+追问指令会与模型自身判断冲突。此门控保留, 已确认为有意设计。
             // 弱模型保留: 防止弱模型在不确信时瞎编
             if (this._capabilityTier !== 'autonomous') {
                 // ═══ 跳过条件: 简单问候/闲聊不需要置信度检查 ═══
@@ -4676,8 +4716,8 @@ export class AgentAILoop extends EventEmitter {
                 } // end if (!isGreetingChat && !isSimpleChat)
             } // end if (capabilityTier !== autonomous) — 置信度评估仅对非自主模型生效
             // ═══ P0-3.1+3.2: 知识边界检测 + 自我提问 (防幻觉, 接入已有但未调用的方法) ═══
-            // 强模型跳过 — 它自己会验证自己的回答
-            // 弱模型保留: 防止弱模型幻觉
+            // 2026-10-11 决策: 强模型有意跳过 (非 bug) — autonomous 模型自带幻觉自检能力。
+            // 此门控保留, 已确认为有意设计。弱模型保留: 防止弱模型幻觉
             if (this._capabilityTier !== 'autonomous' && this.iteration < this.opts.maxIterations * 0.5) {
                 try {
                     const { ConfidenceEstimator } = await import('./meta/confidence-estimator.js');
