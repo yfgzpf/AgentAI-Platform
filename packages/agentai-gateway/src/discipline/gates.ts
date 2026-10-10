@@ -216,15 +216,17 @@ function runDryRun(cmd: string, cwd: string): { ok: boolean; output: string } {
 /** 删除类预演：返回引用数/文件数（无管道版 — Windows 不支持 `| wc -l`，JS 侧计数）。
  *  git grep exit 1 = 无匹配 → 0 引用是有效结果，不是失败。 */
 function runDryRunCount(cmd: string, cwd: string): { ok: boolean; count: number | null; raw: string } {
-  const opts = {
-    cwd,
-    encoding: 'utf8' as const,
-    timeout: 15_000,
-    stdio: ['ignore', 'pipe', 'pipe'] as Array<'ignore' | 'pipe'>,
-    maxBuffer: 4 * 1024 * 1024,
-  };
   try {
-    const raw = execSync(cmd, opts).trim();
+    const raw = execSync(
+      cmd,
+      {
+        cwd,
+        encoding: 'utf8',
+        timeout: 15_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    ).trim();
     return { ok: true, count: raw === '' ? 0 : raw.split(/\r?\n/).length, raw };
   } catch (e: any) {
     // git grep: exit 1 = 无匹配 → 0 引用；exit >= 2 或命令本身失败 → 真失败
