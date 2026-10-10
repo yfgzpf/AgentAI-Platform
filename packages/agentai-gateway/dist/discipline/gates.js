@@ -119,6 +119,27 @@ function runDryRun(cmd, cwd) {
         return { ok: false, output: `${e.stdout || ''}${e.stderr || ''}`.trim() || e.message };
     }
 }
+/** 删除类预演：返回引用数/文件数（无管道版 — Windows 不支持 `| wc -l`，JS 侧计数）。
+ *  git grep exit 1 = 无匹配 → 0 引用是有效结果，不是失败。 */
+function runDryRunCount(cmd, cwd) {
+    try {
+        const raw = execSync(cmd, {
+            cwd,
+            encoding: 'utf8',
+            timeout: 15_000,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            maxBuffer: 4 * 1024 * 1024,
+        }).trim();
+        return { ok: true, count: raw === '' ? 0 : raw.split(/\r?\n/).length, raw };
+    }
+    catch (e) {
+        // git grep: exit 1 = 无匹配 → 0 引用；exit >= 2 或命令本身失败 → 真失败
+        if (e.status === 1) {
+            return { ok: true, count: 0, raw: '' };
+        }
+        return { ok: false, count: null, raw: `${e.stdout || ''}`.trim() || e.message };
+    }
+}
 function truncate(s, max = 800) {
     if (s.length <= max)
         return s;
@@ -153,24 +174,21 @@ export function gateActionPlan(plan, ctx = {}) {
                 missing.push('未执行预演（dry run）');
             }
             else if (action.kind === 'delete-file' || action.kind === 'delete-dir') {
-                // 删除类动作：预演就是「查引用」/「列文件」
+                // 删除类动作：预演就是「查引用」/「列文件」（无管道版，JS 侧计数）
                 const cmd = action.kind === 'delete-file'
-                    ? `git grep -l "${action.target}" -- . | wc -l`
-                    : `git ls-files "${action.target}" | wc -l`;
-                const r = runDryRun(cmd, cwd);
-                // 安全底线：预演失败 ≠ 通过。宁可拒绝也不放行未知状态。
-                if (!r.ok && r.output.trim() === '') {
-                    missing.push(`预演执行失败，无法确认影响范围（${truncate(r.output, 120) || '无输出'}）`);
+                    ? `git grep -l "${action.target}" -- .`
+                    : `git ls-files "${action.target}"`;
+                const r = runDryRunCount(cmd, cwd);
+                // 安全底线：预演失败/无法计数 ≠ 通过。宁可拒绝也不放行未知状态。
+                if (!r.ok || r.count === null) {
+                    missing.push(!r.ok
+                        ? `预演执行失败，无法确认影响范围（${truncate(r.raw, 120) || '无输出'}）`
+                        : '预演未返回可解析的计数，禁止在未知状态下删除');
                 }
-                dryRunOutput = `引用数/文件数: ${r.output.trim() || '(预演失败)'}`;
-                if (action.kind === 'delete-file') {
-                    const refs = parseInt(r.output.trim(), 10);
-                    if (Number.isNaN(refs)) {
-                        // 无法解析引用数 → 无法证明安全 → 拒绝
-                        missing.push('预演未返回可解析的引用数，禁止在未知状态下删除');
-                    }
-                    else if (refs > 0) {
-                        missing.push(`目标仍被引用 ${refs} 处，禁止删除`);
+                else {
+                    dryRunOutput = `引用数/文件数: ${r.count}`;
+                    if (action.kind === 'delete-file' && r.count > 0) {
+                        missing.push(`目标仍被引用 ${r.count} 处，禁止删除`);
                     }
                 }
             }
