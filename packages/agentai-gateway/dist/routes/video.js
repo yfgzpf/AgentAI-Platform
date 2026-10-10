@@ -617,7 +617,8 @@ ${originalPrompt}${storyInfo}${characterInfo}
                 }
                 return msgs;
             };
-            // 503 队列满回退策略：等待 5s 重试, 最多 2 次
+            // 429/503 = 速率限制/队列满回退策略: 指数退避 (2s/4s) 重试, 最多 2 次
+            // 修复: 之前只重试 503, Agnes 免费 key 的 429 直接失败
             const callLlm = async (messages) => {
                 const post = () => fetch('https://api.agnes-ai.cn/v1/chat/completions', {
                     method: 'POST',
@@ -631,18 +632,19 @@ ${originalPrompt}${storyInfo}${characterInfo}
                     signal: AbortSignal.timeout(30000),
                 });
                 let resp = await post();
-                for (let attempt = 0; resp.status === 503 && attempt < 2; attempt++) {
-                    console.warn(`[next-episode] LLM 503 队列满, 第${attempt + 1}次重试, 等待 5s`);
-                    await new Promise((r) => setTimeout(r, 5000));
+                for (let attempt = 0; (resp.status === 503 || resp.status === 429) && attempt < 2; attempt++) {
+                    const waitMs = Math.min(2000 * Math.pow(2, attempt), 4000);
+                    console.warn(`[next-episode] LLM ${resp.status}, 第${attempt + 1}次重试, 等待 ${waitMs / 1000}s`);
+                    await new Promise((r) => setTimeout(r, waitMs));
                     resp = await post();
                 }
                 return resp;
             };
             let effectiveFrame = tailFrameDataUri;
             let llmResp = await callLlm(buildMessages(effectiveFrame));
-            if (llmResp && !llmResp.ok && llmResp.status === 503 && effectiveFrame) {
-                // 503 重试耗尽 → 降级为纯文本模式(跳过尾帧), 不阻断流程
-                console.warn('[next-episode] 503 重试耗尽, 降级为纯文本模式(跳过尾帧)');
+            if (llmResp && !llmResp.ok && (llmResp.status === 503 || llmResp.status === 429) && effectiveFrame) {
+                // 429/503 重试耗尽 → 降级为纯文本模式(跳过尾帧), 不阻断流程
+                console.warn(`[next-episode] ${llmResp.status} 重试耗尽, 降级为纯文本模式(跳过尾帧)`);
                 effectiveFrame = null;
                 llmResp = await callLlm(buildMessages(null));
             }
@@ -688,10 +690,16 @@ ${originalPrompt}${storyInfo}${characterInfo}
                     s.status = 'pending';
                 });
             }
+            // 兼容 VideoGen 前端契约: newPrompt 取第一镜 prompt (从尾帧自然过渡的一镜)
+            const firstShotPrompt = episodeData.episode?.shots?.[0]?.prompt ||
+                `续集 第${episodeIndex}集: ${originalPrompt.slice(0, 80)}...\n请延续上一段视频的内容和风格, 生成后续画面。`;
             return res.json({
                 tailFrameUrl: tailFrameDataUri,
                 episodeData,
                 episodeIndex,
+                newPrompt: firstShotPrompt,
+                storySummary: episodeData.episode?.title || '',
+                characters: episodeData.characters || characters || [],
                 warning: effectiveFrame ? undefined : '未获取到尾帧 (ffmpeg 不可用或 503 降级)。AI 已基于剧情描述生成续集剧本。',
             });
         }
@@ -793,10 +801,16 @@ ${originalPrompt}${storyInfo}${characterInfo}
             for (const img of refImages.slice(0, 5)) {
                 // 已是 Data URI 或 http URL → 直接使用; 纯 base64 → 补全前缀
                 // 修复: 之前漏判 data: 前缀, 导致 data:image/png;base64,data:image/png;base64,... 非法格式 ("图送形式错误")
-                const url = await urlToBase64(String(img));
-                userContent.push({ type: 'image_url', image_url: { url } });
+                try {
+                    const url = await urlToBase64(String(img));
+                    userContent.push({ type: 'image_url', image_url: { url } });
+                }
+                catch (imgErr) {
+                    // 单张图解析失败 → 跳过该图并警告, 不让整个 storyboard 请求 500
+                    console.warn(`[storyboard] 参考图解析失败, 跳过: ${imgErr.message?.slice(0, 100)}`);
+                }
             }
-            const llmResp = await fetch('https://api.agnes-ai.cn/v1/chat/completions', {
+            const postStoryboard = () => fetch('https://api.agnes-ai.cn/v1/chat/completions', {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -810,6 +824,15 @@ ${originalPrompt}${storyInfo}${characterInfo}
                 }),
                 signal: AbortSignal.timeout(60000),
             });
+            // 429/503 = 速率限制/队列满: 指数退避重试 (2s/4s/8s), 最多 3 次
+            // 修复: 之前只重试 503, Agnes 免费 key 的 429 (免费额度耗尽) 直接失败
+            let llmResp = await postStoryboard();
+            for (let attempt = 0; (llmResp.status === 503 || llmResp.status === 429) && attempt < 3; attempt++) {
+                const waitMs = Math.min(2000 * Math.pow(2, attempt), 8000);
+                console.warn(`[storyboard] LLM ${llmResp.status} (429=速率限制/503=队列满), 第${attempt + 1}次重试, 等待 ${waitMs / 1000}s`);
+                await new Promise((r) => setTimeout(r, waitMs));
+                llmResp = await postStoryboard();
+            }
             if (!llmResp.ok) {
                 const errText = await llmResp.text().catch(() => '');
                 return res.status(llmResp.status).json({ error: `LLM 生成剧本失败: HTTP ${llmResp.status}: ${errText.slice(0, 200)}` });
@@ -1264,7 +1287,9 @@ function normalizeUrl(url) {
 // - data: URI → 提取纯 base64
 // - 纯 base64 → 直接返回
 const bigWarned = new Set();
-async function urlToBase64(url) {
+// 导出给 tools.ts 的 generate_video 复用 (P0: 之前 tools.ts 有独立的盲目拼 Data URI 逻辑,
+// 分镜→视频走工具路径时相对路径/base64 校验缺失, 复现 400 错误; 2026-10-11 统一到这里)
+export async function urlToBase64(url) {
     if (!url || typeof url !== 'string')
         return url;
     const trimmed = url.trim();

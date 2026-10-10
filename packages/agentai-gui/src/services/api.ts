@@ -20,6 +20,7 @@ export interface ApiStreamHandlers {
   onSubagentStart?: (info: { id: string; type: string; task: string }) => void;
   onSubagentDone?: (info: { id: string; result: string }) => void;
   onSubagentError?: (info: { id: string; error: string }) => void;
+  onSubagentProgress?: (info: { id: string; event: string; iteration?: number; step?: number; description?: string; toolName?: string; result?: string }) => void;
   onToolStuck?: (info: { tool: string; count: number }) => void;
   onMemoryAuto?: (info: { written: number; skipped: number }) => void;
   onWidgetShow?: (info: { widgetType: string; content: any }) => void;
@@ -287,6 +288,7 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
               case 'subagent_start': handlers.onSubagentStart?.(data); break;
               case 'subagent_done': handlers.onSubagentDone?.(data); break;
               case 'subagent_error': handlers.onSubagentError?.(data); break;
+              case 'subagent_progress': handlers.onSubagentProgress?.(data); break;
 case 'tool_stuck': handlers.onToolStuck?.(data); break;
 case 'widget_show': handlers.onWidgetShow?.(data); break;
 case 'progress': handlers.onProgress?.(data); break;

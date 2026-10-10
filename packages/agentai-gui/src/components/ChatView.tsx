@@ -726,58 +726,8 @@ const [loading, setLoading] = useState(false);
     return () => { sock.removeAllListeners(); sock.disconnect(); socketRef.current = null; };
   }, []);
 
-  /* ═══ 子智能体事件: 展示思考过程 + 工具调用 ═══ */
-  useEffect(() => {
-    const sock = socketRef.current;
-    if (!sock) return;
-
-    sock.on('subagent:start', (data: any) => {
-      setSubagents(prev => [...prev, {
-        id: data.id,
-        type: data.type || 'sub',
-        task: data.task || '',
-        status: 'running' as const,
-        steps: [],
-      }]);
-    });
-
-    sock.on('subagent:progress', (data: any) => {
-      setSubagents(prev => prev.map(sa => {
-        if (sa.id !== data.id) return sa;
-        const stepDesc = data.event === 'tool_start'
-          ? `🔧 调用工具: ${data.name || ''}`
-          : data.event === 'tool_done'
-            ? `✅ 工具完成: ${data.name || ''}`
-            : data.event === 'progress'
-              ? data.description || `迭代 ${data.iteration || ''}`
-              : `思考中...`;
-        return { ...sa, steps: [...(sa.steps || []), stepDesc].slice(-20) };
-      }));
-    });
-
-    sock.on('subagent:done', (data: any) => {
-      setSubagents(prev => prev.map(sa =>
-        sa.id === data.id
-          ? { ...sa, status: 'done' as const, result: data.result || '', steps: [...(sa.steps || []), `✅ 完成: ${(data.result || '').slice(0, 100)}`] }
-          : sa
-      ));
-    });
-
-    sock.on('subagent:error', (data: any) => {
-      setSubagents(prev => prev.map(sa =>
-        sa.id === data.id
-          ? { ...sa, status: 'error' as const, steps: [...(sa.steps || []), `❌ 失败: ${data.error || ''}`] }
-          : sa
-      ));
-    });
-
-    return () => {
-      sock.off('subagent:start');
-      sock.off('subagent:progress');
-      sock.off('subagent:done');
-      sock.off('subagent:error');
-    };
-  }, []);
+  /* ═══ 子智能体事件已改为走 SSE (apiStream handlers: onSubagentStart/Done/Error/Progress),
+     不再监听 Socket.io subagent:* — gateway 只发 SSE, 这些 Socket.io handler 永远不会触发 ═══ */
 
   const CTX_MAX = 1_000_000;
   const FOLD_THRESHOLD = 0.70;
@@ -1157,19 +1107,10 @@ const [loading, setLoading] = useState(false);
         }
 
         // ═══ 桥接 → 全局任务编排器: plan_task 创建计划 ═══
-        if (info.name === 'plan_task' && info.ok && info.data?.action === 'plan_created' && info.data?.plan) {
-          const plan = info.data.plan;
-          const stages = (plan.subtasks || []).map((t: any, i: number) => ({
-            key: t.id || `task-${i}`,
-            label: t.title || `任务 ${i + 1}`,
-            status: (t.status === 'completed' ? 'success' : 'pending') as TaskStatus,
-          }));
-          useTaskOrchestrator.getState().startTask(
-            plan.id || `plan-${Date.now()}`,
-            plan.goal || info.result || '任务规划',
-            stages,
-          );
-        }
+        // 2026-10-11 修复: 之前这里直接 startTask, 而 SSE onPlanCreated 也会 startTask
+        // → 双重调用, 第二次把第一次标 failed 导致面板闪烁/重置.
+        // 现在: 只走 SSE 单一链路; 工具结果路径不再 startTask.
+        // (onToolResult 在 SSE onPlanCreated 之前触发, 故由 SSE 作为唯一 startTask 源头)
 
         // 桥接 → 全局任务编排器: 更新工具调用结果
         useTaskOrchestrator.getState().updateToolCall(info.callId, info.result, info.ok, info.durationMs);
@@ -1322,11 +1263,19 @@ const [loading, setLoading] = useState(false);
           understand: '理解', execute: '执行',
         };
         // 修复: 处理后端发送的 stages 格式，确保每个 stage 有 status 字段
+        // 2026-10-11: 状态映射补全 — 后端子任务可能是 pending/in_progress/completed/failed,
+        // 前端 StepStatus 是 pending/running/success/failed, 之前只映射了 completed→success
+        const mapStageStatus = (raw: string | undefined, index: number): TaskStatus => {
+          if (raw === 'completed' || raw === 'success') return 'success';
+          if (raw === 'in_progress' || raw === 'running') return 'running';
+          if (raw === 'failed' || raw === 'error') return 'failed';
+          return index === 0 ? 'running' : 'pending';
+        };
         const incomingStages = info.stages || [{ key: 'plan', label: '规划' }, { key: 'solve', label: '执行' }, { key: 'verify', label: '验证' }];
         const normalizedStages = incomingStages.map((s: any, index: number) => ({
           key: s.key || `stage-${index}`,
           label: s.label || stageLabels[s.key] || s.key || `阶段 ${index + 1}`,
-          status: (s.status || (index === 0 ? 'running' : 'pending')) as TaskStatus,
+          status: mapStageStatus(s.status, index),
         }));
         useTaskOrchestrator.getState().startTask(
           info.chainId || `task-${Date.now()}`,
@@ -1355,7 +1304,7 @@ const [loading, setLoading] = useState(false);
             }
           }
         }
-        orchestrator.updateStage(stage, 'running');
+        if (stage) orchestrator.updateStage(stage, 'running');
       },
       onMemoryAuto: (info: any) => {
         if (info.written > 0) {
@@ -1429,6 +1378,20 @@ const [loading, setLoading] = useState(false);
       onSubagentError: (info: any) => {
         lastActivityTs = Date.now();
         setSubagents(prev => prev.map(a => a.id === info.id ? { ...a, status: 'error' as const, error: info.error } : a));
+      },
+      onSubagentProgress: (info: any) => {
+        lastActivityTs = Date.now();
+        setSubagents(prev => prev.map(sa => {
+          if (sa.id !== info.id) return sa;
+          const stepDesc = info.event === 'tool_start'
+            ? `🔧 调用工具: ${info.toolName || ''}`
+            : info.event === 'tool_done'
+              ? `✅ 工具完成: ${info.toolName || ''}`
+              : info.event === 'progress'
+                ? info.description || `迭代 ${info.iteration || ''}`
+                : `思考中...`;
+          return { ...sa, steps: [...(sa.steps || []), stepDesc].slice(-20) };
+        }));
       },
       onToolStuck: (info: any) => {
         lastActivityTs = Date.now();

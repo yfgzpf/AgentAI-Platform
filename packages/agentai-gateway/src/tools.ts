@@ -1,9 +1,11 @@
 // @ts-nocheck
 // ===== 批量工具定义和处理器 =====
 /**
- * ⚠️ 工具系统说明 (2026-07-17)
+ * ⚠️ 工具系统说明 (2026-07-17, 2026-10-11 更新)
  * ----------------------------------------------------------------
- * 此文件包含 53 个内置工具的定义 (EXTRA_TOOLS) 和实现 (EXTRA_HANDLERS)。
+ * 此文件包含 EXTRA_TOOLS 工具声明和 EXTRA_HANDLERS 工具实现。
+ * 工具数量随迭代增长, 头部旧注释曾写死 "53 个" (已严重过时, 实测早已 200+)。
+ * 精确数量以 `pnpm verify:tools` (TypeScript AST 实测) 为准, 不再在此写死数字。
  * 
  * 【当前状态】
  *  - 全文件禁用类型检查（@ts-nocheck），这是已知技术债务
@@ -33,6 +35,7 @@ import { readFileSmart } from './read-file-decoder.js';
 import { CaptchaHandler, detectCaptchaFromHtml, type CaptchaInfo } from './captcha-handler.js';
 import { runSandboxedSkill } from './safety/code-runner.js';
 import { pascalEditor } from './pascal-editor.js';
+import { urlToBase64 } from './routes/video.js';
 
 /**
  * 静态扫描 Python 代码的危险模式
@@ -747,6 +750,10 @@ function checkMultimodalSupport(model: string): string {
 }
 
 export const EXTRA_TOOLS = [
+  // 2026-10-11: 补声明 — 这两个 handler 早已实现并被 agentai-loop/subagent/experts 多处引用,
+  // 但 EXTRA_TOOLS 缺声明导致注册时被静默跳过 (verify:tools WARN 死代码误报)。
+  { name: 'get_symbols', description: 'List top-level symbols (functions/classes/interfaces/types/enums/constants) in a file', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Relative path within workspace' } }, required: ['path'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'knowledge_explore', description: 'Actively explore a concept/task: search relevant GitHub repos, auto-distill high-quality readmes into memory, and report knowledge gaps', parameters: { type: 'object', properties: { task: { type: 'string' }, concept: { type: 'string' }, maxResults: { type: 'number', default: 3 } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'generate_image', description: `AI 绘画/图片生成. 4 级免费引擎: HF SD → 通义万相(500张) → 智谱 Cogview-3-Flash → agnes-image.
 ⚠️ 仅用于生成艺术图片: 效果图/海报/插画/设计图/照片/壁纸/头像等视觉内容。
 ❌ 绝对不要用于: 架构图/流程图/知识图谱/技术图表 — 这些请用 generate_diagram 工具 (SVG, 内联渲染, 不会出现"图片加载失败")。
@@ -1593,14 +1600,14 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
         size: '720P',
         aspect_ratio: isPortrait2 ? '9:16' : '16:9',
       };
-if (image) {
-// P0 修复: 保留 Data URI 格式 — Agnes API 支持 data:image/...;base64,xxx
-if (image.startsWith('data:') || image.startsWith('http')) {
-body.image = image;
-} else {
-body.image = `data:image/png;base64,${image}`;
-}
-}
+      if (image) {
+        try {
+          body.image = await urlToBase64(String(image));
+        } catch (imgErr: any) {
+          // 单张图解析失败 → 跳过图片, 以纯文本模式继续 (不让整个视频请求 500)
+          console.warn(`[generate_video] 图片解析失败, 跳过 image 参数继续: ${imgErr.message?.slice(0, 80)}`);
+        }
+      }
       const resp = await fetch('https://api.agnes-ai.cn/v1/videos', {
         method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body), signal: AbortSignal.timeout(30000),
@@ -1807,15 +1814,9 @@ body.image = `data:image/png;base64,${image}`;
       return { success: false, output: `Error: ${e.message}` };
     }
   },
-  edit_file: async (args, ctx) => {
-    // Delegates to multi_edit with a single edit
-    try {
-      const { multi_edit } = require("./tools.js");
-      return await multi_edit({ edits: [{ path: args.path, search: args.search, replace: args.replace }] }, ctx);
-    } catch (e: any) {
-      return { success: false, output: `edit_file error: ${e.message}` };
-    }
-  },
+  // edit_file 已删除 (2026-10-11): 它是 multi_edit 的单编辑包装, 但通过
+  // require("./tools.js") 自引用获取 multi_edit — ESM 下该 require 必崩, 且无 EXTRA_TOOLS 声明,
+  // 是永不注册的死代码。multi_edit 本身就是多编辑版本, 无需单独包装。
   multi_edit: async (args, ctx) => {
     try {
       const { edits } = args;

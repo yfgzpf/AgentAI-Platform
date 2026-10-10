@@ -3020,7 +3020,7 @@ if (isComplexTask) {
             if (r?.success) {
               this.context.appendOnlyLog.splice(-1, 0, { role: 'system', content: `[pre-read] 📄 文件内容:\n${r.output}` });
             }
-          } catch (e: any) { console.warn('[pre-read] read_file failed:', e?.message); }
+          } catch (e: any) { logger.warn('[pre-read] read_file failed:', e?.message); }
         }
       }
 
@@ -3270,7 +3270,7 @@ if (isComplexTask) {
 
       // ═══ 长任务超时降级: 上一轮超时后, 减少工具数+压缩上下文, 避免再次超时 ═══
       if (llmTimedOut) {
-        console.warn(`[loop] timeout degradation: reducing tools ${requestTools.length} → 8, compressing context`);
+        logger.warn(`[loop] timeout degradation: reducing tools ${requestTools.length} → 8, compressing context`);
         const coreToolNames = ['read_file', 'write_file', 'list_directory', 'search_content', 'ask_user', 'run_code', 'directory_tree', 'web_search'];
         requestTools = requestTools.filter((t: any) => coreToolNames.includes(t.name || t.function?.name || ''));
         // 激进压缩上下文: 只保留最近 6 条 + system, 然后重新消毒避免切断 assistant→tool 配对
@@ -3286,7 +3286,7 @@ if (isComplexTask) {
               ? `[历史用户请求] ${typeof lastUser.content === 'string' ? lastUser.content.slice(0, 150) : JSON.stringify(lastUser.content).slice(0, 150)}`
               : '请继续完成之前的任务。';
             messages.push({ role: 'user', content: fallback });
-            console.warn(`[timeout-degrade] 兜底注入 user 消息, 防止 API 400`);
+            logger.warn(`[timeout-degrade] 兜底注入 user 消息, 防止 API 400`);
           }
         }
         llmTimedOut = false; // 重置标志
@@ -3348,7 +3348,7 @@ if (isComplexTask) {
           // 清除待处理标记
           (this as any)._pendingVisionAnalysis = null;
         } catch (e: any) {
-          console.error(`[vision-proxy] analysis failed: ${e?.message}`);
+          logger.error(`[vision-proxy] analysis failed: ${e?.message}`);
           // 分析失败，降级为文字描述
           messages.unshift({
             role: 'system',
@@ -3400,7 +3400,7 @@ if (isComplexTask) {
     } catch (llmErr: any) {
       // ═══ 长任务保护: router.chat 异常不应崩溃整个循环 ═══
       const errMsg = llmErr?.message?.toLowerCase() || '';
-      console.error(`[loop] router.chat threw (iter=${this.iteration}): ${llmErr?.message?.slice(0, 120)}`);
+      logger.error(`[loop] router.chat threw (iter=${this.iteration}): ${llmErr?.message?.slice(0, 120)}`);
 
       if (errMsg.includes('timeout') || errMsg.includes('abort')) {
         llmTimedOut = true;
@@ -3445,7 +3445,7 @@ if (isComplexTask) {
       // 表现: 用户看到"AI 什么都没做"、反复重试、任务停滞。
       const _hasToolCalls = !!(res?.toolCalls && res.toolCalls.length > 0);
       if (!res || (!_hasToolCalls && typeof res.content === 'string' && res.content.trim() === '' && res.provider !== 'none')) {
-        console.warn(`[loop] ⚠️ Empty LLM response (provider=${res?.provider}, iter=${this.iteration}), starting rescue chain...`);
+        logger.warn(`[loop] ⚠️ Empty LLM response (provider=${res?.provider}, iter=${this.iteration}), starting rescue chain...`);
         
         // 辅助函数: 从 appendOnlyLog 重建并消毒消息
         const rebuildMessages = (): ChatMessage[] => {
@@ -3476,7 +3476,7 @@ if (isComplexTask) {
         if (!this._emptyResponseCount) this._emptyResponseCount = 0;
         this._emptyResponseCount++;
         if (this._emptyResponseCount > 3) {
-          console.warn(`[loop] 🛑 连续 ${this._emptyResponseCount} 次空/废回复, 终止循环`);
+          logger.warn(`[loop] 🛑 连续 ${this._emptyResponseCount} 次空/废回复, 终止循环`);
           this.directives.add('dead_loop_done', '[SYSTEM] 已根据死循环保护策略终止循环。请直接给出最终回答。', 'high');
           // 不 continue, 走完当前轮后正常结束
           break;
@@ -3493,7 +3493,7 @@ if (isComplexTask) {
 
         // Level 2: 切 deepseek-v4-pro (重建消息)
         if (this.opts.model === 'deepseek' && this.opts.modelName !== 'deepseek-v4-pro') {
-          console.warn(`[loop] L2 rescue: deepseek-v4-pro`);
+          logger.warn(`[loop] L2 rescue: deepseek-v4-pro`);
           const orig = this.opts.modelName;
           this.opts.modelName = 'deepseek-v4-pro';
           req.model = this.opts.model as any;
@@ -3510,7 +3510,7 @@ if (isComplexTask) {
 
         // Level 3: 最小工具集 (只发核心 8 工具 — 任何模型都能处理)
         if (req.tools && req.tools.length > 8) {
-          console.warn(`[loop] L3 rescue: min tools (${req.tools.length} → 8)`);
+          logger.warn(`[loop] L3 rescue: min tools (${req.tools.length} → 8)`);
           const coreNames = ['read_file','write_file','list_directory','search_content','ask_user','run_code','directory_tree','web_search'];
           const origTools = req.tools;
           req.tools = origTools.filter(t => coreNames.includes(t.name));
@@ -3526,7 +3526,7 @@ if (isComplexTask) {
 
         // Level 4: 无工具 + 只保留最近 4 条消息 (纯文字对话 — 任何模型都必然能回复)
         if (req.tools && req.tools.length > 0) {
-          console.warn(`[loop] L4 rescue: no tools + min context`);
+          logger.warn(`[loop] L4 rescue: no tools + min context`);
           const origTools = req.tools;
           req.tools = undefined;
           // L4 终极方案: 只保留 system + 最近 4 条消息, 彻底避免消息格式问题
@@ -3540,7 +3540,7 @@ if (isComplexTask) {
               ? `[历史用户请求] ${typeof lastUser.content === 'string' ? lastUser.content.slice(0, 150) : JSON.stringify(lastUser.content).slice(0, 150)}`
               : '请继续完成之前的任务。';
             req.messages.push({ role: 'user', content: fallback });
-            console.warn(`[L4-rescue] 兜底注入 user 消息`);
+            logger.warn(`[L4-rescue] 兜底注入 user 消息`);
           }
           const l4Req = rescueReq(10_000);
           retryRes = l4Req ? await this.router.chat(l4Req) : null;
@@ -3552,7 +3552,7 @@ if (isComplexTask) {
           }
         }
 
-        console.warn(`[loop] ✗ All rescue levels exhausted`);
+        logger.warn(`[loop] ✗ All rescue levels exhausted`);
         return {
           content: '当前 AI 模型暂时繁忙，请稍后再试。如果问题持续，请前往设置页检查 API Key 配置。',
           provider: 'none' as any,
@@ -3645,11 +3645,11 @@ if (isComplexTask) {
       if (res?.content && FORBIDDEN_PATTERNS.test(res.content)) {
         this._forbiddenResponseCount++;
         if (this._forbiddenResponseCount > 2) {
-          console.warn(`[self-repair] 连续 ${this._forbiddenResponseCount} 次内部错误回复, 停止重试, 直接向用户反馈`);
+          logger.warn(`[self-repair] 连续 ${this._forbiddenResponseCount} 次内部错误回复, 停止重试, 直接向用户反馈`);
           return { content: '系统处理时遇到问题，请稍后重试，或尝试在设置页更换模型。', provider: 'none' as any, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const }, iterations: this.iteration, durationMs: Date.now() - startedAt };
         }
         if (this.iteration < this.opts.maxIterations - 1) {
-          console.warn(`[self-repair] intercepted forbidden response: "${String(res.content).slice(0, 80)}" (attempt ${this._forbiddenResponseCount}/2)`);
+          logger.warn(`[self-repair] intercepted forbidden response: "${String(res.content).slice(0, 80)}" (attempt ${this._forbiddenResponseCount}/2)`);
           this.directives.add('forbidden_response', `[SYSTEM] 你的回复包含了不应暴露的内部错误信息。请不要说"模型不可用"之类的话。换一种方式完成用户请求: 1) 生成文件失败→用write_file写CSV/Markdown 2) 路径错误→先list_directory 3) 确实无法完成→诚实告诉用户具体原因和替代建议`, 'high');
           continue; // 重新执行一轮, 让 AI 自修复 (最多 1 次)
         }
@@ -3670,7 +3670,7 @@ if (isComplexTask) {
       const toolLimit = TOOL_BUDGET[this._taskType] || 5;
       if (hasTools && res.toolCalls.length > toolLimit) {
         const truncated = res.toolCalls.slice(0, toolLimit);
-        console.warn(`[loop] 工具预算: 截断 ${res.toolCalls.length} → ${truncated.length} (上限 ${toolLimit}, 任务=${this._taskType})`);
+        logger.warn(`[loop] 工具预算: 截断 ${res.toolCalls.length} → ${truncated.length} (上限 ${toolLimit}, 任务=${this._taskType})`);
         this.directives.add('tool_budget',
           `[SYSTEM] 本轮工具调用 ${res.toolCalls.length} 个超过预算 ${toolLimit}, 已截断。请优先执行最重要的 ${truncated.length} 个, 其余留到下一轮。`,
           'medium');
@@ -3678,7 +3678,7 @@ if (isComplexTask) {
       }
       const isEmptyFailure = !hasContent && !hasTools;
       if (isEmptyFailure) {
-        console.warn(`[context] 跳过写入空/失败 assistant 消息 (iter=${this.iteration})`);
+        logger.warn(`[context] 跳过写入空/失败 assistant 消息 (iter=${this.iteration})`);
       } else {
         const assistantMsg: any = { role: 'assistant', content: res.content || null };
         if (res.toolCalls && res.toolCalls.length > 0) {
@@ -3721,7 +3721,7 @@ if (isComplexTask) {
               const closeBrackets = (fixed.match(/\]/g) || []).length;
               if (openBrackets > closeBrackets) fixed += ']'.repeat(openBrackets - closeBrackets);
               try { tc.args = JSON.parse(fixed) as Record<string, any>; console.log(`[tool-repair] fixed truncated JSON for ${tc.name}`); }
-              catch { tc.args = {}; console.warn(`[tool-repair] unfixable JSON for ${tc.name}, using empty args`); }
+              catch { tc.args = {}; logger.warn(`[tool-repair] unfixable JSON for ${tc.name}, using empty args`); }
             }
           }
         }
@@ -3791,7 +3791,7 @@ if (isComplexTask) {
               taskChain.advance('solve', { output: '开始执行工具调用' });
               this.emit('plan:stage', { chainId: taskChain.chainId, stage: 'solve', status: 'running' });
             }
-          } catch (e: any) { console.warn('[loop] TaskChain advance optional:', e?.message || e); }
+          } catch (e: any) { logger.warn('[loop] TaskChain advance optional:', e?.message || e); }
         }
         // 子Agent 检测: spawn_subagent 调用 → 创建独立 AgentAILoop 执行
         // 模型策略: 免费档模型禁用子智能体并行(配额有限), 商业模型以本体为主
@@ -3823,7 +3823,7 @@ if (isComplexTask) {
               // 商业模型: 以本体为主, 子智能体也用同一商业模型
               // ✅ P0: 并发限制 — 超过 MAX_SUBAGENTS 时排队等待, 防止无限扩张
               if (this._subAgentCount >= AgentAILoop.MAX_SUBAGENTS) {
-                console.warn(`[subagent] 并发上限 ${AgentAILoop.MAX_SUBAGENTS}, 拒绝 spawn (当前 ${this._subAgentCount}/${AgentAILoop.MAX_SUBAGENTS})`);
+                logger.warn(`[subagent] 并发上限 ${AgentAILoop.MAX_SUBAGENTS}, 拒绝 spawn (当前 ${this._subAgentCount}/${AgentAILoop.MAX_SUBAGENTS})`);
                 // ★ P0 修复: 原来只 emit 'subagent:rejected', 而 chat.ts 只转发
                 //   start/done/error 三个事件 → 前端完全无感知, 运行框永久挂着。
                 //   改为同时发 error 事件(带正确 id), 让前端能收敛状态。
@@ -4292,7 +4292,7 @@ if (isComplexTask) {
               console.log(`[knowledge-explore] 探索完成: ${(exploreResult.output || '').slice(0, 100)}`);
             }
           } catch (e: any) {
-            console.warn(`[knowledge-explore] 探索失败 (非致命):`, e?.message?.slice(0, 80));
+            logger.warn(`[knowledge-explore] 探索失败 (非致命):`, e?.message?.slice(0, 80));
           }
         }
 
@@ -4590,7 +4590,7 @@ if (isComplexTask) {
                 const errResults = last5.filter(m => typeof m.content === 'string' && (m.content.startsWith('[ERROR]') || m.content.includes('未启动') || m.content.includes('失败')));
                 const isErrorLoop = errResults.length >= 3;
 
-                console.warn(`[loop] 🛑 死循环硬停: ${repeatName} 连续 5 次返回相同/错误结果, 强制终止`);
+                logger.warn(`[loop] 🛑 死循环硬停: ${repeatName} 连续 5 次返回相同/错误结果, 强制终止`);
                 taskSnap?.appendLog('warn', 'dead-loop-hard-stop', { tool: repeatName, signatures: sigs, errLoop: isErrorLoop });
                 // 注入强引导 + 硬停
                 this.directives.add('dead_loop_stop',
@@ -4607,7 +4607,7 @@ if (isComplexTask) {
                 this._hardStopCount++;
                 // 如果已经硬停过 2 次, AI 仍在忽略 → 强制 force break
                 if (this._hardStopCount >= 2) {
-                  console.warn(`[loop] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break`);
+                  logger.warn(`[loop] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break`);
                   taskSnap?.appendLog('warn', 'dead-loop-force-break', { tool: repeatName, hardStopCount: this._hardStopCount });
                   this.directives.add('force_break',
                     `[SYSTEM] ⚠️ 硬停失败, 强制退出循环。最终回答基于已知信息。`,
@@ -4631,7 +4631,7 @@ if (isComplexTask) {
           }  // 关闭 if (toolMsgs.length >= 5) — v3.3 修复: 阈值从 3 提高到 5
         } catch (loopDetectErr: any) {
           // v3.2 防御: 即使死循环检测内部出错, 也不影响主循环
-          console.warn('[loop] ⚠️ 死循环检测块异常 (已吞掉, 不影响主流程):', loopDetectErr?.message);
+          logger.warn('[loop] ⚠️ 死循环检测块异常 (已吞掉, 不影响主流程):', loopDetectErr?.message);
         }
 
         continue;
@@ -4650,7 +4650,7 @@ if (isComplexTask) {
         //   而 prompt 因工具定义/工作记忆永不缩短），循环没有自然出口 ——
         //   唯一出口是 iteration 计数，单请求可产生 maxIterations(默认30~90) 次付费调用。
         if (autoResumeCount > MAX_AUTO_RESUME) {
-          console.warn(`[loop] auto-resume 超过上限 ${MAX_AUTO_RESUME},停止截断续写并要求总结`);
+          logger.warn(`[loop] auto-resume 超过上限 ${MAX_AUTO_RESUME},停止截断续写并要求总结`);
           this.directives.add(
             'resume_exhausted',
             '[SYSTEM] 你已连续多次因输出被截断而续写。现在不要再续写, 请用一段总结收尾: 已完成什么、结论是什么、还差什么。',
@@ -4781,7 +4781,7 @@ if (isComplexTask) {
         (this as any)._lastMetaDecision = metaOutput.decision.action;
       } catch (metaErr: any) {
         // 元认知模块不可用时，降级到硬编码规则，不影响主流程
-        console.warn('[meta-cognitive] fallback to hardcoded rules:', metaErr?.message);
+        logger.warn('[meta-cognitive] fallback to hardcoded rules:', metaErr?.message);
       }
       } // end if (iter < maxIterations * 0.5)
 
@@ -5003,7 +5003,7 @@ if (this._capabilityTier !== 'autonomous') {
           }
           _tailLlmRoundRan = true;
         } catch (e: any) {
-          console.warn('[directives] deferred round failed:', e?.message);
+          logger.warn('[directives] deferred round failed:', e?.message);
         }
       }
 
@@ -5067,7 +5067,7 @@ if (this._capabilityTier !== 'autonomous') {
           this.emit('log:appended', { role: 'assistant', content: summaryRes.content });
         }
       } catch (e: any) {
-        console.warn('[summary] task summary failed:', e?.message);
+        logger.warn('[summary] task summary failed:', e?.message);
       }
     }
 
@@ -5145,7 +5145,7 @@ if (this._capabilityTier !== 'autonomous') {
 
         console.log(`[reflection] checked: ${failedTools.length} failed tools, hasWrite=${hasWriteTool}`);
       } catch (reflectErr: any) {
-        console.warn('[reflection] failed:', reflectErr?.message);
+        logger.warn('[reflection] failed:', reflectErr?.message);
       }
     }
 
@@ -5168,7 +5168,7 @@ if (this._capabilityTier !== 'autonomous') {
           this.opts.userId || 'unknown',
         );
       } catch (e: any) {
-        console.warn('[context] prune failed:', e?.message);
+        logger.warn('[context] prune failed:', e?.message);
       }
     }
 
@@ -5219,7 +5219,7 @@ if (this._capabilityTier !== 'autonomous') {
           }
         }
       }
-    } catch (e: any) { console.warn('[B5] structured tail fallback failed:', e?.message); }
+    } catch (e: any) { logger.warn('[B5] structured tail fallback failed:', e?.message); }
 
     // 自动计划: 标记所有阶段完成
     try {
@@ -5298,7 +5298,7 @@ if (this._capabilityTier !== 'autonomous') {
       if (_meaningfulRun && _nowRef - _lastRefAt >= 60_000) {
         (this as any)._lastReflectorAt = _nowRef;
         this.runReflector(lastResponse, lastUserText).catch((e) => {
-          console.warn('[reflector] failed:', (e as Error).message);
+          logger.warn('[reflector] failed:', (e as Error).message);
         });
       }
     }
@@ -5323,7 +5323,7 @@ if (this._capabilityTier !== 'autonomous') {
       if (decisions.length > 0) {
         console.log(`[evolution] ${decisions.length} evolution decisions made`);
       }
-    } catch (e: any) { console.warn('[loop] evolution optional:', e?.message || e); }
+    } catch (e: any) { logger.warn('[loop] evolution optional:', e?.message || e); }
 
     // ============== 行业洞察自动提取 (授人以渔: 让AI自主积累行业知识) ==============
     try {
@@ -5334,7 +5334,7 @@ if (this._capabilityTier !== 'autonomous') {
         console.log(`[insight] extracted: [${insight.category}] ${insight.content.slice(0, 60)}... (industry: ${insight.industryName})`);
         this.emit('insight:extracted', insight);
       }
-    } catch (e: any) { console.warn('[loop] insight extraction optional:', e?.message || e); }
+    } catch (e: any) { logger.warn('[loop] insight extraction optional:', e?.message || e); }
     
     // ============== 2026-06-24 新增: 临时文件自动清理 ==============
     // 任务完成后，自动清理AI创建的临时文件（测试脚本、临时文件等）
@@ -5345,18 +5345,18 @@ if (this._capabilityTier !== 'autonomous') {
         this.emit('temp:files:cleaned', { deleted: cleanupResult.deleted, kept: cleanupResult.kept });
         // 如果有错误，记录但不阻塞主流程
         if (cleanupResult.errors.length > 0) {
-          console.warn('[temp-cleanup] errors:', cleanupResult.errors.slice(0, 3));
+          logger.warn('[temp-cleanup] errors:', cleanupResult.errors.slice(0, 3));
         }
       }
     } catch (e: any) {
-      console.warn('[temp-cleanup] failed:', e?.message);
+      logger.warn('[temp-cleanup] failed:', e?.message);
     }
 
 // ═══ 2026-07-30 新增: 导出工具调用分析到 evolution ═══
 try {
 finalizeSessionAnalytics(this.opts.userId || 'anonymous');
 } catch (e: any) {
-console.warn('[tool-analytics] finalize failed:', e?.message);
+logger.warn('[tool-analytics] finalize failed:', e?.message);
 }
 
 // ═══ 灵魂层: 对话结束后提取未解问题 + 触发内部辩论 ═══
@@ -5496,7 +5496,7 @@ try {
             this.emit('skill:created', { path: skillPath });
           }
         } catch (e) {
-          console.warn('[auto-skill] 分析失败:', (e as Error).message);
+          logger.warn('[auto-skill] 分析失败:', (e as Error).message);
         }
       }).catch(() => { /* auto-skill optional */ });
     }
@@ -5544,7 +5544,7 @@ try {
             }
           }
         } catch (e) {
-          console.warn('[skill-evolver] 评估失败:', (e as Error).message);
+          logger.warn('[skill-evolver] 评估失败:', (e as Error).message);
         }
       }).catch(() => { /* skill-evolver optional */ });
     }
@@ -5570,7 +5570,7 @@ try {
           if (promptFragment.trim()) systemPromptOverride = promptFragment;
         }
       }
-    } catch (e) { console.warn('[loop] distilled patterns optional:', (e as any)?.message || e); }
+    } catch (e) { logger.warn('[loop] distilled patterns optional:', (e as any)?.message || e); }
 
     // ═══ 2026-06-26 新增: Model Distiller 自动蒸馏 ═══
     // 每次 loop 结束后，异步提取成功模式 → 固化经验
@@ -5652,7 +5652,7 @@ try {
             this.emit('worldmodel:extracted', result);
           }
         } catch (e: any) {
-          console.warn('[world-model] extract failed:', e?.message || e);
+          logger.warn('[world-model] extract failed:', e?.message || e);
         }
       }).catch(() => { /* world-model extraction optional */ });
     }
@@ -5734,7 +5734,7 @@ try {
         }
       } catch { /* tracker 容错 */ }
     } catch (e) {
-      console.warn('[reflector] import/exec failed:', (e as Error).message);
+      logger.warn('[reflector] import/exec failed:', (e as Error).message);
     }
   }
 
@@ -6038,7 +6038,7 @@ try {
                 this.emit('self-modify:pending', { file: filePath, proposalId: proposal.id });
               }
             }
-          } catch (e: any) { console.warn('[SelfModify] proposal failed:', e?.message); }
+          } catch (e: any) { logger.warn('[SelfModify] proposal failed:', e?.message); }
         }
         if (!selfModifyCheck.allowed) {
           rejectedResults.push({
