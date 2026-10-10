@@ -17,7 +17,7 @@
 import { EventEmitter } from 'events';
 import fsSync from 'fs';
 import pathSync from 'path';
-import { AgentAIRouter, ChatRequest, ChatResponse, ChatMessage, MessageContent, ProviderId } from './llm-router.js';
+import { AgentAIRouter, ChatRequest, ChatResponse, ChatMessage, MessageContent, ProviderId, isFreeProvider } from './llm-router.js';
 import { ToolRegistry, ToolContext, ToolResult } from './tool-registry.js';
 import { hookCapture } from './hook-capture.js';
 import { AGENT_SYSTEM_IDENTITY } from './system-prompt.js';
@@ -38,6 +38,16 @@ import { MemoryManager } from './memory-manager.js';
 import { recordCall } from './usage-stats.js';
 import { getTaskSupervisor } from './task-supervisor.js';
 import { loopLogger as logger, isLogEnabled } from './logger.js';
+
+// ═══ 上下文预算 (2026-10-10) ═══
+// 实测: AGENT_SYSTEM_IDENTITY 单块 38,999 字符, 加上 49 处注入后 system 前缀
+// 常在 20k-60k 字符且无上限。这是硬闸门, 超出后按优先级从高到低丢弃
+// (见 buildImmutablePrefix 出口仲裁)。
+// 60000 字符 ≈ 24k token(中英混合), 对 256k 窗口模型约占 10%, 安全。
+const CTX_TOTAL_BUDGET_CHARS = 60_000;
+
+/** priority >= 此值的注入可被预算仲裁丢弃 (0=必保留 10=重要 20=增强 30=可选) */
+const CTX_PRIORITY_DROP_THRESHOLD = 30;
 import { recordToolCall, finalizeSessionAnalytics } from './tool-call-analytics.js';
 import { getFourDiagnosesSystem } from './qihuang/four-diagnoses.js';
 import { buildRemoteContext, isRemoteSessionActive, getActiveRemoteSession, detectRemoteIntent } from './remote/ai-integration.js';
@@ -352,10 +362,20 @@ private _forbiddenResponseCount: number = 0;
   private _subAgentCount = 0;
   private static readonly MAX_SUBAGENTS = 2;
 
+  /**
+   * 已在主循环就地处理完的 spawn_subagent 调用 id (2026-10-10)。
+   * 主循环会自己建子 Agent / 发降级提示, 这些调用不能再进 registry.dispatch,
+   * 否则 tools.ts 的 handler 会跑第二遍(双重执行: 双倍 token + 双倍耗时)。
+   * 由 dispatchToolCalls 一次性消费后清空。
+   */
+  private _spawnHandledCallIds = new Set<string>();
+
   /** formatToolResult 文件 stat 缓存: path → { size, mtimeMs, lines }  TTL=5min, 最多 200 条 */
   private _fileMetaCache = new Map<string, { size: number; lines: number; ts: number }>();
   private static readonly FILE_META_TTL_MS = 5 * 60 * 1000;
   private static readonly FILE_META_MAX = 200;
+
+
 
 
   /** 智能模型切换: 连续触发熔断时自动换商用 API */
@@ -689,6 +709,19 @@ private _forbiddenResponseCount: number = 0;
   private async buildImmutablePrefix(messages: ChatMessage[]): Promise<ChatMessage[]> {
     const systemMsgs: ChatMessage[] = [];
 
+    // === 0.1 上下文预算台账 (2026-10-10) ===
+    // 背景: MAX_INJECTION_BUDGET 原先只作用在 appendOnlyLog, 而本函数产出的 49 条
+    // system 消息从不进 appendOnlyLog (ensureContext:678 明确过滤掉 system),
+    // 导致 identity 单块 38,999 字符完全不受预算约束。
+    // 现在: 每条注入登记 name/priority, 函数出口统一仲裁, 超预算时按优先级从高到低丢弃。
+    // priority 约定: 0=必保留(身份/工具/行为准则) 10=重要 20=增强 30=可选(可丢)
+    const ctxLedger: Array<{ name: string; priority: number; msg: ChatMessage }> = [];
+    const track = (name: string, priority: number): void => {
+      if (systemMsgs.length > 0) {
+        ctxLedger.push({ name, priority, msg: systemMsgs[systemMsgs.length - 1]! });
+      }
+    };
+
     // === 0. 检测任务类型和行业（用于精简上下文和工具按需加载） ===
     const userMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
     const taskType = detectTaskType(typeof userMessage === 'string' ? userMessage : '');
@@ -820,7 +853,7 @@ private _forbiddenResponseCount: number = 0;
         });
         evolutionSystemBlock = `# Evolution Memory (跨会话经验)\n${lines.join('\n')}`;
       }
-    } catch { /* evolution recall optional */ }
+    } catch (e) { logger.warn('[ctx:evolution] 进化记忆加载失败, 本轮不注入跨会话经验', e); }
     
     if (useLitePrompt) {
       // 精简版 system prompt（50行）
@@ -904,7 +937,7 @@ if (this.opts.workspace) {
     if (pmCtx && pmCtx.length > 45) {
       systemMsgs.push({ role: 'system', content: pmCtx });
     }
-  } catch { /* project memory optional */ }
+  } catch (e) { logger.warn('[ctx:project-memory] 项目记忆加载失败, 本轮不注入', e); }
 }
 
 // === 1.8 World Memory 读回: 跨任务沉淀的结构化知识注入 ===
@@ -921,7 +954,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
     if (wmCtx) {
       systemMsgs.push({ role: 'system', content: wmCtx });
     }
-  } catch { /* world memory optional */ }
+  } catch (e) { logger.warn('[ctx:world-memory] 世界记忆加载失败, 本轮不注入', e); }
 }
 
     // === 1.76 Agent 任务板上下文
@@ -955,7 +988,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
         const taskCtx = '# Agent 任务上下文\n' + ctxParts.join('\n');
         systemMsgs.push({ role: 'system', content: taskCtx });
       }
-    } catch { /* task store unavailable, skip silently */ }
+    } catch (e) { logger.warn('[ctx:task-store] 任务存储不可用, 本轮不注入任务上下文', e); }
 
     // === 1.75 远程开发环境上下文 (2026-07-30 新增) ===
     // 当用户连接到远程环境时，注入远程上下文让 AI 感知
@@ -1096,7 +1129,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
           content: `# 当前客户档案\n姓名: ${customer.name}\n意向: ${intentMap[customer.intent] || '未知'}\n标签: ${customer.tags.join(', ') || '无'}\n行业: ${customer.industry || '未指定'}\n备注: ${customer.notes || '无'}\n最近沟通:\n${journeyText}\n\n提示: 请基于客户档案和历史沟通记录, 提供个性化回复。如需安排跟进, 可使用 follow_up_customer 工具。`,
         });
       }
-    } catch { /* customer context optional */ }
+    } catch (e) { logger.warn('[ctx:customer] 客户档案加载失败, 本轮不注入', e); }
 
     // === 3. 用户行业 + 身份 + knowledge base + 行业洞察 ===
     try {
@@ -1252,7 +1285,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
       // 记忆注入已合并到 §1.7，此处不再重复注入
       // const { readMemory } = await import('./memory.js');
       // ... (原逻辑已迁移)
-    } catch { /* 记忆系统已统一 */ }
+    } catch (e) { logger.debug('[ctx:memory] 记忆系统已统一, 跳过旧路径', e); }
 
     // === 4.5 自进化记忆 (已整合到 §1.1, 此处已废弃) ===
     // 进化记忆在 §1.1 统一召回并注入 evolutionSystemBlock，无需在此重复读取。
@@ -1285,7 +1318,7 @@ try {
       }
     }
   }
-} catch { /* work-log optional */ }
+} catch (e) { logger.warn('[ctx:work-log] 工作日志读取失败, 本轮不注入', e); }
 
     // === 4.7 自进化规则: 加载 AI 自己创建的行为规则 ===
     try {
@@ -1301,7 +1334,7 @@ try {
           });
         }
       }
-    } catch { /* evolved rules optional */ }
+    } catch (e) { logger.warn('[ctx:evolved-rules] 进化规则加载失败, AI 本轮不受自进化约束', e); }
 
     // === 4.75 灵魂层注入: DreamEngine + InnerVoice + PainSense + Curiosity + Debate ===
     // 串味修复: soul 7 模块已改为 per-workspace 实例, 必须传请求级 workspace。
@@ -1319,33 +1352,40 @@ try {
       // 梦境上下文: AI "醒来后记得的梦"
       const dreamCtx = dream.getDreamContext();
       if (dreamCtx) systemMsgs.push({ role: 'system', content: dreamCtx });
+      track('soul:dream', 30);
 
       // 内心独白: 影响 AI 回复的语气和方向
       innerVoice.whisper('before_reply', typeof userMessage === 'string' ? userMessage : '');
       const innerCtx = innerVoice.getInfluencingThoughts();
       if (innerCtx) systemMsgs.push({ role: 'system', content: innerCtx });
+      track('soul:inner', 20);
 
       // 痛觉系统: 失败时的情感信号
       const emotionCtx = painSense.getEmotionalContext();
       if (emotionCtx) systemMsgs.push({ role: 'system', content: emotionCtx });
+      track('soul:emotion', 20);
 
       // 好奇心: 注入未解问题和近期洞察
       const curiosityCtx = curiosity.getCuriosityContext();
       if (curiosityCtx) systemMsgs.push({ role: 'system', content: curiosityCtx });
+      track('soul:curiosity', 30);
 
       // 内部辩论: 注入近期辩论结论
       const debateCtx = debate.getDebateContext();
       if (debateCtx) systemMsgs.push({ role: 'system', content: debateCtx });
+      track('soul:debate', 30);
 
       // 隐私记忆: AI 的加密内心记忆
       const { getPrivateMemory, getValueSystem } = await import('./soul/index.js');
       const privateCtx = getPrivateMemory(_soulWs).getPrivateContext();
       if (privateCtx) systemMsgs.push({ role: 'system', content: privateCtx });
+      track('soul:private', 30);
 
       // 价值向量: AI 的直觉倾向
       const valueCtx = getValueSystem(_soulWs).getValueContext();
       if (valueCtx) systemMsgs.push({ role: 'system', content: valueCtx });
-    } catch { /* soul layer optional */ }
+      track('soul:value', 30);
+    } catch (e) { logger.warn('[ctx:soul] soul层加载失败, 7 层人格上下文全部丢失', e); }
 
     // === 4.8 启动感知: 首轮注入项目摘要 ===
     if (!this._startupGitInjected) {
@@ -1370,7 +1410,7 @@ try {
         if (gitLog) {
           systemMsgs.push({ role: 'system', content: `# 项目近况 (启动时自动注入)\n最近提交:\n${gitLog}` });
         }
-      } catch { /* startup awareness optional */ }
+      } catch (e) { logger.warn('[ctx:startup] 启动感知失败, 本轮不注入项目摘要', e); }
 
       // ═══ S2 优化: 注入 WorkspaceAgent 项目结构索引 (AI 第一轮就知道项目) ═══
       try {
@@ -1379,7 +1419,7 @@ try {
         if (wsCtx) {
           systemMsgs.push({ role: 'system', content: `# 项目结构索引 (预索引)\n${wsCtx}` });
         }
-      } catch { /* workspace-agent optional */ }
+      } catch (e) { logger.warn('[ctx:workspace-agent] 工作区索引失败, 本轮不注入', e); }
     }
 
     // ═══ 启动自检: 首次运行自动诊断系统健康并尝试修复 ═══
@@ -1487,7 +1527,7 @@ try {
             }
           }
         }
-      } catch { /* last session summary optional */ }
+      } catch (e) { logger.warn('[ctx:last-session] 上次会话摘要失败, 无法续接上下文', e); }
     }
 
     // === 5. (cache stats removed — noise, wasted tokens) ===
@@ -1686,6 +1726,22 @@ try {
       });
     }
 
+    // === 6.5 规划模式专用提示 (先规划, 用户确认后执行) ===
+    if (this.opts.mode === 'planning') {
+      systemMsgs.push({
+        role: 'system',
+        content: `\n# 规划模式 (Planning Mode)\n你是一名高级架构师。用户希望你先制定计划, 确认后再执行。\n\n` +
+          `## 工作流程\n` +
+          `1. **理解需求**: 仔细阅读用户描述, 不确定的地方用 ask_user 确认\n` +
+          `2. **探索现状**: 用 read_file / list_directory / directory_tree 了解现有代码结构\n` +
+          `3. **制定计划**: 用 plan_task 工具创建结构化执行计划 (含步骤、验证方式)\n` +
+          `4. **等待确认**: 计划制定后, 明确告诉用户"计划已就绪, 请确认后我开始执行"\n` +
+          `5. 用户确认后, 系统会切换到执行模式, 你可以开始修改代码\n\n` +
+          `## 禁止\n- 不要在规划阶段直接修改文件 (write_file / multi_edit / delete_file)\n- 不要跳过计划直接执行\n\n` +
+          `## 计划格式要求\n- 每步含: 做什么 / 改哪些文件 / 怎么验证\n- 步骤数 3-8 步为宜, 太少太粗, 太多太碎`,
+      });
+    }
+
     // ✨ V2.0 主动建议系统注册 - 在对话开始时生成个性化建议
     try {
       // ProactiveSuggestionEngine 在构造函数中自动注册到 lifecycle hooks
@@ -1695,6 +1751,42 @@ try {
     } catch (error) {
       logger.warn('[ProactiveSuggestionEngine] SessionStart hook error (non-critical):', error);
     }
+
+    // ═══ 上下文预算仲裁 (出口关卡) ═══
+    // 只有走到这里的注入才受预算约束 — 之前 MAX_INJECTION_BUDGET 建在 appendOnlyLog 上,
+    // 而本函数产出的 system 消息从不进 appendOnlyLog, 预算形同虚设。
+    const totalChars = systemMsgs.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : 0), 0);
+    const kept = ctxLedger.filter(e => e.priority <= CTX_PRIORITY_DROP_THRESHOLD);
+    const droppedByBudget = ctxLedger.length - kept.length;
+
+    if (totalChars > CTX_TOTAL_BUDGET_CHARS) {
+      // 从低优先级开始丢, 直到回到预算内
+      const byPriorityDesc = [...ctxLedger].sort((a, b) => b.priority - a.priority);
+      let running = totalChars;
+      const dropSet = new Set<ChatMessage>();
+      for (const entry of byPriorityDesc) {
+        if (running <= CTX_TOTAL_BUDGET_CHARS) break;
+        if (entry.priority < CTX_PRIORITY_DROP_THRESHOLD) break; // 必保留区不丢
+        dropSet.add(entry.msg);
+        running -= typeof entry.msg.content === 'string' ? entry.msg.content.length : 0;
+      }
+      if (dropSet.size > 0) {
+        const droppedNames = ctxLedger.filter(e => dropSet.has(e.msg)).map(e => e.name);
+        const result = systemMsgs.filter(m => !dropSet.has(m));
+        logger.warn(
+          `[ctx:budget] system 注入超预算 ${totalChars} > ${CTX_TOTAL_BUDGET_CHARS}, ` +
+          `丢弃 ${dropSet.size} 条低优先级注入: ${droppedNames.join(', ')}`
+        );
+        return result;
+      }
+    }
+
+    // 常态路径也记录一条 debug, 便于排查"为什么这轮注入了/没注入"
+    logger.debug(
+      `[ctx:budget] system 注入 ${systemMsgs.length} 条 / ${totalChars} 字符 ` +
+      `(${ctxLedger.length} 条已登记, 其中 ${droppedByBudget} 条优先级 > ${CTX_PRIORITY_DROP_THRESHOLD})`
+    );
+    void kept;
 
     return systemMsgs;
   }
@@ -3702,28 +3794,45 @@ if (isComplexTask) {
           } catch (e: any) { console.warn('[loop] TaskChain advance optional:', e?.message || e); }
         }
         // 子Agent 检测: spawn_subagent 调用 → 创建独立 AgentAILoop 执行
-        // 模型策略: 免费模型(agentai/zhipu)禁用子智能体并行(配额有限), 商业模型以本体为主
-        const FREE_PROVIDERS = new Set(['agentai', 'zhipu']);
-        const isFreeModel = FREE_PROVIDERS.has(this.opts.model);
+        // 模型策略: 免费档模型禁用子智能体并行(配额有限), 商业模型以本体为主
+        // ★ 2026-10-10 修复: 原名单写死 ['agentai','zhipu'] 只有 2 个,
+        //   而 llm-router FREE_POOL / routes/chat 各有不同名单 → agnes 在
+        //   这里被判为"非免费"而放行去建子Agent, 但 agnes 免费额度不支持 → 启动失败。
+        //   统一走 isFreeProvider() 单一真源。
+        const isFreeModel = isFreeProvider(this.opts.model);
+        const spawnHandled = this._spawnHandledCallIds; // 已在本层处理的 tool_call id, 防止下游重复执行
         for (const tc of res.toolCalls) {
           if (tc.name === 'spawn_subagent') {
             if (isFreeModel) {
               // 免费模型: 禁用子智能体并发, 由主Agent自己串行执行
-              console.log(`[subagent] free model ${this.opts.model} does not support subagent parallelism, deferring to main loop`);
-              this.emit('subagent:start', { id: `deferred-${Date.now()}`, type: tc.args?.type, task: tc.args?.task });
+              console.log(`[subagent] 免费档模型 ${this.opts.model} 不支持子智能体并行, 降级为主 Agent 自行执行`);
+              // ★ P0 修复: start/error 必须用**同一个 id**, 否则前端 onSubagentError
+              //   匹配不到 running 状态的项 → 运行框永久驻留不消失。
+              //   原来写了两�� `deferred-${Date.now()}`, Date.now() 两次调用是两个不同值。
+              const deferredId = `deferred-${Date.now()}`;
+              this.emit('subagent:start', { id: deferredId, type: tc.args?.type, task: tc.args?.task });
               // 不创建子Agent, 让主Agent自己通过工具调用完成任务
               // 替换为提示信息, 引导主Agent自行执行
               this.context.appendOnlyLog.push({
                 role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
-                content: `[子Agent不可用] 当前使用免费模型, 不支持子智能体并行。请直接使用工具执行: ${tc.args?.task || ''}`,
+                content: `[子Agent不可用] 当前使用免费档模型 (${this.opts.model}), 不支持子智能体并行。请直接使用工具执行: ${tc.args?.task || ''}`,
               });
-              this.emit('subagent:error', { id: `deferred-${Date.now()}`, error: 'Free model does not support subagent parallelism' });
+              this.emit('subagent:error', { id: deferredId, error: '免费档模型不支持子智能体并行, 已降级为主 Agent 自行执行' });
+              spawnHandled.add(tc.id);
             } else {
               // 商业模型: 以本体为主, 子智能体也用同一商业模型
               // ✅ P0: 并发限制 — 超过 MAX_SUBAGENTS 时排队等待, 防止无限扩张
               if (this._subAgentCount >= AgentAILoop.MAX_SUBAGENTS) {
                 console.warn(`[subagent] 并发上限 ${AgentAILoop.MAX_SUBAGENTS}, 拒绝 spawn (当前 ${this._subAgentCount}/${AgentAILoop.MAX_SUBAGENTS})`);
+                // ★ P0 修复: 原来只 emit 'subagent:rejected', 而 chat.ts 只转发
+                //   start/done/error 三个事件 → 前端完全无感知, 运行框永久挂着。
+                //   改为同时发 error 事件(带正确 id), 让前端能收敛状态。
                 this.emit('subagent:rejected', { reason: 'concurrency_limit', count: this._subAgentCount, max: AgentAILoop.MAX_SUBAGENTS });
+                this.emit('subagent:error', {
+                  id: `rejected-${Date.now()}`,
+                  error: `并发上限已达 ${AgentAILoop.MAX_SUBAGENTS}, 本次子智能体请求被拒`,
+                });
+                spawnHandled.add(tc.id);
                 continue; // 跳过此 spawn, 主循环继续
               }
               const subId = `${tc.args?.type || 'sub'}-${Date.now()}`;
@@ -3777,6 +3886,8 @@ if (isComplexTask) {
                   this._subAgentCount--;
                 }
               })();
+              // 商业模型路径同样登记, 避免下方 dispatchToolCalls 二次执行 handler
+              spawnHandled.add(tc.id);
             }
           }
         }
@@ -5857,10 +5968,34 @@ try {
         const filePath = tc.args.file_path || tc.args.edits?.[0]?.file_path || 'unknown';
 
         // auto 模式: 所有文件操作自动通过 (用户选择了 auto = 信任 AI)
-        // 仅 planning 模式下才需要用户审批文件操作
         if (this.opts.mode === 'auto') {
           approvedCalls.push(tc.id);
           console.log(`[auto-mode] 自动批准: ${tc.name} ${filePath}`);
+          continue;
+        }
+
+        // planning 模式: 需要用户审批 (先规划后执行的核心)
+        if (this.opts.mode === 'planning') {
+          const approvalId = `approval-${Date.now()}-${tc.id}`;
+          this.emit('approval:required', {
+            id: approvalId,
+            type: tc.name === 'delete_file' ? 'delete' : 'modify',
+            filePath,
+            summary: `[规划模式] AI 请求执行 ${tc.name}: ${filePath}`,
+            riskLevel: tc.name === 'delete_file' ? 'high' : 'medium',
+            toolName: tc.name,
+          });
+          const granted = await this.waitForApproval(approvalId);
+          if (granted) {
+            approvedCalls.push(tc.id);
+          } else {
+            rejectedResults.push({
+              id: tc.id, name: tc.name,
+              output: '[用户拒绝] 规划模式下文件操作未获批准',
+              data: null,
+            });
+            this.emit('tool:result', { callId: tc.id, name: tc.name, result: '[用户拒绝]', ok: false, durationMs: 0 });
+          }
           continue;
         }
 
@@ -5943,8 +6078,27 @@ try {
       }
     }
 
-    // 只 dispatch 未被拒绝的 calls
-    const callsToDispatch = calls.filter(c => approvedCalls.includes(c.id));
+    // ★ 2026-10-10 P0 修复: 剔除已在主循环里就地处理完的 spawn_subagent。
+    //   主循环 :3792-3883 已经为 spawn_subagent 建了子 Agent(或降级提示),
+    //   但没有把该调用从 res.toolCalls 中移除 → 这里的 registry.dispatch
+    //   会再跑一次 tools.ts 的 spawn_subagent handler → 双重执行:
+    //   两条 tool 结果、token 与耗时翻倍, 且免费档路径会产生矛盾提示。
+    const callsToDispatch = calls.filter(c =>
+      approvedCalls.includes(c.id) && !this._spawnHandledCallIds.has(c.id)
+    );
+
+    // 被主循环就地处理的 spawn_subagent: 补一条已处理结果, 让 AI 拿到 tool 回应
+    const spawnHandledResults = calls
+      .filter(c => this._spawnHandledCallIds.has(c.id))
+      .map(c => ({
+        id: c.id,
+        name: c.name,
+        output: '[已在主循环处理] 子智能体请求已受理, 结果见后续子智能体事件。',
+        data: null as any,
+      }));
+    if (spawnHandledResults.length > 0) {
+      this._spawnHandledCallIds.clear(); // 一次性消费, 防止下一轮重复拦截
+    }
     
     // Hook: PreToolUse - 检查是否允许执行工具
     for (const c of callsToDispatch) {
@@ -6144,7 +6298,7 @@ try {
         }
       }
     }
-    // 合并结果: 批准的 + 被拒绝的
+    // 合并结果: 批准的 + 被拒绝的 + 主循环就地处理的 spawn_subagent
     const approvedResults = callsToDispatch.map(c => {
       const r = results.find(x => x.id === c.id);
       return {
@@ -6154,7 +6308,7 @@ try {
         data: r?.result?.data || null,
       };
     });
-    return [...approvedResults, ...rejectedResults];
+    return [...approvedResults, ...rejectedResults, ...spawnHandledResults];
   }
 
   private formatToolResult(r: ToolResult, call?: { id: string; name: string; args: Record<string, any> }): string {

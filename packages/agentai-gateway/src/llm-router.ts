@@ -28,6 +28,26 @@ import { routeByScore, getSubModel } from './model-classifier.js';
 import { getModelContextWindow, getDefaultContextWindow, getCapability } from './model-capabilities.js';
 import { modelMetrics } from './model-metrics-service.js';
 
+// 免费模型池: 这些可以互相切换 (sensenova/longcat 有免费额度, 也加入)
+// ★ 2026-10-10: 提取为模块级导出, 消除三处名单不统一 (见下)。
+//   历史问题: llm-router / agentai-loop / routes/chat 各写一份名单,
+//   agnes 在 llm-router 和 chat 里算免费、在 agentai-loop 里不算
+//   → 子智能体被放行去调 agnes 免费额度 → 启动失败。
+//   现在: 所有地方统一用 isFreeProvider()。
+export const FREE_PROVIDERS = new Set([
+    'agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat',
+    'agnes-2.5-flash', 'agnes-2.0', 'deepseek-v4-flash',
+]);
+
+/** 判定 provider/model id 是否属于免费档 (含 agnes 各版本别名)。 */
+export function isFreeProvider(id: string | undefined | null): boolean {
+    if (!id) return false;
+    if (FREE_PROVIDERS.has(id)) return true;
+    // agnes 系列带版本后缀 (agnes-2.5-flash / agnes-2.0 等) 一律归为免费档
+    return id.startsWith('agnes');
+}
+
+
 // ===== 类型定义 =====
 export type ProviderId = 'agentai' | 'deepseek' | 'openai' | 'zhipu' | 'superapi' | 'alrc' | 'dxnt' | string;
 
@@ -439,9 +459,7 @@ factory: 'FACTORY_CHAT_KEY',
       console.info('[cost-guard] 日预算已超限, 仅允许免费模型');
     }
 
-// 免费模型池: 这些可以互相切换 (sensenova/longcat 有免费额度, 也加入)
-const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat']);
-    const isFreeModel = (id: string) => FREE_POOL.has(id);
+    const isFreeModel = (id: string) => isFreeProvider(id);
     // 用户选了付费模型 → 只锁该 provider, 不 fallback 到免费池
     const isPremiumModel = req.model && !isFreeModel(req.model);
 
@@ -546,8 +564,6 @@ const FREE_POOL = new Set(['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'lo
         }
       }
     } catch { /* dynamic adjustment 容错 */ }
-
-    const isFreeProvider = (id: string) => ['agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat'].includes(id);
 
     // ✅ 2026-08-03 P0: 同厂整组排除 (Agnes2.5失败切同厂2.0也必然失败; 用户明确反馈)
     //   注意: req.model 可能是 provider 名 (agentai/zhipu/deepseek) 或 model 名 (agnes-2.5-flash)

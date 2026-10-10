@@ -120,13 +120,22 @@ export class TaskLedger extends EventEmitter {
     if (this.failures.length > 20) this.failures.shift();
   }
 
-  /** 记录一条决策/结论（AI 自己说的"我决定用X方案"），压缩后仍可回溯 */
-  recordDecision(decision: string, maxLen = 200): void {
-    const d = String(decision || '').trim().slice(0, maxLen);
-    if (!d || this.decisions.includes(d)) return;
-    this.decisions.push(d);
-    if (this.decisions.length > 15) this.decisions.shift();
-  }
+/** 记录一条决策/结论（AI 自己说的"我决定用X方案"），压缩后仍可回溯 */
+recordDecision(decision: string, maxLen = 200): void {
+const d = String(decision || '').trim().slice(0, maxLen);
+if (!d || this.decisions.includes(d)) return;
+this.decisions.push(d);
+if (this.decisions.length > 15) this.decisions.shift();
+}
+
+/**
+ * 记录决策上下文 — 选择了什么 + 否定了什么 + 为什么 (2026-10-10)
+ * 防止 AI 反复推翻已定决策
+ */
+recordDecisionWithContext(decision: string, rejected: string[], reason: string): void {
+const entry = `✅ ${decision} | ❌ 否定: ${rejected.join('; ')} | 理由: ${reason}`;
+this.recordDecision(entry.slice(0, 300));
+}
 
   /** 设置当前任务目标（用户诉求，最不能丢的东西） */
   setGoal(goal: string, maxLen = 400): void {

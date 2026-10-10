@@ -322,13 +322,14 @@ export const ReasoningCard: React.FC<{ text: string; streaming?: boolean }> = ({
       </div>
       {open && (
         <div style={{
-          padding: '6px 10px 10px', fontSize: 12, lineHeight: 1.6,
+          padding: '6px 10px 8px', fontSize: 11.5, lineHeight: 1.55,
           color: 'var(--muted)', whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
           borderTop: '1px solid var(--border)',
           fontFamily: 'inherit',
-          maxHeight: 300, overflowY: 'auto',
+          maxHeight: 200, overflowY: 'auto',
         }}>
-          {text}
+          {text.length > 1500 ? text.slice(0, 1500) + '\n… (已截断)' : text}
           {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:9}} /></span>}
         </div>
       )}
@@ -456,13 +457,14 @@ export const ThinkingCard: React.FC<{ text: string; streaming?: boolean }> = ({ 
       </div>
       {open && (
         <div style={{
-          padding: '6px 10px 10px', fontSize: 12, lineHeight: 1.6,
+          padding: '6px 10px 8px', fontSize: 11.5, lineHeight: 1.55,
           color: 'var(--muted)', whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
           borderTop: '1px solid var(--border)',
           fontFamily: 'inherit',
-          maxHeight: 300, overflowY: 'auto',
+          maxHeight: 200, overflowY: 'auto',
         }}>
-          {text}
+          {text.length > 1500 ? text.slice(0, 1500) + '\n… (已截断)' : text}
           {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:9}} /></span>}
         </div>
       )}

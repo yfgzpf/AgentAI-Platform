@@ -5,6 +5,7 @@
  * v2: MasterController 前置 → 意图理解→规划→分派子Agent
  */
 import { Router } from 'express';
+import { isFreeProvider } from '../llm-router.js';
 import { AgentAILoop, addTrustedPattern, getTrustedPatterns, removeTrustedPattern } from '../agentai-loop.js';
 import { MasterController } from '../master-controller.js';
 import { writeMemory, readMemory } from '../memory.js';
@@ -578,6 +579,7 @@ export function createChatRouter(deps) {
                             label: modelConfig.modelName || requestedModel,
                             baseURL: modelConfig.baseURL,
                             fallback: false,
+                            contextWindow: modelConfig.contextWindow || 128000, // 自定义模型默认 128K
                         };
                     }
                     // 旧逻辑: 保持原有实现 (验证稳定后删除)
@@ -647,7 +649,7 @@ export function createChatRouter(deps) {
                             fts5Memory,
                             model: selected.provider,
                             modelName: selected.subModel || '',
-                            contextWindow: contextWindow || selected.contextWindow,
+                            contextWindow: contextWindow || selected.contextWindow || 128000,
                             displayModelLabel: selected.label,
                             userPickedModel,
                             emotion,
@@ -814,6 +816,25 @@ export function createChatRouter(deps) {
                     });
                     loop.on('subagent:error', (info) => {
                         sendEvent('subagent_error', { id: info.id, error: info.error });
+                    });
+                    // ★ 2026-10-10 修复「无实时子智能体过程」:
+                    //   loop 侧已在 :3830-3841 转发 4 类 progress 事件(iteration/progress/
+                    //   tool_start/tool_done), 但 SSE 层只接了 start/done/error 三个终态,
+                    //   → 事件源存在但没接到前端。现在补齐转发。
+                    loop.on('subagent:progress', (info) => {
+                        sendEvent('subagent_progress', {
+                            id: info.id,
+                            event: info.event,
+                            iteration: info.iteration,
+                            step: info.step,
+                            description: info.description,
+                            toolName: info.name || info.toolName,
+                            // 截断, 避免工具输出过长撑爆 SSE 帧
+                            result: typeof info.result === 'string' ? info.result.slice(0, 500) : undefined,
+                        });
+                    });
+                    loop.on('subagent:rejected', (info) => {
+                        sendEvent('subagent_rejected', info);
                     });
                     loop.on('tool:stuck', (info) => {
                         sendEvent('tool_stuck', { tool: info.tool, count: info.count });
@@ -985,7 +1006,8 @@ export function createChatRouter(deps) {
                         needMasterController = false; // 极简消息不绕编排器
                     }
                     effectiveModel = effectiveModel || requestModel || 'agentai';
-                    const isFreeModel = ['agentai', 'zhipu', 'agnes-2.5-flash', 'agnes-2.0'].includes(effectiveModel);
+                    // ★ 2026-10-10: 改用统一判定, 消除第三份散落的免费名单
+                    const isFreeModel = isFreeProvider(effectiveModel);
                     // 如果不需要 MasterController, 直接走 loop.run() (分支 3)
                     if (!needMasterController) {
                         console.log(`[chat] 🚀 快速路径: 不调 MasterController, 直接 loop.run()`);
@@ -1177,11 +1199,17 @@ export function createChatRouter(deps) {
                                 }
                             });
                             // 注入前端系统规则 (文件时间线/版本回退/浏览器元素识别等)
+                            // DEF-02 修复: 按内容去重, 防止同一规则在多轮请求中被重复注入 20+ 次
                             if (systemRules && loop.context?.immutablePrefix) {
-                                loop.context.immutablePrefix.push({
-                                    role: 'system',
-                                    content: systemRules,
-                                });
+                                const rulesHash = systemRules.slice(0, 200); // 用前 200 字符作为去重键
+                                const alreadyInjected = loop.context.immutablePrefix.some((m) => m.role === 'system' && typeof m.content === 'string'
+                                    && m.content.slice(0, 200) === rulesHash);
+                                if (!alreadyInjected) {
+                                    loop.context.immutablePrefix.push({
+                                        role: 'system',
+                                        content: systemRules,
+                                    });
+                                }
                             }
                             const response = await loop.run(runMessage);
                             // 注销loop追踪

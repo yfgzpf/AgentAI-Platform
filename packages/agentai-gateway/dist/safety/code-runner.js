@@ -14,8 +14,9 @@ import * as os from 'os';
 const FORBIDDEN_PATTERNS = [
     { pattern: /require\s*\(\s*['"]child_process['"]\s*\)/, reason: 'child_process' },
     { pattern: /\bimport\s+[^;]*['"]child_process['"]/, reason: 'child_process import' },
-    { pattern: /require\s*\(\s*['"]fs['"]\s*\)/, reason: 'fs' },
-    { pattern: /\bimport\s+[^;]*['"]fs['"]/, reason: 'fs import' },
+    // D7 修复: fs 只拦截写操作, 允许只读 (existsSync/readFileSync/readdirSync/statSync 等)
+    { pattern: /fs\.\s*(write|append|unlink|mkdir|rmdir|rm|rename|copy|truncate|chmod|chown)\w*\s*\(/i, reason: 'fs write operation' },
+    { pattern: /require\s*\(\s*['"]fs['"]\s*\)\s*\.\s*(write|append|unlink|mkdir|rmdir|rm|rename|copy|truncate)\w*\s*\(/i, reason: 'fs write via require' },
     { pattern: /\bprocess\s*\.\s*kill\b/, reason: 'process.kill' },
     { pattern: /\beval\s*\(/, reason: 'eval' },
     { pattern: /\bnew\s+Function\s*\(/, reason: 'new Function' },

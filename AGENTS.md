@@ -98,16 +98,30 @@ color: '#ddd';
 #### 1.1 Agent Loop (agentai-loop.ts)
 主循环架构: 用户消息 → 上下文构建 → LLM 调用 → 工具分派 → 结果入 log → 继续循环
 
-**上下文构建 (buildImmutablePrefix) v3.3**
-按需注入 ~8 层上下文 (2026-07-19 合并精简自 19 层):
-1. 身份+技能匹配+进化记忆 (合并)
-2. 工具定义+IDE状态+项目记忆 (合并)
-3. 用户上下文+客户档案 (合并)
-4. 行业引擎+知识库RAG+用户模型 (合并)
-5. 持久记忆+进化规则+启动感知+上次会话 (合并)
-6. Workspace+项目规则+行为准则 (合并)
-7. 技能索引 (按 includeSkillsIndex)
-8. 用户偏好+额外system消息
+**上下文构建 (buildImmutablePrefix) — agentai-loop.ts:689-1715**
+⚠️ **实测更正 (2026-10-10)**：原文档称"按需注入 ~8 层"，那是 2026-07-19 的**期望目标**，不是现状。
+
+实测事实：
+- 该函数内含 **49 处 `systemMsgs.push({role:'system'})`**，结构是 **17 个平铺的 try/catch 区块**，**没有分层抽象、没有优先级注册表**
+- §1.7 / §1.76 等注释编号已自相矛盾（"已合并到 §1.7，此处禁用"与"已并入上方 §1.6"并存），说明多次重构后已无人理解全局
+- 主循环另有 15 处 `appendOnlyLog.push({role:'system'})` + 约 17 处其他 system 注入
+
+真实分层意图（按门控归类）：
+1. 身份 (identity) + lite 版本二选一
+2. 技能匹配 + 进化记忆
+3. 工具定义 (按 tier / taskType 分流) + IDE 状态
+4. 记忆 / 项目记忆 / 世界记忆 / 用户上下文 / 客户档案
+5. 行业引擎 + 知识库 RAG + 用户模型
+6. 任务存储 / 远程上下文 / 项目文档
+7. 进化规则 / 工作日志 / 启动感知 / 上次会话
+8. soul 层七件套 (dream/innerVoice/emotion/curiosity/debate/private/value)
+9. 行为准则 + 技能索引 + 外部工具 + 用户偏好
+
+**上下文预算 (2026-10-10 新增)**
+- `CTX_TOTAL_BUDGET_CHARS = 60_000` — immutablePrefix 出口硬闸门
+- `CTX_PRIORITY_DROP_THRESHOLD = 30` — priority ≥30 的注入可被丢弃 (soul 五项为 30, innerVoice/emotion 为 20)
+- ⚠️ 修复了一个真实漏洞：原 `MAX_INJECTION_BUDGET=3000` 建在 `appendOnlyLog` 上，而本函数产出的 system 消息**从不进 appendOnlyLog**（`ensureContext:678` 明确过滤掉 system），所以那个预算**根本管不到 38,999 字符的 identity**。现在预算建在正确的容器上。
+- 每次构建都会 `logger.debug` 输出「注入 N 条 / M 字符」，超预算会 `logger.warn` 输出丢了哪些
 
 **主循环控制**
 - finish_reason='length' → 自动追加继续消息, 不中断任务
@@ -118,12 +132,22 @@ color: '#ddd';
 - 60 分钟绝对超时保护 (10 分钟空闲超时)
 - 循环结束后: 有工具调用但无总结 → 追加一轮 LLM 总结
 
-#### 1.2 LLM 路由 (llm-router.ts)
+#### 1.2 LLM 路由 (llm-router.ts 2245 行 + model-classifier.ts 1091 行)
 8 Provider: agentai(免费) / deepseek / openai / zhipu / superapi / dxnt / sensenova / longcat
-- 五维评分: 复杂度匹配 30% + 上下文适配 15% + 成本 20% + 成功率 25% + 延迟 10%
-- Cost Guard 预检 + 后检
-- LRU 缓存 (相同请求直接命中)
-- 失败降级 + 熔断保护
+- **五维评分实现在 `model-classifier.ts:580 computeScore()`**（不是 llm-router.ts，常见误引）:
+  复杂度 30% + 上下文 15% + 成本 20% + 成功率 25% + 延迟 10%
+  - 冷启动保护: 无成功率/延迟数据时给 **0.5 中性分**（给 0 会让新模型永不被选中）
+  - 未定价的付费模型成本分给 **0.5 中性值**（原公式让未填 price 的付费模型与免费模型同拿满分，即"付费当免费"）
+- Cost Guard 预检 + 后检 (`maxCostPerTurn=$5` / `maxCostPerDay=$50`，超限只标记不 throw)
+- LRU 缓存 1000 条 / TTL 30min，仅非流式且 isCacheable 时命中
+- 熔断: `CB_COOLDOWN_MS=2min`、连续失败 3 次额外锁 120s；429 指数退避 10s→120s
+  `FLAKY_PROVIDERS={sensenova,longcat}` 设 15s 短超时
+- ⚠️ 已移除 force-untrip（原逻辑对熔断中 provider 每请求强试，完全绕过 2 分钟冷却）
+- 修复管道 6 步见 `llm-router.ts:981 repairPipeline()` ——
+  ①flattenToolCalls:1235 ②scavengeFromThink:1260 ③detectCallStorm:1281
+  ④repairTruncation:1294（**只补 args 括号, 绝不碰 content**）
+  ⑤repairToolCallArgs:1172（smartQuoteFix 状态机, 只换 JSON 边界引号）
+  ⑥parseTextToolCalls:1013（4 种降级格式）
 - 30% 失败率触发智能模型切换 (smart-model-switcher.ts)
 
 **修复管道 (6 步)**
@@ -134,7 +158,27 @@ color: '#ddd';
 5. **tool call JSON 自动修复** — 尾逗号/单引号/无引号 key/undefined
 6. **text→tool_call 回退** — 解析 func(args)/```tool```/XML/DSML 模式
 
-### 二、工具系统 (141 工具)
+### 二、工具系统 (198 声明 / 203 实现)
+
+⚠️ **实测更正 (2026-10-10)**：原文档称"141 工具"，实测为 **EXTRA_TOOLS 声明 198 个 / EXTRA_HANDLERS 实现 203 个**
+（`tools.ts:749-1382` 声明，`:1383-7459` 实现）。tools.ts 全文件 `@ts-nocheck`，工具参数无类型保障。
+
+风险等级分布（AST 实测）：**low 117 / medium 59 / high 21 / critical 1**
+
+**一致性校验（2026-10-10 新增，构建期 fail-fast）**
+```bash
+pnpm verify:tools          # 常规：ERROR 阻塞，WARN 提示
+pnpm verify:tools:strict   # 严格：WARN 也阻塞
+```
+`scripts/verify-tool-consistency.mjs` 已接入 `scripts/build.mjs` 前置，构建前自动跑。
+- 用 TypeScript 编译器 API 走 AST（**不能用正则/括号配平** — tools.ts 大量模板字符串会让两者都误判，实测各踩一次）
+- 声明无实现 → ERROR（这些工具注册时被静默跳过）
+- 实现未声明 → WARN（死代码）：**edit_file / get_symbols / clear_plan / knowledge_explore**
+- 下划线前缀（`_formatBytes`）视为私有 helper，不算死代码
+
+**注册逻辑**：`index.ts:133` 遍历 EXTRA_TOOLS 取 `EXTRA_HANDLERS[spec.name]`，缺 handler 时 `console.warn` + `continue` —— **运行时静默失效**。另有 `index.ts` 里 15 处独立 `registry.register()` 绕过这套校验，边界不统一。
+
+**文件头注释「53 个内置工具」已严重过时**，以 AST 实测为准。
 
 #### 2.1 文件操作 (精确编辑 + 安全守护)
 | 工具 | 能力 |
@@ -216,7 +260,32 @@ AI 经常做某操作 → create_tool({name:'diff_files', script:'...'})
 → 注入上下文头部, 防止长任务"失忆"
 
 #### 4.5 记忆压缩
-项目记忆 >30 条 → 自动合并旧条目为摘要, 保留最近 20 条
+⚠️ **实测更正 (2026-10-10)**：原文档称"项目记忆 >30 条 → 自动合并旧条目为摘要"，**该逻辑不存在**。
+实际是**构建期排序截断（slice）**，不是自动合并。照此文档开发会实现出一个不存在的功能。
+
+记忆双轨制（两者职责不同，改动前务必分清）：
+- `memory-manager.ts` — KV **事实层**（"用户叫富哥"、"项目在 F:/xxx"）：快、可查、可改，JSON + JSONL 双源
+- `memory.ts` / WorkspaceJournal — **日志蒸馏层**（"上次那个 bug 是因为…"）：慢、语义、只追加
+
+#### 4.6 已知设计取舍
+- `create_tool` 自创工具**仅在进程启动时加载**（`index.ts:147-193` 动态 import），运行期创建的当轮不可见。这是取舍，但**UI 上必须标注**，否则用户会以为工具坏了。
+- soul 层已改为 per-workspace 实例（`agentai-loop.ts:1312 _soulWs`）。多租户状态必须请求级作用域 —— 历史 P0-9 串味事故的教训。
+
+### 四·补、智能决策层的真实执行边界（2026-10-10 实测）
+
+⚠️ **元认知 / 置信度层对强模型 100% 静默**：
+```
+agentai-loop.ts:4607  if (this._capabilityTier !== 'autonomous' && iteration < maxIterations*0.5)  // MetaCognitiveLoop
+agentai-loop.ts:4775  if (this._capabilityTier !== 'autonomous' && iteration < maxIterations*0.5)  // ConfidenceEstimator
+```
+- 付费强模型（DeepSeek Pro / GPT-4o 等）**整个决策层永不执行**
+- 即使命中，也只有后 50% 迭代（90 轮里第 46-90 轮）
+- 且 `MetaCognitiveLoop` 的 `currentPlan: []` / `pendingQuestions: []` **恒为空数组硬编码**（:4615-4616, 4635-4636）
+- 投入 159 + 220 + 278 = 657 行代码 + 5 个测试文件，生产主路径零执行
+
+tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 governor` 动态覆盖 → `:1873` 兜底 `'supervised'`
+
+**要么改门控，要么别在架构图里宣称决策层是核心机制。这是全项目最贵的技术债 —— 不是代码债，是认知债。**
 
 ### 五、前端能力
 
@@ -282,6 +351,8 @@ AI 经常做某操作 → create_tool({name:'diff_files', script:'...'})
 - P1: 删除 5 个死代码文件 (decision-gate.ts, self-verifier.ts, autonomous-goal-engine.ts, execution-reflection.ts, trust-ladder.ts)
 - P1: 删除 system-prompt.ts 死函数 (buildFullSystemPrompt, buildLayeredSystemPrompt, classifyIntent 等, ~226 行)
 - P1: system-prompt.ts 从 476 行缩减到 ~250 行 (仅保留 AGENT_SYSTEM_IDENTITY)
+  ⚠️ **2026-10-10 实测已再次漂移**：现为 **643 行 / 38,999 字符**（`AGENT_SYSTEM_IDENTITY` 单块）。
+  该块无任何长度上限，是上下文膨胀的主要来源 —— 现已由 `CTX_TOTAL_BUDGET_CHARS=60000` 出口仲裁兜住。
 - P3: 删除 .bak 备份文件 (system-prompt.ts.bak, system-prompt-lite.ts.bak)
 - 清理 trust-ladder 死代码链 (6 个文件: integrated-agent-core, unified-agent-core, innovations-integration, production-entry, unified-core-demo, trust-ladder.test)
 - 清理桌面端 gateway-dist-v2 中 28 个死代码编译副本 (.js + .d.ts)
@@ -332,13 +403,31 @@ AI 经常做某操作 → create_tool({name:'diff_files', script:'...'})
 
 ### 框架能力实际数据
 
-| 指标 | 原文档 | 实际 |
-|------|--------|------|
-| LLM Provider | 4 | 8 |
-| 工具数量 | 57+ | 141 |
-| 评分维度 | 3D | 5D |
-| MAX_AUTO_RESUME | 5 | 10 |
-| 绝对超时 | 3 分钟 | 60 分钟 |
-| 修复管道 | 5 步 | 6 步 |
-| 熔断条件 | 3 次失败 | 30% 失败率 |
-| 上下文注入层数 | 8 | ~8 (已从 19 层合并精简) |
+| 指标 | 原文档 | 实际 | 核验方式 |
+|------|--------|------|---------|
+| LLM Provider | 4 | 8 | llm-router.ts |
+| 工具数量 | 57+ | **198 声明 / 203 实现** | `pnpm verify:tools`（AST） |
+| 评分维度 | 3D | 5D | model-classifier.ts:511-515 |
+| MAX_AUTO_RESUME | 5 | 10 | agentai-loop.ts:2601 |
+| 绝对超时 | 3 分钟 | 60 分钟 | agentai-loop.ts:1963 |
+| 修复管道 | 5 步 | 6 步 | llm-router.ts:981 |
+| 熔断条件 | 3 次失败 | 30% 失败率 | smart-model-switcher.ts |
+| 上下文注入 | 8 层 | **8 层是目标，实际 49 处注入 / 17 个平铺 try-catch** | grep `systemMsgs.push` |
+| system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
+| 测试覆盖 | "无 E2E" | 65 文件 / ~790 测试，但 **agentai-loop.ts(6416行) 零覆盖** | vitest |
+
+### ⚠️ 声明可验证规矩（2026-10-10 新增）
+
+本文档的数字**已被实测打脸 7 处**。因此立以下规矩：
+
+1. **凡写"约 N 个/N 行/N 层"，必须附核验方式**（脚本命令或行号）。
+2. **声称存在的功能，必须能 grep 到实现**。本轮实测发现「记忆 >30 条自动合并」**根本不存在**（实为 slice 截断）。
+3. **每次改核心数字后，同步更新本文档 + `docs/CAPABILITY_AUDIT_2026-10-10.md`**。
+4. 新增架构机制时，同步更新本节「框架能力实际数据」表。
+
+**核验脚本**（可复用）：
+- 工具一致性：`pnpm verify:tools`（AST 版，已接入 build 前置）
+- 上下文注入点：`grep -c "role: 'system'" packages/agentai-gateway/src/agentai-loop.ts`
+- 核心文件规模：`wc -l packages/agentai-gateway/src/*.ts | sort -rn | head`
+- 测试基线：`cd packages/agentai-gateway && npx vitest run --reporter=dot`
+  （⚠️ 已知基线失败 7 个：b1-security 1 / context-fidelity 3 / ledger-wiring 2 / code-runner 1，**2026-10-10 优化前已存在**，非新引入）

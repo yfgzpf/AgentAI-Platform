@@ -193,27 +193,8 @@ export const StatusBar: React.FC = () => {
     return () => window.removeEventListener('agentai:music-action', handler as EventListener);
   }, []);
 
-  /* ---- 启动时自动播放音乐 ---- */
-  useEffect(() => {
-    // 每次启动都自动加载免费音乐（用户可在设置中关闭）
-    const autoPlayMusic = localStorage.getItem('agentai-music-autoplay-setting');
-    if (autoPlayMusic !== 'false') {
-      // 延迟 3 秒后自动加载免费音乐并播放
-      setTimeout(() => {
-        // 触发音乐播放器自动加载免费音乐
-        window.dispatchEvent(new CustomEvent('agentai:music-action', {
-          detail: { action: 'load_free' },
-        }));
-        // 显示音乐入口提示（仅在首次启动时显示）
-        const hasShownTip = localStorage.getItem('agentai-music-tip-shown');
-        if (!hasShownTip) {
-          setShowMusicTip(true);
-          setTimeout(() => setShowMusicTip(false), 5000);
-          localStorage.setItem('agentai-music-tip-shown', 'true');
-        }
-      }, 3000);
-    }
-  }, []);
+/* ---- 启动时不再自动播放音乐 (用户反馈: 不要打开就开启) ---- */
+// 音乐播放器仅通过用户主动点击或对话中说"放音乐"时触发
 
   /* ---- 渲染状态点 ---- */
   const statusDot = (state: ConnStatus, colorOnline: string) => {

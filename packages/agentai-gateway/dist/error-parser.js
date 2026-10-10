@@ -11,6 +11,46 @@
  * - 修复建议经过安全检查
  */
 /**
+ * 快速创建结构化错误 — 供工具 handler 使用
+ * 用法: return { success: false, output: '...', structuredError: fail('timeout', 'HTTP 503', { retryable: true, next_action: 'retry_with_delay', retry_delay_ms: 5000 }) }
+ */
+export function fail(errorKind, message, opts) {
+    const defaults = {
+        network: { retryable: true, next_action: 'retry_with_delay', retry_delay_ms: 5000 },
+        timeout: { retryable: true, next_action: 'retry_with_delay', retry_delay_ms: 10000 },
+        rate_limit: { retryable: true, next_action: 'retry_with_delay', retry_delay_ms: 60000 },
+        not_found: { retryable: false, next_action: 'fix_args' },
+        syntax: { retryable: false, next_action: 'fix_args' },
+        permission: { retryable: false, next_action: 'ask_user' },
+        auth: { retryable: false, next_action: 'ask_user' },
+        resource: { retryable: false, next_action: 'switch_tool' },
+        runtime: { retryable: false, next_action: 'fix_args' },
+        unknown: { retryable: false, next_action: 'abort' },
+    };
+    const d = (errorKind && defaults[errorKind]) || defaults['unknown'];
+    return {
+        type: errorKind === 'network' ? 'NetworkError'
+            : errorKind === 'timeout' ? 'TimeoutError'
+                : errorKind === 'syntax' ? 'SyntaxError'
+                    : errorKind === 'permission' ? 'PermissionError'
+                        : errorKind === 'not_found' ? 'FileSystemError'
+                            : 'UnknownError',
+        message,
+        root_cause: opts?.root_cause || errorKind || 'unknown',
+        error_kind: errorKind || 'unknown',
+        retryable: opts?.retryable ?? d.retryable,
+        next_action: opts?.next_action || d.next_action,
+        retry_delay_ms: opts?.retry_delay_ms || d.retry_delay_ms,
+        context: {
+            toolName: opts?.toolName,
+            args: opts?.args,
+        },
+        suggestedFix: opts?.suggestedFix,
+        confidence: 0.8,
+        riskLevel: 'low',
+    };
+}
+/**
  * 解析工具执行错误，返回结构化错误信息
  */
 export function parseToolError(error, step, toolName, args) {

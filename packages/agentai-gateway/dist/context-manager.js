@@ -143,7 +143,23 @@ export async function maybeFold(appendOnlyLog, _systemPrompt, router, workspace,
         return { folded: false, beforeTokens: totalTokens, afterTokens: totalTokens, messagesRemoved: 0 };
     }
     // 4. 生成结构化摘要 (使用免费模型 agentai)
-    const summary = await generateStructuredSummary(turnsToCompress, router, userId, workspace, previousSummary);
+    // P0 修复: 提取被压缩区域中 read_file 工具返回的文件内容, 附加到摘要请求中
+    // 避免压缩后 AI 丢失已读文件的具体内容 ("不重复读"纪律变成障碍)
+    const readFileContents = [];
+    for (const m of turnsToCompress) {
+        if (m.role === 'tool' && m.name === 'read_file') {
+            const content = typeof m.content === 'string' ? m.content : '';
+            const args = m.args || {};
+            const filePath = args.file_path || args.path || args.file || '(未知路径)';
+            // 截取文件内容前 800 字符作为关键内容缓存
+            const snippet = content.length > 800 ? content.slice(0, 600) + '\n...[截断]...\n' + content.slice(-200) : content;
+            readFileContents.push(`### ${filePath}\n\`\`\`\n${snippet}\n\`\`\``);
+        }
+    }
+    const fileCacheSection = readFileContents.length > 0
+        ? `\n\n## 已读文件内容缓存 (压缩前读取, 可直接引用无需重复读取)\n${readFileContents.join('\n\n')}`
+        : '';
+    const summary = await generateStructuredSummary(turnsToCompress, router, userId, workspace, previousSummary, fileCacheSection);
     // 5. 替换中间部分
     const summaryMsg = {
         role: 'system',
@@ -161,7 +177,7 @@ export async function maybeFold(appendOnlyLog, _systemPrompt, router, workspace,
  * 生成结构化摘要 (结构化模板)
  * 优先使用免费模型 agentai，不可用时降级
  */
-async function generateStructuredSummary(messages, router, userId, workspace, previousSummary) {
+async function generateStructuredSummary(messages, router, userId, workspace, previousSummary, fileCacheSection) {
     // 序列化消息 (截断过长的工具输出)
     const serialized = messages
         .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
@@ -192,10 +208,14 @@ ${serialized}
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
         // 优先使用免费模型 agentai 做摘要 (节省成本)
+        // P0 修复: 将已读文件内容缓存附加到摘要请求中, 避免压缩后 AI 丢失文件内容
+        const fullPrompt = fileCacheSection
+            ? `${prompt}\n\n${SUMMARY_TEMPLATE}\n${fileCacheSection}\n\n目标约3000 tokens。要具体——包含文件路径、命令输出、错误消息和具体值。"已读文件内容缓存"部分必须原样保留在摘要中, 不要省略。只输出摘要正文。`
+            : `${prompt}\n\n${SUMMARY_TEMPLATE}\n\n目标约2000 tokens。要具体——包含文件路径、命令输出、错误消息和具体值。只输出摘要正文。`;
         const res = await router.chat({
             model: 'agentai',
             messages: [
-                { role: 'system', content: `${prompt}\n\n${SUMMARY_TEMPLATE}\n\n目标约2000 tokens。要具体——包含文件路径、命令输出、错误消息和具体值。只输出摘要正文。` },
+                { role: 'system', content: fullPrompt },
             ],
             userId,
             workspace,

@@ -9,6 +9,7 @@
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Select, Tooltip, Button } from 'antd';
+import { BrandLogo } from './BrandLogo';
 import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined,
   AudioOutlined, GlobalOutlined, RobotOutlined, CloseOutlined,
   AudioMutedOutlined, PlusOutlined,
@@ -253,7 +254,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         display: 'flex', alignItems: 'center', gap: 4,
         background: 'var(--bg-2)',
       }}>
-        <img src="/logo1.jpg" alt="AI" style={{ width: 16, height: 16, borderRadius: 3, objectFit: 'cover' }} />
+        <BrandLogo size={16} />
         <span style={{ fontSize: 11, color: '#ccc', fontWeight: 600, marginRight: 4 }}>AI 对话</span>
         <Select
           size="small"
@@ -288,7 +289,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
       }}>
         {editorMsgs.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#666', fontSize: 11, padding: 20, marginTop: 20 }}>
-            <img src="/logo1.jpg" alt="AI" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover', marginBottom: 8 }} />
+            <div style={{ marginBottom: 8 }}><BrandLogo size={40} /></div>
             <div style={{ fontWeight: 600, color: '#888', fontSize: 12 }}>AI 对话</div>
             <div style={{ marginTop: 4, lineHeight: 1.6 }}>
               输入代码相关的问题<br />AI 可读取当前工作目录文件

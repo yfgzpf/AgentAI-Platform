@@ -527,14 +527,40 @@ function getWs(): string {
  * 改为 execFile('git', [参数数组])：**不经shell**，参数中任何元字符都是字面量。
  * 顺带好处: 异步执行不再阻塞事件循环（原 execSync 会卡住整个 gateway）。
  */
+
+// DEF-11 修复: Windows 上查找 git 完整路径, 避免 execFile ENOENT
+let _gitBinCache: string | null = null;
+async function findGitBinary(): Promise<string> {
+  if (_gitBinCache) return _gitBinCache;
+  const { execSync } = await import('child_process');
+  // 用 where 查找 git 完整路径
+  try {
+    const found = execSync('where git 2>nul', { encoding: 'utf-8', timeout: 3000 }).trim().split('\n')[0].trim();
+    if (found) { _gitBinCache = found; return found; }
+  } catch {}
+  // 常见安装路径
+  const candidates = [
+    'C:\\Program Files\\Git\\bin\\git.exe',
+    'C:\\Program Files (x86)\\Git\\bin\\git.exe',
+    `${process.env.LOCALAPPDATA || ''}\\Programs\\Git\\bin\\git.exe`,
+  ];
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) { _gitBinCache = p; return p; } } catch {}
+  }
+  _gitBinCache = 'git'; // fallback
+  return _gitBinCache;
+}
+
 async function gitExec(
   args: string[],
   opts: { cwd: string; timeout?: number },
 ): Promise<string> {
   const { execFile } = await import('child_process');
+  // DEF-11 修复: Windows 上 execFile('git') 可能 ENOENT — 尝试完整路径 fallback
+  const gitBin = process.platform === 'win32' ? await findGitBinary() : 'git';
   return new Promise((resolve, reject) => {
     execFile(
-      'git',
+      gitBin,
       args,
       {
         cwd: opts.cwd,
@@ -791,6 +817,10 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'remember', description: 'Save a memory. scope=project: 项目级记忆, 写入项目 .agentai/memory.jsonl, 会自动摘要旧条目; scope=global: 全局记忆, 仅用于技能/语法/代码开发模式 (如 "项目使用pnpm, 禁止使用npm")', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['skill','pattern','context','preference'] }, scope: { type: 'string', enum: ['global','project'] }, name: { type: 'string' }, description: { type: 'string' }, content: { type: 'string' }, priority: { type: 'string', enum: ['low','medium','high'] }, industry: { type: 'string', description: 'Industry tag (auto-filled from current industry if omitted)' } }, required: ['type','scope','name','description','content'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'plan_task', description: '【复杂任务分解 / 管理者模式 / 必须先用此工具】\n当用户提出任何**复杂、多步、需要规划**的任务时，**必须**先调用此工具拆解为子任务，再逐个执行。\n\n🔑 触发关键词（命中任一即用此工具）:\n- "完整"/"全套"/"整套"/"全方位"/"系统地"\n- "多步骤"/"分步"/"分阶段"/"涉及多个"/"一整套"\n- "调研报告"/"分析报告"/"市场报告"/"研究"\n- "大型"/"复杂"/"综合"/"深度"\n- "项目"/"方案"/"计划"/"规划"\n- 涉及 3+ 个不同类型的工作（搜索+分析+生成+测试等）\n- 预计执行超过 2 分钟\n\n⚠️ 关键区别:\n- generate_diagram = 画图（视觉输出）\n- spec_generate = 生成 PRD（需求文档）\n- web_search/web_fetch = 搜资料（信息收集）\n- plan_task = **拆解任务**（先规划再执行, 适合多步任务）\n\n💡 适用场景:\n- 完整报告/调研：数据收集→分析→生成文档\n- 代码重构：审查→修改→测试\n- 产品发布：需求→开发→测试→上线\n- 长任务管理：每步用 update_plan 更新进度\n\n🎯 管理者模式增强 (v2):\n启用管理者模式时, AI 会自动:\n1. 【预判】预判用户真实需求 (可能用户自己没想清楚)\n2. 【定目标】将模糊目标转为 SMART 目标 (具体/可衡量/可行/相关/有时限)\n3. 【两套方案】准备 2 个实现路径, 推荐最优方案\n4. 【风险预判】识别每个子任务的潜在风险 + 应对预案\n5. 【验收标准】每个子任务定义明确的完成标准 (Done Criteria)\n6. 【追踪】每步完成后 update_plan, 失败立即分析原因\n7. 【复盘】任务完成后自动 run_distillation 固化经验\n\n📝 案例:\n- "帮我做一个完整的市场调研报告" → plan_task(goal:"市场调研", subtasks:[...], smart_goal:{...}, strategy:{...})\n- "重构用户认证模块" → plan_task(goal:"认证模块重构", subtasks:[审计+设计+实现+测试], risks:[...])', parameters: { type: 'object', properties: { goal: { type: 'string', description: '任务总目标，简明扼要' }, smart_goal: { type: 'object', description: '【管理者模式】SMART 目标量化 (可选, 建议复杂任务填写)', properties: { specific: { type: 'string', description: '具体做什么 (Specific)' }, measurable: { type: 'string', description: '如何衡量成功 (Measurable)' }, achievable: { type: 'string', description: '可行性评估 (Achievable)' }, relevant: { type: 'string', description: '与大目标的关系 (Relevant)' }, time_bound: { type: 'string', description: '时间限制 (Time-bound)' } } }, strategy: { type: 'object', description: '【管理者模式】总体策略 (可选)', properties: { approach: { type: 'string', description: '总体思路/方法论' }, alternatives: { type: 'array', items: { type: 'string' }, description: '备选方案 (汇报两套方案技巧)' }, recommended: { type: 'number', description: '推荐方案索引 (从 0 开始)' }, risks: { type: 'array', items: { type: 'object', properties: { what: { type: 'string', description: '风险描述' }, probability: { type: 'string', enum: ['high','medium','low'], description: '发生概率' }, mitigation: { type: 'string', description: '应对预案' } } }, description: '风险清单' } } }, subtasks: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, priority: { type: 'string', enum: ['high','medium','low'] }, depends_on: { type: 'array', items: { type: 'string' }, description: '【管理者模式】依赖的其他子任务 ID (DAG 依赖关系)' }, acceptance_criteria: { type: 'string', description: '【管理者模式】验收标准 - 什么情况下算完成 (Done Criteria)' }, estimated_effort: { type: 'string', description: '【管理者模式】预估工作量 (如 "5min", "30min", "2h")' }, risk_level: { type: 'string', enum: ['low','medium','high'], description: '【管理者模式】风险等级' }, assignee_type: { type: 'string', enum: ['self','subagent','team'], description: '【管理者模式】执行者类型: self=AI自身, subagent=子智能体, team=团队协作' } }, required: ['id','title'] } } }, required: ['goal','subtasks'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'update_plan', description: '更新任务计划中某个子任务的状态', parameters: { type: 'object', properties: { task_id: { type: 'string' }, status: { type: 'string', enum: ['pending','in_progress','completed','failed'] }, summary: { type: 'string', description: '完成摘要(仅 completed 时)' } }, required: ['task_id','status'] }, parallelSafe: false, riskLevel: 'low' },
+  // ★ 2026-10-10 补声明: clear_plan 原本「有 handler 无声明」→ 永不注册,
+  //   但 plan_task 的错误提示一直引导 AI 调它 → AI 照做必然失败。
+  //   现补上声明, 让工具真正可用(声明/实现一致性由 verify:tools 构建期把关)。
+  { name: 'clear_plan', description: '清除当前任务计划。当需要放弃旧计划、重建全新计划, 或计划已失效时使用。⚠️ 不可逆: 清除后旧计划内容无法恢复, 如需保留进度请先用 update_plan 标记 completed。', parameters: { type: 'object', properties: { force: { type: 'boolean', default: false, description: '计划未完成时是否强制清除 (默认 false, 未完成会拒绝)' } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'evolve_prompt', description: '【AI 行为规则自进化 / 永久规则】修改 AI 自己的系统行为规则。\n\n⚠️ 关键区别:\n- remember = 存事实/上下文/用户偏好, 会话级记忆\n- evolve_prompt = 添加永久行为规则, 影响未来所有 AI 行为, 写入 .agentai/evolved-rules.json\n\n🔑 触发场景 (用户提到以下关键词时必须用此工具而非 remember):\n- "添加规则"/"写入规则"/"形成规则"/"系统约束"\n- "避免再犯"/"未来不要"/"以后都"/"永远不要"\n- "行为准则"/"操作规范"/"系统行为"/"AI 行为"\n- 发现低效/错误模式, 希望 AI 永久记住并避免\n\n💡 示例: "我发现 PowerShell 不支持 &&, 帮我添加这条规则避免再犯" → evolve_prompt(action:add, rule:...)\n"删除刚才那条规则" → evolve_prompt(action:remove, rule_id:N)\n"查看所有规则" → evolve_prompt(action:list)', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['add','remove','list'], description: 'add=添加新规则, remove=删除规则, list=查看所有规则' }, rule: { type: 'string', description: '规则内容 (add 时必填)。简洁明确, 1-2 句' }, reason: { type: 'string', description: '为什么要添加/删除这条规则' }, rule_id: { type: 'number', description: '要删除的规则编号 (remove 时必填)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'run_distillation', description: '【模型蒸馏 / 经验固化】从历史成功/失败案例中提取可复用模式，写入 implicit_rules 供后续任务参考。\n\n适用场景:\n- 想查看 AI 从过去任务中学到了什么经验\n- 希望系统从最近的成功/失败中提取规则\n- "巩固"/"固化"/"蒸馏"/"提炼经验"\n\n不适用: 简单记忆用 remember, 行为规则用 evolve_prompt', parameters: { type: 'object', properties: { force: { type: 'boolean', default: false, description: '是否强制完整蒸馏 (默认仅增量, 只蒸馏上次以来未处理的新记录)' } }, required: [] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'create_tool', description: '创建自定义工具。当发现经常需要某个操作但没有现成工具时使用。工具以脚本形式存储在 .agentai/custom-tools/ 目录下。', parameters: { type: 'object', properties: { name: { type: 'string', description: '工具名称 (小写+下划线)' }, description: { type: 'string' }, script: { type: 'string', description: 'Node.js 脚本内容。必须导出 async function run(args): Promise<string>' }, parameters: { type: 'object', description: '参数定义 (JSON Schema)' } }, required: ['name','description','script'] }, parallelSafe: false, riskLevel: 'high' },
@@ -2151,6 +2181,21 @@ body.image = `data:image/png;base64,${image}`;
   },
   write_file: async (args, ctx) => {
     try {
+      // DEF-11 修复: content 参数校验 — 丢参时结构化拒绝, 禁止静默空写入
+      if (args.content === undefined || args.content === null) {
+        return {
+          success: false,
+          output: `[工具故障报告] write_file 参数缺失\n- reason_code: MISSING_PARAM\n- hint: content 参数为 undefined/null, 可能是 LLM 序列化丢参\n- next_action: 重新调用 write_file, 确保 content 参数已传入完整内容\n- args.file_path: ${args.file_path || '(missing)'}`,
+        };
+      }
+      const contentStr = String(args.content);
+      if (contentStr.length === 0) {
+        return {
+          success: false,
+          output: `[工具故障报告] write_file 参数为空\n- reason_code: EMPTY_PARAM\n- hint: content 参数为空字符串, 可能是 LLM 截断或序列化错误\n- next_action: 重新调用 write_file, 传入非空 content`,
+        };
+      }
+
       const resolved = resolvePath(args.file_path, ctx?.workspace);
       const g = await sandboxGuard(resolved, 'write', args.content?.length);
       if (g) return g;
@@ -2338,33 +2383,73 @@ body.image = `data:image/png;base64,${image}`;
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
   // P1 修复: run_command — 同步执行, 等待完成后返回输出 (供自动化任务使用)
+  // DEF-09 修复: node -e "..." 在 Windows 下被 execFile 当作文件名 → ENOENT
+  // 改为: node -e 脚本写入临时 .js 文件再执行, 绕开引号转义和命令截断
   run_command: async (args, ctx?) => {
     try {
-      const { execFile } = await import('child_process');
+      const { execFile, spawn } = await import('child_process');
+      const os = await import('os');
+      const pathMod = await import('path');
+      const fsMod = await import('fs');
       const cwd = args.cwd || ctx?.workspace || process.cwd();
       const timeout = Math.min(args.timeout_ms || 30000, 120_000);
-      // 2026-10-05: 改异步 execFile（原 execSync 阻塞事件循环）+ 破坏性命令黑名单
       const command = String(args.command || '');
       if (!command.trim()) return { success: false, output: '命令为空' };
       const danger = DANGEROUS_CMD_PATTERNS.find((p) => p.pattern.test(command));
       if (danger) {
         return { success: false, output: `命令被安全策略拒绝: ${danger.reason}\n（被拒命令）${command.slice(0, 200)}` };
       }
+
+      // DEF-09: node -e "..." → 写临时文件执行, 绕开 Windows 引号截断
+      const nodeEMatch = command.match(/^node\s+-e\s+["'](.+)["']$/s);
+      if (nodeEMatch) {
+        const script = nodeEMatch[1].replace(/\\'/g, "'").replace(/\\"/g, '"');
+        const tmpFile = pathMod.join(os.tmpdir(), `agentai_task_${Date.now()}.js`);
+        fsMod.writeFileSync(tmpFile, script, 'utf-8');
+        try {
+          const output = await new Promise<string>((resolve, reject) => {
+            execFile('node', [tmpFile], {
+              cwd, timeout, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, windowsHide: true,
+            }, (err: any, so: any, se: any) => {
+              if (err) { err.stdout = so; err.stderr = se; reject(err); return; }
+              resolve(String(so ?? '') + (se ? `\nSTDERR:\n${se}` : ''));
+            });
+          });
+          return { success: true, output: (output || '').slice(0, 5000) || '(ok, no output)' };
+        } catch (e: any) {
+          const so = e.stdout ? `\nSTDOUT:\n${e.stdout}` : '';
+          const se = e.stderr ? `\nSTDERR:\n${e.stderr}` : '';
+          return { success: false, output: `[node -e 临时文件执行失败] ${e.message}${so}${se}` };
+        } finally {
+          try { fsMod.unlinkSync(tmpFile); } catch {}
+        }
+      }
+
+      // 普通命令: 用 spawn + shell:true (支持 && | 等管道)
       const output = await new Promise<string>((resolve, reject) => {
-        execFile(
-          command,
-          { cwd, timeout, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, windowsHide: true },
-          (err: any, so: any, se: any) => {
-            if (err) { err.stdout = so; err.stderr = se; reject(err); return; }
-            resolve(String(so ?? ''));
-          },
-        );
+        const child = spawn(command, [], {
+          cwd, timeout, encoding: 'utf-8', shell: true,
+          windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '', stderr = '';
+        child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
+        child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
+        child.on('error', (err: any) => { err.stdout = stdout; err.stderr = stderr; reject(err); });
+        child.on('close', (code: number) => {
+          if (code !== 0) {
+            const e: any = new Error(`exit code ${code}`);
+            e.stdout = stdout; e.stderr = stderr; e.code = code;
+            reject(e); return;
+          }
+          resolve(stdout + (stderr ? `\nSTDERR:\n${stderr}` : ''));
+        });
       });
       return { success: true, output: (output || '').slice(0, 5000) || '(ok, no output)' };
     } catch (e: any) {
       const so = e.stdout ? `\nSTDOUT:\n${e.stdout}` : '';
       const se = e.stderr ? `\nSTDERR:\n${e.stderr}` : '';
-      return { success: false, output: `Error: ${e.message || e}${so}${se}` };
+      const exitInfo = e.code !== undefined ? `\n退出码: ${e.code}` : '';
+      return { success: false, output: `Error: ${e.message || e}${so}${se}${exitInfo}` };
     }
   },
   job_output: async (args) => { const j = bgJobs.get(args.jobId); return { success: !!j, output: j ? (j.output || '').slice(-(args.tailLines || 80) * 80) : 'Not found' }; },
@@ -2434,42 +2519,59 @@ body.image = `data:image/png;base64,${image}`;
         const oldDone = existingPlan.subtasks.filter((t: any) => t.status === 'completed').length;
         const oldTotal = existingPlan.subtasks.length;
         if (oldDone > 0 && oldDone < oldTotal) {
-          // 有未完成的旧计划 — 提醒但允许覆盖
-          console.log(`[plan_task] 覆盖未完成的旧计划 (${oldDone}/${oldTotal} 已完成): ${existingPlan.goal}`);
+          // 有未完成的旧计划 — 返回警告, 让 AI 确认是否覆盖
+          return {
+            success: false,
+            output: `⚠️ 当前已有未完成的计划: "${existingPlan.goal}" (${oldDone}/${oldTotal} 已完成)。\n` +
+              `已完成: ${existingPlan.subtasks.filter((t:any)=>t.status==='completed').map((t:any)=>t.id).join(', ')}\n` +
+              `待完成: ${existingPlan.subtasks.filter((t:any)=>t.status!=='completed').map((t:any)=>t.id).join(', ')}\n\n` +
+              `如果这是延续之前的工作, 请用 update_plan 继续。\n` +
+              // ★ 2026-10-10 修复: 原来让 AI 调用的 clear_plan 是「有实现未声明」的死代码,
+              //   永远不会被注册 → AI 照做必然失败, 反复重试卡死在这里。
+              //   现在直接给出可用的替代路径: 用 update_plan 把旧计划全部标记 completed。
+              `如果确实要建立全新计划, 请先用 update_plan 把旧计划全部标记为 completed (逐个 task_id 调用)。\n` +
+              `注意: clear_plan 工具当前不可用(声明缺失), 请勿调用。`,
+          };
         }
       }
 
       // ====== 增量约束检查 (/build 原则) ======
+      // ★ 2026-10-10 修复「plan_task 报错」
+      //   原逻辑把违规直接 return success:false, 但:
+      //   1) plan_task 的声明定位是「复杂多步任务分解」, 包括调研报告/PRD/产品发布,
+      //      这些任务天然涉及多文件多步骤 → 与「每步最多 1 文件 100 行」直接冲突;
+      //   2) 从 title 自由文本正则提取文件名误伤率极高 ——
+      //      "对比 a.ts 与 b.ts 的差异"这种正常描述会被判成"涉及 2 个文件"直接拒绝;
+      //   3) AI 被拒后反复重试 → 用户看到的就是「plan_task 一直报错」。
+      //   现在: 降级为 warning 附加在成功结果里, 不再阻塞。
+      //   增量约束的真正落点应该在 update_plan / 实际执行阶段, 不是计划阶段拦标题。
       const violations: string[] = [];
       for (const t of subtasks) {
         // 检查单次文件数（从 title 中提取文件路径）
         const fileMatches = (t.title || '').match(/`([^`]+\.ts[xj]?)`|["']([^"']+\.ts[xj]?)["']/g);
         if (fileMatches && fileMatches.length > 1) {
-          violations.push(`子任务 "${t.title}" 涉及 ${fileMatches.length} 个文件（最多 1 个）`);
+          violations.push(`子任务 "${t.title}" 标题提到 ${fileMatches.length} 个文件（建议单步聚焦 1 个文件便于验证）`);
         }
         // 检查单次行数（从 title 中提取行数信息）
         const lineMatch = (t.title || '').match(/(\d+)\s*行/i);
         if (lineMatch && parseInt(lineMatch[1], 10) > 100) {
-          violations.push(`子任务 "${t.title}" 修改超过 100 行（当前 ${lineMatch[1]} 行）`);
+          violations.push(`子任务 "${t.title}" 预估 ${lineMatch[1]} 行（建议单步 ≤100 行, 超出可再拆）`);
         }
-      }
-
-      if (violations.length > 0) {
-        return {
-          success: false,
-          output: `⚠️ 计划违反增量约束，请重新拆分子任务：\n\n${violations.map(v => `• ${v}`).join('\n')}\n\n**约束规则**：\n• 每个子任务最多修改 **1 个文件**\n• 每个子任务修改不超过 **100 行**\n• 每个子任务必须可独立测试和验证`,
-        };
       }
 
       const plan = {
         id: `plan-${Date.now()}`,
         goal,
-        subtasks: subtasks.map((t: any) => ({
-          id: t.id, title: t.title,
+        subtasks: subtasks.map((t: any, idx: number) => ({
+          // ★ 2026-10-10 修复: schema 里字段名是 depends_on, 实现却读 t.dependencies
+          //   → 模型按 schema 传 depends_on 时依赖关系被静默丢弃, 拓扑排序退化。
+          //   两个字段名都读, 兼容历史数据。
+          id: t.id || `t${idx + 1}`,
+          title: t.title || t.description || '(未命名子任务)',
           priority: t.priority || 'medium',
           status: 'pending' as string,
           summary: '' as string,
-          dependencies: t.dependencies || [],
+          dependencies: t.depends_on || t.dependencies || [],
         })),
         created_at: Date.now(),
       };
@@ -2482,11 +2584,11 @@ body.image = `data:image/png;base64,${image}`;
       try {
         const { analyzeComplexity } = await import('./intelligent-core.js');
         // 构建子任务列表用于分析
-        const analysisInput = subtasks.map((t: any) => ({
-          id: t.id,
-          title: t.title,
-          description: t.description || t.title,
-          dependencies: t.dependencies || [],
+        const analysisInput = subtasks.map((t: any, idx: number) => ({
+          id: t.id || `t${idx + 1}`,
+          title: t.title || t.description || '(未命名子任务)',
+          description: t.description || t.title || '',
+          dependencies: t.depends_on || t.dependencies || [],
           difficulty: t.difficulty || 'medium',
           estimatedSteps: t.estimatedSteps || 3,
           requiredTools: t.requiredTools || [],
@@ -2567,10 +2669,16 @@ body.image = `data:image/png;base64,${image}`;
   ${risks.length > 0 ? `⚠️ 风险: ${risks.join('; ')}` : ''}
 ` : '';
 
+      // ★ 2026-10-10: 增量约束降级为提示, 不再阻塞计划创建(见上方注释)
+      const adviceBlock = violations.length > 0 ? `
+💡 **拆分建议** (不阻塞, 供参考):
+${violations.map(v => `• ${v}`).join('\n')}
+` : '';
+
       return {
         success: true,
-        output: `📋 计划已创建: ${goal}\n${list}${analysisBlock}\n请按拓扑序执行, 可并行的任务同时执行。完成后用 update_plan 更新状态。`,
-        data: { action: 'plan_created', plan, topoOrder, parallelGroups, criticalPath, risks },
+        output: `📋 计划已创建: ${goal}\n${list}${analysisBlock}${adviceBlock}\n请按拓扑序执行, 可并行的任务同时执行。完成后用 update_plan 更新状态。`,
+        data: { action: 'plan_created', plan, topoOrder, parallelGroups, criticalPath, risks, suggestions: violations },
       };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
@@ -2603,6 +2711,25 @@ body.image = `data:image/png;base64,${image}`;
         // 全部完成 → 清掉计划文件，避免下次会话误以为还有活没干完
         ...(done === total ? (clearActivePlan(), { planCompleted: true }) : {}),
       };
+    } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+  clear_plan: async (args) => {
+    try {
+      const existing = getActivePlan();
+      if (!existing) return { success: true, output: '当前没有活跃计划, 无需清除' };
+      // ★ 2026-10-10: 声明里给了 force 参数, 实现要真的认它。
+      //   否则 AI 传 force:true 也被无视 → 声明与实现不一致。
+      const unfinished = (existing.subtasks || []).filter((t: any) => t.status !== 'completed');
+      if (unfinished.length > 0 && !args?.force) {
+        return {
+          success: false,
+          output: `⚠️ 计划 "${existing.goal}" 还有 ${unfinished.length} 个子任务未完成。\n` +
+            `未完成: ${unfinished.map((t: any) => t.id).join(', ')}\n\n` +
+            `如需继续请用 update_plan; 确需放弃请传 force: true。`,
+        };
+      }
+      clearActivePlan();
+      return { success: true, output: `✅ 已清除计划: ${existing.goal} (${existing.subtasks?.length || 0} 个子任务)` };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
   evolve_prompt: async (args) => {
@@ -4308,9 +4435,11 @@ const ws = getWs();
             const typeIcon = { rpa: '🌐', ai_task: '🤖', notification: '🔔', custom: '⚙️', workflow: '🏭' }[s.type] || '📋';
             const statusBadge = s.status === 'active' ? '🟢' : s.status === 'paused' ? '🟡' : '⚪';
             const lastRun = s.lastRunAt ? `上次: ${new Date(s.lastRunAt).toLocaleString()} ${s.lastResult?.success ? '✅' : '❌'}` : '未执行';
-            return `  ${typeIcon} ${statusBadge} [${s.id}] ${s.name} (${s.type}, ${s.cron}) — 执行${s.runCount}次 | ${lastRun}`;
+            const failInfo = s.failCount > 0 ? ` ⚠️连续失败${s.failCount}次` : '';
+            const disabledInfo = s.status === 'disabled' && s.autoDisabledReason ? ` [禁用原因: ${s.autoDisabledReason.slice(0, 60)}]` : '';
+            return `  ${typeIcon} ${statusBadge} [${s.id}] ${s.name} (${s.type}, ${s.cron}) — 执行${s.runCount}次 | ${lastRun}${failInfo}${disabledInfo}`;
           }).join('\n');
-          return { success: true, output: `定时任务 (${schedules.length}):\n${list}`, data: { schedules } };
+          return { success: true, output: `定时任务 (${schedules.length}):\n${list}`, data: { schedules, registryReady: true } };
         }
         case 'get': {
           if (!schedule_id) return { success: false, output: 'schedule_id required' };
@@ -4318,7 +4447,7 @@ const ws = getWs();
           if (!s) return { success: false, output: '任务不存在' };
           return {
             success: true,
-            output: `任务: ${s.name}\n类型: ${s.type}\nCron: ${s.cron}\n状态: ${s.status}\n执行: ${s.runCount}次 (成功${s.successCount}/失败${s.failCount})\n创建: ${new Date(s.createdAt).toLocaleString()}\n${s.lastRunAt ? `上次执行: ${new Date(s.lastRunAt).toLocaleString()} (${s.lastResult?.success ? '✅' : '❌'} ${s.lastResult?.durationMs}ms)` : ''}\n${s.lastResult?.error ? `错误: ${s.lastResult.error}` : ''}`,
+            output: `任务: ${s.name}\n类型: ${s.type}\nCron: ${s.cron}\n状态: ${s.status}${s.autoDisabledReason ? ` (${s.autoDisabledReason})` : ''}\n执行: ${s.runCount}次 (成功${s.successCount}/失败${s.failCount})\n创建: ${new Date(s.createdAt).toLocaleString()}\n${s.lastRunAt ? `上次执行: ${new Date(s.lastRunAt).toLocaleString()} (${s.lastResult?.success ? '✅' : '❌'} ${s.lastResult?.durationMs}ms)` : ''}\n${s.lastResult?.error ? `错误: ${s.lastResult.error}` : ''}`,
             data: s,
           };
         }

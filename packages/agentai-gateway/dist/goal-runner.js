@@ -19,6 +19,7 @@
  *   - 每阶段 verify 不通过最多重试 2 次
  */
 import { AgentAILoop } from './agentai-loop.js';
+import { verifyStage as verifyAcceptance, formatGateResult, normalizeAcceptance, DisciplineRun, } from './discipline/index.js';
 // ===== 常量 =====
 const MAX_STAGES = 8;
 const MAX_STAGE_RETRIES = 2;
@@ -83,10 +84,43 @@ async function buildPlan(goal, router) {
     };
 }
 /**
- * 阶段验证: 用 LLM 检查当前阶段的成果是否满足验收标准
+ * 阶段验收 = 机器断言 + LLM 兜底
+ *
+ * 纪律层接入点（2026-10-09）：
+ *   原本 acceptanceCriteria 只是拼进 prompt 文本，零处机器校验
+ *   → 模型自己说「完成了」就算完成。
+ *   现在：若阶段提供了 AcceptanceAssert[]，先跑机器断言；
+ *   断言全过才算通过，不再依赖模型自述。
+ *   若仍是字符串（向后兼容），自动降级为 llmJudge 断言。
  */
 async function verifyStage(stage, stageResult, router) {
-    const prompt = `验收标准: ${stage.acceptanceCriteria}
+    // 纪律层：先把验收标准归一为机器可执行断言
+    const asserts = normalizeAcceptance(stage.acceptanceCriteria);
+    const isMachineAssert = Array.isArray(stage.acceptanceCriteria);
+    let gateResult;
+    if (isMachineAssert) {
+        gateResult = await verifyAcceptance({ stageKey: stage.key, asserts }, {
+            judgeContent: stageResult,
+            llmJudge: async (rubric, content, threshold) => {
+                const verdict = await llmJudge(rubric, content, router);
+                return { pass: verdict.pass, score: verdict.pass ? 1 : 0, reason: verdict.feedback };
+            },
+        });
+        if (gateResult.passed) {
+            return { pass: true, feedback: formatGateResult(gateResult), gateResult };
+        }
+        // 机器断言失败 → 直接判不通过，不再给 LLM 翻案的机会
+        return { pass: false, feedback: formatGateResult(gateResult), gateResult };
+    }
+    // 兼容路径：字符串验收标准 → 降级为 LLM 判定
+    const verdict = await llmJudge(asserts[0].kind === 'llmJudge' ? asserts[0].rubric : String(stage.acceptanceCriteria), stageResult, router);
+    return { pass: verdict.pass, feedback: verdict.feedback, gateResult };
+}
+/**
+ * LLM 质量判定（机器断言之外的语义兜底）
+ */
+async function llmJudge(criteria, stageResult, router) {
+    const prompt = `验收标准: ${criteria}
 
 实际输出:
 ${stageResult.slice(0, 3000)}
@@ -102,11 +136,7 @@ ${stageResult.slice(0, 3000)}
         maxTokens: 300,
     });
     const text = res.content.trim();
-    const pass = /^PASS/i.test(text);
-    return {
-        pass,
-        feedback: text,
-    };
+    return { pass: /^PASS/i.test(text), feedback: text };
 }
 /**
  * 在 AgentAILoop 上新增 runWithGoal 方法
@@ -114,7 +144,9 @@ ${stageResult.slice(0, 3000)}
  */
 export async function runWithGoal(goal, loop, router, registry, baseOpts, 
 /** 断点续跑: 传入上次的 checkpoint 可跳过已完成阶段 */
-resumeFrom) {
+resumeFrom, 
+/** 纪律层: 执行记事本 runId，传入则全程落盘决策与验收结果（打通处方-执行链） */
+runId) {
     const startedAt = resumeFrom?.startedAt || Date.now();
     const stageResults = { ...resumeFrom?.stageResults };
     const completedStages = [];
@@ -129,9 +161,12 @@ resumeFrom) {
         stageResults,
         startedAt,
     };
+    // 纪律层：建立执行记事本，关联处方（打通处方-执行断链）
+    const discipline = new DisciplineRun(goal, { runId });
+    discipline.linkPrescription(plan.stages.map(s => s.key));
     // 发射计划事件
     const stagesForEvent = plan.stages.map(s => ({ key: s.key, label: s.label }));
-    loop.emit('goal:plan', { goal, stages: stagesForEvent, total: plan.stages.length });
+    loop.emit('goal:plan', { goal, stages: stagesForEvent, total: plan.stages.length, runId: discipline.runId });
     // 2. 逐阶段执行
     for (let i = 0; i < plan.stages.length; i++) {
         const stage = plan.stages[i];
@@ -151,6 +186,13 @@ resumeFrom) {
         }
         progress.currentStage = stage.key;
         loop.emit('goal:stage', { key: stage.key, label: stage.label, index: i + 1, total: plan.stages.length });
+        // 纪律层：登记阶段开始（落盘）
+        discipline.markStageStart(stage.key, stage.label);
+        discipline.recordDecision(`开始阶段「${stage.label}」`, {
+            stageKey: stage.key,
+            reversible: true,
+            evidence: [`验收标准类型: ${Array.isArray(stage.acceptanceCriteria) ? '机器断言' : 'LLM判定(兼容)'}`],
+        });
         // 2a. 并行阶段 → 委派子智能体
         if (stage.parallelizable) {
             const subResult = await runStageInSubagent(stage, router, registry, baseOpts);
@@ -158,12 +200,14 @@ resumeFrom) {
             completedStages.push({ key: stage.key, label: stage.label, success: subResult.success, summary: subResult.summary });
             progress.completedStages++;
             loop.emit('goal:stage:done', { key: stage.key, label: stage.label, success: subResult.success, summary: subResult.summary });
+            discipline.recordDecision(`并行阶段完成: ${subResult.success ? '成功' : '失败'}`, { stageKey: stage.key });
             continue;
         }
         // 2b. 串行阶段 → 新建 AgentAILoop + 重试
         let pass = false;
         let stageOutput = '';
         let retries = 0;
+        let lastGateResult;
         const stageStartedAt = Date.now();
         while (!pass && retries <= MAX_STAGE_RETRIES) {
             const stageLoop = new AgentAILoop(router, registry, [], {
@@ -184,8 +228,9 @@ resumeFrom) {
                 stageOutput += '\n[超时截止]';
                 break;
             }
-            // 验证
+            // 验证（纪律层：机器断言优先，不再依赖模型自述）
             const verdict = await verifyStage(stage, stageOutput, router);
+            lastGateResult = verdict.gateResult;
             if (verdict.pass) {
                 pass = true;
             }
@@ -198,6 +243,13 @@ resumeFrom) {
         completedStages.push({ key: stage.key, label: stage.label, success: pass, summary: stageOutput.slice(0, 500) });
         progress.completedStages++;
         loop.emit('goal:stage:done', { key: stage.key, label: stage.label, success: pass, summary: stageOutput.slice(0, 200) });
+        // 纪律层：登记阶段结果 + 验收明细（落盘，可审计）
+        discipline.markStageEnd(stage.key, pass, {
+            gateResult: lastGateResult,
+            summary: stageOutput.slice(0, 1000),
+            failureReason: pass ? undefined : (lastGateResult ? `${lastGateResult.failedCount} 项机器断言未通过` : 'LLM 判定未通过'),
+            retries,
+        });
         // 人工审批节点: 阶段标记 requireHumanApproval 时暂停, 等待前端确认
         if (stage.requireHumanApproval && pass) {
             progress.pendingApproval = stage.key;
@@ -207,11 +259,14 @@ resumeFrom) {
                 summary: stageOutput.slice(0, 200),
                 checkpoint: { ...progress, skipStages: [...skipStages, stage.key] },
             });
+            // 纪律层：登记人工审批节点（落盘，便于跨会话等待确认）
+            discipline.block(stage.key, '等待人工审批后继续');
+            discipline.recordHuman(`阶段「${stage.label}」完成，待审批`, undefined);
             // 暂停执行, 返回带 checkpoint 的结果, 前端审批后可 resume
             return {
                 success: false,
                 goal,
-                content: `阶段「${stage.label}」已完成, 等待人工审批后继续。`,
+                content: `阶段「${stage.label}」已完成, 等待人工审批后继续。\n\nrunId: ${discipline.runId}`,
                 stages: completedStages,
                 durationMs: Date.now() - startedAt,
                 totalIterations,
@@ -221,6 +276,11 @@ resumeFrom) {
         // 关键阶段失败 → 停止
         if (!pass && retries > MAX_STAGE_RETRIES) {
             loop.emit('goal:stage:failed', { key: stage.key, label: stage.label, retries });
+            discipline.recordDecision(`阶段「${stage.label}」重试耗尽，停止执行`, {
+                stageKey: stage.key,
+                reversible: true,
+                evidence: lastGateResult ? lastGateResult.results.filter(r => !r.passed).map(r => `${r.label}: ${r.reason}`) : undefined,
+            });
             break;
         }
     }
@@ -239,7 +299,22 @@ resumeFrom) {
         }),
         '',
     ];
-    loop.emit('goal:done', { success: allPassed, stages: completedStages.length });
+    // 纪律层：机器验收汇总（哪些断言没通过一目了然）
+    const failedAsserts = discipline.notebook.stages
+        .filter(s => s.gateResult && !s.gateResult.passed)
+        .flatMap(s => s.gateResult.results.filter(r => !r.passed).map(r => `- [${s.label}] ${r.label}: ${r.reason}`));
+    if (failedAsserts.length > 0) {
+        reportLines.push('### 机器验收未通过项');
+        reportLines.push(...failedAsserts);
+        reportLines.push('');
+    }
+    reportLines.push(`**执行记事本**: ${discipline.runId}（可据此断点续跑）`);
+    reportLines.push('');
+    if (allPassed)
+        discipline.complete();
+    else
+        discipline.abort('存在未通过阶段');
+    loop.emit('goal:done', { success: allPassed, stages: completedStages.length, runId: discipline.runId });
     return {
         success: allPassed,
         goal,

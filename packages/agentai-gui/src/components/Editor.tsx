@@ -238,10 +238,17 @@ const filteredTree = filterTree(tree, searchQ);
     }
   }, [msgApi]);
 
-  // 启动时: 浏览器为默认中屏, 有缓存就恢复文件树
+  // 启动时: 恢复上次使用的模式 (默认编辑器), 有缓存就恢复文件树
   useEffect(() => {
-    // 默认设为浏览器模式
-    useWorkspaceStore.getState().setMode('browser');
+    // 修复: 之前每次进编辑器页都强制切到 browser, 导致"打开文件却停在浏览器界面"
+    // 现在默认 editor; 上次用的是 browser/preview 才恢复, 保持用户习惯
+    try {
+      const last = localStorage.getItem('agentai.workspace.lastMode');
+      const target = (last === 'browser' || last === 'preview') ? last : 'editor';
+      useWorkspaceStore.getState().setMode(target);
+    } catch {
+      useWorkspaceStore.getState().setMode('editor');
+    }
     if (workspace) {
       loadWorkspace(workspace);
     } else {
@@ -351,6 +358,14 @@ const filteredTree = filterTree(tree, searchQ);
 
   // ===== 打开文件 =====
   const openFile = async (filePath: string) => {
+    // 修复: 先乐观切到编辑器模式并同步目标文件, 即使后续读取失败也不会停在浏览器界面
+    const fname = filePath.split(/[\\/]/).pop() || filePath;
+    useWorkspaceStore.getState().openEditor({
+      path: filePath,
+      name: fname,
+      type: 'file',
+      ext: fname.includes('.') ? '.' + fname.split('.').pop()!.toLowerCase() : '',
+    });
     const existing = openFiles.find(f => f.path === filePath);
     if (existing) {
       setActiveKey(filePath);

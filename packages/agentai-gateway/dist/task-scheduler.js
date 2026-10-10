@@ -186,6 +186,21 @@ class TaskScheduler extends EventEmitter {
         let result;
         let attempts = 0;
         const maxRetries = schedule.maxRetries || 0;
+        // P0 修复: 重试熔断 — 连续失败 3 次自动暂停, 避免重试风暴
+        const MAX_CONSECUTIVE_FAILS = 3;
+        const failKey = `__fail_${schedule.id}`;
+        const recentFails = this[failKey] || 0;
+        if (recentFails >= MAX_CONSECUTIVE_FAILS) {
+            console.warn(`[task-scheduler] ⚡ 熔断: ${schedule.name} 已连续失败 ${recentFails} 次, 自动暂停`);
+            this.update(schedule.id, { status: 'paused' });
+            return {
+                scheduleId: schedule.id,
+                success: false,
+                error: `连续失败 ${recentFails} 次, 已自动暂停 (熔断保护)`,
+                durationMs: 0,
+                executedAt: Date.now(),
+            };
+        }
         while (attempts <= maxRetries) {
             attempts++;
             try {
@@ -195,9 +210,14 @@ class TaskScheduler extends EventEmitter {
                 });
                 const execPromise = this._executeByType(schedule);
                 result = await Promise.race([execPromise, timeoutPromise]);
-                // 成功，跳出重试循环
-                if (result.success)
+                // 成功，跳出重试循环 + 重置失败计数
+                if (result.success) {
+                    this[failKey] = 0; // 重置熔断计数
                     break;
+                }
+                // P0 修复: 失败时记录诊断信息
+                const diagInfo = result.error || result.output || '(无错误信息)';
+                console.warn(`[task-scheduler] ❌ 任务失败: ${schedule.name}\n  原因: ${diagInfo.slice(0, 200)}\n  堆栈: ${new Error().stack?.split('\n').slice(1, 4).join(' | ')}`);
                 // 失败但还有重试次数
                 if (attempts <= maxRetries) {
                     const delay = Math.min(1000 * Math.pow(2, attempts - 1), 30000); // 指数退避，最大30秒
@@ -206,10 +226,13 @@ class TaskScheduler extends EventEmitter {
                 }
             }
             catch (e) {
+                // P0 修复: 异常时输出完整诊断
+                const errStack = e.stack?.slice(0, 500) || e.message;
+                console.error(`[task-scheduler] ❌ 任务异常: ${schedule.name}\n  错误: ${e.message}\n  堆栈: ${errStack}`);
                 result = {
                     scheduleId: schedule.id,
                     success: false,
-                    error: e.message,
+                    error: `${e.message}\n[诊断] ${errStack.slice(0, 200)}`,
                     durationMs: Date.now() - startTime,
                     executedAt: Date.now(),
                 };
@@ -220,6 +243,10 @@ class TaskScheduler extends EventEmitter {
                     await new Promise(r => setTimeout(r, delay));
                 }
             }
+        }
+        // P0 修复: 更新熔断计数
+        if (result && !result.success) {
+            this[failKey] = recentFails + 1;
         }
         // result 在此一定已赋值（while 至少执行一次）
         const safeResult = result;

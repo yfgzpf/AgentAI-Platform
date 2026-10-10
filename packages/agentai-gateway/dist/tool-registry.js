@@ -240,16 +240,21 @@ export class ToolRegistry extends EventEmitter {
             }
         }
         // 额外检查：参数值中是否包含危险代码模式
-        const dangerousPatterns = [
-            /eval\s*\(/i,
-            /Function\s*\(/i,
-            /child_process/i,
-            /require\s*\(\s*['"]fs['"]\s*\)/i,
-            /require\s*\(\s*['"]child_process['"]\s*\)/i,
-        ];
-        for (const pattern of dangerousPatterns) {
-            if (pattern.test(argsStr)) {
-                return { success: false, output: '', error: `Tool call blocked: dangerous code pattern detected` };
+        // P2 修复 (D7): run_code 工具豁免 — 它有自己的沙箱安全检查 (code-runner.ts)
+        // 原来对 run_code 的 code 参数做正则匹配, 导致纯 fs 探测脚本被误报为 "dangerous code pattern"
+        const DANGEROUS_TOOL_EXEMPT = new Set(['run_code', 'skill_forge', 'create_tool']);
+        if (!DANGEROUS_TOOL_EXEMPT.has(call.name)) {
+            const dangerousPatterns = [
+                /eval\s*\(/i,
+                /Function\s*\(/i,
+                /child_process/i,
+                /require\s*\(\s*['"]fs['"]\s*\)/i,
+                /require\s*\(\s*['"]child_process['"]\s*\)/i,
+            ];
+            for (const pattern of dangerousPatterns) {
+                if (pattern.test(argsStr)) {
+                    return { success: false, output: '', error: `Tool call blocked: dangerous code pattern detected (${call.name})` };
+                }
             }
         }
         // ═══ 拦截器链: 按序执行, 任一返回 string 则拒绝 ═══

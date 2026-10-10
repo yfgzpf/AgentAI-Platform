@@ -414,8 +414,8 @@ export function createVideoRouter(io?: any) {
       // 提取首帧 (00:00:00)
       try {
         await runFfmpeg(['-y', '-i', videoPath, '-ss', '00:00:00', '-frames:v', '1', '-q:v', '2', firstFramePath]);
-      } catch {
-        return res.status(500).json({ error: 'ffmpeg 提取首帧失败' });
+      } catch (e: any) {
+        return res.status(500).json({ error: `ffmpeg 提取首帧失败: ${explainFfmpegError(e)}` });
       }
 
       // 提取尾帧 (倒数 0.1 秒)
@@ -587,9 +587,7 @@ export function createVideoRouter(io?: any) {
 只输出JSON, 不要加任何说明文字或markdown标记。`;
 
       // 如果有尾帧 → 多模态分析; 没有 → 纯文本续集
-      const hasFrame = !!tailFrameDataUri;
-      const userPrompt = hasFrame
-        ? `这是第${episodeIndex - 1}集视频的最后一帧画面。请分析画面内容, 并基于上一集剧情生成第${episodeIndex}集的分镜剧本。
+      const framePrompt = `这是第${episodeIndex - 1}集视频的最后一帧画面。请分析画面内容, 并基于上一集剧情生成第${episodeIndex}集的分镜剧本。
 
 【第${episodeIndex - 1}集剧情】
 ${originalPrompt}${storyInfo}${characterInfo}
@@ -601,8 +599,8 @@ ${originalPrompt}${storyInfo}${characterInfo}
 4. 第一镜从尾帧画面自然过渡
 5. 角色外貌必须与上一集一致
 
-只输出JSON。`
-        : `请基于上一集的剧情描述, 生成第${episodeIndex}集的分镜剧本。
+只输出JSON。`;
+      const textPrompt = `请基于上一集的剧情描述, 生成第${episodeIndex}集的分镜剧本。
 
 【第${episodeIndex - 1}集剧情】
 ${originalPrompt}${storyInfo}${characterInfo}
@@ -615,41 +613,58 @@ ${originalPrompt}${storyInfo}${characterInfo}
 
 只输出JSON。`;
 
-      // 构造消息: 有尾帧时用多模态, 没有时用纯文本
-      const llmMessages: any[] = [
-        { role: 'system', content: systemPrompt },
-      ];
-      if (hasFrame && tailFrameDataUri) {
-        llmMessages.push({ role: 'user', content: [
-          { type: 'text', text: userPrompt },
-          { type: 'image_url', image_url: { url: tailFrameDataUri } },
-        ] });
-      } else {
-        llmMessages.push({ role: 'user', content: userPrompt });
+      const buildMessages = (frame: string | null): any[] => {
+        const msgs: any[] = [{ role: 'system', content: systemPrompt }];
+        if (frame) {
+          msgs.push({ role: 'user', content: [
+            { type: 'text', text: framePrompt },
+            { type: 'image_url', image_url: { url: frame } },
+          ] });
+        } else {
+          msgs.push({ role: 'user', content: textPrompt });
+        }
+        return msgs;
+      };
+
+      // 503 队列满回退策略：等待 5s 重试, 最多 2 次
+      const callLlm = async (messages: any[]): Promise<Response> => {
+        const post = () => fetch('https://api.agnes-ai.cn/v1/chat/completions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'agnes-2.5-flash',
+            messages,
+            max_tokens: 800,
+            temperature: 0.8,
+          }),
+          signal: AbortSignal.timeout(30000),
+        });
+        let resp = await post();
+        for (let attempt = 0; resp.status === 503 && attempt < 2; attempt++) {
+          console.warn(`[next-episode] LLM 503 队列满, 第${attempt + 1}次重试, 等待 5s`);
+          await new Promise((r) => setTimeout(r, 5000));
+          resp = await post();
+        }
+        return resp;
+      };
+
+      let effectiveFrame = tailFrameDataUri;
+      let llmResp: Response | null = await callLlm(buildMessages(effectiveFrame));
+      if (llmResp && !llmResp.ok && llmResp.status === 503 && effectiveFrame) {
+        // 503 重试耗尽 → 降级为纯文本模式(跳过尾帧), 不阻断流程
+        console.warn('[next-episode] 503 重试耗尽, 降级为纯文本模式(跳过尾帧)');
+        effectiveFrame = null;
+        llmResp = await callLlm(buildMessages(null));
       }
 
-      const llmResp = await fetch('https://api.agnes-ai.cn/v1/chat/completions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'agnes-2.5-flash',
-          messages: llmMessages,
-          max_tokens: 800,
-          temperature: 0.8,
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
-
       let episodeData: any = null;
-      if (llmResp.ok) {
+      if (llmResp && llmResp.ok) {
         const llmData: any = await llmResp.json();
         let content = llmData.choices?.[0]?.message?.content || '';
-        // 清理 markdown
         content = content.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
         try {
           episodeData = JSON.parse(content);
         } catch {
-          // JSON 解析失败 — 尝试提取
           const jsonMatch = content.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             try { episodeData = JSON.parse(jsonMatch[0]); } catch {}
@@ -657,7 +672,6 @@ ${originalPrompt}${storyInfo}${characterInfo}
         }
       }
 
-      // 降级: LLM 失败或解析失败
       if (!episodeData || !episodeData.episode) {
         episodeData = {
           title: `第${episodeIndex}集`,
@@ -688,7 +702,7 @@ ${originalPrompt}${storyInfo}${characterInfo}
         tailFrameUrl: tailFrameDataUri,
         episodeData,
         episodeIndex,
-        warning: tailFrameDataUri ? undefined : 'ffmpeg 未安装, 未提取尾帧。AI 已基于剧情描述生成续集剧本。',
+        warning: effectiveFrame ? undefined : '未获取到尾帧 (ffmpeg 不可用或 503 降级)。AI 已基于剧情描述生成续集剧本。',
       });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
@@ -1256,14 +1270,29 @@ function normalizeUrl(url: string): string {
 // - localhost URL → 下载转纯 base64 (不带 data: 前缀)
 // - data: URI → 提取纯 base64
 // - 纯 base64 → 直接返回
+const bigWarned = new Set<string>();
 async function urlToBase64(url: string): Promise<string> {
 if (!url || typeof url !== 'string') return url;
 const trimmed = url.trim();
 // data: URI → 直接返回完整 Data URI (Agnes API 接受 data:image/xxx;base64,... 格式)
-if (trimmed.startsWith('data:')) {
-console.log(`[urlToBase64] data: URI 直接返回 (长度: ${trimmed.length})`);
-return trimmed;
-}
+    if (trimmed.startsWith('data:')) {
+        // ★ 2026-10-10: 原来对每个 2MB 级 data URI 都打一行日志,
+        //   分镜循环里同一批参考图会重复调用 → 日志被刷爆(用户反馈"长度: 2249942"刷屏),
+        //   日志体积本身就是负担。改为: 超 64KB 只打长度不打印全文, 且同类重复调用降噪。
+        if (trimmed.length > 64 * 1024) {
+            const sig = `${trimmed.length}`; // 同长度视为同一张图, 只警告一次
+            if (!bigWarned.has(sig)) {
+                bigWarned.add(sig);
+                console.log(
+                    `[urlToBase64] data: URI 直接返回 (长度: ${trimmed.length}, ` +
+                    `${(trimmed.length / 1024 / 1024).toFixed(2)}MB) — 后续同尺寸 data URI 不再重复打印`,
+                );
+            }
+        } else {
+            console.log(`[urlToBase64] data: URI 直接返回 (长度: ${trimmed.length})`);
+        }
+        return trimmed;
+    }
 // 纯 base64 (不以 http 开头) → 补全为 Data URI
 // 相对路径 (/api/files/download?path=xxx): 前端持久化的场景图/角色图常是相对路径,
 // 不处理会被误判为"纯 base64"拼出非法 Data URI, 导致 Agnes 400 (2026-10-10 修复)

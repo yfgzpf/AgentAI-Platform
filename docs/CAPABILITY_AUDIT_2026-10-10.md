@@ -1,0 +1,264 @@
+# PulseFlow 平台能力实测清单（借鉴参考版）
+
+> **实测日期**：2026-10-10
+> **实测方式**：源码级审计（AST/行区间精确统计），非文档摘抄
+> **代码基线**：`agentai-gateway` 292 文件 / 29 子系统 / 18090 行核心四件套
+
+---
+
+## 零、先看这一段：文档失真清单
+
+**如果你直接照 AGENTS.md 开发，会踩到这些坑。** 以下都是本次实测发现的、文档与代码不符之处：
+
+| 文档宣称 | 实测结果 | 影响 |
+|---|---|---|
+| 141 个工具 | **198 个声明**，全部有实现（`tools.ts:749-1382`） | 少估 57 个，架构容量认知偏差 |
+| 「8 层上下文注入」 | **49 处 system push 点** | 低估 6 倍，prompt 膨胀风险严重低估 |
+| 「system-prompt.ts 约 250 行」 | **625 行**（`system-prompt.ts:16-641`） | 文档自己承认过时但未修订 |
+| 「智能决策层已清理死代码」 | 决策层是**活的**，置信度/歧义/元认知均在主循环被真实调用 | 误判为死代码会删掉真正的差异化能力 |
+| 「记忆 >30 条自动合并」 | **无合并逻辑**，实际是构建期排序截断（slice） | 照抄会实现出一个不存在的功能 |
+| 「测试覆盖 xx%」 | 65 个测试文件，但**6416 行的 agentai-loop.ts 零覆盖** | 核心上帝类无任何回归保护 |
+
+> **教训**：接手任何宣称「已完成/已精简」的项目，第一件事是写个统计脚本核对真实数字，而不是读文档。本文的工具数量就是这么查出来的——中途因为正则截断、shell 引号转义、模板字符串干扰报错 5 次才拿到准数。
+
+---
+
+## 一、直接抄（高价值、低耦合）
+
+### 1. 修复管道 6步 —— 全项目最值得抄的一块
+
+位置：`llm-router.ts:981` `repairPipeline(raw)`，在 `chat():820` 调用。
+
+```
+1. flattenToolCalls    llm-router.ts:1235  嵌套对象压成点号键，数组保留不展平
+2. scavengeFromThink   llm-router.ts:1260  从<think>块正则打捞被吞的 JSON
+3. detectCallStorm     llm-router.ts:1281  同轮≥3调用时签名去重计数，仅告警
+4. repairTruncation    llm-router.ts:1294  统计括号差值补齐
+5. repairToolCallArgs  llm-router.ts:1172  尾逗号→引号→无引号key→undefined
+6. parseTextToolCalls  llm-router.ts:1013  4种降级格式文本转 tool_call
+```
+
+**两个「克制」设计是精华：**
+
+- **Step4 只补 args 的括号，绝不动 content。** 代码注释写明原因：对代码内容补 `}` 会破坏语法（`if(x){` 被补成 `if(x){}` 而语法错）。这是很多人写修复器会犯的错。
+- **Step5 的 `smartQuoteFix`（:1200）是状态机逐字符扫描**，只把 JSON **边界位置**的单引号换成双引号，字符串**内部**的单引号原样保留，内部双引号转义为 `\"`。动机注释举例：`{"code":"console.log('hello')"}` 不被误伤。用全局正则做这件事必翻车。
+
+**Step6 降级格式矩阵**：`func(args)` / ` ```tool ` 代码块 / `<tool_call>` XML / **DSML 伪XML**（DeepSeek 系私有格式）。工具名用 `KNOWN_TOOLS_NAMES` 白名单（约110个）校验。**解析成功后必须从content 正则擦除已消费文本**，否则模型会重复输出已执行的调用。
+
+### 2. multi_edit 三阶段事务
+
+`tools.ts:1824 / 1862 / 1891`
+
+```
+Phase1 预检 + 备份  → 任一 old_str 未找到，直接返回，一字不改
+Phase2 原子执行     → 统一 backupId = Date.now()，批量备份
+Phase3 回滚        → 任一 write 抛错即 break，遍历 backups 全部还原
+```
+
+**预检失败必须完全不改**——这是很多编辑器类工具缺的。备份即一次性令牌：`undo_edit` 用完 `unlinkSync` 删除。
+
+### 3. 沙箱 fail-closed
+
+`sandbox/checker.ts:91行`，优先级 `deny > size > prompt > default-allow`。
+
+```ts
+} catch (e: any) {
+  return { verdict: 'deny', reason: `Sandbox check error: ...`, source: 'error' };
+}
+```
+
+**异常必须返回 deny 而不是放行。** 配套 `safety/path-guard.ts:60` 用 `resolved.startsWith(r + path.sep)` 防前缀绕过（`/workspace-evil` 不能通过 `/workspace` 校验）。
+
+### 4. 上下文二段式结构
+
+```
+immutablePrefix  → system 部分，构建一次后永不改变，缓存在 context 上
+appendOnlyLog    → 历史对话，只追加
+```
+
+**这是整个平台最该学的架构决策。** 好处：缓存命中率高、system 稳定可测、不会因为中途改历史而污染前缀。
+
+---
+
+## 二、抄思路，但要重做实现
+
+### 1. 双写验证防抖（有漏报缺陷）
+
+`tools.ts:427` `auto_verify`，`VERIFY_DEBOUNCE_MS = 2000`，合并 2 秒内多次写入为一次 `tsc --noEmit --incremental`（timeout 30s），按 basename 过滤只回传相关错误（`slice(0,10)`）。
+
+**三个缺陷——照抄前必须改：**
+- 防抖命中时直接 `return _verifyLastResult`，可能是 `null` → **漏报**
+- `multi_edit` 只传 `editedFiles[0]` → 多文件场景漏检
+- 只覆盖 `.ts/.tsx/.js/.jsx`，Python/Go 不验证
+
+**改进方向**：防抖期间返回 `pending` 状态而非上次结果；改为全量文件集。
+
+另注意：存在**平行冗余实现** `src/validator.ts`（`detectProject()` 按 package.json/tsconfig/pyproject/go.mod 自动选验证器 + `parseErrors()` 结构化 tsc 输出），但**未被 write_file 链路调用**。这个设计（项目类型自动识别）值得抄，实现冗余不要抄。
+
+### 2. 工具声明与实现的一致性校验
+
+实测结果（`tools.ts:749-1382` 声明 vs `tools.ts:1383-7459` 实现）：
+
+```
+声明 198 / 实现 203
+声明无实现：0       ← 健康
+实现未声明：5       ← edit_file, get_symbols, clear_plan, knowledge_explore, _formatBytes
+风险等级：low 107 / medium 51 / high 20
+```
+
+注册逻辑 `index.ts:133`：`EXTRA_TOOLS` 循环取 `EXTRA_HANDLERS[spec.name]`，缺 handler 则 `console.warn` + `continue`。**静默跳过**——这 5 个 handler 永远不会注册，但没有任何编译期或启动期错误。
+
+**借鉴点**：注册时的一致性校验思路对，但应该做成**构建期 fail-fast 校验脚本**，而不是运行时 warn。另有`index.ts` 里15 处独立 `registry.register()` 绕过了这套校验，边界不统一。
+
+### 3. MCP 客户端（手写，值得抄结构）
+
+`mcp/host.ts:301行`，**不依赖官方 SDK**，手写 JSON-RPC 2.0。
+
+- 双transport：stdio（spawn）+ HTTP（POST，:237）
+- 生命周期：`initialize` → `notifications/initialized` → `tools/list` → 逐个注册（命名 `${server}.${tool}`，统一 `riskLevel: 'medium'`）
+- **两处消毒必抄**：
+  - `normalizeSchema()` 强制 `type:'object'`（模型经常返回残缺 schema）
+  - 工具名 `replace(/[^a-zA-Z0-9_-]/g,'_')`
+- 配置持久化到 `.agentai/mcp-servers.json`，`restoreSaved()` 启动重连
+
+### 4. 技能渐进式披露
+
+`skills/loader.ts`（约2100 行引擎）
+
+- 匹配是**关键词打分非语义**：triggers 命中 +10、name +5、description 分词（≥2字）+2，取 top-N（:226）
+- **渐进式披露**：只把 name/description/tools/triggers 拼 markdown 注入 system prompt（:303），正文按需 `getSkill(name)` 拉取
+- chokidar 热加载（`watcher.ts`）
+
+**借鉴点**：渐进式披露是控制 prompt 膨胀的正确姿势。但关键词匹配太弱，建议自己开发时直接上语义检索。
+
+### 5. 路由五维评分
+
+`model-classifier.ts:580computeScore()`（**不在 llm-router.ts**，文档指错了）
+
+```
+复杂度 0.30 + 上下文 0.15 + 成本 0.20 + 成功率 0.25 + 延迟 0.10
+```
+
+**两个细节值得抄：**
+- **未定价的付费模型成本分给 0.5 中性值**（:604）。注释说明原公式让未填 price 的付费模型与免费模型同拿满分，即「付费当免费」——这是个真实的坑。
+- successRate/latency 无数据时默认 **0.5 冷启动**，而不是 0（否则新模型永不被选中）。
+
+**熔断**（`llm-router.ts`）：`CB_COOLDOWN_MS=2min`、`CONSECUTIVE_FAIL_THRESHOLD=3`、限流 429 指数退避 10s→120s、`FLAKY_PROVIDERS={sensenova,longcat}` 设 15s 短超时。
+**重要修正**（:692 注释）：移除了 force-untrip——原逻辑对熔断中的 provider 每请求强试一次，**完全绕过 2 分钟冷却**。降级链：用户指定则锁定 → 同模型重试 3 次（指数退避 1s→30s）→ 备用 → 免费池 6 个轮换 → deepseek-v4-flash（关 thinking）→ 兜底文案。
+
+---
+
+## 三、必须避开的坑
+
+### 1. 上帝类：agentai-loop.ts 6416 行 / 352KB
+
+单文件承载 49 处注入点 + 全部主循环控制 + 决策层调用 + 工具分发。**自己开发时务必按子系统拆分**。至少分出：`context-builder` / `loop-controller` / `tool-dispatcher` / `memory-integration` / `decision-layer`。
+
+### 2. 重复实现
+
+- Step4 截断补齐在 `llm-router.ts:1294` 和 `agentai-loop.ts:3636` 各实现一遍
+- `validator.ts` 与 `tools.ts:auto_verify` 两套验证器，只有一套被调用
+
+### 3. 整文件 @ts-nocheck
+
+`tools.ts` 全文关闭类型检查。198 个工具的参数没有类型保障。
+
+### 4. 硬编码本机绝对路径
+
+`_isSafeFileModification()`（`agentai-loop.ts:6265`）里有 `^f:\\agentai-platform\\packages\\...` 这类硬编码路径。AGENTS.md 明令禁止，但自己代码里犯了。
+
+### 5. 跨轮重复检测的误伤（真实 bug，值得当反面教材）
+
+`agentai-loop.ts:3636-3670` 的跨轮去重，签名用 `JSON.stringify(args).slice(0,500)` → 两个不同的 `write_file` 前 500 字符相同 → **用户改动被静默丢弃**。修复为全量签名，且跳过时写 `[SKIPPED]` tool 消息让 AI 可感知。
+
+**教训**：去重/去重逻辑一定要有「可感知的中止信号」，静默丢弃是最坏的一种。
+
+### 6. 上下文膨胀无按需加载
+
+49 处注入是**全量前置 + 关键词门控**，没有真正的按需加载。`MetaCognitiveLoop` 仅弱模型启用（`tier!=='autonomous' && iteration < maxIterations*0.5`），强模型完全绕过决策层。
+
+---
+
+## 四、平台真正稀缺的东西（不是代码能抄的）
+
+### 1. 连续状态监控与三重续跑
+
+三个**互不干扰**的计数器，这是长期任务不崩的关键：
+
+| 计数器 | 值 | 位置 | 作用 |
+|---|---|---|---|
+| `MAX_AUTO_RESUME` | 10 | `agentai-loop.ts:2601` | 截断续跑（length） |
+| `MAX_SHORT_REPLY_RESUME` | 3 | `:2605` | 短回复空转，**排除问候/告别正则** |
+| 迭代上限 | — | — | 总轮数保护 |
+
+超时保护**不是硬超时而是降级**（:3196）：`llmTimedOut` 时工具裁剪到 8 个核心、messages 压缩为 `system + 最近6条`、`sanitizeToolMessages` 防assistant→tool 配对断裂。**这个思路比直接 kill 高级得多。**
+
+工作记忆摘要（:2709）每 10 轮生成，**先 `splice` 掉旧的再 `unshift` 新的**——防无限膨胀的关键。
+
+中断用**代际检查**（`myGeneration !== this._runGeneration`）而非 `abortSignal`，优雅 return 而非 throw。
+
+### 2. 自进化的资产化落地
+
+```
+evolve_prompt  → .agentai/evolved-rules.json（上限 20 条，超出 slice(-20)）
+                → 下次对话全量拼进 prompt（:1292）
+create_tool    → .agentai/custom-tools/ + registry.json
+                → 进程启动时 await import(scriptPath) 动态加载（index.ts:147-193）
+记忆           → memory-manager.ts (KV事实层，JSON+JSONL双源)
+                → memory.ts/WorkspaceJournal (日志蒸馏层)
+```
+
+**已知局限**：自创工具**仅启动时加载，运行期创建的当轮不可见**。这是设计取舍，值得在自己开发时明确标注，避免用户误解。
+
+### 3. xuanji/ 目录：中医皮下的真架构
+
+`xuanji/`（1232行）映射关系——**这不是文案，是真闭环**：
+
+| 中医 | 实际 |
+|---|---|
+| 望闻问切 | `perceiveTask()` 任务感知 |
+| 切诊 | `diagnoseTask()` 决策 |
+| 开方 | `prescriptionEngine.prescribe()` → **步骤化 tool 序列** |
+| 医案 | `medicalCaseManager` 持久化 |
+
+`routes/chat.ts:340` 调 `processTask`，`:349` 映射为 `strategy: direct/deep/step_by_step`，`:368` **接入成本核算**。`XuanjiResult` 含 `confidence/riskLevel/estimatedSteps/potentialBlockers` —— 本质是**带风险评估的任务规划器**。
+
+对比：`qihuang/four-diagnoses.ts`（699行）在 `agentai-loop.ts:42` **import 但从未调用**，仅通过 `routes/qihuang.ts` 独立 HTTP API 暴露 —— 半死代码。
+
+**同一套中医叙事，一个做成了真闭环，一个做成了摆设。** 这个对比本身就是最好的架构教材。
+
+### 4. 测试布局
+
+- vitest ^3.2.7，覆盖率门槛 lines/functions 60%、branches 50%，timeout 10s
+- 65 个测试文件（约 811 个 `it()`）
+- **布局特点：绝大多数测试与源码同目录并置**，`__tests__/` 只有 2 个文件
+- 安全测试做得扎实：`b1-security.test.ts`(10.7KB)、sandbox 四件套、safety 三件套
+- **缺口：6416 行的 agentai-loop.ts 零覆盖，repairPipeline 六步无专项测试**
+
+---
+
+## 五、如果你要动手，建议的落地顺序
+
+| 阶段 | 做什么 | 参考本文 |
+|---|---|---|
+| P0 | 二段式上下文 + 修复管道6步 + 沙箱 fail-closed | §一.1 §一.3 §一.4 |
+| P1 | multi_edit 事务 + 双写验证（改掉漏报）+ 三重续跑 | §一.2 §二.1 §四.1 |
+| P2 | MCP 客户端 + 技能渐进式披露 + 五维路由 | §二.3 §二.4 §二.5 |
+| P3 | 自进化三件套资产化 + xuanji 式任务规划器 | §四.2 §四.3 |
+
+**核心判断**：这个平台的**框架决策层已经超过大部分商用产品**，瓶颈在单文件过大、prompt 膨胀、核心逻辑零测试。你要借鉴的话，抄 §一 的四个设计 + §四.1 的三重续跑，避开 §三 的六个坑，就已经超过 90% 的开源 Agent 框架。
+
+---
+
+## 附：核心文件速查
+
+| 文件 | 行数 | 作用 |
+|---|---|---|
+| `tools.ts` | 7714 | 198 工具声明 + 203 handler（全文 @ts-nocheck） |
+| `agentai-loop.ts` | 6416 | 上帝类：上下文构建 + 主循环 + 工具分发 |
+| `llm-router.ts` | 2245 | 修复管道 + 熔断 + 降级 + 缓存 |
+| `model-classifier.ts` | 1091 | 五维评分 + 复杂度分类 |
+| `tool-registry.ts` | 624 | 工具注册 + 参数校验 |
+| `xuanji/` | 1232 | 任务规划器（真闭环） |
+| `skills/` | ~2100 | 技能加载 + 匹配 + 热更新 |
+| `mcp/host.ts` | 301 | 手写 JSON-RPC MCP 客户端 |

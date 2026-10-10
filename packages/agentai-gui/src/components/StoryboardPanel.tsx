@@ -72,6 +72,35 @@ export interface StoryboardPanelProps {
   model: string;
 }
 
+// ===== 角色库 (跨剧本复用) =====
+const CHAR_LIBRARY_KEY = 'agentai-character-library';
+interface CharLibEntry {
+  name: string;
+  description: string;
+  portraitUrl?: string;
+  sheetUrl?: string;
+  savedAt: number;
+}
+function loadCharLibrary(): CharLibEntry[] {
+  try { const raw = localStorage.getItem(CHAR_LIBRARY_KEY); if (raw) return JSON.parse(raw); } catch {}
+  return [];
+}
+function saveToCharLibrary(char: StoryboardCharacter) {
+  if (!char.portraitUrl) return; // 没有定妆图不入库
+  try {
+    const lib = loadCharLibrary();
+    const idx = lib.findIndex(c => c.name === char.name);
+    const entry: CharLibEntry = {
+      name: char.name, description: char.description,
+      portraitUrl: char.portraitUrl?.startsWith('http') || char.portraitUrl?.startsWith('/api/') ? char.portraitUrl : undefined,
+      sheetUrl: char.sheetUrl?.startsWith('http') || char.sheetUrl?.startsWith('/api/') ? char.sheetUrl : undefined,
+      savedAt: Date.now(),
+    };
+    if (idx >= 0) lib[idx] = entry; else lib.push(entry);
+    localStorage.setItem(CHAR_LIBRARY_KEY, JSON.stringify(lib));
+  } catch {}
+}
+
 // 右侧折叠面板的 CSS — 折叠时只显示 header, 展开时自动填充
 const RIGHT_COLLAPSE_CSS = `
 .storyboard-right-collapse .ant-collapse-content {
@@ -269,6 +298,8 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>([]); // [
       if (data.ok && data.storyboard) {
         const sb = data.storyboard as Storyboard;
         sb.episodes.forEach(ep => ep.shots.forEach(s => { s.selected = true; s.status = 'pending'; }));
+        // 生成新剧本时清除 activeId, 让 useEffect 创建新条目而非覆盖当前
+        setActiveId(null);
         setStoryboard(sb);
         message.success(`✅ 剧本已生成: ${sb.title}`);
       }
@@ -328,6 +359,11 @@ White background, character sheet reference, concept art style, high detail, pro
         };
       });
 
+      // 自动保存到角色库 (跨剧本复用)
+      if (portraitUrl) {
+        saveToCharLibrary({ ...char, portraitUrl, sheetUrl: sheetUrl || char.sheetUrl });
+      }
+
       const okCount = (portraitUrl ? 1 : 0) + (sheetUrl ? 1 : 0);
       if (portraitData.error && sheetData.error) {
         message.error(`角色图生成失败: ${portraitData.error}`);
@@ -358,9 +394,10 @@ White background, character sheet reference, concept art style, high detail, pro
     if (!ep || !ep.scene) return;
     setGeneratingScene(epIdx);
     try {
-      const scenePrompt = `Photorealistic scene background: ${ep.scene.description}. 
-Wide establishing shot, no people, no characters, environment only. 
-Cinematic lighting, natural colors, realistic photography style. 
+      const scenePrompt = `Photorealistic scene background ONLY: ${ep.scene.description}. 
+ABSOLUTELY NO PEOPLE, NO CHARACTERS, NO HUMANS, NO FACES, NO FIGURES — environment and architecture only.
+Empty room, empty landscape, empty street — no living beings visible.
+Wide establishing shot, cinematic lighting, natural colors, realistic photography style.
 High detail, professional quality, 16:9 aspect ratio.`;
       const resp = await fetch(`${httpUrl}/v1/image`, {
         method: 'POST',
@@ -688,8 +725,8 @@ High detail, professional quality, 16:9 aspect ratio.`;
 return (
 <div style={{ display: 'flex', gap: 12, height: '100%' }}>
 <style>{RIGHT_COLLAPSE_CSS}</style>
-{/* 左侧: 输入 + 角色卡 + 分镜列表 */}
-      <div style={{ width: '55%', display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', paddingRight: 4 }}>
+{/* 左侧: 输入 + 角色卡 + 分镜列表 — 右侧折叠时自动扩展到 100% */}
+      <div style={{ width: rightPanelExpanded.length > 0 ? '55%' : '100%', transition: 'width 0.3s ease', display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', paddingRight: 4 }}>
         {/* 输入区 */}
         <Card size="small" title={
           <Space>
@@ -712,7 +749,14 @@ return (
               </Tooltip>
               {storyboard && activeId && (
                 <Tooltip title="删除当前剧本">
-                  <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => deleteStoryboard(activeId)} />
+                  <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => {
+                    Modal.confirm({
+                      title: '删除剧本',
+                      content: `确定删除「${storyboard.title}」? 此操作不可恢复。`,
+                      okText: '删除', okType: 'danger', cancelText: '取消',
+                      onOk: () => deleteStoryboard(activeId),
+                    });
+                  }} />
                 </Tooltip>
               )}
             </Space>
@@ -737,9 +781,34 @@ return (
           </div>
         </Card>
 
-        {/* 角色卡区域 — 独立面板 */}
-        {storyboard?.characters && storyboard.characters.length > 0 && (
-          <Card size="small" title={<Space><UserOutlined /> 角色卡 ({storyboard.characters.length})</Space>}>
+{/* 角色卡区域 — 独立面板 */}
+{storyboard?.characters && storyboard.characters.length > 0 && (
+<Card size="small" title={<Space><UserOutlined /> 角色卡 ({storyboard.characters.length})</Space>}
+  extra={
+    <Select
+      size="small"
+      placeholder="从角色库导入"
+      style={{ width: 150 }}
+      showSearch
+      optionFilterProp="label"
+      options={loadCharLibrary().map(c => ({ value: c.name, label: c.name }))}
+      onChange={(name) => {
+        const libChar = loadCharLibrary().find(c => c.name === name);
+        if (!libChar) return;
+        setStoryboard(prev => {
+          if (!prev) return prev;
+          // 如果角色已存在则更新, 否则添加
+          const exists = prev.characters.find(c => c.name === name);
+          if (exists) {
+            return { ...prev, characters: prev.characters.map(c => c.name === name ? { ...c, portraitUrl: libChar.portraitUrl, sheetUrl: libChar.sheetUrl } : c) };
+          }
+          return { ...prev, characters: [...prev.characters, { name: libChar.name, description: libChar.description, portraitUrl: libChar.portraitUrl, sheetUrl: libChar.sheetUrl }] };
+        });
+        message.success(`已从角色库导入: ${name}`);
+      }}
+    />
+  }
+>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
               {storyboard.characters.map((char, i) => (
                 <div key={i} style={{ padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
@@ -890,8 +959,8 @@ return (
         )}
       </div>
 
-      {/* 右侧: 可折叠 — 分镜预览 + 剧集成品, 默认折叠让编辑区更清爽 */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+{/* 右侧: 可折叠 — 分镜预览 + 剧集成品, 折叠时完全隐藏让左侧全宽 */}
+<div style={{ flex: 1, display: rightPanelExpanded.length > 0 ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden' }}>
         {storyboard ? (
           <Collapse
             activeKey={rightPanelExpanded}

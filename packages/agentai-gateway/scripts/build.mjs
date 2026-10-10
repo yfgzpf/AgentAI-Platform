@@ -37,6 +37,24 @@ function resolveTsc() {
 }
 
 let tscExit = 0;
+
+// ── 前置: 工具声明/实现一致性校验 (fail-fast) ──
+// EXTRA_TOOLS 声明了但 EXTRA_HANDLERS 没实现的工具, 会在 index.ts:134 被
+// console.warn + continue 静默跳过 —— 构建通过、启动正常, 但工具永远不注册。
+// 这个校验把它从运行时静默失效提到构建期硬失败。
+try {
+    const vr = spawnSync(process.execPath, [resolve(__dirname, 'verify-tool-consistency.mjs')], {
+        cwd: ROOT, stdio: 'inherit', shell: false
+    });
+    if ((vr.status ?? 1) !== 0) {
+        console.error('\n[build] ❌ 工具一致性校验未通过, 中止构建');
+        process.exit(1);
+    }
+} catch (e) {
+    console.error(`\n[build] ❌ 工具一致性校验执行异常, 中止构建: ${e.message}`);
+    process.exit(1);
+}
+
 try {
     const { cmd, args, shell } = resolveTsc();
     const r = spawnSync(cmd, args, { cwd: ROOT, stdio: 'inherit', shell });

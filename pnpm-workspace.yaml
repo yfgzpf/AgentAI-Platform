@@ -1,6 +1,13 @@
 packages:
   - "packages/*"
   - "apps/*"
+allowBuilds:
+  '@vscode/vsce-sign': true
+  cpu-features: true
+  keytar: true
+  protobufjs: true
+  sharp: true
+  ssh2: true
 onlyBuiltDependencies:
   - '@vscode/vsce-sign'
   - better-sqlite3

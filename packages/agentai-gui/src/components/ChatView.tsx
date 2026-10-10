@@ -665,48 +665,36 @@ const [loading, setLoading] = useState(false);
       // 不显示重连成功消息, 避免刷屏
     });
 
-    /* ═══ 统一执行结果推送: 工作流 / 自动化 / 定时任务完成时在对话窗口显示 ═══ */
+    /* ═══ 统一执行结果推送: 自动化/定时任务不再刷屏对话窗口 ═══ */
+    // 改为: 成功→静默; 失败→仅桌面通知; 用户可去任务面板查看详情
     sock.on('execution:result', (data: any) => {
       const sourceLabel: Record<string, string> = { workflow: '工作流', automation: '自动化任务', cron: '定时任务' };
       const label = sourceLabel[data.source] || data.source || '任务';
-      const eventLabel = data.event === 'start' ? '开始执行' : (data.success ? '✅ 执行成功' : '❌ 执行失败');
+      const eventLabel = data.success ? '✅ 执行成功' : '❌ 执行失败';
 
-      // 只对完成/失败事件推消息，避免开始事件刷屏
       if (data.event === 'done' || data.event === undefined) {
-        const durationStr = data.durationMs ? ` (耗时 ${(data.durationMs / 1000).toFixed(1)}s)` : '';
-        const errorStr = data.error ? `\n错误: ${data.error}` : '';
-
-        // P1: 自动化清理类任务不堆叠 — 只保留最近 3 条 automation 消息
-        const isAutoCleanup = data.source === 'automation' &&
-          /清理|cleanup|clean|clear|gc|garbage/i.test(data.name || '');
-        if (isAutoCleanup) {
-          // 移除旧的 automation cleanup 消息, 只保留最近 2 条 + 新消息 = 3 条
-          const currentMsgs = useChatStore.getState().messages;
-          const autoMsgs = currentMsgs.filter(m =>
-            m.provider === 'system' && m.id?.startsWith('exec-automation-')
-          );
-          if (autoMsgs.length >= 3) {
-            // 移除最早的
-            const toRemove = autoMsgs.slice(0, autoMsgs.length - 2);
-            const removeIds = new Set(toRemove.map(m => m.id));
-            setMessages(currentMsgs.filter(m => !removeIds.has(m.id)));
-          }
+        // 工作流结果仍然显示在对话窗口 (用户主动触发的)
+        if (data.source === 'workflow') {
+          const durationStr = data.durationMs ? ` (耗时 ${(data.durationMs / 1000).toFixed(1)}s)` : '';
+          const errorStr = data.error ? `\n错误: ${data.error}` : '';
+          appendMessage({
+            id: `exec-${data.source}-${data.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            role: 'assistant',
+            segments: [{ kind: 'text', text: `[${label}] ${data.name || '未命名任务'} ${eventLabel}${durationStr}${errorStr}` }],
+            ts: Date.now(),
+            status: 'done',
+            provider: 'system',
+          } as any);
         }
 
-        appendMessage({
-          id: `exec-${data.source}-${data.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          role: 'assistant',
-          segments: [{ kind: 'text', text: `[${label}] ${data.name || '未命名任务'} ${eventLabel}${durationStr}${errorStr}` }],
-          ts: Date.now(),
-          status: 'done',
-          provider: 'system',
-        } as any);
-
-        // 桌面通知 + 提示音 (后台任务完成时)
-        taskNotifier.notifyTaskComplete(
-          data.success ? `✅ ${label} 完成` : `❌ ${label} 失败`,
-          `${data.name || '未命名任务'}${data.durationMs ? ` (${(data.durationMs / 1000).toFixed(1)}s)` : ''}${data.error ? `\n${data.error.slice(0, 200)}` : ''}`,
-        );
+        // 自动化/定时任务: 只桌面通知, 不推对话窗口
+        // 成功时静默不发通知 (避免刷屏), 失败时通知
+        if (!data.success && data.source !== 'workflow') {
+          taskNotifier.notifyTaskComplete(
+            `❌ ${label} 失败`,
+            `${data.name || '未命名任务'}${data.error ? `\n${data.error.slice(0, 200)}` : ''}`,
+          );
+        }
       }
     });
 
@@ -2070,18 +2058,14 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           maxWidth: '100%',
         }}
       >
-        {/* 上轮会话摘要提示 (v3.1) - 新对话时显示, 让用户知道 AI 记得上轮 */}
+        {/* 空状态 (欢迎页): 上轮摘要固定高度, 欢迎区自动占满剩余空间并居中 */}
         {messages.length === 0 && (
-          <LastSessionHint workspace={useProfileStore.getState()?.profile?.workspace || localStorage.getItem('agentai.workspace') || ''} />
-        )}
-
-        {/* Welcome screen when empty */}
-        {messages.length === 0 && (
-          <WelcomePanel
-            handleSend={handleSend}
-            composerRef={composerRef as React.RefObject<any>}
-            systemInfo={systemInfo}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+            <div style={{ flexShrink: 0 }}>
+              <LastSessionHint workspace={useProfileStore.getState()?.profile?.workspace || localStorage.getItem('agentai.workspace') || ''} />
+            </div>
+            <WelcomePanel handleSend={handleSend} />
+          </div>
         )}
 
         {/* Message list */}
@@ -2170,6 +2154,16 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             );
           }
           if (msg.role === 'system') {
+            // 系统内部指令 ([SYSTEM]/[工具故障报告]等) 不作为独立气泡显示
+            // 这些是给 AI 的内部指令, 显示给用户只会造成干扰
+            const sysText = msg.segments?.filter(s => s.kind === 'text').map(s => (s as any).text || '').join('') || '';
+            const isInternalDirective = sysText.startsWith('[SYSTEM]')
+              || sysText.startsWith('[工具故障报告]')
+              || sysText.startsWith('[上下文折叠摘要')
+              || sysText.startsWith('# 对话历史摘要')
+              || sysText.startsWith('[历史摘要');
+            if (isInternalDirective) return null; // 静默跳过, 不渲染
+            // 用户可见的 system 消息 (如欢迎信息) 正常显示
             return (
               <div key={msg.id} style={{ padding: '8px 16px' }}>
                 <AssistantMsg segments={msg.segments} pending={false} />

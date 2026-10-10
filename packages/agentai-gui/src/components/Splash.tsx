@@ -17,6 +17,7 @@
  *   - 可点击跳过 (提升交互感)
  */
 import React, { useEffect, useState, useCallback } from 'react';
+import { BrandLogo } from './BrandLogo';
 
 interface Props {
   onFinish?: () => void;
@@ -196,19 +197,15 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
             animation: 'splash-heartbeat 2.2s ease-out infinite',
             animationDelay: '0.9s',
           }} />
-          {/* LOGO 图片 */}
-          <img
-            src="/logo.jpg"
-            alt="PulseFlow"
-            style={{
-              width: 92, height: 92,
-              animation: 'splash-pulse 2.2s ease-in-out infinite',
-              zIndex: 'var(--z-base)',
-              borderRadius: 18,
-              objectFit: 'cover',
-              boxShadow: '0 8px 32px rgba(205, 122, 58, 0.55), 0 0 60px rgba(205, 122, 58, 0.2)',
-            }}
-          />
+          {/* LOGO — BrandLogo 组件 */}
+          <div style={{
+            width: 92, height: 92,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: 'splash-pulse 2.2s ease-in-out infinite',
+            zIndex: 'var(--z-base)',
+          }}>
+            <BrandLogo size={92} glow />
+          </div>
         </div>
 
         {/* ─── Stage 2: 品牌名 + 副标题 (增强层次) ─── */}

@@ -192,7 +192,15 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
   },
   ul: (props) => <ul style={{ paddingLeft: 20, margin: '4px 0' }} {...props} />,
   ol: (props) => <ol style={{ paddingLeft: 20, margin: '4px 0' }} {...props} />,
-  blockquote: (props) => <blockquote style={{ borderLeft: '4px solid var(--accent)', paddingLeft: 12, margin: '8px 0', color: 'var(--muted-2)' }} {...props} />,
+  // 标题统一缩小 — 避免浏览器默认 h1=2em 过大
+  h1: (props) => <h1 style={{ fontSize: '1.3em', margin: '10px 0 6px', fontWeight: 700, lineHeight: 1.4 }} {...props} />,
+  h2: (props) => <h2 style={{ fontSize: '1.2em', margin: '8px 0 4px', fontWeight: 700, lineHeight: 1.4 }} {...props} />,
+  h3: (props) => <h3 style={{ fontSize: '1.1em', margin: '6px 0 3px', fontWeight: 600, lineHeight: 1.4 }} {...props} />,
+  h4: (props) => <h4 style={{ fontSize: '1.05em', margin: '4px 0 2px', fontWeight: 600, lineHeight: 1.4 }} {...props} />,
+  h5: (props) => <h5 style={{ fontSize: '1em', margin: '4px 0 2px', fontWeight: 600, lineHeight: 1.4 }} {...props} />,
+  h6: (props) => <h6 style={{ fontSize: '0.95em', margin: '3px 0 2px', fontWeight: 600, lineHeight: 1.4, opacity: 0.85 }} {...props} />,
+  p: (props) => <p style={{ margin: '3px 0', lineHeight: 'var(--chat-line-height)' }} {...props} />,
+  blockquote: (props) => <blockquote style={{ borderLeft: '4px solid var(--accent)', paddingLeft: 12, margin: '6px 0', color: 'var(--muted-2)', fontSize: '0.95em' }} {...props} />,
   table: (props) => (
     <div style={{ overflow: 'auto', margin: '8px 0' }}>
       <table style={{ borderCollapse: 'collapse', width: '100%' }} {...props} />

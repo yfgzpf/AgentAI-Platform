@@ -198,4 +198,40 @@ describe('V4 前后端模型值一致', () => {
   });
 });
 
+describe('V5 分镜/视频 refImages 相对路径不再被误拼为非法 Data URI', () => {
+  it('urlToBase64 有「/ 开头」分支：按 ?path= 参数解码后读本地文件', () => {
+    expect(videoCode, '缺 / 开头分支 → 相对路径仍会被当 base64').toMatch(
+      /startsWith\('\/'\)/,
+    );
+    expect(videoCode).toContain('[?&]path=([^&]+)');
+    expect(videoCode).toMatch(/fs\.existsSync\(real\)/);
+  });
+
+  it('无法解析的 / 开头路径显式 throw，不再静默拼出非法 URI', () => {
+    expect(videoCode).toMatch(/无法解析相对图片 URL/);
+  });
+
+  it('「纯 base64」分支有长度+字符集双重校验，不盲目补前缀', () => {
+    expect(videoCode).toMatch(/trimmed\.length < 64/);
+    expect(videoCode).toContain('A-Za-z0-9+');
+  });
+
+  it('★ 分支顺序正确：/ 开头判定先于 base64 兜底（防止回归重排）', () => {
+    const slashBranch = videoCode.indexOf("trimmed.startsWith('/')");
+    const b64Branch = videoCode.indexOf('trimmed.length < 64');
+    expect(slashBranch, '/ 开头分支缺失').toBeGreaterThan(-1);
+    expect(b64Branch, '纯 base64 分支缺失').toBeGreaterThan(-1);
+    expect(slashBranch, '/ 开头分支必须在 base64 兜底之前').toBeLessThan(b64Branch);
+  });
+
+  it('★ storyboard 端点 refImages 统一走 urlToBase64，不再有盲拼 data: 前缀的旧代码', () => {
+    expect(videoCode).toMatch(/await urlToBase64\(String\(img\)\)/);
+    const blindConcat = (videoCode.match(/data:image\/png;base64,\$\{img\}/g) || []).length;
+    expect(
+      blindConcat,
+      '旧盲拼代码 data:image/png;base64,${img} 应已删除',
+    ).toBe(0);
+  });
+});
+
 void NL;
