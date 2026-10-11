@@ -137,7 +137,11 @@ const DEHYDRATE_JS = `() => {
   const SCROLLABLE_TAGS = new Set(['div','section','main','article','aside','span']);
 
   const elements = [];        // [index, Element]
-  const indexMap = new WeakMap<Element, number>();
+  // 必须写纯 JS: 本函数体是注入浏览器的字符串, 走 page.evaluate, 不经 tsc 编译。
+  // 原写法带 TS 泛型参数 (new WeakMap 加尖括号 Element, number) 在浏览器里是语法错误
+  // "Missing initializer in const declaration" → dehydrate() 恒抛异常,
+  // 连带 browser_extract(dehydration) / click_by_index / type_by_index 全部失效。
+  const indexMap = new WeakMap();
 
   function isInteractive(el) {
     const tag = el.tagName.toLowerCase();
@@ -756,7 +760,13 @@ class BrowserEngine extends EventEmitter {
     }`;
 
     try {
-      return await page.evaluate(SCAN_FN);
+      // ⚠️ Playwright 1.61 对「字符串形式的箭头函数」**不再自动调用**: page.evaluate('() => {}')
+      //    返回 undefined (实测), 既不报错也不求值 —— 于是 scanElements 恒返回 undefined,
+      //    连带 browser_scan / browser_snapshot 全部静默降级到 iframe 分支假报"浏览器未启动"。
+      //    必须自己包成 IIFE, 让「表达式」求值出结果。
+      const out = await page.evaluate('(' + SCAN_FN + ')()');
+      // 再兜一层: 调用点万一退化回裸传字符串, 调用方拿到的是数组而不是 undefined
+      return Array.isArray(out) ? out : [];
     } catch {
       return [];
     }
@@ -773,7 +783,8 @@ class BrowserEngine extends EventEmitter {
     const page = this.getActivePage();
     if (!page) throw new Error('没有活跃标签页');
 
-    const raw = await page.evaluate(DEHYDRATE_JS);
+    // 同 scanElements: 字符串箭头函数必须包 IIFE, 否则 evaluate 返回 undefined
+    const raw = await page.evaluate('(' + DEHYDRATE_JS + ')()');
     if (!raw) throw new Error('DOM 脱水失败: 页面为空');
 
     // 转换前端数据结构 → DehydrationResult
@@ -965,3 +976,14 @@ export function getBrowserEngine(): BrowserEngine {
   if (!_instance) _instance = new BrowserEngine();
   return _instance;
 }
+
+/**
+ * 注入浏览器的脚本源码 (仅供测试断言, 不要在运行时直接使用)。
+ * SCAN_FN 是方法内局部常量, 未导出; 它由测试里的"裸传字符串"断言间接覆盖。
+ *
+ * 这些字符串绕过 tsc 直接进浏览器, 曾经踩过两个静默的坑 (不报错、不崩溃、只返回空):
+ *   ① 混入 TS 语法 (泛型 new WeakMap<Element, number>) → 浏览器 SyntaxError
+ *   ② page.evaluate(字符串箭头函数) 在 Playwright 1.61 不再自动调用 → 恒返回 undefined
+ * 断言见 browser-engine.test.ts。
+ */
+export const __INJECTED_SCRIPTS = { DEHYDRATE_JS };
