@@ -62,6 +62,12 @@ interface ModelCapabilities {
   supportsKeyframe: boolean; // 是否支持首尾帧
   supportsFirstFrame: boolean; // 是否支持首帧图生视频
   seedSupported?: boolean;   // 是否支持 seed 参数
+  /** 后端根本不发送 分辨率/宽高比/时长 三个参数 (2026-10-11)
+   *  实测 `routes/video.ts:1281 submitCogVideo(res, key, prompt, image, endFrame)` —
+   *  函数签名里没有 seconds/size/aspectRatio, body 只有 { model, prompt, [image_url], [end_image_url] }。
+   *  即 cogvideo 引擎下 UI 上的「时长 / 宽高比」是**假的**: 点哪个值结果都一样。
+   *  必须锁死控件并写明原因, 否则用户会以为是自己选错 → 反复重试同一个不生效的参数。 */
+  ignoresParams?: boolean;
 }
 
 const MODEL_CAPS: Record<string, ModelCapabilities> = {
@@ -97,6 +103,8 @@ const MODEL_CAPS: Record<string, ModelCapabilities> = {
     maxRefAudios: 0,
     supportsKeyframe: true,
     supportsFirstFrame: true,
+    // 后端 submitCogVideo 不接收 seconds/size/aspectRatio —— 控件必须锁定
+    ignoresParams: true,
   },
 };
 
@@ -217,6 +225,11 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
 
   /** 引擎是否可用 (状态未加载时不阻止, 保持旧行为) */
   const isEngineAvailable = (name: string) => !engineStatus[name] || engineStatus[name].available;
+
+  /** 该引擎忽略参数时的 Tag 样式 — 变暗 + 不可点 (CheckableTag 无 disabled prop) */
+  const lockedTagStyle: React.CSSProperties = getModelCaps(model).ignoresParams
+    ? { fontSize: 11, opacity: 0.45, cursor: 'not-allowed', pointerEvents: 'none' }
+    : { fontSize: 11 };
 
   // 合并内置模型和自定义模型
   const videoModels = useModelStore.getState().models.filter(m => m.modelType === 'video' && m.enabled);
@@ -470,92 +483,13 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
     if (pollRef.current) clearInterval(pollRef.current);
   };
 
-  const pollTask = (taskId: string, item: VideoTask) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    let pollCount = 0;
-    const MAX_POLLS = 200; // 200次 × 15秒 = 50分钟超时
-    pollRef.current = window.setInterval(async () => {
-      pollCount++;
-      if (pollCount > MAX_POLLS) {
-        if (pollRef.current) clearInterval(pollRef.current);
-        setBusy(false);
-        message.error('⏰ 视频生成超时 (50分钟), 请稍后在历史记录中查看');
-        return;
-      }
-      try {
-        const r = await fetch(`${httpUrl}/v1/video/${taskId}?provider=${encodeURIComponent(item.provider || '')}`);
-        const data = await r.json();
-        if (data.error) {
-          if (pollRef.current) clearInterval(pollRef.current);
-          setBusy(false);
-          message.error('视频生成失败: ' + data.error);
-          const failed: VideoTask = { ...item, status: 'failed' };
-          setCurrent(failed);
-          setHistory(prev => prev.map(h => h.id === item.id ? failed : h));
-          return;
-        }
-        // P0 修复: 直接用后端返回字段, 不再解析 raw JSON
-        const newStatus = data.status || 'queued';
-        const newProgress = typeof data.progress === 'number' ? data.progress : 0;
-        const remoteUrl = data.videoUrl || data.video_url || null;
-        const coverUrl = data.coverUrl || data.cover_url || null;
-        const updated: VideoTask = {
-          ...item,
-          status: newStatus as VideoTask['status'],
-          progress: newProgress,
-          videoUrl: remoteUrl,
-          coverUrl,
-        };
-        setCurrent(updated);
-        setHistory(prev => prev.map(h => h.id === item.id ? updated : h));
-
-        // 判断完成/失败 (兼容多种状态名)
-        const isDone = ['completed', 'success', 'succeeded', 'done', 'finished'].includes(newStatus) || (remoteUrl && newStatus !== 'failed');
-        const isFailed = ['failed', 'error', 'cancelled', 'canceled'].includes(newStatus);
-
-        // P0 修复: 如果状态是完成但没URL, 尝试从 raw 中提取
-        let finalUrl = remoteUrl;
-        if (isDone && !finalUrl && data.raw) {
-          try {
-            const raw = JSON.parse(data.raw);
-            finalUrl = raw.video_url || raw.video?.url || raw.output?.[0]?.url || raw.url || raw.result?.video_url || null;
-          } catch { /* ignore */ }
-        }
-        // 更新最终 URL
-        if (finalUrl && finalUrl !== remoteUrl) {
-          updated.videoUrl = finalUrl;
-          setCurrent(updated);
-          setHistory(prev => prev.map(h => h.id === item.id ? updated : h));
-        }
-
-        if (isDone || isFailed) {
-          if (pollRef.current) clearInterval(pollRef.current);
-          setBusy(false);
-          if (isDone) {
-            message.success('🎬 视频生成完成! 已自动保存到历史记录');
-            // P0: 自动保存到 localStorage — 用户不需要一直等着
-            try {
-              const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-              const existIdx = saved.findIndex((s: any) => s.id === item.id);
-              const savedItem = { ...updated, videoUrl: finalUrl || remoteUrl, savedAt: Date.now() };
-              if (existIdx >= 0) {
-                saved[existIdx] = savedItem;
-              } else {
-                saved.unshift(savedItem);
-              }
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(saved.slice(0, 50)));
-            } catch { /* ignore */ }
-            // 浏览器通知 (用户切走后也能收到)
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('视频生成完成', { body: item.prompt.slice(0, 50) });
-            }
-          } else {
-            message.error('视频生成失败: ' + (data.error || newStatus));
-          }
-        }
-      } catch { /* 网络抖动, 下次重试 */ }
-    }, 15000); // P0: 15秒间隔 — 视频生成需要分钟级, 3秒太频繁浪费请求
-  };
+  /* 2026-10-11: 删除本地 `pollTask()` (86 行死代码)
+   * ------------------------------------------------------------------
+   * 它自引入起就没有任何调用点 —— 全文件仅剩上方 152 行的注释提到它。
+   * 真正的轮询在 `services/videoTaskManager.ts`: 后台串行排队 + 持久化 +
+   * 限流退避, 且**退出页面也不中断**; 本地 setInterval 版本全部不具备这些。
+   * 保留它只会诱使后来者在这条死路径上改 bug (改完不生效)。
+   * `pollRef` 仍被 unmount 清理与 resetAll 使用, 故保留。 */
 
   const submit = async (imageUrl?: string) => {
     if (!prompt.trim()) {
@@ -719,15 +653,19 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
 
           {/* 时长选择 */}
           <div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>时长 {getModelCaps(model).maxSeconds > 12 && `(最长 ${getModelCaps(model).maxSeconds}秒)`}</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
+              时长 {getModelCaps(model).maxSeconds > 12 && `(最长 ${getModelCaps(model).maxSeconds}秒)`}
+              {/* cogvideo 后端不接收秒数 → 标出真实情况, 不要让用户以为能调 */}
+              {getModelCaps(model).ignoresParams && <span style={{ fontSize: 9, color: 'var(--muted-2)', marginLeft: 6 }}>由引擎决定 · 不可调</span>}
+            </div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {DURATIONS.filter(d => parseInt(d.value.replace('s', ''), 10) <= getModelCaps(model).maxSeconds).map(d => (
-                <Tag.CheckableTag key={d.value} checked={duration === d.value} onChange={() => setDuration(d.value)} style={{ fontSize: 11 }}>{d.label}</Tag.CheckableTag>
+                <Tag.CheckableTag key={d.value} checked={duration === d.value} onChange={() => setDuration(d.value)} style={lockedTagStyle}>{d.label}</Tag.CheckableTag>
               ))}
               {/* Seedance 30秒选项 */}
               {getModelCaps(model).maxSeconds >= 15 &&
                 [15, 20, 25, 30].filter(s => s <= getModelCaps(model).maxSeconds).map(s => (
-                  <Tag.CheckableTag key={s + 's'} checked={duration === s + 's'} onChange={() => setDuration(s + 's')} style={{ fontSize: 11 }}>{s}秒</Tag.CheckableTag>
+                  <Tag.CheckableTag key={s + 's'} checked={duration === s + 's'} onChange={() => setDuration(s + 's')} style={lockedTagStyle}>{s}秒</Tag.CheckableTag>
                 ))
               }
             </div>
@@ -738,13 +676,14 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>分辨率</div>
               <Select size="small" value={videoSize} onChange={setVideoSize} style={{ width: '100%' }}
-                disabled={!!getModelCaps(model).fixedSize}
+                disabled={!!getModelCaps(model).fixedSize || !!getModelCaps(model).ignoresParams}
                 options={getModelCaps(model).sizes.map(s => ({ value: s, label: s }))} />
               {getModelCaps(model).fixedSize && <div style={{ fontSize: 9, color: 'var(--muted-2)' }}>固定 {getModelCaps(model).fixedSize}</div>}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>宽高比</div>
-              <Select size="small" value={aspectRatio} onChange={setAspectRatio} style={{ width: '100%' }} options={ASPECT_RATIOS} />
+              <Select size="small" value={aspectRatio} onChange={setAspectRatio} style={{ width: '100%' }}
+                disabled={!!getModelCaps(model).ignoresParams} options={ASPECT_RATIOS} />
             </div>
           </div>
 
@@ -854,7 +793,12 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
               {model === 'seedance-2.5' && `Seedance 2.5 | 火山引擎 | ${videoSize} | ${aspectRatio} | ${duration} | 文/图/音/视频 四模态 (素材≤50)`}
               {model.startsWith('custom:') && `自定义模型: ${customModels.find(m => 'custom:' + m.id === model)?.name || ''}`}
             </div>
-            <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4 }}>预计 {duration === '3s' ? '1-2 分钟' : duration === '5s' ? '2-3 分钟' : '3-5 分钟'}</div>
+            <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4 }}>
+              {/* 时长参数对 cogvideo 无效, 不能拿它算预计耗时 — 那是假精度 */}
+              {getModelCaps(model).ignoresParams
+                ? '预计 2-4 分钟'
+                : `预计 ${duration === '3s' ? '1-2 分钟' : duration === '5s' ? '2-3 分钟' : '3-5 分钟'}`}
+            </div>
           </div>
         </div>
 </Card>

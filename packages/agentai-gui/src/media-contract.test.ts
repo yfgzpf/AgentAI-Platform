@@ -187,3 +187,43 @@ describe('生视频: 限流重试不得无限循环', () => {
     expect(code).toContain('CogVideoX-Flash');
   });
 });
+
+describe('生视频: 引擎忽略的参数不得在 UI 上装作可调', () => {
+  const gen = stripComments(src('components/VideoGen.tsx'));
+  const gw = stripComments(gwSrc('routes/video.ts'));
+
+  it('★ 后端 submitCogVideo 确实不接收 seconds/size/aspectRatio (锁 UI 的依据)', () => {
+    const sig = gw.match(/async function submitCogVideo\(([^)]*)\)/)?.[1];
+    expect(sig, 'submitCogVideo 签名必须存在').toBeTruthy();
+    expect(sig).not.toContain('seconds');
+    expect(sig).not.toContain('aspectRatio');
+    // 调用点同样不传 (res, key, prompt, image, end_frame)
+    expect(gw).toContain('submitCogVideo(res, key, prompt, image, end_frame)');
+  });
+
+  it('★ cogvideo 标 ignoresParams, 时长标签变暗不可点', () => {
+    expect(gen).toContain('ignoresParams: true');
+    // CheckableTag 无 disabled prop → 必须用样式锁 (tsc 已证)
+    expect(gen).toContain("pointerEvents: 'none'");
+    const tags = gen.match(/style=\{lockedTagStyle\}/g) || [];
+    expect(tags.length, 'DURATIONS 与 Seedance 两条渲染路径都要锁').toBe(2);
+    expect(gen).toContain('由引擎决定 · 不可调');
+  });
+
+  it('★ 宽高比 Select 也锁 (原先完全开放, 但后端从不读它)', () => {
+    expect(gen).toMatch(/disabled=\{!!getModelCaps\(model\)\.ignoresParams\} options=\{ASPECT_RATIOS\}/);
+  });
+
+  it('★ 预计耗时不再由无效的 duration 推导 (假精度)', () => {
+    expect(gen).toContain("? '预计 2-4 分钟'");
+  });
+});
+
+describe('生视频: 死代码 pollTask 不得复活', () => {
+  const gen = stripComments(src('components/VideoGen.tsx'));
+
+  it('本地 setInterval 轮询已删除, 轮询只在 videoTaskManager', () => {
+    expect(gen).not.toMatch(/const pollTask = \(/);
+    expect(gen).toContain("from '../services/videoTaskManager'");
+  });
+});
