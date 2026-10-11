@@ -176,7 +176,12 @@ export const ImageStudio: React.FC = () => {
     const [prompt, setPrompt] = useState('');
     const [negativePrompt, setNegativePrompt] = useState('');
     const [showNegative, setShowNegative] = useState(false);
-    const [size, setSize] = useState('1024x1024');
+    // 默认必须是 SIZES 里存在的档位: 原先写死 '1024x1024' (旧像素格式),
+    // 与 SIZES 的 1K/2K/4K 对不上, 选择器一进页面就是空白。
+    const [size, setSize] = useState('1K');
+    // 画幅比例 — 后端 /v1/image 支持 ratio, 但此前前端从不发送, 于是每张图都被
+    // mapSizeToTier 兜成 1:1。ASPECT_RATIOS 常量因此成了没人引用的死代码。
+    const [ratio, setRatio] = useState('1:1');
     const [model, setModel] = useState('agnes');
     const [strength, setStrength] = useState(0.65);
     const [batchCount, setBatchCount] = useState(1);
@@ -298,7 +303,14 @@ const sendToVideo = (imageUrl: string) => {
   catch { message.error('图片太大, 无法传递'); }
 };
 
+    // 「张数」原先是死控件: body 里带了 n, 后端 destructure 后从未使用, 选 2/4 张也只出 1 张。
+    // 在后端 4 条返回分支上循环太侵入, 改为前端串行补足; 仅文生图生效 (改图/换装是多轮语义)。
     const gen = async (overridePrompt?: string) => {
+        const times = mode === 'text2img' ? Math.max(1, Math.min(4, batchCount)) : 1;
+        for (let i = 0; i < times; i++) await genOnce(overridePrompt);
+    };
+
+    const genOnce = async (overridePrompt?: string) => {
         const actualPrompt = overridePrompt || prompt;
         if (!actualPrompt.trim()) { message.warning('请输入描述'); return; }
         setBusy(true); setFakeProgress(0);
@@ -306,7 +318,7 @@ const sendToVideo = (imageUrl: string) => {
         try {
             let finalPrompt = actualPrompt;
             if (mode === 'style_transfer' && sourceImage) finalPrompt = `Transform the provided image into the following art style while preserving the original composition and subject: ${prompt}.`;
-            const body: any = { prompt: finalPrompt, size, model, mode, n: batchCount };
+            const body: any = { prompt: finalPrompt, size, ratio, model, mode };
             if (negativePrompt.trim()) body.negative_prompt = negativePrompt;
 
             // P0 修复: 发送前压缩 data URI 图片 — 避免大图导致 Failed to fetch
@@ -555,6 +567,10 @@ const sendToVideo = (imageUrl: string) => {
                                 <Select size="small" value={String(strength)} onChange={v => setStrength(parseFloat(v))} style={{ width: '100%' }}
                                     options={[{ value: '0.3', label: '0.3 轻微' }, { value: '0.5', label: '0.5 适中' }, { value: '0.65', label: '0.65 默认' }, { value: '0.8', label: '0.8 强力' }, { value: '0.95', label: '0.95 重绘' }]} />
                             </div>
+                        </div>
+                        <div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>画幅</div>
+                            <Select size="small" value={ratio} onChange={setRatio} style={{ width: '100%' }} options={ASPECT_RATIOS} />
                         </div>
                     </div>
 
@@ -930,6 +946,12 @@ const sendToVideo = (imageUrl: string) => {
                                     catch { setPrompt(`masterpiece, best quality, ${prompt}, 8k`); } finally { setBusy(false); }
                                 }} /></Tooltip>
                             </div>
+                        </div>
+
+                        {/* 画幅比例 — 后端一直支持 ratio, 这里之前根本没有入口, 所以出图恒为 1:1 */}
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <span style={{ fontSize: 11, color: 'var(--muted)', flexShrink: 0 }}>画幅</span>
+                            <Select size="small" value={ratio} onChange={setRatio} style={{ flex: 1 }} options={ASPECT_RATIOS} disabled={busy} />
                         </div>
 
                         {/* 风格预设 */}

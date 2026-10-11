@@ -35,6 +35,8 @@ export interface Shot {
   dialogue: string;
   status?: 'pending' | 'generating' | 'completed' | 'failed';
   videoUrl?: string;
+  /** API 返回的尾帧 (return_last_frame) — 续集功能用它跳过 ffmpeg 抽帧 */
+  lastFrameUrl?: string;
   error?: string;
   selected?: boolean;
 }
@@ -425,9 +427,9 @@ High detail, professional quality, 16:9 aspect ratio.`;
     if (!ep) return;
     // 收集上一集剧情: 所有镜头的 prompt
     const epPrompts = ep.shots.map(s => s.prompt).join('\n');
-    // 获取最后一镜的尾帧 URL
+    // 获取最后一镜的尾帧 URL — 有 API 尾帧就免去 ffmpeg 抽帧 (后端 next-episode 优先用它)
     const lastShot = ep.shots[ep.shots.length - 1];
-    const apiLastFrame = lastShot?.videoUrl ? undefined : undefined; // TODO: 从 shot 状态中获取 lastFrameUrl
+    const apiLastFrame = lastShot?.lastFrameUrl;
 
     setGeneratingSequel(fromEpIdx);
     try {
@@ -525,11 +527,13 @@ High detail, professional quality, 16:9 aspect ratio.`;
   };
 
   // 提交视频任务 — 自动处理 503 video_queue_full / 429 速率限制 (最多重试 5 次)
-  const submitVideoTask = async (body: any, onRetry?: (retry: number, msg: string) => void): Promise<{ taskId: string } | { error: string }> => {
+  // 返回 provider 是必须的: 查询任务要靠它区分 agnes / agnes-video-2.5 / cogvideo /
+  // seedance 四套查询接口, 前端自己猜 (曾硬编码 'agnes') 会查错引擎。
+  const submitVideoTask = async (body: any, onRetry?: (retry: number, msg: string) => void): Promise<{ taskId: string; provider?: string } | { error: string }> => {
     for (let retry = 0; retry < 5; retry++) {
       const resp = await fetch(`${httpUrl}/v1/video`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await resp.json();
-      if (data.taskId) return { taskId: data.taskId };
+      if (data.taskId) return { taskId: data.taskId, provider: data.provider };
       // 检测队列已满 — 503 + video_queue_full
       const errStr = String(data.error || '') + String(data.message || '') + String(data.code || '');
       const isQueueFull = resp.status === 503 || errStr.includes('video_queue_full') || errStr.includes('队列已满');
@@ -610,9 +614,9 @@ High detail, professional quality, 16:9 aspect ratio.`;
         setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: result.error } : s); return { ...prev, episodes: eps }; });
         return;
       }
-      const videoResult = await pollVideo(result.taskId, model);
+      const videoResult = await pollVideo(result.taskId, result.provider || model);
       if (videoResult) {
-        setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
+        setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
         message.success(`第${epIdx + 1}集-${shotId}镜 生成完成`);
       } else {
         setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: '轮询超时或任务失败' } : s); return { ...prev, episodes: eps }; });
@@ -664,10 +668,10 @@ High detail, professional quality, 16:9 aspect ratio.`;
               failed++;
               setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: result.error } : s); return { ...prev, episodes: eps }; });
             } else {
-              const videoResult = await pollVideo(result.taskId, model);
+              const videoResult = await pollVideo(result.taskId, result.provider || model);
               if (videoResult) {
                 succeeded++;
-                setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
+                setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
               } else {
                 failed++;
                 setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: '轮询超时或任务失败' } : s); return { ...prev, episodes: eps }; });
@@ -690,14 +694,21 @@ High detail, professional quality, 16:9 aspect ratio.`;
     message.info(`批量生成完成: ${succeeded} 镜成功${failMsg}`, 5);
   };
 
-  const pollVideo = (taskId: string, modelName: string): Promise<{ videoUrl: string; lastFrameUrl?: string } | null> => {
+  const pollVideo = (taskId: string, provider: string): Promise<{ videoUrl: string; lastFrameUrl?: string } | null> => {
     return new Promise((resolve) => {
       let attempts = 0;
       let consecutiveErrors = 0;
+      // 5s × 180 = 15 分钟。原先 60 次 (5 分钟) 对 1080P 正式版常常不够,
+      // 任务其实还在跑就被判"超时"。
       const interval = setInterval(async () => {
-        if (++attempts > 60) { clearInterval(interval); resolve(null); return; }
+        if (++attempts > 180) { clearInterval(interval); resolve(null); return; }
         try {
-          const queryUrl = `${httpUrl}/v1/video/query?taskId=${taskId}&model=${modelName === 'agnes-video-2.5' ? 'agnes-video-2.5' : 'agnes'}`;
+          // ⚠️ 这里曾经打 /v1/video/query?taskId=..&model=.. —— 该端点从未存在。
+          //    请求会被 GET /v1/video/:taskId 以 taskId='query' 吃掉, 且后端读的是
+          //    req.query.provider 而不是 model, 于是恒返 400「无法识别 provider: (空)」,
+          //    每一镜都在 3 次失败 (15s) 后变成「轮询超时或任务失败」——视频其实
+          //    在上游生成成功了, 只是 URL 永远拿不回来。
+          const queryUrl = `${httpUrl}/v1/video/${encodeURIComponent(taskId)}?provider=${encodeURIComponent(provider)}`;
           const resp = await fetch(queryUrl);
           if (!resp.ok) {
             if (++consecutiveErrors >= 3) { clearInterval(interval); resolve(null); return; }
