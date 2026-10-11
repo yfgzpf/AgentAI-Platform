@@ -2,10 +2,10 @@
  * FileCard — AI 文件操作卡片 (精简折叠版)
  * ----------------------------------------------------
  * 核心设计:
- *   - read_file: 只显示文件名 + 语言 + 大小，不显示内容 (纯导航)
+ *   - read_file: 只显示文件名 + 语言 + 大小，点击卡片就地展开全文 (不跳页)
  *   - write/edit: 折叠内容预览，只显示文件名 + 变更统计
  *   - 全部默认折叠，不占聊天篇幅
- *   - 点击 "打开" 才真正跳转编辑器
+ *   - 只有点「编辑器」按钮才跳转编辑器页 (2026-10-11: 原先整行点击就跳页, 用户反馈很烦)
  */
 import React, { useState, useMemo } from 'react';
 import { Tooltip, message as antdMsg } from 'antd';
@@ -44,6 +44,13 @@ function formatBytes(b?: number): string {
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
+
+/**
+ * 就地展开的渲染行上限。
+ * 内容整体塞进 DOM 会卡死页面 —— 本项目实测出现过单文件 30,528 行的变更，
+ * 那是 3 万个 <div>。超过上限先渲染前 N 行，由用户点「显示全部」再补全。
+ */
+const PREVIEW_LINE_CAP = 400;
 
 export type FileOp = 'create' | 'edit' | 'read' | 'delete' | 'batch';
 
@@ -90,6 +97,11 @@ export const FileCard: React.FC<FileCardProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [showContent, setShowContent] = useState(false);
+  // 就地展开时的「显示全部」开关 (超过 PREVIEW_LINE_CAP 才用得上)
+  const [showAll, setShowAll] = useState(false);
+  // read 模式上游常不带 content → 首次展开时按需拉取并缓存
+  const [fetched, setFetched] = useState<string | null>(null);
+  const [fetching, setFetching] = useState(false);
   const { icon, color, lang } = getLangMeta(path);
   const opMeta = OP_META[op];
 
@@ -116,7 +128,27 @@ export const FileCard: React.FC<FileCardProps> = ({
   // ═══ 通用 handler (定义在 return 前, 避免 read 模式提前 return 后找不到) ═══
   
   /**
-   * "打开"按钮 → 自动切换到编辑器页面 + 打开文件
+   * 行内展开/收起全文 (read 模式)。上游未传 content 时按需拉取一次。
+   * 这是「点卡片就地看内容」的主路径 —— 不跳页。
+   */
+  const toggleInline = async () => {
+    if (showContent) { setShowContent(false); return; }
+    setShowContent(true);
+    if (content != null || fetched != null) return; // 已有内容, 不重复拉
+    setFetching(true);
+    try {
+      const res = await fetch(`/v1/files/read?path=${encodeURIComponent(path)}`);
+      const data = res.ok ? await res.json() : null;
+      setFetched(data?.content ?? '');
+    } catch {
+      setFetched('');
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  /**
+   * 「编辑器」按钮 → 自动切换到编辑器页面 + 打开文件 (唯一会跳页的路径)
    */
   const handleOpen = (e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -130,8 +162,13 @@ export const FileCard: React.FC<FileCardProps> = ({
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!content) return;
-    navigator.clipboard.writeText(content).then(() => {
+    // read 卡片的 content 可能是展开时按需拉回来的
+    const text = content ?? fetched ?? '';
+    if (!text) {
+      antdMsg.warning('内容不可用, 无法复制');
+      return;
+    }
+    navigator.clipboard.writeText(text).then(() => {
       antdMsg.success('已复制文件内容');
     });
   };
@@ -172,11 +209,16 @@ export const FileCard: React.FC<FileCardProps> = ({
     }
   };
 
-  // ─── read 模式: 纯导航卡片 + 查看内容按钮 ───
-  // 只显示文件名 + 语言徽标 + 大小，无任何内容预览
+  // ─── read 模式: 就地展开全文 (点卡片不跳页) ───
+  // 只显示文件名 + 语言徽标 + 大小; 点整行 = 展开/收起内容, 不跳编辑器。
+  // 跳编辑器只有底部「编辑器」按钮这一条路径 (用户反馈: 老跳编辑器很不方便)。
   if (op === 'read') {
-    const previewLines = content ? content.split('\n').slice(0, 10) : [];
-    const totalLines = content ? content.split('\n').length : 0;
+    // read_file 的卡片上游不带 content (FilesFromToolSegment 只传 path) → 展开时按需拉取
+    const body = content ?? fetched ?? '';
+    const allLines = body ? body.split('\n') : [];
+    const totalLines = allLines.length;
+    const shownLines = showAll ? allLines : allLines.slice(0, PREVIEW_LINE_CAP);
+    const capReached = !showAll && totalLines > PREVIEW_LINE_CAP;
 
     return (
       <div
@@ -190,7 +232,7 @@ export const FileCard: React.FC<FileCardProps> = ({
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = ok === false ? 'var(--danger)' : 'var(--border)'; }}
       >
         <div
-          onClick={handleOpen}
+          onClick={() => { void toggleInline(); }}
           style={{
             display: 'flex', alignItems: 'center', gap: 8,
             padding: '6px 10px', cursor: 'pointer',
@@ -223,23 +265,28 @@ export const FileCard: React.FC<FileCardProps> = ({
             background: opMeta.bg, color: opMeta.color, flexShrink: 0,
           }}>{opMeta.icon} 已读取</span>
           
-          {/* 查看内容按钮 */}
-          {content && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowContent(!showContent); }}
-              style={{
-                fontSize: 9, color: 'var(--accent)', background: 'transparent',
-                border: 'none', cursor: 'pointer', padding: '0 4px', flexShrink: 0,
-              }}
-            >
-              {showContent ? '收起 ▲' : '查看内容 ▼'}
-            </button>
-          )}
+          {/* 查看内容按钮 (点行与点它等价) */}
+          <button
+            onClick={(e) => { e.stopPropagation(); void toggleInline(); }}
+            style={{
+              fontSize: 9, color: 'var(--accent)', background: 'transparent',
+              border: 'none', cursor: 'pointer', padding: '0 4px', flexShrink: 0,
+            }}
+          >
+            {showContent ? '收起 ▲' : '查看内容 ▼'}
+          </button>
         </div>
         
-        {/* 展开的内容预览 */}
-        {showContent && content && (
+        {/* 展开的内容预览 (就地展开, 不跳页) */}
+        {showContent && (
           <div style={{ borderTop: '1px solid var(--border)' }}>
+            {fetching ? (
+              <div style={{ padding: '8px 12px', fontSize: 10, color: 'var(--muted-2)' }}>加载中…</div>
+            ) : totalLines === 0 ? (
+              <div style={{ padding: '8px 12px', fontSize: 10, color: 'var(--muted-2)' }}>
+                {content == null && fetched == null ? '（内容不可用）' : '（空文件或读取失败）'}
+              </div>
+            ) : (
             <pre style={{
               margin: 0, padding: '8px 12px',
               fontSize: 10, lineHeight: 1.4,
@@ -250,7 +297,7 @@ export const FileCard: React.FC<FileCardProps> = ({
               overflowY: 'auto',
               borderBottom: '1px solid var(--border)',
             }}>
-              {previewLines.map((line, idx) => (
+              {shownLines.map((line, idx) => (
                 <div key={idx} style={{ display: 'flex' }}>
                   <span style={{ 
                     width: 24, 
@@ -261,20 +308,32 @@ export const FileCard: React.FC<FileCardProps> = ({
                     opacity: 0.5,
                     flexShrink: 0,
                   }}>{idx + 1}</span>
-                  <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>{line}</span>
+                  <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>{line || '\u00A0'}</span>
                 </div>
               ))}
-              {totalLines > 10 && (
-                <span style={{ color: 'var(--muted-2)', display: 'block', marginTop: 8, fontStyle: 'italic' }}>
-                  ... 共 {totalLines} 行, 点击"打开"在编辑器查看完整内容
-                </span>
-              )}
             </pre>
+            )}
+            {capReached && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '4px 12px', fontSize: 10, color: 'var(--muted-2)',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                <span>已显示前 {PREVIEW_LINE_CAP} 行 / 共 {totalLines} 行</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowAll(true); }}
+                  style={{
+                    fontSize: 10, color: 'var(--accent)', background: 'transparent',
+                    border: 'none', cursor: 'pointer', padding: 0,
+                  }}
+                >显示全部</button>
+              </div>
+            )}
             <div style={{
               display: 'flex', gap: 3, padding: '4px 8px',
               background: 'var(--panel)',
             }}>
-              <ActionButton onClick={handleOpen} icon="📝" label="打开" />
+              <ActionButton onClick={handleOpen} icon="📝" label="编辑器" />
               <ActionButton onClick={handleLocate} icon="📂" label="定位" />
               <ActionButton onClick={handleCopy} icon="📋" label="复制" />
               <ActionButton onClick={handleDownload} icon="⬇" label="下载" />
@@ -286,9 +345,13 @@ export const FileCard: React.FC<FileCardProps> = ({
   }
 
   // ─── write/edit/batch 模式: 折叠内容预览 + 编辑高亮 ───
-  const previewLines = content ? content.split('\n').slice(0, 6) : [];
-  const totalLines = content ? content.split('\n').length : 0;
-  const truncated = totalLines > 6;
+  const allLines = content ? content.split('\n') : [];
+  const totalLines = allLines.length;
+  // 同 read 模式: 超过上限先渲染前 N 行, 避免超大文件把页面卡死
+  const shownLines = showAll ? allLines : allLines.slice(0, PREVIEW_LINE_CAP);
+  // diff 分支渲染的是 DiffPreviewLines, 不受 shownLines 影响 → 只有纯文本分支才提示截断
+  const isDiffMode = oldContent != null && oldContent !== content;
+  const capReached = !showAll && !isDiffMode && totalLines > PREVIEW_LINE_CAP;
 
   return (
     <div
@@ -385,9 +448,9 @@ export const FileCard: React.FC<FileCardProps> = ({
       {/* 展开时: 内容预览 + 操作按钮 (edit 模式走行级 diff) */}
       {expanded && content && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
-          {oldContent != null && oldContent !== content ? (
+          {isDiffMode ? (
             /* 行级 diff 渲染 (edit 模式, 有旧内容) */
-            <DiffPreviewLines oldContent={oldContent} newContent={content} />
+            <DiffPreviewLines oldContent={oldContent!} newContent={content} />
           ) : (
             /* 纯文本预览 (create 模式或 read) */
             <pre style={{
@@ -400,7 +463,7 @@ export const FileCard: React.FC<FileCardProps> = ({
               overflowY: 'auto',
               borderBottom: '1px solid var(--border)',
             }}>
-              {content.split('\n').map((line, idx) => (
+              {shownLines.map((line, idx) => (
                 <div key={idx} style={{ 
                   display: 'flex',
                   minHeight: '1.4em',
@@ -423,6 +486,23 @@ export const FileCard: React.FC<FileCardProps> = ({
               ))}
             </pre>
           )}
+
+          {capReached && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '4px 12px', fontSize: 10, color: 'var(--muted-2)',
+              borderBottom: '1px solid var(--border)',
+            }}>
+              <span>已显示前 {PREVIEW_LINE_CAP} 行 / 共 {totalLines} 行</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowAll(true); }}
+                style={{
+                  fontSize: 10, color: 'var(--accent)', background: 'transparent',
+                  border: 'none', cursor: 'pointer', padding: 0,
+                }}
+              >显示全部</button>
+            </div>
+          )}
           
           {/* 编辑统计信息 */}
           {editStats && (
@@ -444,7 +524,7 @@ export const FileCard: React.FC<FileCardProps> = ({
             display: 'flex', gap: 3, padding: '4px 8px',
             background: 'var(--panel)',
           }}>
-            <ActionButton onClick={handleOpen} icon="📝" label="打开" />
+            <ActionButton onClick={handleOpen} icon="📝" label="编辑器" />
             <ActionButton onClick={handleLocate} icon="📂" label="定位" />
             <ActionButton onClick={handleCopy} icon="📋" label="复制" />
             <ActionButton onClick={handleDownload} icon="⬇" label="下载" />

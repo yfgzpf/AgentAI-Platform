@@ -1,167 +1,44 @@
 /**
- * GlobalBrowserDrawer — 全局浏览器容器 (PulseFlow 核心能力)
+ * GlobalBrowserDrawer — 全局浏览器「独立抽屉」宿主 (PulseFlow 核心能力)
  * ===========================================================
  *
- * 设计目标: 让浏览器自动化从**任意页面**都可用
- *   - 不依赖页面 (ChatView / Editor / Write / Image 都行)
- *   - 入口集成到主布局 (不再使用右下角悬浮按钮, 避免遮挡)
- *   - AI 调用 browser_* 工具时自动唤起
- *   - 手动入口: 顶部导航栏"浏览器"按钮 / 快捷键 Ctrl+B
+ * 2026-10-11 重构: 本组件从「唯一宿主 + 事件中枢」降级为**纯消费方**。
+ *   - 事件中枢 (pulseflow:browser:* / agentai:show-browser) 已迁到
+ *     services/browser-host.ts —— 因为现在有两个宿主 (右侧栏常驻 rail 与这个抽屉),
+ *     各自监听同一批事件会导致双开 + 双导航 + EmbeddedBrowser 重复 subscribe socket。
+ *   - 本组件现在只负责「独立大窗」这一种宿主的渲染, 由 BrowserHost.intent === 'drawer' 驱动。
+ *   - 常驻宿主在 App.tsx 的右栏 (railMode === 'browser'), 由右栏的 ⬈ 按钮切到这里。
  *
- * 集成方式:
- *   - App.tsx 顶层挂载一次
- *   - 任何页面调用: openGlobalBrowser() 或 Ctrl+B
- *   - AI tool bridge 全局可用
- *
- * 关键修复 (2026-07-16):
- *   - 移除右下角悬浮按钮 (用户反馈: 位置碍事, 不应悬浮)
- *   - 入口由 App.tsx 顶部导航控制 (与 ChatView/Settings 同一行)
+ * 入口:
+ *   - 右栏浏览器模式顶部的「⬈ 独立大窗」
+ *   - 任何代码调用 openGlobalBrowser() (auto 宿主, 默认进右栏, 不进这里)
+ *   - 各页面 (EditorChatPanel 等) 的浏览器按钮
  */
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Drawer, message, Space, Tag, Badge, Button, Tooltip } from 'antd';
+import React from 'react';
+import { Drawer, Space, Tag, Button, Tooltip } from 'antd';
 import { GlobalOutlined, CloseOutlined, FullscreenOutlined,
   FullscreenExitOutlined, ReloadOutlined,
   ThunderboltOutlined, ZoomInOutlined, ZoomOutOutlined,
 } from '@ant-design/icons';
 import { EmbeddedBrowser } from './EmbeddedBrowser';
+import { useEffect, useState } from 'react';
 import { gatewayFallback } from '../services/GatewayFallback';
+import { BrowserHost, useBrowserHost, openGlobalBrowser, navigateGlobalBrowser } from '../services/browser-host';
 
-/* ============================================================ */
-/*  全局唤起 API (window event)                                */
-/* ============================================================ */
-const BROWSER_OPEN_EVENT = 'pulseflow:browser:open';
-const BROWSER_NAVIGATE_EVENT = 'pulseflow:browser:navigate';
-
-export function openGlobalBrowser(url?: string): void {
-  window.dispatchEvent(new CustomEvent(BROWSER_OPEN_EVENT, { detail: { url } }));
-}
-
-export function navigateGlobalBrowser(url: string): void {
-  window.dispatchEvent(new CustomEvent(BROWSER_NAVIGATE_EVENT, { detail: { url } }));
-  openGlobalBrowser(url);
-}
+// 兼容旧调用点 (App.tsx / ChatView.tsx / EditorChatPanel.tsx 从本文件 import)
+export { openGlobalBrowser, navigateGlobalBrowser };
 
 export const GlobalBrowserDrawer: React.FC = () => {
-  const [open, setOpen] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [initialUrl, setInitialUrl] = useState<string>('');
-  const [aiActive, setAiActive] = useState(false);
-  // 缩放控制: 默认 75% 大小，用户可调整 (25%-100%)
-  const [zoom, setZoom] = useState<number>(0.75);
+  const host = useBrowserHost();
+  // 只有 intent === 'drawer' 才由本组件承载 (auto 走右栏常驻)
+  const open = host.visible && host.intent === 'drawer';
+  const { fullscreen, zoom, aiActive, url, reloadSeq } = host;
 
-  // 监听全局事件: AI/其他组件可触发唤起
+  // 抽屉挂载时记住要打开的 URL (EmbeddedBrowser 只在 mount 时读 initialUrl)
+  const [mountUrl, setMountUrl] = useState(url);
   useEffect(() => {
-    const onOpen = (e: Event) => {
-      const ce = e as CustomEvent<{ url?: string }>;
-      setInitialUrl(ce.detail?.url || '');
-      setOpen(true);
-    };
-    const onNavigate = (e: Event) => {
-      const ce = e as CustomEvent<{ url?: string }>;
-      if (ce.detail?.url) {
-        setInitialUrl(ce.detail.url);
-      }
-    };
-    window.addEventListener(BROWSER_OPEN_EVENT, onOpen as EventListener);
-    window.addEventListener(BROWSER_NAVIGATE_EVENT, onNavigate as EventListener);
-    return () => {
-      window.removeEventListener(BROWSER_OPEN_EVENT, onOpen as EventListener);
-      window.removeEventListener(BROWSER_NAVIGATE_EVENT, onNavigate as EventListener);
-    };
-  }, []);
-
-  // 键盘快捷键: Ctrl/Cmd + B 唤起
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
-        e.preventDefault();
-        setOpen(o => !o);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  // AI 调用浏览器工具时, 弹一个"AI 正在操作"提示
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const onAiStart = () => {
-      setAiActive(true);
-      // 30s 后自动隐藏 (兜底)
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => setAiActive(false), 30_000);
-    };
-    const onAiEnd = () => {
-      setAiActive(false);
-      if (timer) clearTimeout(timer);
-      // AI 任务结束后自动关闭浏览器 (3 秒延迟, 让用户看到最后结果)
-      setTimeout(() => {
-        setOpen(prev => {
-          // 只有 AI 打开的浏览器才自动关闭, 用户手动打开的不关
-          if (prev && aiOpenedRef.current) {
-            aiOpenedRef.current = false;
-            return false;
-          }
-          return prev;
-        });
-      }, 3000);
-    };
-    window.addEventListener('pulseflow:browser:ai-start', onAiStart);
-    window.addEventListener('pulseflow:browser:ai-end', onAiEnd);
-    return () => {
-      window.removeEventListener('pulseflow:browser:ai-start', onAiStart);
-      window.removeEventListener('pulseflow:browser:ai-end', onAiEnd);
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
-  // ===== 监听 browser_close 工具调用, 立即关闭浏览器 =====
-  const aiOpenedRef = useRef(false);
-  useEffect(() => {
-    const onBrowserClose = (e: Event) => {
-      const detail = (e as CustomEvent).detail || {};
-      // 立即关闭浏览器
-      aiOpenedRef.current = false;
-      setOpen(false);
-    };
-    window.addEventListener('pulseflow:browser:close', onBrowserClose);
-    return () => {
-      window.removeEventListener('pulseflow:browser:close', onBrowserClose);
-    };
-  }, []);
-
-  // ===== 监听 AI 返回结果中的 _show_browser 标记 =====
-  useEffect(() => {
-    /**
-     * 监听来自 Gateway 的浏览器自动显示请求
-     * Gateway 在 browser_* 工具返回结果中添加 _show_browser: true
-     * 前端检测到后自动打开浏览器面板
-     */
-    const onShowBrowser = (e: Event) => {
-      const detail = (e as CustomEvent).detail || {};
-      
-      // 标记为 AI 打开, 任务完成后自动关闭
-      aiOpenedRef.current = true;
-      // 自动打开抽屉
-      setOpen(true);
-      
-      // 如果有 URL，自动导航
-      if (detail.url) {
-        setInitialUrl(detail.url);
-        setTimeout(() => {
-          // 触发导航事件
-          window.dispatchEvent(new CustomEvent('pulseflow:browser:navigate', {
-            detail: { url: detail.url }
-          }));
-        }, 500);
-      }
-    };
-    
-    window.addEventListener('agentai:show-browser', onShowBrowser);
-    return () => {
-      window.removeEventListener('agentai:show-browser', onShowBrowser);
-    };
-  }, []);
+    if (open) setMountUrl(url);
+  }, [open, url]);
 
   // 健康检查: gateway 连接
   const [gatewayOk, setGatewayOk] = useState<boolean>(true);
@@ -189,10 +66,10 @@ export const GlobalBrowserDrawer: React.FC = () => {
 
   return (
     <>
-      {/* 全局 Drawer: 任何页面唤起都可见 (入口由 App.tsx 顶部导航控制) */}
+      {/* 独立抽屉宿主: intent === 'drawer' 才渲染 (常驻宿主在 App 右栏) */}
       <Drawer
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => BrowserHost.closeDrawer()}
         placement="right"
         width={drawerWidth}
         height="100vh"
@@ -201,7 +78,7 @@ export const GlobalBrowserDrawer: React.FC = () => {
         destroyOnClose={false}
         closable={false}
         styles={{
-          body: { padding: 0, background: '#0e0e14' },
+          body: { padding: 0, background: 'var(--bg)' },
           header: { display: 'none' },
         }}
         style={{ zIndex: 'var(--z-modal)' }}
@@ -210,12 +87,12 @@ export const GlobalBrowserDrawer: React.FC = () => {
         <div style={{
           height: 44, padding: '0 12px',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          background: 'linear-gradient(180deg, #16161c 0%, #0e0e14 100%)',
-          borderBottom: '1px solid #2a2a38',
+          background: 'var(--panel)',
+          borderBottom: '1px solid var(--border)',
         }}>
           <Space size={10}>
-            <GlobalOutlined style={{ color: '#CD7A3A', fontSize: 16 }} />
-            <span style={{ color: '#f0f0f4', fontSize: 14, fontWeight: 600 }}>
+            <GlobalOutlined style={{ color: 'var(--accent)', fontSize: 16 }} />
+            <span style={{ color: 'var(--fg)', fontSize: 14, fontWeight: 600 }}>
               智能体浏览器
             </span>
             <Tag
@@ -241,10 +118,7 @@ export const GlobalBrowserDrawer: React.FC = () => {
                 <Tooltip title="缩小">
                   <Button
                     type="text" size="small" icon={<ZoomOutOutlined />}
-                    onClick={() => setZoom(z => {
-                      if (z <= 0.3) return Math.max(0.25, Math.round((z - 0.05) * 100) / 100);
-                      return Math.max(0.25, Math.round((z - 0.1) * 100) / 100);
-                    })}
+                    onClick={() => BrowserHost.setZoom(zoom <= 0.3 ? zoom - 0.05 : zoom - 0.1)}
                     disabled={zoom <= 0.25}
                   />
                 </Tooltip>
@@ -254,7 +128,7 @@ export const GlobalBrowserDrawer: React.FC = () => {
                 <Tooltip title="放大">
                   <Button
                     type="text" size="small" icon={<ZoomInOutlined />}
-                    onClick={() => setZoom(z => Math.min(1.0, Math.round((z + 0.1) * 100) / 100))}
+                    onClick={() => BrowserHost.setZoom(zoom + 0.1)}
                     disabled={zoom >= 1.0}
                   />
                 </Tooltip>
@@ -263,52 +137,40 @@ export const GlobalBrowserDrawer: React.FC = () => {
             <Tooltip title="重新加载浏览器">
               <Button
                 type="text" size="small" icon={<ReloadOutlined />}
-                onClick={() => {
-                  setOpen(false);
-                  setTimeout(() => setOpen(true), 100);
-                }}
+                onClick={() => BrowserHost.reload()}
               />
             </Tooltip>
             <Tooltip title={fullscreen ? '退出全屏' : '全屏'}>
               <Button
                 type="text" size="small"
                 icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-                onClick={() => setFullscreen(f => !f)}
+                onClick={() => BrowserHost.setFullscreen(!fullscreen)}
               />
             </Tooltip>
-            <Tooltip title="关闭 (Ctrl+B)">
+            <Tooltip title="关闭 (回到右栏)">
               <Button
                 type="text" size="small" icon={<CloseOutlined />}
-                onClick={() => setOpen(false)}
+                onClick={() => BrowserHost.closeDrawer()}
               />
             </Tooltip>
           </Space>
         </div>
 
-        {/* EmbeddedBrowser 主体 */}
+        {/* EmbeddedBrowser 主体 — reloadSeq 变化即重建实例 = 真重载 */}
         <div style={{ height: 'calc(100vh - 44px)' }}>
-          <EmbeddedBrowser
-            initialUrl={initialUrl}
-            compact={true}
-            aiControlled={true}
-            autoScan={true}
-            zoom={zoom}
-            style={{ height: '100%' }}
-          />
+          {open && (
+            <EmbeddedBrowser
+              key={reloadSeq}
+              initialUrl={mountUrl}
+              compact={true}
+              aiControlled={true}
+              autoScan={true}
+              zoom={zoom}
+              style={{ height: '100%' }}
+            />
+          )}
         </div>
       </Drawer>
-
-      {/* 动画 */}
-      <style>{`
-        @keyframes pulseflow-glow {
-          0%, 100% {
-            box-shadow: 0 6px 24px rgba(205, 122, 58, 0.45);
-          }
-          50% {
-            box-shadow: 0 6px 36px rgba(205, 122, 58, 0.85);
-          }
-        }
-      `}</style>
     </>
   );
 };

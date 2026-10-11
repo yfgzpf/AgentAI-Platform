@@ -143,7 +143,9 @@ describe('T3 App.tsx 三栏已改为可拖拽', () => {
   it('已接入 useResizable', () => {
     expect(app).toContain('useResizable');
     expect(app).toContain('leftPane.width');
-    expect(app).toContain('rightPane.width');
+    // 右栏 2026-10-11 起有 信息/浏览器 两种模式, JSX 统一读 activePane ——
+    // 用 rightPane.width 的话浏览器模式会拿到信息栏的宽度 (320 而不是 520)
+    expect(app).toContain('activePane.width');
     // PulseFlowSidebar 宽度应跟随
     expect(app).toMatch(/<PulseFlowSidebar\s+width=\{leftPane\.width\}/);
   });

@@ -332,9 +332,40 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
    未激活页面外面还套 FeatureGuide 的 ~41px 提示条 → 溢出 51px、底部控件被裁。
    现改为 `height: 100%`（由 `.app-content` / FeatureGuide 的 `flex:1` 体给出确定高度，不再猜 chrome 高度）。
 
-**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts`（源码文本断言 + `stripComments` 辅助，
-因为修复点注释本身会引用「坏掉的旧代码」）。
-核验：`cd packages/agentai-gui && npx vitest run` → **7 文件 / 109 通过**（本轮 90/6 → 109/7）。
+4. **右栏改成 信息/浏览器 双模式（ZCode 式嵌入式浏览器）** —— 浏览器能力（`EmbeddedBrowser` +
+   `browser-engine.ts` Playwright）**本来就存在**，但只挂在右侧浮层 `GlobalBrowserDrawer` 上，
+   不是常驻右栏。现右栏顶部加 `信息 / 浏览器` 切换条，浏览器模式直接把 `EmbeddedBrowser` 嵌进右栏。
+   - **关键约束：`EmbeddedBrowser` 全局只能挂一个实例** —— 它内部会 `socket.subscribe('/browser')`
+     收帧；两处同时挂 = 双倍订阅 + 双倍帧解析（活体实测踩过）。
+     因此**事件中枢必须唯一**：新建 `src/services/browser-host.ts`（单例 store + 幂等
+     `installBrowserHostListeners()`），把原先散在 Drawer 里的 5 组 window 监听整体搬过来；
+     `GlobalBrowserDrawer` 瘦身为纯消费方（**0 个 `addEventListener`**）。
+     `App.tsx` 用 `drawerHostActive = hostVisible && hostIntent === 'drawer'` 保证右栏与抽屉互斥。
+     核验：`grep -c "addEventListener" packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` → **0**；
+     `grep -n "addEventListener" packages/agentai-gui/src/services/browser-host.ts` → **6 行**（6 个事件各恰好 1 次）。
+   - **两种模式共用一个 `.pane-grip`**（`const activePane = railMode === 'browser' ? browserPane : rightPane`）。
+     浏览器模式有**独立记忆宽度** `agentai.pane.browser.width`（默认 520 / 320–900），
+     与信息栏的 320 / 240–560 不同量级（320px 看网页太窄）。
+     核验：`grep -c "className={\`pane-grip" packages/agentai-gui/src/App.tsx` → **2**（未新增把手）。
+   - 可用范围：右栏浏览器**所有页面可用**；信息模式仅 chat 页（Editor/ImageStudio 自带多栏，
+     平白加 320px 信息栏只会挤）。AI 唤起（`agentai:show-browser` / `pulseflow:browser:open`）
+     切到右栏常驻而非浮层；`Ctrl+B` 切浏览器模式。
+
+5. **文件卡片不再「整行点击就跳编辑器」** —— 根因是**我们自己的 Monaco `editor` 页**，不是外部编辑器
+   （全 GUI `grep -rn "openExternal\|vscode://"` 零命中）。两处整行 `onClick`：
+   `FileCard.tsx` / `GeneratedFilesPanel.tsx` 的行点击现改为**就地展开全文**；
+   跳页能力保留在独立的 **「编辑器」按钮**（`label="编辑器"`，唯一会跳页的路径）。
+   核验：`grep -n "PREVIEW_LINE_CAP" packages/agentai-gui/src/components/FileCard.tsx` → **400**
+   （DOM 上限，仓库里出现过 30,528 行的变更，全量渲染会卡死）；
+   read 模式上游不带 content，故就地展开时 lazy `fetch('/v1/files/read?path=')`。
+
+**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts`
+（源码文本断言 + `stripComments` 辅助，因为修复点注释本身会引用「坏掉的旧代码」）。
+核验：`cd packages/agentai-gui && npx vitest run` → **8 文件 / 125 通过**（本轮新增 16 条：右栏双模式 +
+文件就地查看 + 宿主唯一性；基线 109/7 → 125/8）。
+⚠️ 本轮活体验收**未覆盖**两项：`tab.screenshot()` 降级（`browser screenshot activity capture failed
+for guest`）与 FileCard 就地展开的点击穿透（IAB `click()` 全线超时，页面停在 ImageStudio）。
+这两项**仅有源码文本测试 + `tsc` 干净**，非活体证据 —— 补验时优先重测这两条。
 
 ### 六、安全机制
 
@@ -455,7 +486,10 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
 | @ts-nocheck 文件 | - | **30 个** (22 源文件 + 8 测试文件, 2026-10-11 实测) | `grep -rl "@ts-nocheck" src/ \| wc -l` |
 | 中栏宽度 | "大屏居中 800px" | **`clamp(880px, 90%, 1600px)` 自适应**, 2 处消费 (原 token 零消费) | `grep -rn "var(--chat-max-width)" packages/agentai-gui/src/` |
 | 页面内可拖面板 | 写死不可拖 (420/380/320/240) | **4 处 `<PaneGrip>`**, 把手命中区 5/5px | `packages/agentai-gui/src/layout-panes.test.ts` |
-| GUI 测试基线 | 90 测试 / 6 文件 | **109 测试 / 7 文件** | `cd packages/agentai-gui && npx vitest run` |
+| 浏览器宿主 | 仅右侧浮层 Drawer | **右栏 信息/浏览器 双模式**, 事件中枢唯一 (`browser-host.ts` 6 监听 / Drawer 0) | `grep -c "addEventListener" packages/agentai-gui/src/services/browser-host.ts packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` |
+| 右栏浏览器宽度 | - | **`agentai.pane.browser.width` 默认 520** (320–900), 与信息栏 320 分轨 | `grep -n "agentai.pane.browser.width" packages/agentai-gui/src/App.tsx` |
+| 文件卡片查看 | 整行点击 → 跳 editor 页 | **行点击就地展开全文**, 仅「编辑器」按钮跳页 | `grep -n "PREVIEW_LINE_CAP\|label=\"编辑器\"" packages/agentai-gui/src/components/FileCard.tsx` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **125 测试 / 8 文件** | `cd packages/agentai-gui && npx vitest run` |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）
 

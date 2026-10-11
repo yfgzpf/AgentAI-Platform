@@ -23,7 +23,7 @@ import {
   WechatOutlined, ClockCircleOutlined, BellOutlined, MedicineBoxOutlined,
   DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined, SyncOutlined, DownloadOutlined,
   GlobalOutlined, MinusOutlined, BorderOutlined, CloseOutlined,
-  HomeOutlined, KeyOutlined, HeartOutlined,
+  HomeOutlined, KeyOutlined, HeartOutlined, ExpandOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 /* P0-4: 代码分割 — 首屏组件同步加载，其他页面延迟加载 */
 // 首屏核心组件 - 同步导入避免骨架屏等待
@@ -78,6 +78,9 @@ import { useSuggestionStore } from './store/suggestionStore';
 import { Splash } from './components/Splash';
 import { ReuseIdentityPrompt } from './components/ReuseIdentityPrompt';
 import { GlobalBrowserDrawer, openGlobalBrowser } from './components/GlobalBrowserDrawer';
+import { EmbeddedBrowser } from './components/EmbeddedBrowser';
+import { BrowserHost, useBrowserHost } from './services/browser-host';
+import { BrowserStateBus } from './services/BrowserStateBus';
 import { useIdeState } from './hooks/useIdeState';
 import { useResizable } from './hooks/useResizable';
 import { useUpdaterStore, mountUpdaterEventBus } from './store/updaterStore';
@@ -140,6 +143,23 @@ const FeatureGuide: React.FC<{
       </div>
     </div>
   );
+};
+
+/* ════════════════ 右栏模式切换条样式 (模块级, 避免每次渲染新建对象) ════════════════ */
+function railTabStyle(active: boolean): React.CSSProperties {
+  return {
+    fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+    cursor: 'pointer', userSelect: 'none',
+    color: active ? 'var(--accent)' : 'var(--muted-2)',
+    background: active ? 'var(--accent-soft)' : 'transparent',
+    transition: 'color 0.15s, background 0.15s',
+  };
+}
+
+const railIconStyle: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  width: 20, height: 20, borderRadius: 4, cursor: 'pointer',
+  fontSize: 11, color: 'var(--muted-2)',
 };
 
 /* ════════════════ 对话改图切换按钮 ════════════════ */
@@ -935,7 +955,55 @@ export const App: React.FC = () => {
 
   /* --- Sidebar 仅在 chat 显示会话侧栏 --- */
   const showSessionSidebar = page === 'chat' && sidebarVisible;
-  const showRightPanel = page === 'chat' && rightPanelVisible;
+
+  // ═══ 右栏双模式 (2026-10-11): 信息 / 浏览器 ═══
+  // 背景: 浏览器能力本来就有 (EmbeddedBrowser + browser-engine), 但只挂在右侧浮层 Drawer 上。
+  // 现在改成 ZCode 那样嵌在右栏常驻, 与"信息"模式共用一个栏位。
+  //   - chat 页: 信息 / 浏览器 可切
+  //   - 其它页: 只走浏览器模式 —— Editor/ImageStudio 自带多栏, 平白加一条信息栏只会挤
+  const [railMode, setRailMode] = useState<'info' | 'browser'>(() => {
+    try { return localStorage.getItem('agentai.rail.mode') === 'browser' ? 'browser' : 'info'; } catch { return 'info'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('agentai.rail.mode', railMode); } catch { /* 隐私模式忽略 */ }
+  }, [railMode]);
+
+  // ═══ 浏览器宿主状态 (事件中枢在 services/browser-host.ts) ═══
+  // 全项目只有一份 window 监听 + 一份 EmbeddedBrowser —— 两个宿主同时挂会双开+双导航+重复订阅 socket
+  const browserHost = useBrowserHost();
+  const hostVisible = browserHost.visible;
+  const hostIntent = browserHost.intent;
+  const hostOpenSeq = browserHost.openSeq;
+  // 抽屉宿主激活 (用户点了「⬈ 独立大窗」) → 右栏必须收起,
+  // 否则右栏和抽屉会各挂一份 EmbeddedBrowser = 两份 socket /browser 订阅 (实测踩过这个坑)
+  const drawerHostActive = hostVisible && hostIntent === 'drawer';
+
+  const showInfoRail = page === 'chat' && railMode === 'info';
+  const showBrowserRail = railMode === 'browser';
+  const showRightPanel = rightPanelVisible && (showInfoRail || showBrowserRail) && !drawerHostActive;
+  const railBrowserActive = showBrowserRail && rightPanelVisible && !drawerHostActive;
+
+  // AI 唤起浏览器 → 切到右栏常驻 (浮层会盖住当前页面, 常驻栏不会)
+  useEffect(() => {
+    if (hostVisible && hostIntent === 'auto') {
+      setRailMode('browser');
+      setRightPanelVisible(true);
+    }
+  }, [hostVisible, hostIntent, hostOpenSeq]);
+
+  // Ctrl+B: 切右栏浏览器模式 (原先在 Drawer 内部, 现在默认宿主是右栏, 快捷键归 App)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        const next = railMode === 'browser' ? 'info' : 'browser';
+        setRailMode(next);
+        if (next === 'browser') setRightPanelVisible(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [railMode]);
 
   // ═══ 侧栏可拖拽（2026-10-06 L-Batch 1）═══
   // 原为硬编码 width:260 / 320，1366px 屏下内容区只剩 786px 且无法调整。
@@ -948,8 +1016,16 @@ export const App: React.FC = () => {
   const rightPane = useResizable({
     storageKey: 'agentai.pane.right.width',
     defaultWidth: 320, minWidth: 240, maxWidth: 560, side: 'left',
-    enabled: showRightPanel,
+    enabled: showInfoRail,
   });
+  // 浏览器模式独立记忆宽度 —— 320px 看网页太窄, 而且和"信息"栏的合理宽度不同量级
+  const browserPane = useResizable({
+    storageKey: 'agentai.pane.browser.width',
+    defaultWidth: 520, minWidth: 320, maxWidth: 900, side: 'left',
+    enabled: showBrowserRail && rightPanelVisible,
+  });
+  // 当前生效的把手/宽度: 两种模式共用一个 .pane-grip (不能出现第三根把手)
+  const activePane = railMode === 'browser' ? browserPane : rightPane;
 
   // 当前工作目录 (供 FileTreePanel 使用)
   const currentWorkspace = profile?.workspace || localStorage.getItem('agentai.workspace') || '';
@@ -1012,12 +1088,19 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
               </span>
             ))}
 
-            {/* 浏览器按钮 (唤起 Drawer, 不切换页面) */}
-            <Tooltip title="智能体浏览器 (Ctrl+B) — 任意页面可用">
+            {/* 浏览器按钮 (切右栏常驻浏览器模式, 不切换页面) */}
+            <Tooltip title="智能体浏览器 (Ctrl+B) — 右栏常驻, 任意页面可用">
               <span
-                className="app-tab browser-tab"
+                className={`app-tab browser-tab${railBrowserActive ? ' active' : ''}`}
                 data-testid="open-browser"
-                onClick={() => (window as any).openGlobalBrowser?.()}
+                onClick={() => {
+                  if (railBrowserActive) {
+                    setRightPanelVisible(false);
+                  } else {
+                    setRailMode('browser');
+                    setRightPanelVisible(true);
+                  }
+                }}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
                 <GlobalOutlined style={{ color: 'var(--accent)' }} />
@@ -1349,30 +1432,102 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             </ErrorBoundary>
           </div>
 
-          {/* Right: 信息面板 (仅 chat) */}
+          {/* Right: 右栏 (信息 / 浏览器 双模式) */}
           {showRightPanel && (
             <div
-              ref={rightPane.paneRef}
+              ref={activePane.paneRef}
               className="app-pane app-pane-right"
-              style={{ width: rightPane.width }}
+              style={{ width: activePane.width }}
             >
               {/* 右侧栏把手在左边，拖拽方向与鼠标相反（side: 'left'） */}
               <div
-                ref={rightPane.gripRef}
-                className={`pane-grip${rightPane.resizing ? ' is-dragging' : ''}`}
+                ref={activePane.gripRef}
+                className={`pane-grip${activePane.resizing ? ' is-dragging' : ''}`}
                 role="separator"
                 aria-orientation="vertical"
                 aria-label="调整右侧栏宽度（方向键调整，双击复位）"
-                aria-valuenow={rightPane.width}
-                aria-valuemin={240}
-                aria-valuemax={560}
+                aria-valuenow={activePane.width}
+                aria-valuemin={railMode === 'browser' ? 320 : 240}
+                aria-valuemax={railMode === 'browser' ? 900 : 560}
                 tabIndex={0}
-                onKeyDown={rightPane.onGripKeyDown}
-                onDoubleClick={rightPane.onGripDoubleClick}
+                onKeyDown={activePane.onGripKeyDown}
+                onDoubleClick={activePane.onGripDoubleClick}
               />
-              <div className="app-pane-body">
-                <RightPanel />
+
+              {/* 模式切换条 */}
+              <div
+                data-testid="rail-modes"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+                  padding: '4px 6px', borderBottom: '1px solid var(--border)',
+                }}
+              >
+                {page === 'chat' ? (
+                  <>
+                    <span
+                      data-testid="rail-mode-info"
+                      onClick={() => setRailMode('info')}
+                      style={railTabStyle(railMode === 'info')}
+                    >信息</span>
+                    <span
+                      data-testid="rail-mode-browser"
+                      onClick={() => setRailMode('browser')}
+                      style={railTabStyle(railMode === 'browser')}
+                    >浏览器</span>
+                  </>
+                ) : (
+                  // 非 chat 页只有浏览器模式 (见 showInfoRail 注释)
+                  <span
+                    data-testid="rail-mode-browser"
+                    style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)' }}
+                  >浏览器</span>
+                )}
+                <span style={{ flex: 1 }} />
+                {railMode === 'browser' && (
+                  <>
+                    <Tooltip title="重新加载">
+                      <span
+                        data-testid="rail-browser-reload"
+                        onClick={() => BrowserHost.reload()}
+                        style={railIconStyle}
+                      ><ReloadOutlined /></span>
+                    </Tooltip>
+                    <Tooltip title="在独立大窗打开 (会重新加载页面)">
+                      <span
+                        data-testid="rail-browser-expand"
+                        onClick={() => BrowserHost.expand(browserHost.url || BrowserStateBus.getState().activeTabUrl)}
+                        style={railIconStyle}
+                      ><ExpandOutlined /></span>
+                    </Tooltip>
+                    <Tooltip title="关闭右栏">
+                      <span
+                        data-testid="rail-browser-close"
+                        onClick={() => setRightPanelVisible(false)}
+                        style={railIconStyle}
+                      ><CloseOutlined /></span>
+                    </Tooltip>
+                  </>
+                )}
               </div>
+
+              {railMode === 'browser' ? (
+                // 浏览器自己滚 —— 外套不能再 overflow:auto, 否则出现双层滚动条
+                <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
+                  <EmbeddedBrowser
+                    key={browserHost.reloadSeq}
+                    initialUrl={browserHost.url}
+                    compact={true}
+                    aiControlled={true}
+                    autoScan={true}
+                    zoom={1}
+                    style={{ height: '100%', width: '100%' }}
+                  />
+                </div>
+              ) : (
+                <div className="app-pane-body">
+                  <RightPanel />
+                </div>
+              )}
             </div>
           )}
         </div>
