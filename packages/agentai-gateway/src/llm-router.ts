@@ -27,6 +27,7 @@ import { estimateMessagesTokens, estimateStringTokens, estimateToolCallsTokens, 
 import { routeByScore, getSubModel } from './model-classifier.js';
 import { getModelContextWindow, getDefaultContextWindow, getCapability } from './model-capabilities.js';
 import { modelMetrics } from './model-metrics-service.js';
+import { sanitizeToolMessages } from './message-utils.js';
 
 // 免费模型池: 这些可以互相切换 (sensenova/longcat 有免费额度, 也加入)
 // ★ 2026-10-10: 提取为模块级导出, 消除三处名单不统一 (见下)。
@@ -1687,7 +1688,10 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
         console.warn(`[truncate] removed trailing assistant(tool_calls) with no tool results (idx=${lastAssistantIdx})`);
         fixed.splice(lastAssistantIdx, 1);
       }
-      truncatedMessages = fixed;
+      // ═══ 2026-10-11: 上面这段只处理「0 个 tool 回复」的整块残留,
+      //     漏掉了「N 个 tool_calls 只回 M<N 条」的部分配对 → 上游 400。
+      //     统一交给 sanitizeToolMessages 按 id 精确配对修剪, 单一实现来源。 ═══
+      truncatedMessages = sanitizeToolMessages(fixed);
 
       // ═══ 终极防护: 确保 truncatedMessages 中至少有一条真实的 user 消息 ═══
       // 场景: 当所有已丢弃的消息包含 user 消息, 而 kept 中没有真实 user 消息时,
