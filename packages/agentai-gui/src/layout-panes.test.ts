@@ -195,7 +195,12 @@ describe('右栏: 两个空面板合并为一行, 不叠两张 Empty 插画', ()
 describe('状态条: 不渲染永远填不上的占位符 / 裸数字', () => {
   it('★ 置信度无数据时整个隐藏 (强模型 tier 在 gateway 侧被门控跳过, 恒为 --)', () => {
     const sb = stripComments(src('components/StatusBar.tsx'));
-    expect(sb).toMatch(/\{dash\.confidence != null && \(/);
+    // 2026-10-11 信息架构精简: 6 项诊断值 (含置信度) 折叠进「本次会话」popover,
+    // 原断言锁的 `!= null && (` 括号形态随之失效; 不变的是「无数据不渲染」——
+    // 且入口本身也用 hasSessionStats 兜住, 全无数据时连折叠入口都不出现。
+    expect(sb).toMatch(/\{dash\.confidence != null &&\s/);
+    expect(sb).not.toContain('置信 --');
+    expect(sb).toContain('hasSessionStats');
   });
 
   it('★ Git 变更数字带千分位 + 单位 + 悬浮说明 (原为裸 "-30528")', () => {

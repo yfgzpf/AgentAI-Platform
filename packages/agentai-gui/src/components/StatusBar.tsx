@@ -7,7 +7,7 @@
  *   - [P3-3] 透明度仪表盘: 置信度 / 意图 / token / 费用
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { Tooltip } from 'antd';
+import { Tooltip, Popover } from 'antd';
 import { useModeStore, MODE_CONFIG } from '../store/modeStore';
 import { VoiceWakeIndicator } from './VoiceWakeIndicator';
 import { MusicPlayer } from './MusicPlayer';
@@ -263,6 +263,19 @@ export const StatusBar: React.FC = () => {
   };
   const tokenStr = fmtTokens(dash.tokens);
 
+  /* ---- 本次会话透明度: 6 项诊断值均为 tooltip-only (label+值, 悬停才看细节),
+     与其在状态栏里平铺 6 个只能悬停的碎片, 折叠成一个可点击入口。 ---- */
+  const showMood = !!mood && mood.intensity > 0.2;
+  const hasSessionStats = dash.confidence != null || !!dash.intent || !!dash.planProgress
+    || showMood || !!dash.cost || !!dash.model;
+
+  /* ---- 渠道状态聚合点 (QQ/微信 折叠进 popover 后仍需一眼看出异常) ---- */
+  const chanStates = [qq, wx];
+  const chanColor = chanStates.every(s => s === 'connected') ? 'var(--success)'
+    : chanStates.every(s => s === 'disconnected') ? 'var(--danger)'
+    : 'var(--muted)';
+  const chanLabel = (s: ConnStatus) => s === 'connected' ? '在线' : s === 'checking' ? '检测中' : '离线';
+
   /* ---- Gateway 状态色 ---- */
   const gwDotColor = gw === 'online' ? 'var(--success)'
     : gw === 'offline' ? 'var(--danger)' : 'var(--muted)';
@@ -280,21 +293,43 @@ export const StatusBar: React.FC = () => {
         {gwLabel}
       </span>
 
-      {/* QQ 状态 */}
-      <Tooltip title={qqTooltip} mouseEnterDelay={0.3}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 8, cursor: 'pointer' }}>
-          {statusDot(qq, 'var(--accent)')}
-          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>QQ</span>
+      {/* 渠道状态 (QQ Bot / 微信) — 折叠为单个入口: 常驻只留一个聚合点,
+          异常色由聚合点承担, 细节点击展开 (原来是 2 个常驻 chip + 2 个 hover tooltip) */}
+      <Popover
+        trigger="click"
+        placement="topLeft"
+        content={
+          <div data-testid="statusbar-channels-panel" style={{ minWidth: 210, fontSize: 'var(--fs-micro)', lineHeight: 1.7 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <span>QQ Bot</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {statusDot(qq, 'var(--accent)')}
+                <span style={{ color: 'var(--muted-2)' }}>{chanLabel(qq)}</span>
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <span>微信</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {statusDot(wx, 'var(--success)')}
+                <span style={{ color: 'var(--muted-2)' }}>{chanLabel(wx)}</span>
+              </span>
+            </div>
+            <div style={{ marginTop: 6, borderTop: '1px solid var(--border)', paddingTop: 6 }}>{qqTooltip()}</div>
+            <div style={{ marginTop: 6, borderTop: '1px solid var(--border)', paddingTop: 6 }}>{wxTooltip()}</div>
+          </div>
+        }
+      >
+        <span
+          data-testid="statusbar-channels"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 8, cursor: 'pointer' }}
+        >
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%', background: chanColor,
+            flexShrink: 0, display: 'inline-block', transition: 'background 0.3s ease',
+          }} />
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>渠道</span>
         </span>
-      </Tooltip>
-
-      {/* 微信状态 */}
-      <Tooltip title={wxTooltip} mouseEnterDelay={0.3}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, cursor: 'pointer' }}>
-          {statusDot(wx, 'var(--success)')}
-          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>微信</span>
-        </span>
-      </Tooltip>
+      </Popover>
 
       {/* 语音唤醒 */}
       <span style={{ marginLeft: 8, display: 'inline-flex', alignItems: 'center' }}>
@@ -304,52 +339,40 @@ export const StatusBar: React.FC = () => {
       {/* ═══ P3-3: 透明度仪表盘 ═══ */}
       <span className="ui-divider" />
 
-      {/* 置信度 — 无数据时整个隐藏 (原实现恒显 "置信 --", 而强模型 tier 的
-          置信度评估层在 gateway 侧被 `!== 'autonomous'` 门控跳过, 该占位符
-          实际上永远填不上, 只会长期占宽度。与下方 意图/计划/费用/模型 的
-          "有则显示" 保持一致。) */}
-      {dash.confidence != null && (
-        <Tooltip title={`AI 置信度: ${dash.confidence}%`} mouseEnterDelay={0.3}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>置信</span>
-            <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 700, color: confColor }}>{confLabel}</span>
+      {/* 本次会话 (置信/意图/计划/心境/费用/模型) — 6 项都是 tooltip-only 诊断值,
+          平铺时只是 6 个悬停才可读的碎片; 折叠成一个入口, 仅在低置信时用红点提示。
+          注: 置信度是强模型 tier 下 gateway 侧门控跳过的模块, 该值多半填不上, 故此处
+          只在真有数据时才渲染, 不再长期占位。 */}
+      {hasSessionStats && (
+        <Popover
+          trigger="click"
+          placement="topLeft"
+          content={
+            <div data-testid="statusbar-session-panel" style={{ minWidth: 190, fontSize: 'var(--fs-micro)', lineHeight: 1.9 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>本次会话</div>
+              {dash.confidence != null && <div>置信度 <b style={{ color: confColor }}>{confLabel}</b></div>}
+              {dash.intent && <div>意图 <span style={{ color: 'var(--fg-2)' }}>{dash.intent}</span></div>}
+              {dash.planProgress && <div>计划 <b style={{ color: 'var(--violet)' }}>{dash.planProgress}</b></div>}
+              {showMood && <div>心境 {mood!.emoji} <span style={{ color: mood!.color }}>{mood!.label}</span></div>}
+              {dash.cost && <div>费用 <b style={{ color: 'var(--warning)' }}>{dash.cost}</b></div>}
+              {dash.model && <div>模型 <b style={{ color: 'var(--accent)' }}>{dash.model}</b></div>}
+            </div>
+          }
+        >
+          <span
+            data-testid="statusbar-session"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+          >
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>本次会话</span>
+            {dash.confidence != null && dash.confidence < 50 && (
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--danger)', display: 'inline-block' }} />
+            )}
           </span>
-        </Tooltip>
+        </Popover>
       )}
 
-      {/* 意图 */}
-      {dash.intent && (
-        <Tooltip title={`AI 理解的意图: ${dash.intent}`} mouseEnterDelay={0.3}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>意图</span>
-            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {dash.intent}
-            </span>
-          </span>
-        </Tooltip>
-      )}
-
-      {/* 任务计划进度 */}
-      {dash.planProgress && (
-        <Tooltip title={`任务计划进度: ${dash.planProgress}`} mouseEnterDelay={0.3}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>计划</span>
-            <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--violet)' }}>{dash.planProgress}</span>
-          </span>
-        </Tooltip>
-      )}
-
-      {/* ═══ 灵魂层: AI 情绪指示器 ═══ */}
-      {mood && mood.intensity > 0.2 && (
-        <Tooltip title={`AI 心境: ${mood.label} (${Math.round(mood.intensity * 100)}%)`} mouseEnterDelay={0.3}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help', marginLeft: 4 }}>
-            <span style={{ fontSize: 'var(--fs-sm)' }}>{mood.emoji}</span>
-            <span style={{ fontSize: 'var(--fs-micro)', color: mood.color }}>{mood.label}</span>
-          </span>
-        </Tooltip>
-      )}
-
-      {/* Token 用量 + 压力可视化 (2026-08-03 升级) */}
+      {/* Token 用量 + 压力可视化 (2026-08-03 升级) — 保持常驻: 它是条状图, 一眼可读,
+          与上面 6 个纯文本诊断值不同, 折叠反而降低可用性 */}
       {dash.tokens != null && (
         <TokenPressureBar
           used={dash.tokens}
@@ -357,25 +380,6 @@ export const StatusBar: React.FC = () => {
           messageCount={0}
           toolCallCount={0}
         />
-      )}
-
-      {/* 费用 */}
-      {dash.cost && (
-        <Tooltip title={`本次对话费用: ${dash.cost}`} mouseEnterDelay={0.3}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>费用</span>
-            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--warning)' }}>{dash.cost}</span>
-          </span>
-        </Tooltip>
-      )}
-
-      {/* 当前模型 */}
-      {dash.model && (
-        <Tooltip title={`当前模型: ${dash.model}`} mouseEnterDelay={0.3}>
-          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {dash.model}
-          </span>
-        </Tooltip>
       )}
 
       {/* 分组分隔: 左=AI 本次会话透明度 / 右=账号与用量 (跨会话累计) */}

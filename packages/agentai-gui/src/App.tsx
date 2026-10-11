@@ -104,12 +104,22 @@ const FeatureGuide: React.FC<{
   children: React.ReactNode;
 }> = ({ page, children }) => {
   const { isActivated } = useSubscriptionStore();
-  
-  // 如果已激活或不需要引导，直接显示内容
-  if (isActivated || !page.requireSubscription) {
+
+  // 「免费内置模型」提示条: 常驻会一直压在页面顶部, 允许用户关掉并记住
+  const NAG_KEY = 'agentai.nag.freeModelDismissed';
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem(NAG_KEY) === '1'; } catch { return false; }
+  });
+  const dismiss = () => {
+    setDismissed(true);
+    try { localStorage.setItem(NAG_KEY, '1'); } catch { /* 隐私模式下忽略 */ }
+  };
+
+  // 如果已激活、不需要引导、或用户已关闭提示，直接显示内容
+  if (isActivated || !page.requireSubscription || dismissed) {
     return <>{children}</>;
   }
-  
+
   // 未激活时显示内容 + 顶部提示条
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -136,6 +146,19 @@ const FeatureGuide: React.FC<{
         >
           添加密钥解锁
         </Button>
+        <Tooltip title="本页不再提示 (可在设置里恢复)">
+          <span
+            data-testid="nag-dismiss"
+            onClick={dismiss}
+            style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 20, height: 20, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+              color: 'var(--muted-2)', fontSize: 'var(--fs-md)', lineHeight: 1, flexShrink: 0,
+            }}
+          >
+            ×
+          </span>
+        </Tooltip>
       </div>
       {/* 页面内容 */}
       <div style={{ flex: 1, overflow: 'auto' }}>
@@ -217,6 +240,9 @@ interface PageMeta {
   group: 'core' | 'media' | 'system';
   /** 描述, 悬浮 tooltip 用 */
   desc: string;
+  /** 导航下拉内的分组标题. system 组 15 项平铺太长, 用它切成可扫读的段落;
+   *  同 section 的条目必须在数组里连续 (下拉按数组顺序渲染)。 */
+  section?: string;
   /** 右上角小徽章 (可选) */
   badge?: string;
   /** 是否需要订阅才能使用 */
@@ -239,21 +265,22 @@ const PAGES: PageMeta[] = [
   { key: 'pascal',   label: '建筑编辑', icon: <HomeOutlined />,       comp: PascalEditor,  group: 'media',  desc: 'AI 驱动 3D 建筑模型 · 墙体/门窗/屋顶', badge: 'NEW', hidden: true },
   { key: 'decorai',  label: '建筑装饰', icon: <ExperimentOutlined />, comp: DecorAI,        group: 'media',  desc: '对话画布 · 效果图 · 改图 · 报价 · 视频', badge: 'NEW', hidden: true },
   { key: 'write',    label: '写作',     icon: <EditOutlined />,       comp: WritePage,     group: 'media',  desc: '长文写作 · 模板 · 一键导出' },
-  { key: 'skills',   label: '技能库',   icon: <AppstoreOutlined />,   comp: SkillLibrary,  group: 'system', desc: '25+ 技能 · 7 分类' },
-  { key: 'qq',       label: 'QQ Bot',   icon: <MessageOutlined />,             comp: QQBotPanel,    group: 'system', desc: '反向 WS · 自动回复' },
-  { key: 'wechat',   label: '微信',     icon: <SmileOutlined />,      comp: WechatSetup,   group: 'system', desc: '微信助手插件 · 扫码绑定' },
-  { key: 'knowledge', label: '知识库', icon: <BookOutlined />,       comp: KnowledgeBasePanel, group: 'system', desc: '行业知识库 · 文档上传 · BM25 检索' },
-  { key: 'automation',   label: '自动化',   icon: <ThunderboltOutlined />, comp: AutomationPanel, group: 'system', desc: 'Cron 调度 · RPA 自动化 · AI 任务 · 成功率统计 · 执行监控', badge: 'NEW' },
-  { key: 'workflow',     label: '工作流',   icon: <PartitionOutlined />,   comp: WorkflowPanel,     group: 'system', desc: 'DAG 多步骤自动化 · 行业模板 · 变量管道' },
-  { key: 'notification', label: '通知中心', icon: <BellOutlined />,        comp: NotificationPanel, group: 'system', desc: 'SSE · Webhook · 邮件 · 桌面弹窗' },
-  { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system',   desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持' },
-  { key: 'stats',    label: '用量',     icon: <ThunderboltOutlined />, comp: StatsPanel,    group: 'system', desc: '工具调用统计 · 成功率 · 省时报告', badge: 'NEW' },
-  { key: 'tasks',    label: '任务中心', icon: <SyncOutlined />,       comp: TaskCenterPanel, group: 'system', desc: '长任务快照 · 跨会话恢复 · 进度跟踪', badge: 'NEW' },
-  { key: 'evolution', label: '自进化',  icon: <ExperimentOutlined />, comp: EvolutionPanel,  group: 'system', desc: '跨会话规则自修改 · 技能自动创建 · 行为优化', badge: 'NEW' },
-  { key: 'monitoring', label: '监控面板', icon: <DashboardOutlined />, comp: MonitoringPanel, group: 'system', desc: '进化系统 · 审批策略 · 反馈闭环 实时监控', badge: 'NEW' },
-  { key: 'knowledge-explore', label: '知识探索', icon: <ExperimentOutlined />, comp: KnowledgeDashboard, group: 'system', desc: 'AI 自主学习 · GitHub 探索 · 知识蒸馏', badge: 'NEW' },
-  { key: 'soul', label: '灵魂', icon: <HeartOutlined />, comp: SoulPanel, group: 'system', desc: '梦境 · 好奇心 · 内心独白 · 痛觉 · 辩论 — AI 的内心世界', badge: 'NEW' },
-  { key: 'settings', label: '设置',     icon: <SettingOutlined />,    comp: Settings,      group: 'system', desc: '密钥 · 框架 · 模型 · 主题' },
+  /* system 组按 section 分段 —— 15 项平铺过密, 下拉里靠段标题扫读 (同 section 必须连续) */
+  { key: 'qq',       label: 'QQ Bot',   icon: <MessageOutlined />,             comp: QQBotPanel,    group: 'system', section: '渠道与通知', desc: '反向 WS · 自动回复' },
+  { key: 'wechat',   label: '微信',     icon: <SmileOutlined />,      comp: WechatSetup,   group: 'system', section: '渠道与通知', desc: '微信助手插件 · 扫码绑定' },
+  { key: 'notification', label: '通知中心', icon: <BellOutlined />,        comp: NotificationPanel, group: 'system', section: '渠道与通知', desc: 'SSE · Webhook · 邮件 · 桌面弹窗' },
+  { key: 'skills',   label: '技能库',   icon: <AppstoreOutlined />,   comp: SkillLibrary,  group: 'system', section: '知识与技能', desc: '25+ 技能 · 7 分类' },
+  { key: 'knowledge', label: '知识库', icon: <BookOutlined />,       comp: KnowledgeBasePanel, group: 'system', section: '知识与技能', desc: '行业知识库 · 文档上传 · BM25 检索' },
+  { key: 'knowledge-explore', label: '知识探索', icon: <ExperimentOutlined />, comp: KnowledgeDashboard, group: 'system', section: '知识与技能', desc: 'AI 自主学习 · GitHub 探索 · 知识蒸馏', badge: 'NEW' },
+  { key: 'automation',   label: '自动化',   icon: <ThunderboltOutlined />, comp: AutomationPanel, group: 'system', section: '自动化', desc: 'Cron 调度 · RPA 自动化 · AI 任务 · 成功率统计 · 执行监控', badge: 'NEW' },
+  { key: 'workflow',     label: '工作流',   icon: <PartitionOutlined />,   comp: WorkflowPanel,     group: 'system', section: '自动化', desc: 'DAG 多步骤自动化 · 行业模板 · 变量管道' },
+  { key: 'stats',    label: '用量',     icon: <ThunderboltOutlined />, comp: StatsPanel,    group: 'system', section: '运行与洞察', desc: '工具调用统计 · 成功率 · 省时报告', badge: 'NEW' },
+  { key: 'tasks',    label: '任务中心', icon: <SyncOutlined />,       comp: TaskCenterPanel, group: 'system', section: '运行与洞察', desc: '长任务快照 · 跨会话恢复 · 进度跟踪', badge: 'NEW' },
+  { key: 'suggestions', label: '主动建议', icon: <BulbOutlined />,       comp: ProactiveSuggestionsPanel, group: 'system', section: '运行与洞察', desc: '🎯 智能需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持' },
+  { key: 'evolution', label: '自进化',  icon: <ExperimentOutlined />, comp: EvolutionPanel,  group: 'system', section: '运行与洞察', desc: '跨会话规则自修改 · 技能自动创建 · 行为优化', badge: 'NEW' },
+  { key: 'monitoring', label: '监控面板', icon: <DashboardOutlined />, comp: MonitoringPanel, group: 'system', section: '运行与洞察', desc: '进化系统 · 审批策略 · 反馈闭环 实时监控', badge: 'NEW' },
+  { key: 'soul', label: '灵魂', icon: <HeartOutlined />, comp: SoulPanel, group: 'system', section: '运行与洞察', desc: '梦境 · 好奇心 · 内心独白 · 痛觉 · 辩论 — AI 的内心世界', badge: 'NEW' },
+  { key: 'settings', label: '设置',     icon: <SettingOutlined />,    comp: Settings,      group: 'system', section: '应用设置', desc: '密钥 · 框架 · 模型 · 主题' },
 ];
 
 /* ════════════════ 主题 (5 套 + 跟随系统) ════════════════ */
@@ -326,6 +353,8 @@ interface NavGroupItem {
   desc: string;
   active?: boolean;
   badge?: string;
+  /** 段标题; 与上一项不同则在本项前渲染一条分隔段头 (空则不渲染) */
+  section?: string;
 }
 const NavGroupDropdown: React.FC<{
   label: string;
@@ -383,9 +412,21 @@ const NavGroupDropdown: React.FC<{
             zIndex: 'var(--z-toast)',
           }}
         >
-          {items.map(item => (
+          {items.map((item, i) => {
+            const showSection = !!item.section && item.section !== items[i - 1]?.section;
+            return (
+            <React.Fragment key={item.key}>
+            {showSection && (
+              <div style={{
+                padding: i === 0 ? '2px 10px 4px' : '8px 10px 4px',
+                marginTop: i === 0 ? 0 : 4,
+                borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--muted-2)',
+              }}>
+                {item.section}
+              </div>
+            )}
             <div
-              key={item.key}
               role="menuitem"
               onClick={() => { onSelect(item.key); setOpen(false); }}
               style={{
@@ -419,7 +460,9 @@ const NavGroupDropdown: React.FC<{
               </div>
               {item.active && <CheckCircleFilled style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />}
             </div>
-          ))}
+            </React.Fragment>
+            );
+          })}
         </div>
       )}
     </span>
@@ -1140,6 +1183,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
               active={PAGES.some(p => p.group === 'system' && p.key === page)}
               items={PAGES.filter(p => p.group === 'system' && !p.hidden).map(p => ({
                 key: p.key, icon: p.icon, label: p.label, desc: p.desc, active: page === p.key,
+                section: p.section,
                 badge: p.key === 'suggestions' && unreadSuggestionCount > 0 ? String(unreadSuggestionCount) : undefined,
               }))}
               onSelect={(k) => setPage(k as PageKey)}
@@ -1254,47 +1298,46 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             </>
           )}
 
-          {/* GitHub 仓库 */}
-          <Tooltip title="GitHub 仓库">
-            <a href="https://github.com/pulseflow/platform" target="_blank" rel="noopener noreferrer"
+          {/* 用户菜单 — 「GitHub 仓库」「联系开发者」不是操作而是"关于",
+              从标题栏两个独立图标收进用户菜单 (标题栏右区 3 控件 → 1) */}
+          <Dropdown
+            trigger={['click']}
+            getPopupContainer={(trigger) => trigger.parentElement || document.body}
+            menu={{
+              items: [
+                {
+                  key: 'github',
+                  icon: <GithubOutlined />,
+                  label: (
+                    <a href="https://github.com/pulseflow/platform" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
+                      GitHub 仓库
+                    </a>
+                  ),
+                },
+                {
+                  key: 'contact',
+                  icon: <WechatOutlined />,
+                  label: '联系开发者',
+                  onClick: () => setWechatModalVisible(true),
+                },
+              ],
+            }}
+          >
+            <div
+              data-testid="user-menu"
               style={{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
-                color: 'var(--muted-2)', transition: 'all 0.15s ease', marginLeft: 4,
-                textDecoration: 'none',
+                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+                background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', marginLeft: 4,
+                cursor: 'pointer',
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)'; }}
             >
-              <GithubOutlined style={{ fontSize: 'var(--fs-lg)' }} />
-            </a>
-          </Tooltip>
-
-          {/* 联系开发者 */}
-          <Tooltip title="联系开发者">
-            <span onClick={() => setWechatModalVisible(true)}
-              style={{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
-                color: 'var(--muted-2)', transition: 'all 0.15s ease', marginLeft: 4,
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)'; }}
-            >
-              <WechatOutlined style={{ fontSize: 'var(--fs-lg)' }} />
-            </span>
-          </Tooltip>
-
-          {/* 用户名 */}
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
-            background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', marginLeft: 4,
-          }}>
-            <UserOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }} />
-            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', fontWeight: 500 }}>
-              {profile?.name || '游客'}
-            </span>
-          </div>
+              <UserOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }} />
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', fontWeight: 500 }}>
+                {profile?.name || '游客'}
+              </span>
+              <DownOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }} />
+            </div>
+          </Dropdown>
 
           {/* Tauri 窗口控制按钮 (仅桌面端显示) */}
           {isTauriEnv && (

@@ -458,23 +458,57 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
     坑：`borderRadius` 与 `fontSize` 不同 —— **Antd `ConfigProvider` 的 `theme.token.borderRadius`
     只收 number**（`App.tsx:1069`），codemod 改错会直接 TS2322；测试里用白名单 + 理由兜住。
 
-**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts` + `token-layer.test.ts`
+11. **前端信息架构精简（2026-10-11）** — 设计尺度（字号/圆角/色）收敛之后剩下的"乱"是**架构性**的：
+    同一屏太多**平级平铺**的碎片，每个都只值一次悬停。本轮四处「常驻 → 折叠」：
+    - **状态栏**：`QQ` / `微信` 两个常驻 chip（+2 个 hover tooltip）→ 一个 `渠道` 聚合点
+      （异常由聚合点颜色承担）+ `Popover` 明细；`置信` / `意图` / `计划` / 心境 / `费用` / 模型
+      **6 个 tooltip-only 诊断值**（label+值，悬停才有细节）→ 一个 `本次会话` Popover 入口
+      （入口本身也由 `hasSessionStats` 门控，全无数据时连入口都不出现）。
+      **`TokenPressureBar` 有意保持常驻** —— 它是条状图，一眼可读，与 6 个纯文本片段不同。
+    - **标题栏右区**：`GitHub 仓库`（外链）+ `联系开发者` + `用户名` 三个控件 → 一个 `用户菜单`
+      （前两者不是操作，是"关于"）。
+    - **「系统」下拉 15 项平铺 → 按 `section` 分段**（5 段：渠道与通知 / 知识与技能 / 自动化 /
+      运行与洞察 / 应用设置）。⚠️ **同 section 必须在 `PAGES` 数组里连续** —— 下拉按数组顺序渲染，
+      不连续就会重复出现段标题；这条已由测试断言（`info-arch.test.ts` 的连续性检查）。
+    - **「免费内置模型」提示条**：常驻压在页面顶部 → 可关闭并记住（`localStorage
+      agentai.nag.freeModelDismissed`，取值包 try/catch 兜隐私模式）。
+    核验：
+    ```bash
+    # 状态栏折叠入口存在 / 6 个诊断标签已从状态栏主体消失
+    grep -c 'data-testid="statusbar-channels"\|data-testid="statusbar-session"' packages/agentai-gui/src/components/StatusBar.tsx
+    grep -n "QQ</span>\|微信</span>\|>置信</span>\|>费用</span>" packages/agentai-gui/src/components/StatusBar.tsx
+    # 「关于」类控件已并入用户菜单
+    grep -c "data-testid=\"user-menu\"" packages/agentai-gui/src/App.tsx
+    # system 页全部标了 section
+    grep -c "group: 'system'.*section:" packages/agentai-gui/src/App.tsx
+    ```
+    ⚠️ **未做**：内联 `style={{` **3417 处**（结构性重构，非可批量替换）；
+    「发现 N 个可恢复的长任务」恢复条**不是**常驻 —— 它由 `AutoHideTaskBar` 8 秒后自动收起
+    （`ChatView.tsx:13`，已核实），只在首屏短暂出现，故本轮不动。
+
+**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts` + `token-layer.test.ts` + `info-arch.test.ts`
 （源码文本断言 + `stripComments` 辅助，因为修复点注释本身会引用「坏掉的旧代码」）。
-核验：`cd packages/agentai-gui && npx vitest run` → **9 文件 / 173 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9 → 165/9 → 173/9；
+核验：`cd packages/agentai-gui && npx vitest run` → **10 文件 / 187 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9 → 165/9 → 173/9 → 187/10；
 rail-browser 16 → 21 条（`effectiveRailMode`、空态不叠层、`#fff` 白斑、ImageStudio 消歧），
 token-layer 32 → **43** 条（18 别名定义 + 9 底层 token × 5 主题块 + 死 fallback 归零 + `radius-lg` 不重复 +
 字号尺度存在 + **文本档禁止裸数字** + **`var(--fs-*)` 必须真被消费（防僵尸 token）** +
 **圆角恰 4 档** + **`--radius-lg/pill` 必须被消费** + **禁止裸数字 borderRadius** +
-**绿/红/灰/白四类语义色不得再散落** + **底层 token 死 fallback 归零**）。
-⚠️ **仍未做（用户 2026-10-11 明确选择「只修硬伤」，信息架构延后）**：
-内联 `style={{` **3417 处**（结构性，非本轮目标）；
-标题栏 11 控件 + 「免费内置模型」常驻 nag 条 + 「发现 N 个可恢复的任务」恢复条 + 底部状态栏 **12 项**。
-⚠️ 活体验收**披露**：`tab.screenshot()` 本轮稳定；`playwright.click()` 仍全线失败
-（`Browser broker response id mismatch`），但 **`tab.cua.click({x,y})` 用坐标是有效的** ——
-本轮靠它在 (200,17) 切到对话页。已活体取证：对话页（2 个状态：恢复条 + 消息流/工具调用行）、
-编辑器页、信息栏。**未取证**：右栏「浏览器」模式标签（`rail-mode-browser` 坐标点击未命中）、
-医案页、设置页（在「系统」下拉里）。FileCard 就地展开的点击穿透**至今未活体验证**，
-只有源码文本测试 + `tsc` 干净。
+**绿/红/灰/白四类语义色不得再散落** + **底层 token 死 fallback 归零**），
+info-arch **14** 条（渠道/本次会话折叠入口 + 裸 chip 消失 + `TokenPressureBar` 用 `</Popover>` 距离断言
+确认未被一起折叠 + 用户菜单唯一 + 关于类控件不再独立 + **system 页 100% 标 section** +
+**同 section 连续** + nag 条可关闭 + localStorage try/catch））。
+⚠️ **仍未做**：内联 `style={{` **3417 处**（结构性，非本轮目标）。
+⚠️ 活体验收**披露**（2026-10-11 第二轮，诚实记录）：`tab.screenshot()` 稳定、`pw.domSnapshot()` /
+`pw.evaluate()`（只读）/ `getByTestId().count()` 可用，但**指针与键盘输入本轮全线失效** ——
+`tab.click({x,y})`、`tab.cua.click({x,y})`（试了 y 偏移 0/60/85/100/120/145 六种）与
+`tab.press('Control+b')` 均**无任何效果**（`playwright.locator.click()` 则 `Timeout waiting for locator`），
+故所有交互类取证都做不了。**已活体取证（只读通道）**：截图显示新状态栏；
+`.app-statusbar` 渲染后 `innerText` = `✅ Gateway 在线 | 渠道 | 今日 | 0 | ¥0.00 | 🔒 | 未激活 | ♪ | 🔮 自动模式 | …`
+（**97 字符、无 QQ/微信 chip、置信/意图/计划/费用/模型 标签全无**）；
+`[data-testid="user-menu"]` count=1 且 `a[href*="github.com"]` 在 DOM 中 **0 个**；导航 Tab 完好
+（对话/编辑器/医案/浏览器/创作/系统）。**未取证**：「系统」下拉的 5 个段标题（需要点击才能展开，
+输入通道已死）、nag 条的关闭按钮、`本次会话` Popover 内容本身（无会话数据，入口按设计缺席）——
+这三项只有源码文本测试覆盖。FileCard 就地展开的点击穿透**至今未活体验证**。
 
 ### 六、安全机制
 
@@ -598,12 +632,13 @@ token-layer 32 → **43** 条（18 别名定义 + 9 底层 token × 5 主题块 
 | 浏览器宿主 | 仅右侧浮层 Drawer | **右栏 信息/浏览器 双模式**, 事件中枢唯一 (`browser-host.ts` 6 监听 / Drawer 0) | `grep -c "addEventListener" packages/agentai-gui/src/services/browser-host.ts packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` |
 | 右栏浏览器宽度 | - | **`agentai.pane.browser.width` 默认 520** (320–900), 与信息栏 320 分轨 | `grep -n "agentai.pane.browser.width" packages/agentai-gui/src/App.tsx` |
 | 文件卡片查看 | 整行点击 → 跳 editor 页 | **行点击就地展开全文**, 仅「编辑器」按钮跳页 | `grep -n "PREVIEW_LINE_CAP\|label=\"编辑器\"" packages/agentai-gui/src/components/FileCard.tsx` |
-| GUI 测试基线 | 90 测试 / 6 文件 | **173 测试 / 9 文件** | `cd packages/agentai-gui && npx vitest run` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **187 测试 / 10 文件** | `cd packages/agentai-gui && npx vitest run` |
 | token 层 | 18 变量被消费但**从未定义** (调用点各带 fallback → 同语义 3–6 种色) | **已修**: 建 18 条语义别名 + 6 级 `--fs-*` 尺度; 死 fallback 39 → 0 | `grep -rEoh "var\(--(text-secondary\|bg-1\|hover) ?, ?(#\|rgba)" --include=*.tsx packages/agentai-gui/src \| wc -l` |
 | 字号尺度 | 23 种 fontSize (≤12px **1164 处**), 7/8/9/10 与 12/13/14/15 差 1px 无法分辨 | **已收敛**: 1429 处走 `var(--fs-*)`, 尺度 **11/12/13/16/20/28** 六档; ≥32px 图标/emoji 档 35 处有意保留 | `grep -rEoh "var\(--fs-[a-z]+\)" --include=*.tsx packages/agentai-gui/src \| sort \| uniq -c` |
 | 圆角尺度 | 19 种裸数字 (2/3/4/5 与 6/8/10 差 1–2px 不可辨); `--radius-lg` 零消费 | **已收敛**: 437 处走 `var(--radius-*)`, 尺度 **4/8/12/999 四档** (消费 md 218 / sm 185 / lg 40 / pill 5) | `grep -rEoh "var\(--radius[a-z-]*\)" --include=*.tsx --include=*.css packages/agentai-gui/src \| sort \| uniq -c` |
 | 语义色 | 成功绿 **4 值** / 错误红 **3 值** / 灰阶文字 **5 值** / `color:#fff` 52 处裸写 | **已统一**: 绿→`var(--success)` 114 / 红→`var(--danger)` 71 / 灰→`var(--muted\|-2\|--fg-2)` 54 / 白→`var(--fg-on-accent)` 55; 分类色板+终端/编辑器表面+打印模板 有意豁免 | `grep -rniE "#(52c41a\|10b981\|ef4444\|ff4d4f)" --include=*.tsx packages/agentai-gui/src` |
 | 设计尺度 | — (无 token 体系) | token 层已建 (**18 语义别名 + 6 级文本尺度 + 4 档圆角 + 语义色**); ⚠️ 内联 `style={{` **3417 处** 仍在 (结构性) | `grep -rEoh "style=\{\{" --include=*.tsx packages/agentai-gui/src \| wc -l` |
+| 信息架构 | 状态栏 15 chip 平铺 (QQ/微信常驻 + 6 个 tooltip-only 诊断值); 标题栏 3 个「关于」控件; 系统下拉 15 项平铺; 免费模型 nag 条不可关 | **已折叠**: 渠道 popover + `本次会话` popover (`TokenPressureBar` 保持常驻); 用户菜单 (3→1); 系统下拉按 **5 段** section 分段; nag 条可关 (localStorage) | `grep -c 'statusbar-channels\|statusbar-session' packages/agentai-gui/src/components/StatusBar.tsx` / `grep -c "group: 'system'.*section:" packages/agentai-gui/src/App.tsx` |
 | 右栏内容判据 | — | **`effectiveRailMode`** (非 chat 页恒为浏览器, 320/900 与 240/560 分轨) | `grep -n "effectiveRailMode" packages/agentai-gui/src/App.tsx` |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）

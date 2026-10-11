@@ -235,8 +235,9 @@ create_tool    → .agentai/custom-tools/ + registry.json
 - **布局特点：绝大多数测试与源码同目录并置**，`__tests__/` 只有 2 个文件
 - 安全测试做得扎实：`b1-security.test.ts`(10.7KB)、sandbox 四件套、safety 三件套
 - **缺口：6416 行的 agentai-loop.ts 零覆盖，repairPipeline 六步无专项测试**
-- 前端(`packages/agentai-gui`)基线 **173 测试 / 9 文件**（2026-10-11：在 109/7 基础上新增
-  `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(43)，均为源码文本断言：
+- 前端(`packages/agentai-gui`)基线 **187 测试 / 10 文件**（2026-10-11：在 109/7 基础上新增
+  `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(43)
+  + `src/info-arch.test.ts`(14)，均为源码文本断言：
   前者锁布局机制 —— 中栏宽度必须自适应 `clamp()`、页面内面板必须两层结构、页面根高度必须 `100%`
   而非 `calc(100vh - N)`；后者锁右栏 信息/浏览器 双模式（`agentai.pane.browser.width` 分轨宽度、
   右栏内容判 `effectiveRailMode` 而非持久化的 `railMode`、恰好 2 个 `.pane-grip`）、
@@ -249,7 +250,13 @@ create_tool    → .agentai/custom-tools/ + registry.json
   `--radius-lg` 不得同层重复定义、通用文本尺度 `--fs-*` 必须存在、
   **文本档（7–28px）禁止裸数字字号**（防再次分叉）、**`var(--fs-*)` 必须真被调用点消费**（防僵尸 token）、
   **圆角恰 4 档且 `--radius-lg/pill` 必须被消费**（防僵尸 token）、**禁止裸数字 `borderRadius`**、
-  **绿/红/灰/白四类语义色不得再散落**、**底层 token 死 fallback 归零**。
+  **绿/红/灰/白四类语义色不得再散落**、**底层 token 死 fallback 归零**；
+  info-arch 锁 **信息架构契约** —— 状态栏 `渠道` / `本次会话` 两个折叠入口存在、
+  原裸 chip（`QQ`/`微信`/`置信`/`意图`/`计划`/`费用`）不得残留、`TokenPressureBar`
+  用 `</Popover>` 距离断言确认**未被一起折叠**（条状图一眼可读，与纯文本诊断值不同）、
+  用户菜单唯一且「关于」类控件不再独立、系统下拉 15 页 **100% 标了 `section`** 且
+  **同 section 在 `PAGES` 数组里连续**（不连续就会重复出现段标题）、
+  免费模型 nag 条可关闭且 `localStorage` 取值包 try/catch。
   核验：`cd packages/agentai-gui && npx vitest run`）
 - ✅ **前端字号已收敛（2026-10-11）**：23 种 `fontSize` → 尺度 **六档 11/12/13/16/20/28**。
   ⚠️ 更正：先前文档写的「≤12px 874 处」用的是更严格的正则（要求数字后紧跟 `,`/`}`），属**低估**；
@@ -280,10 +287,23 @@ create_tool    → .agentai/custom-tools/ + registry.json
     （`TerminalPanel` 终端 prompt 色 / `VoiceDictation` 自绘浮层 / `PreviewMode` 设备框 / `DecorAI` 子应用）、
     **打印导出 HTML 模板**（`PrescriptionCard`/`WritePage` 的 `<style>` 按亮色纸张配色，与 App 主题无关）、
     **渐变艺术**（9 处 `linear-gradient(...)`，只换一半色标会在换主题时半主题化，更难看）。
+  - ✅ **信息架构已精简（2026-10-11 第二轮）**：设计尺度收敛后剩下的"乱"是结构性的 ——
+    同一屏太多**平级平铺**的碎片，每个都只值一次悬停。四处「常驻 → 折叠」：
+    - **状态栏最多 15 个 chip → 最多 9 个（常驻 8 → 7）**：`QQ`/`微信` 两个常驻 chip（+2 个 hover tooltip）→ 一个 `渠道`
+      聚合点（异常由聚合点颜色承担）+ Popover 明细；`置信`/`意图`/`计划`/心境/`费用`/模型
+      **6 个 tooltip-only 诊断值** → 一个 `本次会话` Popover 入口（入口本身由 `hasSessionStats` 门控，
+      全无数据时连入口都不出现）。**`TokenPressureBar` 有意保持常驻** —— 条状图一眼可读。
+    - **标题栏右区 3 控件 → 1**：`GitHub 仓库`（外链）+ `联系开发者` + `用户名` → 一个 `用户菜单`
+      （前两者不是操作，是"关于"）。
+    - **「系统」下拉 15 项平铺 → 5 段**：渠道与通知 / 知识与技能 / 自动化 / 运行与洞察 / 应用设置。
+      ⚠️ 同 section 必须在 `PAGES` 里连续，否则段标题重复（已由 `info-arch.test.ts` 断言）。
+    - **「免费内置模型」nag 条**：可关闭并记住（`localStorage agentai.nag.freeModelDismissed`）。
   - ⚠️ **仍未做**：内联 `style={{` **3417 处 / 111 个 tsx 文件**（CSS-in-JS 散落，需逐组件抽 CSS class，
-    属结构性重构而非可批量替换）；信息架构项 —— 标题栏 11 控件、「免费内置模型」常驻 nag 条、
-    「发现 N 个可恢复的任务」恢复条、底部状态栏 **12 项**。
-  核验：`grep` 命令与实测数字见 `AGENTS.md` §五·补 第 10 条；残留值归零断言见 `token-layer.test.ts`。
+    属结构性重构而非可批量替换）。
+    ⚠️ 更正：先前把「发现 N 个可恢复的长任务」恢复条列为常驻横条是**错的** ——
+    它由 `AutoHideTaskBar`（`ChatView.tsx:13`）8 秒后自动 `setShow(false)`，只在首屏短暂出现；
+    `.app-content` 里并没有三条常驻横条。故本轮不动它。
+  核验：`grep` 命令与实测数字见 `AGENTS.md` §五·补 第 10、11 条；断言见 `token-layer.test.ts` + `info-arch.test.ts`。
 - ✅ **前端 CSS token 层已修（2026-10-11，这是"乱"的根因，非审美问题）**：
   **18 个变量被 tsx 消费但从未在任何 CSS 中定义** —— `--text-primary/secondary/tertiary`、`--bg-1`、
   `--muted-1`/`--muted-3`、`--muted-soft`、`--border-color`、`--color-text-muted`、`--bg-primary/secondary`、
