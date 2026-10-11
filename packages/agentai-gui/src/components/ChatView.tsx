@@ -292,6 +292,7 @@ import { DiffViewer, useDiffEvents } from './DiffViewer';
 import { LastSessionHint } from './LastSessionHint';
 import { WelcomePanel } from './WelcomePanel';
 import { SubagentStatus, type SubagentInfo } from './SubagentStatus';
+import { openGlobalBrowser } from './GlobalBrowserDrawer';
 import { gatewayFallback } from '../services/GatewayFallback';
 import { submitFeedback } from '../services/feedbackApi';
 import { taskNotifier } from '../services/TaskNotifier';
@@ -1023,6 +1024,12 @@ const [loading, setLoading] = useState(false);
             window.dispatchEvent(new CustomEvent('agentai:browser-action', {
               detail: result._iframe_action,
             }));
+          }
+          // 边做边看: AI 操作浏览器 (browser_*/review_frontend) 时自动亮出浏览器面板。
+          // 此前 _show_browser 只有 gateway 在写、前端没人读 —— AI 其实在"盲操作",
+          // 用户看不到它在看什么, 这是"内嵌浏览器不标准"的观感来源之一。
+          if (result?._show_browser) {
+            openGlobalBrowser(result?.data?.url || result?.url);
           }
           // 浏览器关闭: AI 调用 browser_close 时自动关闭浏览器面板
           if (info.name === 'browser_close' || result?._browser_action === 'close') {
