@@ -810,6 +810,13 @@ setActiveModel(modelId);
             if (visibleModels.length === 0) return null;
 
             const groupedArr = groupModels(visibleModels);
+            const renderOption = (m: typeof models[0]) => (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: m.color || '#888', display: 'inline-block' }} />
+                {m.label}
+                <ModelSourceTag model={m} dense />
+              </span>
+            );
 
             return (
               <Select
@@ -820,23 +827,20 @@ setActiveModel(modelId);
                 variant="borderless"
                 popupMatchSelectWidth={false}
                 getPopupContainer={() => document.body}
-                options={groupedArr.map(g => ({
-                  label: <span style={{ fontSize: 9, color: 'var(--muted-2)', fontWeight: 600 }}>{g.label} ({g.models.length})</span>,
-                  title: g.label,
-                  options: [
+                // 单模型不套分组头 —— 否则组名与唯一一项的标签逐字重复
+                // (混用分组项与独立项, antd Select 支持两者并存)
+                options={groupedArr.flatMap((g): any[] =>
+                  g.models.length > 1
+                    ? [{
+                        label: <span style={{ fontSize: 9, color: 'var(--muted-2)', fontWeight: 600 }}>{g.label} ({g.models.length})</span>,
+                        title: g.label,
+                        options: [
 // NVIDIA Auto 选项已移除
-                    ...g.models.map(m => ({
-                      value: m.id,
-                      label: (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: m.color || '#888', display: 'inline-block' }} />
-                          {m.label}
-                          <ModelSourceTag model={m} dense />
-                        </span>
-                      ),
-                    })),
-                  ],
-                }))}
+                          ...g.models.map(m => ({ value: m.id, label: renderOption(m) })),
+                        ],
+                      }]
+                    : g.models.map(m => ({ value: m.id, label: renderOption(m) }))
+                )}
               />
             );
           })()}
