@@ -350,6 +350,14 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
    - 可用范围：右栏浏览器**所有页面可用**；信息模式仅 chat 页（Editor/ImageStudio 自带多栏，
      平白加 320px 信息栏只会挤）。AI 唤起（`agentai:show-browser` / `pulseflow:browser:open`）
      切到右栏常驻而非浮层；`Ctrl+B` 切浏览器模式。
+   - ⚠️ **右栏内容必须判 `effectiveRailMode`，不是 `railMode`**：`railMode` 是持久化的，
+     **语义上只代表 chat 页偏好**。非 chat 页恒为浏览器模式 → `const effectiveRailMode =
+     page === 'chat' ? railMode : 'browser'`。
+     拿 `railMode` 直接判会同时踩两个坑（2026-10-11 活体复现）：① 在编辑器页开过浏览器后，
+     偏好被写成 `browser`，回 chat 页看到的是浏览器栏而非信息栏；② 非 chat 页若当前
+     `railMode==='info'`，会拿到信息栏的 **320px 宽度 + aria 240–560**，与 520px 的浏览器内容错配。
+     三处改偏好的地方（导航按钮 / `Ctrl+B` / AI 唤起）都加了 `page === 'chat'` 守卫。
+     核验：`grep -n "effectiveRailMode" packages/agentai-gui/src/App.tsx`
 
 5. **文件卡片不再「整行点击就跳编辑器」** —— 根因是**我们自己的 Monaco `editor` 页**，不是外部编辑器
    （全 GUI `grep -rn "openExternal\|vscode://"` 零命中）。两处整行 `onClick`：
@@ -359,11 +367,30 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
    （DOM 上限，仓库里出现过 30,528 行的变更，全量渲染会卡死）；
    read 模式上游不带 content，故就地展开时 lazy `fetch('/v1/files/read?path=')`。
 
+6. **浏览器空态曾是两个空态叠在一起（截图实测）** —— `EmbeddedBrowser.tsx` 里
+   Playwright 空态（判 `pwEngineStatus !== 'running'`）与 iframe 空态
+   （判 `tabs.length === 0 || !activeTab?.url`）**都是 `position:absolute; inset:0`**，
+   而后者**漏了 `!playwrightMode` 守卫** → 两份同时在 DOM 里，文字互相穿透叠在一起
+   （截图里 "智能体浏览器" 与 "Playwright 浏览器引擎" 重合）。已加守卫。
+   同处 `background: '#fff'` 写死 → 未加载时是深色主题下**占屏近 40% 的白斑**，改 `var(--panel)`。
+   核验：活体 `getByText('输入 URL 开始浏览').count()` → 修复前 **2**，修复后 **1**；
+   `grep -n "!playwrightMode && (tabs.length === 0" packages/agentai-gui/src/components/EmbeddedBrowser.tsx`
+
+7. **ImageStudio 空态把「风格预设」写成「选择模式」** —— 左栏下拉才是模式（文生图/图生图/风格迁移/改图/换装），
+   中栏 6 卡来自 `TEXT2IMG_PRESETS`（写实摄影/动漫插画/油画/3D渲染/水墨/像素）其实是**风格**。
+   同一个「模式」被两处争用，用户分不清点哪边。文案已改为「选一个风格预设，或直接输入描述」+「套用此风格」。
+   核验：`grep -rn "选择模式" packages/agentai-gui/src/` → **0**
+
 **回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts`
 （源码文本断言 + `stripComments` 辅助，因为修复点注释本身会引用「坏掉的旧代码」）。
-核验：`cd packages/agentai-gui && npx vitest run` → **8 文件 / 125 通过**（本轮新增 16 条：右栏双模式 +
-文件就地查看 + 宿主唯一性；基线 109/7 → 125/8）。
-⚠️ 本轮活体验收**未覆盖**两项：`tab.screenshot()` 降级（`browser screenshot activity capture failed
+核验：`cd packages/agentai-gui && npx vitest run` → **8 文件 / 130 通过**（基线 90/6 → 109/7 → 125/8 → 130/8；
+rail-browser 从 16 条增至 21 条，新增的锁的是 `effectiveRailMode`、空态不叠层、`#fff` 白斑、ImageStudio 消歧）。
+⚠️ **仍未做（用户 2026-10-11 明确选择「只修硬伤」，设计尺度与信息架构延后）**：
+字号尺度（**23 种** fontSize，≤12px **874 处**）、圆角（**19 种**）、硬编码色（**208 种**，同语义
+成功绿 4 个/错误红 3 个/灰阶 5 个）、内联 `style={{` **3417 处**；
+标题栏 11 控件 + 「免费内置模型」常驻 nag 条 + 底部状态栏 **12 项 @9–10px**。
+核验：`grep -rEoh "fontSize: ?['\"]?[0-9]+" --include=*.tsx packages/agentai-gui/src | grep -oE "[0-9]+$" | sort -nu | wc -l`
+⚠️ 上一轮活体验收**未覆盖**两项：`tab.screenshot()` 降级（`browser screenshot activity capture failed
 for guest`）与 FileCard 就地展开的点击穿透（IAB `click()` 全线超时，页面停在 ImageStudio）。
 这两项**仅有源码文本测试 + `tsc` 干净**，非活体证据 —— 补验时优先重测这两条。
 
@@ -489,7 +516,9 @@ for guest`）与 FileCard 就地展开的点击穿透（IAB `click()` 全线超�
 | 浏览器宿主 | 仅右侧浮层 Drawer | **右栏 信息/浏览器 双模式**, 事件中枢唯一 (`browser-host.ts` 6 监听 / Drawer 0) | `grep -c "addEventListener" packages/agentai-gui/src/services/browser-host.ts packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` |
 | 右栏浏览器宽度 | - | **`agentai.pane.browser.width` 默认 520** (320–900), 与信息栏 320 分轨 | `grep -n "agentai.pane.browser.width" packages/agentai-gui/src/App.tsx` |
 | 文件卡片查看 | 整行点击 → 跳 editor 页 | **行点击就地展开全文**, 仅「编辑器」按钮跳页 | `grep -n "PREVIEW_LINE_CAP\|label=\"编辑器\"" packages/agentai-gui/src/components/FileCard.tsx` |
-| GUI 测试基线 | 90 测试 / 6 文件 | **125 测试 / 8 文件** | `cd packages/agentai-gui && npx vitest run` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **130 测试 / 8 文件** | `cd packages/agentai-gui && npx vitest run` |
+| 设计尺度 | — (无 token 体系) | ⚠️ **未收敛**: fontSize **23 种**(≤12px 874 处) / radius **19 种** / 硬编码色 **208 种** / 内联 `style={{` **3417 处** | `grep -rEoh "fontSize: ?['\"]?[0-9]+" --include=*.tsx packages/agentai-gui/src \| grep -oE "[0-9]+$" \| sort -nu \| wc -l` |
+| 右栏内容判据 | — | **`effectiveRailMode`** (非 chat 页恒为浏览器, 320/900 与 240/560 分轨) | `grep -n "effectiveRailMode" packages/agentai-gui/src/App.tsx` |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）
 

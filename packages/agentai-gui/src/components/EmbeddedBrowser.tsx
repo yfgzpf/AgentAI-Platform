@@ -1023,7 +1023,9 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
       )}
 
       {/* ===== 内容区: Playwright Canvas 或 iframe ===== */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#fff', ...(screenMode === 'mobile' && !fullscreen ? { display: 'flex', justifyContent: 'center', padding: '8px 0' } : {}) }}>
+      {/* 底色用 var(--panel) 而不是 #fff: 页面未加载时这块是唯一可见的东西,
+          深色主题下写死白会变成一大块刺眼白斑 (右栏 520px 就占了屏幕近 40%) */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: 'var(--panel)', ...(screenMode === 'mobile' && !fullscreen ? { display: 'flex', justifyContent: 'center', padding: '8px 0' } : {}) }}>
         {/* Playwright Canvas 模式 */}
         {playwrightMode && (
           <>
@@ -1074,12 +1076,15 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" />
           </div>
         ))}
-        {tabs.length === 0 || !activeTab?.url ? (
+        {/* iframe 空态。必须排除 playwrightMode —— 它与上面的 Playwright 空态都是
+            position:absolute / inset:0, 同时渲染会两层文字互相穿透叠字
+            (2026-10-11 截图实测: "智能体浏览器" 与 "Playwright 浏览器引擎" 重合在一起) */}
+        {!playwrightMode && (tabs.length === 0 || !activeTab?.url) ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontSize: 13, flexDirection: 'column', gap: 8, position: 'absolute', inset: 0 }}>
             <GlobalOutlined style={{ fontSize: 40, color: '#ccc' }} />
             <div style={{ fontWeight: 600 }}>智能体浏览器</div>
             <div style={{ fontSize: 11, color: '#bbb' }}>输入 URL 开始浏览，AI 可实时控制页面</div>
-            {aiControlled && <div style={{ fontSize: 10, color: '#999', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}><ThunderboltOutlined style={{ color: '#818cf8' }} />{playwrightMode ? 'Playwright 引擎' : 'AI 桥接'} {(playwrightMode ? pwConnected : wsConnected) ? '✅ 已连接' : '⏳ 等待连接'}</div>}
+            {aiControlled && <div style={{ fontSize: 10, color: '#999', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}><ThunderboltOutlined style={{ color: '#818cf8' }} />AI 桥接 {wsConnected ? '✅ 已连接' : '⏳ 等待连接'}</div>}
             {bookmarks.length > 0 && <div style={{ fontSize: 10, color: '#999', marginTop: 2 }}>📚 已加载 {bookmarks.length} 个本地书签</div>}
           </div>
         ) : null}

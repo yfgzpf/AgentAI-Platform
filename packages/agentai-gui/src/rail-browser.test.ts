@@ -19,6 +19,11 @@
  *   A. 文件卡片行点击不再派发 agentai:navigate; 只剩「编辑器」按钮这条跳转路径
  *   B. 右栏有 信息/浏览器 双模式, 浏览器走独立宽度 key, 且全项目只有 2 个 pane-grip
  *   C. window 事件监听只有一份 (browser-host.ts), 防双宿主 → 双开 + 双导航 + 重复订阅 socket
+ *
+ * 2026-10-11 二轮 (用户: 「再审前端, 我感觉还是非常的乱不简洁」) —— 补齐 4 个硬伤:
+ *   B2. 浏览器空态叠层 (两个 absolute inset:0 同时渲染 → 文字穿透) + 内容区写死 #fff 的白斑
+ *   B2'. 非 chat 页不再污染 chat 的 railMode 偏好, 且不再错拿信息栏的 320px 宽度
+ *   B3. ImageStudio 空态把「风格预设」错写成「选择模式」, 与左栏模式下拉撞词
  */
 
 import { describe, it, expect } from 'vitest';
@@ -95,7 +100,9 @@ describe('B 右栏双模式 (信息 / 浏览器)', () => {
     expect(app).toContain("storageKey: 'agentai.pane.browser.width'");
     expect(app).toContain("storageKey: 'agentai.pane.right.width'");
     // JSX 必须读 activePane —— 直接读 rightPane.width 会让浏览器栏拿到 320 而不是 520
-    expect(app).toContain('const activePane = railMode');
+    // 2026-10-11 二修: 判据从 railMode 改成 effectiveRailMode —— 非 chat 页内容恒为浏览器,
+    // 拿 railMode('info') 会让它拿到信息栏的 320px 宽度和 240–560 的 aria 区间
+    expect(app).toContain('const activePane = effectiveRailMode');
   });
 
   it('模式切换有 testid 且信息模式只留给 chat 页', () => {
@@ -103,7 +110,16 @@ describe('B 右栏双模式 (信息 / 浏览器)', () => {
     expect(app).toContain('data-testid="rail-mode-browser"');
     // 非 chat 页只有浏览器模式: Editor/ImageStudio 自带多栏, 平白加信息栏只会挤
     expect(app).toContain("const showInfoRail = page === 'chat' && railMode === 'info'");
-    expect(app).toContain("const showBrowserRail = railMode === 'browser'");
+    expect(app).toContain("const showBrowserRail = effectiveRailMode === 'browser'");
+  });
+
+  it('非 chat 页不改 chat 的持久化偏好 (否则回 chat 看到的是浏览器栏而不是信息栏)', () => {
+    expect(app).toContain(
+      "const effectiveRailMode: 'info' | 'browser' = page === 'chat' ? railMode : 'browser'",
+    );
+    // 三处改偏好的地方都要有 page === 'chat' 守卫
+    expect(app).toContain('if (page === \'chat\') setRailMode(\'browser\');');
+    expect(app).toMatch(/if \(page === 'chat'\) setRailMode\('browser'\)[\s\S]{0,60}?setRightPanelVisible\(true\)/);
   });
 
   it('仍然只有 2 根把手 (两种模式共用一个, 不能出现第三根)', () => {
@@ -112,7 +128,7 @@ describe('B 右栏双模式 (信息 / 浏览器)', () => {
   });
 
   it('浏览器宿主外套不滚动 (浏览器自己滚, 否则双层滚动条)', () => {
-    expect(app).toMatch(/railMode === 'browser' \?[\s\S]{0,400}?minHeight: 0, overflow: 'hidden'/);
+    expect(app).toMatch(/effectiveRailMode === 'browser' \?[\s\S]{0,400}?minHeight: 0, overflow: 'hidden'/);
   });
 
   it('导航栏浏览器按钮切右栏模式, 不再直接开浮层', () => {
@@ -122,7 +138,54 @@ describe('B 右栏双模式 (信息 / 浏览器)', () => {
   });
 
   it('Ctrl+B 归 App (默认宿主是右栏, 不再是抽屉内部快捷键)', () => {
-    expect(app).toMatch(/key\.toLowerCase\(\) === 'b'[\s\S]{0,200}?setRailMode/);
+    expect(app).toMatch(/key\.toLowerCase\(\) === 'b'[\s\S]{0,600}?setRailMode/);
+    // 非 chat 页没有"信息"可选, Ctrl+B 只做显示/隐藏开关
+    expect(app).toMatch(/key\.toLowerCase\(\) === 'b'[\s\S]{0,300}?if \(page !== 'chat'\)/);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// B2. 浏览器空态不能叠层 (2026-10-11 截图实测的两个硬伤)
+// ════════════════════════════════════════════════════════════════════════
+
+describe('B2 浏览器空态 (叠层 + 深色主题白斑)', () => {
+  const eb = src('components/EmbeddedBrowser.tsx');
+
+  it('iframe 空态必须排除 playwrightMode, 否则两层 absolute 空态文字互相穿透', () => {
+    // Playwright 空态 (pwEngineStatus !== 'running') 与 iframe 空态都是
+    // position:absolute / inset:0, 同时在 DOM 里会叠字 —— 截图里能看到
+    // "智能体浏览器" 与 "Playwright 浏览器引擎" 重合在一起
+    expect(eb).toContain('!playwrightMode && (tabs.length === 0 || !activeTab?.url)');
+  });
+
+  it('内容区底色不再写死 #fff (深色主题下是占屏近 40% 的白斑)', () => {
+    expect(eb).not.toMatch(/overflow: 'hidden', background: '#fff'/);
+    expect(eb).toContain("overflow: 'hidden', background: 'var(--panel)'");
+  });
+
+  it('iframe 空态不再假装自己是 Playwright 引擎', () => {
+    // 该分支只有 !playwrightMode 才进得来, 原三元 `playwrightMode ? 'Playwright 引擎' : ...`
+    // 恒为 false → 半截死代码, 且文案会误导
+    const iframeEmpty = eb.slice(eb.indexOf('!playwrightMode && (tabs.length === 0'));
+    const block = iframeEmpty.slice(0, 900);
+    expect(block).toContain('AI 桥接');
+    expect(block).not.toContain("playwrightMode ? 'Playwright 引擎'");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// B3. ImageStudio 文案: 风格预设 ≠ 模式
+// ════════════════════════════════════════════════════════════════════════
+
+describe('B3 ImageStudio 空态文案消歧', () => {
+  const studio = src('components/ImageStudio.tsx');
+
+  it('中栏 6 卡是风格预设, 不再自称「模式」(左栏才是模式)', () => {
+    expect(studio).not.toContain('选择模式，输入描述');
+    expect(studio).toContain('选一个风格预设，或直接输入描述');
+    expect(studio).toContain('套用此风格');
+    // 仍然来自风格预设表, 不是模式表
+    expect(studio).toContain('TEXT2IMG_PRESETS.slice(0, 6)');
   });
 });
 

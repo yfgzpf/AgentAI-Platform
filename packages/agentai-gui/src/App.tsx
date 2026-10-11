@@ -978,24 +978,35 @@ export const App: React.FC = () => {
   // 否则右栏和抽屉会各挂一份 EmbeddedBrowser = 两份 socket /browser 订阅 (实测踩过这个坑)
   const drawerHostActive = hostVisible && hostIntent === 'drawer';
 
+  // 非 chat 页只有浏览器一种模式, 所以 railMode 作为**持久化值只代表 chat 页的偏好**。
+  // 不能拿 railMode 直接决定右栏内容, 否则「在编辑器页开了浏览器」会把偏好写成 browser,
+  // 回 chat 页看到的就是浏览器栏而不是信息栏 (上一轮实测踩到); 非 chat 页还会因此拿到
+  // 信息栏的 320px 宽度和 240–560 的 aria 区间, 与 520px 的浏览器内容错配。
+  const effectiveRailMode: 'info' | 'browser' = page === 'chat' ? railMode : 'browser';
   const showInfoRail = page === 'chat' && railMode === 'info';
-  const showBrowserRail = railMode === 'browser';
+  const showBrowserRail = effectiveRailMode === 'browser';
   const showRightPanel = rightPanelVisible && (showInfoRail || showBrowserRail) && !drawerHostActive;
   const railBrowserActive = showBrowserRail && rightPanelVisible && !drawerHostActive;
 
-  // AI 唤起浏览器 → 切到右栏常驻 (浮层会盖住当前页面, 常驻栏不会)
+  // AI 唤起浏览器 → 切到右栏常驻 (浮层会盖住当前页面, 常驻栏不会)。
+  // 只在 chat 页改偏好: 非 chat 页本来就是浏览器模式, 改了等于污染 chat 的持久化值。
   useEffect(() => {
     if (hostVisible && hostIntent === 'auto') {
-      setRailMode('browser');
+      if (page === 'chat') setRailMode('browser');
       setRightPanelVisible(true);
     }
-  }, [hostVisible, hostIntent, hostOpenSeq]);
+  }, [hostVisible, hostIntent, hostOpenSeq, page]);
 
   // Ctrl+B: 切右栏浏览器模式 (原先在 Drawer 内部, 现在默认宿主是右栏, 快捷键归 App)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
         e.preventDefault();
+        if (page !== 'chat') {
+          // 非 chat 页没有"信息"可选, Ctrl+B 只做显示/隐藏开关
+          setRightPanelVisible(v => (railBrowserActive ? false : true));
+          return;
+        }
         const next = railMode === 'browser' ? 'info' : 'browser';
         setRailMode(next);
         if (next === 'browser') setRightPanelVisible(true);
@@ -1003,7 +1014,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [railMode]);
+  }, [railMode, page, railBrowserActive]);
 
   // ═══ 侧栏可拖拽（2026-10-06 L-Batch 1）═══
   // 原为硬编码 width:260 / 320，1366px 屏下内容区只剩 786px 且无法调整。
@@ -1024,8 +1035,9 @@ export const App: React.FC = () => {
     defaultWidth: 520, minWidth: 320, maxWidth: 900, side: 'left',
     enabled: showBrowserRail && rightPanelVisible,
   });
-  // 当前生效的把手/宽度: 两种模式共用一个 .pane-grip (不能出现第三根把手)
-  const activePane = railMode === 'browser' ? browserPane : rightPane;
+  // 当前生效的把手/宽度: 两种模式共用一个 .pane-grip (不能出现第三根把手)。
+  // 用 effectiveRailMode 而不是 railMode —— 非 chat 页内容恒为浏览器, 必须拿 browserPane
+  const activePane = effectiveRailMode === 'browser' ? browserPane : rightPane;
 
   // 当前工作目录 (供 FileTreePanel 使用)
   const currentWorkspace = profile?.workspace || localStorage.getItem('agentai.workspace') || '';
@@ -1097,7 +1109,8 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   if (railBrowserActive) {
                     setRightPanelVisible(false);
                   } else {
-                    setRailMode('browser');
+                    // 只有 chat 页需要改偏好; 非 chat 页恒为浏览器模式, 改了会污染 chat 的持久化值
+                    if (page === 'chat') setRailMode('browser');
                     setRightPanelVisible(true);
                   }
                 }}
@@ -1447,8 +1460,8 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                 aria-orientation="vertical"
                 aria-label="调整右侧栏宽度（方向键调整，双击复位）"
                 aria-valuenow={activePane.width}
-                aria-valuemin={railMode === 'browser' ? 320 : 240}
-                aria-valuemax={railMode === 'browser' ? 900 : 560}
+                aria-valuemin={effectiveRailMode === 'browser' ? 320 : 240}
+                aria-valuemax={effectiveRailMode === 'browser' ? 900 : 560}
                 tabIndex={0}
                 onKeyDown={activePane.onGripKeyDown}
                 onDoubleClick={activePane.onGripDoubleClick}
@@ -1483,7 +1496,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   >浏览器</span>
                 )}
                 <span style={{ flex: 1 }} />
-                {railMode === 'browser' && (
+                {effectiveRailMode === 'browser' && (
                   <>
                     <Tooltip title="重新加载">
                       <span
@@ -1510,7 +1523,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                 )}
               </div>
 
-              {railMode === 'browser' ? (
+              {effectiveRailMode === 'browser' ? (
                 // 浏览器自己滚 —— 外套不能再 overflow:auto, 否则出现双层滚动条
                 <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
                   <EmbeddedBrowser

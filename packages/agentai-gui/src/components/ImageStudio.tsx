@@ -1130,7 +1130,10 @@ const sendToVideo = (imageUrl: string) => {
                     <div style={{ textAlign: 'center', marginTop: 60 }}>
                         <div style={{ marginBottom: 12, color: 'var(--muted)' }}><PictureOutlined style={{ fontSize: 40 }} /></div>
                         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>AI 图像工作室</div>
-                        <div style={{ fontSize: 13, color: 'var(--muted-2)', marginBottom: 24 }}>选择模式，输入描述，开始创作</div>
+                        {/* 这里是风格预设 (TEXT2IMG_PRESETS), 不是模式 —— 模式下拉在左栏
+                            (文生图/图生图/风格迁移/改图/换装)。原文案写「选择模式」会让同一个词
+                            被两处争用, 用户分不清点哪边 (2026-10-11 截图发现) */}
+                        <div style={{ fontSize: 13, color: 'var(--muted-2)', marginBottom: 24 }}>选一个风格预设，或直接输入描述</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 8, maxWidth: 500, margin: '0 auto' }}>
                             {TEXT2IMG_PRESETS.slice(0, 6).map(p => (
                                 <button key={p.label} onClick={() => { setMode('text2img'); setPrompt(p.prompt); }}
@@ -1138,7 +1141,7 @@ const sendToVideo = (imageUrl: string) => {
                                     onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
                                     onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; }}>
                                     <span style={{ fontSize: 13, fontWeight: 600, display: 'block' }}>{p.label}</span>
-                                    <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>点击使用</span>
+                                    <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>套用此风格</span>
                                 </button>
                             ))}
                         </div>
