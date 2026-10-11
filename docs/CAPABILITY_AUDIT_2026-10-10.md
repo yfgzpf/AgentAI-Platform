@@ -478,3 +478,50 @@ create_tool    → .agentai/custom-tools/ + registry.json
 - ⚠️ **仍延后（明确未做）**：全库约 **460 处**裸 `fontWeight`/`lineHeight`/`fontFamily` 未批量替换
   （新 token 只在**新增的页壳层**强制使用）；`packages/*/dist/` 未移出 git；3417 处内联 `style={{` 未重构；
   剩余 ~17 页的自有标题条未转 `PageHeader`。
+---
+
+## 七、2026-10-11 第三轮增量：运行时守卫「批次1 止血」
+
+来源：`docs/ai-runtime-repair-proposal.md`（5 层方案书）。**复核后发现方案书 5 处诊断与代码不符**，
+把已存在/休眠机制当成缺失。故本轮**不新建层**, 只接通休眠机器 + 补 4 个真缺口。
+方案书顶部已加「实测校正」三分类表, 原文保留作历史。
+
+### 7.1 四个真缺口与修法
+
+| # | 缺口（实测证据） | 修法 | 类型 |
+|---|---|---|---|
+| G1 | `duplicateTracker` 声明在**每轮工具分支内**（`const duplicateTracker = new Map()`）→ 每轮重建 → 跨迭代"连续失败 3 次"恒不成立 | 提升为实例字段 `_failTracker`, `run()` 开头 `clear()` | **真 bug 修复** |
+| G2 | 跨轮去重只拦**全签名完全相同**的调用；"同一文件反复改、参数每次不同"永远漏网 | 复用 `TaskLedger.writeCount()`（`:158` 已存在, 无需新增）→ `repeat_write` directive, **只提醒不拦截** | 补漏（安全边界内） |
+| G3 | 只有**每轮** `TOOL_BUDGET`（`:3808`）; 无"每任务累计"上限 | `TOOL_CALL_BUDGET = 200` + `tool:budget-exceeded` + 复用 `_hardStopNext` 软着陆 | 真缺口 |
+| G4 | 唯一迭代上限判断埋在**超时块内**（`if (this.iteration > effectiveMax - 2) break`）→ **没超时 = 无上限** | 循环顶部独立硬闸: 首轮超限软提醒, 再一轮 `break` | 真缺口 |
+
+**G4 的意外后果（重要）**：修好它之后, **5 个既有失败测试转为通过** —— 它们不是断言写错, 而是
+`Error: Test timed out in 10000ms`（循环无上限, 一个空转到 `iter=48`）。
+> **测试基线因此更新**：`804 测试 / 7 失败` → **`815 测试 / 2 失败`**。
+> 剩余 2 个与本轮无关: `b1-security`（断言 `tools.ts` 用 `execFile('git')`）、`safety/code-runner`（断言 `scanForbiddenPatterns` 拒绝 `fs` import）——
+> 均为源码契约断言, 且改动前就在失败。
+
+### 7.2 新增守卫对所有 tier 生效（用户决定）
+
+`grep -c "_capabilityTier !== 'autonomous'" agentai-loop.ts` = **5**（与改动前一致）——
+即**没有新增任何 tier 门控**。用户跑的是 autonomous 档强模型, 若沿用既有 `!== 'autonomous'` 门控,
+新守卫将永不执行。`runtime-guard.test.ts` 有一条断言锁死这个数字, 变化即报警。
+
+### 7.3 已知 / 有意保留的边界（如实记录）
+
+- **写类重复只提醒不拦截**：`agentai-loop.ts` 的历史注释明确写"不同参数被误判为重复 → 用户改动被静默丢弃"。
+  故"执行前拦"只用于**全签名相同**（这条 `_toolCallHistory` 机制本来就已存在, 本轮未重做）。
+- `_toolCallHistory` **从不清理**（跨 run 残留）——本轮**仅记录为观察项, 未动**（改动会波及续点语义）。
+- 60K 上下文预算仍只能丢弃 5 条 soul 注入（priority 恰为 30）, 其余 44 条注入不可触碰 → 属**批次2**, 本轮未动。
+
+### 7.4 本轮核验命令（可复用）
+
+```bash
+cd packages/agentai-gateway
+npx tsc --noEmit                                        # 0 error
+npx vitest run src/runtime-guard.test.ts --reporter=dot # 11 passed
+npx vitest run --reporter=dot                           # 815 / 2 failed (基线: 少 5 个超时)
+grep -c "systemMsgs.push({ role: 'system'" src/agentai-loop.ts   # 32
+grep -c "systemMsgs.push(" src/agentai-loop.ts                   # 49
+awk 'NR>=812 && NR<=1927 && /^    try \{/ {c++} END {print c+0}' src/agentai-loop.ts  # 14
+```

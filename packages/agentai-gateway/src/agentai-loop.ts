@@ -48,6 +48,13 @@ const CTX_TOTAL_BUDGET_CHARS = 60_000;
 
 /** priority >= 此值的注入可被预算仲裁丢弃 (0=必保留 10=重要 20=增强 30=可选) */
 const CTX_PRIORITY_DROP_THRESHOLD = 30;
+
+// ═══ 工具调用预算 (2026-10-11) ═══
+// 之前只有 token 压力预警 + 60 分钟墙钟超时, 没有"工具调用总量"上限:
+// 死循环/弱模型可在预算内空转, 单请求产生大量付费调用。
+// 超限后不硬 break, 而是注入总结指令 + 复用 _hardStopNext 软着陆 (见循环顶部消费点)。
+// 200 次 ≈ 90 轮 × 每轮 ~2 个工具, 对正常长任务足够宽松。
+const TOOL_CALL_BUDGET = 200;
 import { recordToolCall, finalizeSessionAnalytics } from './tool-call-analytics.js';
 import { getFourDiagnosesSystem } from './qihuang/four-diagnoses.js';
 import { buildRemoteContext, isRemoteSessionActive, getActiveRemoteSession, detectRemoteIntent } from './remote/ai-integration.js';
@@ -268,6 +275,37 @@ private _hardStopCount = 0;     // v3.1 硬停次数: 超过 2 次直接 force b
 
 /** P0 修复: 跨轮次工具调用历史 — 防止 AI 续点后重复调用相同工具+相同参数 */
 private _toolCallHistory = new Set<string>();
+
+/**
+ * 2026-10-11 修复: 跨迭代「同一工具+同一参数」连续失败计数器
+ * ============================================================
+ * 原实现把 duplicateTracker 声明在每轮工具分支内 (`const duplicateTracker = new Map()`),
+ * 每轮重建 → 跨迭代计数恒为 1 → AGENTS.md 承诺的
+ * 「同一工具连续失败 3 次 → 强制换方案」**从未真正生效**。
+ * 提升为实例字段后, 生命周期 = 一次 run() (在 run() 开头 clear),
+ * 语义与原实现完全一致, 只是不再被每轮重置。
+ */
+private _failTracker = new Map<string, number>();
+
+/**
+ * 2026-10-11 新增: 本次任务累计工具调用次数
+ * ====================================================
+ * 之前无任何"工具调用总量"预算 —— 只有 token 压力预警与 60 分钟墙钟超时。
+ * 弱模型/死循环场景下可在预算内耗尽配额 (AGENTS.md §四.6 提到的付费调用风险)。
+ * 超 TOOL_CALL_BUDGET 后走已有的 _hardStopNext 软着陆通道收尾。
+ * 与 _capabilityTier 无关 — 对所有 tier 生效。
+ */
+private _toolCallCount = 0;
+
+/**
+ * 2026-10-11 新增: 迭代上限软着陆标记 (一次 run 只警告一次)
+ * ==========================================================
+ * 之前唯一的迭代终止藏在超时块里 (`if (this.iteration > effectiveMax - 2) break`),
+ * 即"没超时就等于没有迭代上限" —— LLM 持续调工具可越过 maxIterations。
+ * 现在: 顶部独立硬闸, 第一轮超限只注入"立即总结"指令 (软着陆), 下一轮仍未收尾才 break。
+ * 与 _capabilityTier 无关, 对所有 tier 生效。
+ */
+private _iterCapWarned = false;
 
 /**
  * 2026-10-05 P0 修复: 本轮被去重跳过的工具调用
@@ -1984,9 +2022,27 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       this.ledger.setGoal(msgText);
     }
   }
+  // ═══ 2026-10-11 目标锚点冷启动回填 ═══
+  // TaskLedger 是进程内 LRU(64) 内存态 (task-ledger.ts), 重启或被挤出后 goal 归零,
+  // AI 就"忘了要干什么"。active-plan.json 里已有持久化的目标 (tools.ts getActivePlan)。
+  // 仅在"当前无目标"时回填 —— 绝不覆盖用户刚输入的新目标 (与上方 guard 同构)。
+  if (!this.ledger.getGoal()) {
+    try {
+      const { getActivePlan } = await import('./tools.js');
+      const persisted = getActivePlan(this.opts.workspace);
+      const anchor = persisted?.goal || persisted?.title || persisted?.objective;
+      if (anchor && String(anchor).trim().length >= 4) {
+        this.ledger.setGoal(String(anchor));
+        logger.debug('[loop] goal anchor backfilled from active-plan.json');
+      }
+    } catch { /* 回填 best-effort, 绝不阻断任务 */ }
+  }
   this.ledger.setIteration(0);
   this._forceSkill = null; // 清除上轮强制技能, 让 skillManager重新匹配
   this._skippedToolCalls = []; // 清空上一轮遗留的跳过记录
+  this._failTracker.clear();   // 2026-10-11: 失败计数按任务隔离 (不跨 run 累积)
+  this._toolCallCount = 0;     // 2026-10-11: 工具调用预算按任务归零
+  this._iterCapWarned = false; // 2026-10-11: 迭代上限软着陆标记按任务归零
   logger.debug(`[loop] task isolation: _taskType=${this._taskType}, _forceSkill cleared`);
 
   // ═══ 任务自监督系统: 启动计时器 + 重置统计 ═══
@@ -2740,6 +2796,23 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       }
       this.iteration++;
       this.emit('loop:iteration', { n: this.iteration });
+
+      // ═══ 2026-10-11 独立迭代硬闸 (G4) ═══
+      // 之前唯一的迭代上限判断埋在下面的超时块内 —— 没超时 = 无上限。
+      // 这里给出真正独立于时间/预算的出口: 首次超限软着陆(注入总结指令),
+      // 再一轮仍未收尾则硬退出。放在 token 预警之前, 免得最后一轮还去做昂贵的 token 估算。
+      if (this.iteration >= this.opts.maxIterations) {
+        if (!this._iterCapWarned) {
+          this._iterCapWarned = true;
+          logger.warn(`[loop] ⏹️ 迭代达上限 ${this.iteration}/${this.opts.maxIterations} — 要求收尾`);
+          this.directives.add('iter_cap', `[SYSTEM] 已达到本次任务的最大迭代轮次 (${this.opts.maxIterations})。请立即停止调用工具, 直接给出最终总结: 已完成的内容 / 实际改动 / 未完成的遗留项。`, 'critical');
+          this.emit('loop:iteration-cap', { iteration: this.iteration, max: this.opts.maxIterations, hard: false });
+        } else {
+          logger.warn(`[loop] ⏹️ 迭代上限已警告一轮仍未收尾 — 强制退出 (iteration ${this.iteration})`);
+          this.emit('loop:iteration-cap', { iteration: this.iteration, max: this.opts.maxIterations, hard: true });
+          break;
+        }
+      }
 
       // ═══ Token 预警 (2026-08-03 新增) ═══
       // 在每轮开始检查上下文压力, 避免长任务跑到 token 用尽才停止
@@ -3827,6 +3900,11 @@ if (isComplexTask) {
           'list_dir', 'find_file', 'search_files', 'analyze_code',
           'web_search', 'fetch_url', 'read_file_content',
         ]);
+        // 写类工具 (与 ledger.record 的 kind 分类对齐, 见 dispatchToolCalls 内的 _kind 判定)
+        const WRITE_CLASS_TOOLS = new Set([
+          'write_file', 'multi_edit', 'edit_file', 'create_file',
+          'delete_file', 'string_replace', 'apply_edit',
+        ]);
         const _crossRoundDeduped: typeof res.toolCalls = [];
         for (const tc of res.toolCalls) {
           // 全量签名 + 哈希, 不截断 —— 避免长内容参数被误判为重复
@@ -3843,6 +3921,21 @@ if (isComplexTask) {
             this._skippedToolCalls.push({ id: tc.id, name: tc.name, sig: _sig });
             this.directives.add('duplicate_skip', `[SYSTEM] 工具 ${tc.name} 已在之前的轮次中执行过相同操作, 不要重复调用。请基于已有结果继续下一步, 或换不同参数/方法。`, 'high');
             continue;
+          }
+          // ═══ 2026-10-11 同目标反复写提醒 (G2) ═══
+          // 上面只拦"全签名完全相同"的调用, 拦不到"同一文件反复改、参数每次不同"的原地打转
+          // —— 那正是"改 A 修坏 B 再改 A"的典型表现。
+          // 注意: **只提醒, 绝不拦截**。不同参数 = 不同改动, 拦死会静默丢弃用户代码
+          // (见上方 :3819-3821 的历史教训)。只读类的提醒由 ledger 的 redundant_read 负责。
+          if (WRITE_CLASS_TOOLS.has(tc.name)) {
+            const _wArgs = (tc.args || {}) as Record<string, any>;
+            const _wTarget = String(_wArgs.file_path ?? _wArgs.path ?? _wArgs.file ?? '');
+            if (_wTarget) {
+              const _prevWrites = this.ledger.writeCount(_wTarget);
+              if (_prevWrites >= 2) {
+                this.directives.add('repeat_write', `[SYSTEM] 注意: 本会话已 ${_prevWrites} 次修改 "${_wTarget}", 本次将是第 ${_prevWrites + 1} 次。若反复改动同一文件, 请先停下来说明: 是哪个判断出了偏差 / 是否需要换方案, 而不是继续试。若确有必要请忽略此提示。`, 'high');
+              }
+            }
           }
           _crossRoundDeduped.push(tc);
         }
@@ -4012,6 +4105,18 @@ if (isComplexTask) {
         });
         
         const rawResults = await this.dispatchToolCalls(res.toolCalls);
+        // ═══ 2026-10-11 工具调用总预算 (G3) ═══
+        // 与 _capabilityTier 无关, 对所有 tier 生效。超限不硬 break —— 注入收尾指令
+        // 并置 _hardStopNext, 让 AI 在下一轮产出总结后自然退出 (见循环顶部消费点)。
+        this._toolCallCount += res.toolCalls.length;
+        if (this._toolCallCount > TOOL_CALL_BUDGET && !this._hardStopNext) {
+          logger.warn(`[loop] 🧮 工具调用预算超限: ${this._toolCallCount}/${TOOL_CALL_BUDGET} (iteration ${this.iteration})`);
+          // 注意: source 用 tool_budget_total, 区别于 :3808 的**每轮** tool_budget
+          // (SystemDirectiveManager 按 source 去重, 同名会互相顶掉)。
+          this.directives.add('tool_budget_total', `[SYSTEM] 本次任务工具调用已达 ${this._toolCallCount} 次 (预算 ${TOOL_CALL_BUDGET})。请立即停止继续调用工具, 直接总结: 已完成什么 / 有哪些改动 / 还有什么没做完。`, 'critical');
+          this._hardStopNext = true;
+          this.emit('tool:budget-exceeded', { used: this._toolCallCount, budget: TOOL_CALL_BUDGET, iteration: this.iteration });
+        }
         lastToolActivityAt = Date.now(); // 工具执行完成, 重置超时计时器
 
         // ═══ 2026-10-05 P0 修复: 把被去重跳过的调用补成 [SKIPPED] tool 消息 ═══
@@ -4119,7 +4224,9 @@ if (isComplexTask) {
         // 3.5 工具结果进 append-only log + 检测重复失败
         let hasPendingAsk = false;
         let askData: any = null;
-        const duplicateTracker = new Map<string, number>(); // tool:args → 连续失败次数
+        // 2026-10-11: 用实例级 _failTracker (跨迭代存活) 替代原来的局部 Map。
+        // 原实现每轮重建 → failCount 恒为 1 → "连续失败 3 次换方案"从未生效。
+        const duplicateTracker = this._failTracker; // tool:args → 连续失败次数 (跨轮累积)
         for (const r of toolResults) {
           const sig = `${r.name}::${JSON.stringify(res.toolCalls?.find((tc:any) => tc.id === r.id)?.args || {})}`;
 
@@ -6053,13 +6160,17 @@ try {
   private async dispatchToolCalls(
     calls: Array<{ id: string; name: string; args: Record<string, any> }>,
   ): Promise<Array<{ id: string; name: string; output: string; data?: any }>> {
-    const ctx: any = {
+    // 2026-10-11 阶段2 轻档: ctx 收紧为 ToolContext (之前 `: any`), 新增 model 字段
+    // 让 handler 里 `ctx?.model` 多模态判断拿到强类型。_registry 是运行时扩展字段
+    // (不在 ToolContext 接口里), 用 as any 单点断言, 不再整对象 any。
+    const ctx: ToolContext = {
       userId: this.opts.userId,
       workspace: this.opts.workspace,
       abortSignal: this.opts.abortSignal,
-      priorMessages: this.context.appendOnlyLog,
+      priorMessages: this.context.appendOnlyLog as ToolContext['priorMessages'],
       _router: this.router,
-      _registry: this.registry,
+      model: this.opts.model,
+      _registry: this.registry, // ToolContext._registry (2026-10-11 接口新增)
     };
 
     // Hook: SessionStart（如果尚未开始会话，则在第一次工具调用时开始）

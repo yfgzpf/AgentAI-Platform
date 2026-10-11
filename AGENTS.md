@@ -98,13 +98,16 @@ color: '#ddd';
 #### 1.1 Agent Loop (agentai-loop.ts)
 主循环架构: 用户消息 → 上下文构建 → LLM 调用 → 工具分派 → 结果入 log → 继续循环
 
-**上下文构建 (buildImmutablePrefix) — agentai-loop.ts:689-1715**
+**上下文构建 (buildImmutablePrefix) — agentai-loop.ts:812-1927**（下一个方法 `buildExternalToolsContext` :1928 起）
 ⚠️ **实测更正 (2026-10-10)**：原文档称"按需注入 ~8 层"，那是 2026-07-19 的**期望目标**，不是现状。
 
 实测事实：
-- 该函数内含 **49 处 `systemMsgs.push({role:'system'})`**，结构是 **17 个平铺的 try/catch 区块**，**没有分层抽象、没有优先级注册表**
+- 该函数内含 **32 处字面量 `systemMsgs.push({ role: 'system'`**（`systemMsgs.push(` 总数 **49**，其余为变量 role），
+  结构是 **14 个顶层 try/catch 区块**（缩进 4 空格；任意缩进计 38），**没有分层抽象、没有优先级注册表**
 - §1.7 / §1.76 等注释编号已自相矛盾（"已合并到 §1.7，此处禁用"与"已并入上方 §1.6"并存），说明多次重构后已无人理解全局
 - 主循环另有 15 处 `appendOnlyLog.push({role:'system'})` + 约 17 处其他 system 注入
+- 核验：`grep -c "systemMsgs.push({ role: 'system'" src/agentai-loop.ts` → 32；
+  `awk 'NR>=812 && NR<=1927 && /^    try \{/ {c++} END {print c+0}' src/agentai-loop.ts` → 14
 
 真实分层意图（按门控归类）：
 1. 身份 (identity) + lite 版本二选一
@@ -122,6 +125,24 @@ color: '#ddd';
 - `CTX_PRIORITY_DROP_THRESHOLD = 30` — priority ≥30 的注入可被丢弃 (soul 五项为 30, innerVoice/emotion 为 20)
 - ⚠️ 修复了一个真实漏洞：原 `MAX_INJECTION_BUDGET=3000` 建在 `appendOnlyLog` 上，而本函数产出的 system 消息**从不进 appendOnlyLog**（`ensureContext:678` 明确过滤掉 system），所以那个预算**根本管不到 38,999 字符的 identity**。现在预算建在正确的容器上。
 - 每次构建都会 `logger.debug` 输出「注入 N 条 / M 字符」，超预算会 `logger.warn` 输出丢了哪些
+- ⚠️ **2026-10-11 实测：该预算仍是纸老虎。** `track()` 全文只有 **7 处**调用点，全是 `soul:*`
+  （`grep -n "track('" src/agentai-loop.ts`）；且仲裁里 `if (entry.priority < 30) break` 意味着
+  **只有 priority 恰为 30 的 5 条**（dream/curiosity/debate/private/value）可丢，
+  另外 **44 条注入结构上不可触碰**。覆盖面扩到全部注入点属**批次2**，未做。
+
+**运行时守卫 (2026-10-11「批次1 止血」新增, 对所有 tier 生效)**
+- `TOOL_CALL_BUDGET = 200` — **每任务累计**工具调用上限。注意与**每轮** `TOOL_BUDGET`（`:3808`, coding 5/research 4/general 4/industry 3）
+  是**两套**机制：每轮都合规, 合计仍可空转几十轮 —— 这正是补的缺口。超限走 `_hardStopNext` 软着陆（不硬 break）。
+- **独立迭代硬闸**（循环顶部）：`if (this.iteration >= this.opts.maxIterations)` → 首轮软提醒, 再一轮 `break`。
+  之前唯一的上限判断埋在超时块内 ⇒ **没超时 = 无上限**。
+  **实测后果**：修好它后 5 个既有失败测试转绿 —— 它们不是断言错, 而是 `Test timed out in 10000ms`（有个空转到 `iter=48`）。
+- `_failTracker` — 跨迭代连续失败计数（原 `duplicateTracker` 是**每轮重建的局部 Map**, 故"连续失败 3 次换方案"从未生效）。
+- `repeat_write` — 同一文件第 3 次写入时提醒。**只提醒不拦截**：不同参数 = 不同改动, 拦死会静默丢用户代码。
+  配套 `WRITE_CLASS_TOOLS`（`:3904`）；只读白名单 `READ_ONLY_TOOLS`（`:3898`）保持不变。
+- **目标锚点冷启动回填**：`TaskLedger` 是进程内 LRU(64), 重启即丢 goal；现从已落盘的 `active-plan.json` 回填
+  （仅当 `!this.ledger.getGoal()`, 绝不覆盖用户新输入）。
+- ⚠️ **新增守卫一律不得加 `_capabilityTier !== 'autonomous'` 门控** —— 强模型（autonomous 档）必须同样受约束。
+  基线数字锁死在 `runtime-guard.test.ts`：`grep -c "_capabilityTier !== 'autonomous'" src/agentai-loop.ts` = **5**（既有元认知/置信度门控）。
 
 **主循环控制**
 - finish_reason='length' → 自动追加继续消息, 不中断任务
@@ -744,9 +765,11 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 绝对超时 | 3 分钟 | 60 分钟 | agentai-loop.ts:1963 |
 | 修复管道 | 5 步 | 6 步 | llm-router.ts:981 |
 | 熔断条件 | 3 次失败 | 30% 失败率 | smart-model-switcher.ts |
-| 上下文注入 | 8 层 | **8 层是目标，实际 49 处注入 / 17 个平铺 try-catch** | grep `systemMsgs.push` |
+| 上下文注入 | 8 层 | **8 层是目标，实际 32 处字面量 / 49 处 `systemMsgs.push` / 14 个顶层 try-catch**（buildImmutablePrefix `:812-1927`）| `grep -c "systemMsgs.push(" src/agentai-loop.ts`；`awk 'NR>=812 && NR<=1927 && /^    try \{/' …` |
 | system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
-| 测试覆盖 | "无 E2E" | 65 文件 / ~790 测试，但 **agentai-loop.ts(6416行) 零覆盖** | vitest |
+| 60K 上下文预算实际覆盖 | "硬闸门" | **只覆盖 7 条 soul 注入, 其中仅 priority=30 的 5 条可丢**；44 条注入不可触碰 | `grep -n "track('" src/agentai-loop.ts` → 7 |
+| 测试覆盖 | "无 E2E" | 68 文件 / **815 测试 / 2 失败**（2026-10-11；原 804/7 中 5 个是循环无上限导致的超时） | vitest |
+| 运行时守卫 | 无 | **4 个真缺口已补**（`_failTracker` / `repeat_write` / `TOOL_CALL_BUDGET=200` / 独立迭代硬闸），**对所有 tier 生效** | `packages/agentai-gateway/src/runtime-guard.test.ts` |
 | @ts-nocheck 文件 | - | **30 个** (22 源文件 + 8 测试文件, 2026-10-11 实测) | `grep -rl "@ts-nocheck" src/ \| wc -l` |
 | 中栏宽度 | "大屏居中 800px" | **`clamp(880px, 90%, 1600px)` 自适应**, 2 处消费 (原 token 零消费) | `grep -rn "var(--chat-max-width)" packages/agentai-gui/src/` |
 | 页面内可拖面板 | 写死不可拖 (420/380/320/240) | **4 处 `<PaneGrip>`**, 把手命中区 5/5px | `packages/agentai-gui/src/layout-panes.test.ts` |
@@ -782,4 +805,9 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 - 上下文注入点：`grep -c "role: 'system'" packages/agentai-gateway/src/agentai-loop.ts`
 - 核心文件规模：`wc -l packages/agentai-gateway/src/*.ts | sort -rn | head`
 - 测试基线：`cd packages/agentai-gateway && npx vitest run --reporter=dot`
-  （⚠️ 已知基线失败 7 个：b1-security 1 / context-fidelity 3 / ledger-wiring 2 / code-runner 1，**2026-10-10 优化前已存在**，非新引入）
+  （⚠️ **2026-10-11 更新：815 测试 / 2 失败**。原 `804 / 7 失败` 里的
+  `context-fidelity 3 + ledger-wiring 2` **不是断言写错, 而是 `Test timed out in 10000ms`** ——
+  循环无迭代上限导致空转（实测跑到 `iter=48`）；批次1 的 G4 迭代硬闸修好了它们。
+  剩余 2 个**与本轮无关且改动前就在失败**：b1-security 1（断言 `tools.ts` 用 `execFile('git')`）、
+  safety/code-runner 1（断言 `scanForbiddenPatterns` 拒绝 `fs` import）。）
+- 运行时守卫回归：`cd packages/agentai-gateway && npx vitest run src/runtime-guard.test.ts --reporter=dot`（11 项）

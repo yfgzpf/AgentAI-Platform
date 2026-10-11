@@ -37,6 +37,22 @@ export interface ToolContext {
   /** 递归深度限制，防止无限递归 */
   callDepth?: number;
   maxDepth?: number;
+  /**
+   * 2026-10-11 新增 (阶段2 轻档): 消除 EXTRA_HANDLERS 里 6 处 `(ctx as any)?._router`
+   * 强转。router 由 agentai-loop.ts 在构造 ctx 时注入, 供需要调 LLM 的 handler
+   * (vision/capture_and_read/iterative-tool-generator 等) 直接访问, 不再 any。
+   */
+  _router?: import('./llm-router.js').AgentAIRouter;
+  /**
+   * 2026-10-11 新增: 当前会话的模型名 (如 agnes-3.0-flash), 消除 4 处
+   * `ctx?.model` 对 `ctx?: any` 的依赖。agentai-loop.ts 构造 ctx 时传入。
+   */
+  model?: string;
+  /**
+   * 2026-10-11 新增: 工具注册表 (递归调用 handler 用), 消除 3 处
+   * `(ctx as any)?._registry` 强转。agentai-loop.ts 构造 ctx 时注入。
+   */
+  _registry?: ToolRegistry;
 }
 
 export interface ToolResult {
