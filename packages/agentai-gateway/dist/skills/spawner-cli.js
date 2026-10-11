@@ -16,14 +16,16 @@ export async function runCLI() {
     const router = new AgentAIRouter();
     const registry = new ToolRegistry();
     // 注册 EXTRA_TOOLS (python, bash, read, write, list_dir, etc.)
+    // 2026-10-11: 用 ToolDecl 类型边界, spec.riskLevel 已是 RiskLevel 联合 (来自 tool-schema.ts),
+    // 不再需要 `as any` 强转 (原因为 tools.ts @ts-nocheck 使 spec 退化为 any, riskLevel 变 string)
     const { EXTRA_TOOLS, EXTRA_HANDLERS } = await import('../tools.js');
     for (const spec of EXTRA_TOOLS) {
         registry.register({
             name: spec.name,
             description: spec.description,
             parameters: spec.parameters,
-            parallelSafe: spec.parallelSafe,
-            riskLevel: spec.riskLevel, // v3.2 修复: spec.riskLevel 是 string, ToolEntry 要求 RiskLevel 联合类型
+            parallelSafe: spec.parallelSafe ?? false,
+            riskLevel: spec.riskLevel,
             handler: EXTRA_HANDLERS[spec.name],
         });
     }

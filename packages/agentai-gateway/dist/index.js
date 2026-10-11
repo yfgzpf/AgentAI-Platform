@@ -121,6 +121,9 @@ catch (e) {
 }
 const registry = new ToolRegistry();
 // ===== 注册内置工具 (EXTRA_TOOLS + EXTRA_HANDLERS) =====
+// 2026-10-11: 用 ToolDecl 作为类型边界 — EXTRA_TOOLS 来自 @ts-nocheck 的 tools.ts,
+// 直接迭代时 spec 是 any; 标成 ToolDecl[] 后, 消费侧 (registry.register) 拿到强类型,
+// 消除 riskLevel 的 `as any` (RiskLevel 联合与 ToolEntry.riskLevel 对齐)。
 for (const spec of EXTRA_TOOLS) {
     const handler = EXTRA_HANDLERS[spec.name];
     if (!handler) {
@@ -133,7 +136,7 @@ for (const spec of EXTRA_TOOLS) {
         parameters: spec.parameters,
         parallelSafe: spec.parallelSafe,
         riskLevel: spec.riskLevel,
-        handler: handler,
+        handler: handler, // handler 实现仍 any (@ts-nocheck), 待阶段2 类型化
     });
 }
 console.log(`[tools] ${registry.list().length} tools registered`);

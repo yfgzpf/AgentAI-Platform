@@ -15,6 +15,7 @@ import { ToolRegistry } from './tool-registry.js';
 import { initGlobalSandbox, getGlobalSandbox } from './sandbox/index.js';
 import { scanProjectSkills, scanUserSkills, scanProjectLocalSkills } from './skills/loader.js';
 import { EXTRA_TOOLS, EXTRA_HANDLERS } from './tools.js';
+import type { ToolDecl } from './types/tool-schema.js';
 import { startSkillWatcher } from './skills/watcher.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
 import { frameworkSwitcher } from './frameworks/switcher.js';
@@ -130,7 +131,10 @@ try {
 const registry = new ToolRegistry();
 
 // ===== 注册内置工具 (EXTRA_TOOLS + EXTRA_HANDLERS) =====
-for (const spec of EXTRA_TOOLS) {
+// 2026-10-11: 用 ToolDecl 作为类型边界 — EXTRA_TOOLS 来自 @ts-nocheck 的 tools.ts,
+// 直接迭代时 spec 是 any; 标成 ToolDecl[] 后, 消费侧 (registry.register) 拿到强类型,
+// 消除 riskLevel 的 `as any` (RiskLevel 联合与 ToolEntry.riskLevel 对齐)。
+for (const spec of EXTRA_TOOLS as ToolDecl[]) {
   const handler = EXTRA_HANDLERS[spec.name];
   if (!handler) { console.warn(`[tools] no handler for ${spec.name}`); continue; }
   registry.register({
@@ -139,7 +143,7 @@ for (const spec of EXTRA_TOOLS) {
     parameters: spec.parameters,
     parallelSafe: spec.parallelSafe,
     riskLevel: spec.riskLevel,
-    handler: handler as any,
+    handler: handler as any, // handler 实现仍 any (@ts-nocheck), 待阶段2 类型化
   });
 }
 console.log(`[tools] ${registry.list().length} tools registered`);

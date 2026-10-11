@@ -4155,11 +4155,22 @@ if (isComplexTask) {
             || (r as any).success === false
             || (r.output.length < 5 && /err|fail|null|undef/i.test(r.output));
           // 标记失败的工具结果, 让 AI 明确知道
-          const toolContent = isToolFailed && r.output
-            ? `[ERROR] ${r.output}`
-            : isToolFailed && !r.output
-              ? '[ERROR] 工具执行返回空结果, 可能失败了'
-              : r.output;
+          // 2026-10-11: 失败时把 classifyToolError 的结构化诊断 (故障码/根因/下一步)
+          // 直接并入 [ERROR] 工具消息 — 之前该报告以独立 system 消息注入, 与工具消息
+          // 割裂, 模型看到 [ERROR] 文本却不知道下一步该干嘛。现在一站式拿到"失败原因+
+          // 建议动作", 减少试错轮次。
+          let toolContent = r.output;
+          if (isToolFailed) {
+            const rawErr = r.output || '';
+            let diagnosis = '';
+            try {
+              const classified = classifyToolError(r.name, rawErr);
+              diagnosis = `\n[故障码] ${classified.code} | 根因: ${classified.hint}\n[下一步] ${classified.nextAction}`;
+            } catch { diagnosis = ''; }
+            toolContent = rawErr
+              ? `[ERROR] ${rawErr}${diagnosis}`
+              : `[ERROR] 工具执行返回空结果, 可能失败了${diagnosis}`;
+          }
           if (!isToolFailed) {
             // P0 修复: 记录成功工具调用到跨轮次历史 — 防止续点后重复
             // 2026-10-05: 签名与去重侧保持一致(全量不截断)，否则这里记的签名
@@ -6332,20 +6343,14 @@ try {
 
       // ═══ 智能核心: 工具失败时注入错误分析和修复建议 ═══
       // DEF-07 修复: 结构化故障上报 — 返回 {reason_code, hint, next_action}
+      // 2026-10-11: 结构化诊断已并入 [ERROR] 工具消息 (run() 主路径), 此处只保留
+      // 反思引擎 (reflectionInjection) 注入, 去掉重复的 [工具故障报告] system 消息,
+      // 避免同一故障码灌两遍。
       if (r?.result?.success === false) {
         try {
-          const { buildErrorRecoverySuggestion, reflectOnResult, buildReflectionInjection } = await import('./intelligent-core.js');
+          const { reflectOnResult, buildReflectionInjection } = await import('./intelligent-core.js');
           const errorOutput = typeof r.result.output === 'string' ? r.result.output : String(r.result.output || '');
-          const suggestion = buildErrorRecoverySuggestion(errorOutput, c.name, c.args?.path || c.args?.file);
 
-          // DEF-07: 生成结构化故障码和修复建议
-          const reasonCode = classifyToolError(c.name, errorOutput);
-          const structuredError = `[工具故障报告] 工具: ${c.name}\n` +
-            `- reason_code: ${reasonCode.code}\n` +
-            `- hint: ${reasonCode.hint}\n` +
-            `- next_action: ${reasonCode.nextAction}\n` +
-            `- 原始错误: ${errorOutput.slice(0, 200)}`;
-          this.context.appendOnlyLog.push({ role: 'system', content: structuredError });
           // 反思引擎: 检查是否需要调整策略
           const reflection = reflectOnResult(c.name, c.args, { success: false, output: errorOutput }, this.iteration, 0);
           const reflectionInjection = buildReflectionInjection(reflection, c.name);
@@ -6476,7 +6481,16 @@ try {
 
       return output;
     }
-    return `[ERROR] ${r.error || 'unknown error'}\n${r.output}`;
+    // 2026-10-11: 失败分支也加结构化诊断 (故障码/根因/下一步) — 与成功分支的
+    // [memory:meta] 增强对齐, 模型失败时不再只拿到裸文本, 而是知道下一步该干嘛。
+    const rawErr = r.output || '';
+    const errMsg = r.error || (rawErr ? rawErr.slice(0, 200) : 'unknown error');
+    let diagnosis = '';
+    try {
+      const classified = classifyToolError(call?.name || '', rawErr || r.error || '');
+      diagnosis = `\n[故障码] ${classified.code} | 根因: ${classified.hint}\n[下一步] ${classified.nextAction}`;
+    } catch { diagnosis = ''; }
+    return `[ERROR] ${errMsg}${diagnosis}`;
   }
 
   /**
