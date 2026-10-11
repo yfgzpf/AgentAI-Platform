@@ -1382,6 +1382,14 @@ const [loading, setLoading] = useState(false);
         setTimeout(() => {
           setSubagents(prev => prev.filter(a => a.id !== info.id));
         }, 5000);
+        // 2026-10-11 P1: 失败记录落盘 localStorage 审计 — GUI 面板移除后仍可事后查证
+        // (之前面板清空 + 后端无记录 = 证据自毁, 用户无法复盘子智能体为何失败)
+        try {
+          const key = 'agentai.subagent-failures';
+          const prev = JSON.parse(localStorage.getItem(key) || '[]');
+          prev.push({ id: info.id, ts: Date.now(), error: info.error, task: info.task || '' });
+          localStorage.setItem(key, JSON.stringify(prev.slice(-50))); // 最近 50 条
+        } catch { /* best-effort */ }
       },
       onSubagentProgress: (info: any) => {
         lastActivityTs = Date.now();

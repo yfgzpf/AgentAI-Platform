@@ -1,4 +1,4 @@
-import{r as s,j as e}from"./react-vendor-CSfPZZ9P.js";import{G as N,s as ee,i as te,M as ne}from"./index-LkHuDSsV.js";import{T as S,B as g,a6 as W,y as K,bw as J,$ as G,aX as X,G as se,bx as Z,b as le,az as Q,c as U,by as re,u as q,aY as oe,S as ie,I as ae,s as v}from"./antd-vendor-DfrNBeY-.js";import"./socket-vendor-dm1FmSOd.js";import"./vendor-CaT5phGR.js";const V=1500,ce=1e3,de=`你是一个听写整理助手。
+import{r as s,j as e}from"./react-vendor-CSfPZZ9P.js";import{G as N,s as ee,i as te,M as ne}from"./index-O_Bhk8pT.js";import{T as S,B as g,a6 as W,y as K,bw as J,$ as G,aX as X,G as se,bx as Z,b as le,az as Q,c as U,by as re,u as q,aY as oe,S as ie,I as ae,s as v}from"./antd-vendor-DfrNBeY-.js";import"./socket-vendor-dm1FmSOd.js";import"./vendor-CaT5phGR.js";const V=1500,ce=1e3,de=`你是一个听写整理助手。
 请将以下语音转写内容整理成通顺的文字：
 1. 修复口语化表达, 去掉"嗯、啊、这个、那个"等填充词
 2. 添加标点符号, 合理分段

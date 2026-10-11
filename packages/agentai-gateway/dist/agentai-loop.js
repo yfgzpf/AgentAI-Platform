@@ -274,6 +274,15 @@ export class AgentAILoop extends EventEmitter {
      * 由 dispatchToolCalls 一次性消费后清空。
      */
     _spawnHandledCallIds = new Set();
+    /**
+     * 2026-10-11 P0: 子智能体结果回注队列。
+     * inline spawn (detached IIFE) 完成时把结果记入此 Map; 主循环下一轮 LLM 调用前
+     * 消费本 Map, 把子智能体的产出作为一条 system 消息写回 context.appendOnlyLog,
+     * 让主模型"看得到"子任务结果 — 修复 fire-and-forget 架构下主模型对子智能体
+     * 产出完全不可见的缺陷 (之前主模型只收到占位"结果见后续子智能体事件",
+     * 实际拿不到任何内容, 表现为"子智能体已受理但结果从未到达")。
+     */
+    _pendingSubagentResults = new Map();
     /** formatToolResult 文件 stat 缓存: path → { size, mtimeMs, lines }  TTL=5min, 最多 200 条 */
     _fileMetaCache = new Map();
     static FILE_META_TTL_MS = 5 * 60 * 1000;
@@ -3254,6 +3263,23 @@ export class AgentAILoop extends EventEmitter {
                 }
             }
             // 3.2 调 LLM
+            // ═══ 2026-10-11 P0: 子智能体结果回注 ═══
+            // inline spawn (detached) 完成/失败后把结果记入 _pendingSubagentResults;
+            // 每轮 LLM 调用前消费本队列, 把子智能体产出作为 system 消息注入,
+            // 让主模型"看得见"子任务结果 — 修复 fire-and-forget 架构缺陷。
+            // 只注入尚未回注过的结果 (按 subId 去重), 注入后立即清除。
+            if (this._pendingSubagentResults.size > 0) {
+                const lines = [...this._pendingSubagentResults.values()].map(r => {
+                    const statusTag = r.status === 'done' ? '✅' : '❌';
+                    return `${statusTag} [子智能体 ${r.subId}] ${r.content}`;
+                });
+                messages.unshift({
+                    role: 'system',
+                    content: `# 子智能体执行结果 (已回注, 请据此继续任务)\n${lines.join('\n')}`,
+                });
+                this._pendingSubagentResults.clear();
+                logger.debug(`[subagent] 回注 ${lines.length} 条子智能体结果到主上下文`);
+            }
             console.log('[run:chat] calling router.chat, model=', req.model, 'subModel=', req.subModel);
             // Hook: PreModelCall - 检查是否允许调用模型
             const inputText = messages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n');
@@ -3678,7 +3704,14 @@ export class AgentAILoop extends EventEmitter {
                 //   而 llm-router FREE_POOL / routes/chat 各有不同名单 → agnes 在
                 //   这里被判为"非免费"而放行去建子Agent, 但 agnes 免费额度不支持 → 启动失败。
                 //   统一走 isFreeProvider() 单一真源。
-                const isFreeModel = isFreeProvider(this.opts.model);
+                // ★ 2026-10-11 P0 修复: 必须传 **modelName** (如 agnes-3.0-flash), 不能传
+                //   **model** (provider 名, 如 agentai) — FREE_PROVIDERS 白名单里既有 provider
+                //   名 (agentai/agnes) 也有 model 名 (agnes-2.5-flash), 传 provider 名 agentai
+                //   永远命中白名单 → 付费强模型 (3.0-flash) 一直被误判免费档, 子智能体被锁。
+                //   同一 provider 下既免费也付费 (agentai: 2.5-flash 免费 / 3.0-flash 付费),
+                //   只能按 model 名精确判定; modelName 为空时退化为 model (provider) 名兜底。
+                const modelKeyForFreeCheck = this.opts.modelName || this.opts.model;
+                const isFreeModel = isFreeProvider(modelKeyForFreeCheck);
                 const spawnHandled = this._spawnHandledCallIds; // 已在本层处理的 tool_call id, 防止下游重复执行
                 for (const tc of res.toolCalls) {
                     if (tc.name === 'spawn_subagent') {
@@ -3720,12 +3753,38 @@ export class AgentAILoop extends EventEmitter {
                             this._subAgentCount++;
                             (async () => {
                                 try {
+                                    // 2026-10-11 P1: 父模型熔断时自动切备用 provider (与 subagent.ts:398-419 双路径合并)
+                                    // 之前 inline spawn 直接用 this.opts.model, 父模型 429 熔断时子智能体必挂,
+                                    // 而 subagent.ts 的 runSubagentTask 有 tripped 降级逻辑 → 双路径行为不一致。
+                                    let subModel = this.opts.model;
+                                    let subModelName = this.opts.modelName;
+                                    const parentProviderStats = this.router?.providers?.get(this.opts.model);
+                                    if (this.opts.model && parentProviderStats?.tripped) {
+                                        const keyMap = {
+                                            agentai: 'AGENTAI_API_KEY', zhipu: 'ZHIPU_API_KEY',
+                                            dxnt: 'DXNT_API_KEY', sensenova: 'SENSENOVA_API_KEY',
+                                            longcat: 'LONGCAT_API_KEY', deepseek: 'DEEPSEEK_API_KEY',
+                                            alrc: 'ALRC_API_KEY', openai: 'OPENAI_API_KEY',
+                                        };
+                                        for (const alt of ['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', 'deepseek', 'alrc', 'openai']) {
+                                            if (alt === this.opts.model)
+                                                continue;
+                                            const altStats = this.router?.providers?.get(alt);
+                                            const envKey = keyMap[alt];
+                                            if (altStats && !altStats.tripped && envKey && process.env[envKey]) {
+                                                subModel = alt;
+                                                subModelName = ''; // 切换 provider 后 subModel 名不沿用, 走默认
+                                                logger.info(`[subagent] 父模型 ${this.opts.model} tripped, 子智能体切换到 ${alt}`);
+                                                break;
+                                            }
+                                        }
+                                    }
                                     const subLoop = new AgentAILoop(this.router, this.registry, [], {
                                         maxIterations: 20,
                                         userId: this.opts.userId,
                                         workspace: this.opts.workspace,
-                                        model: this.opts.model,
-                                        modelName: this.opts.modelName,
+                                        model: subModel,
+                                        modelName: subModelName,
                                         userPickedModel: this.opts.userPickedModel,
                                         industryId: this.opts.industryId, // ★ 继承父级行业, 不读单例
                                     });
@@ -3756,12 +3815,24 @@ export class AgentAILoop extends EventEmitter {
                                         role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
                                         content: `[子Agent ${tc.args?.type || 'explore'}]: ${(subResult.content || '无结果').slice(0, 2000)}`,
                                     });
+                                    // 2026-10-11 P0: 结果记入回注队列 — 主循环下一轮 LLM 调用前
+                                    // 会消费 _pendingSubagentResults, 把子智能体产出注入主上下文
+                                    this._pendingSubagentResults.set(subId, {
+                                        status: 'done',
+                                        subId,
+                                        content: `任务「${tc.args?.task || ''}」完成 (${subResult.iterations}轮/${subResult.durationMs}ms): ${(subResult.content || '无结果').slice(0, 1500)}`,
+                                    });
                                 }
                                 catch (e) {
                                     this.emit('subagent:error', { id: subId, error: e.message });
                                     this.context.appendOnlyLog.push({
                                         role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
                                         content: `[子Agent 失败]: ${e.message}`,
+                                    });
+                                    this._pendingSubagentResults.set(subId, {
+                                        status: 'error',
+                                        subId,
+                                        content: `任务「${tc.args?.task || ''}」失败: ${e.message}`,
                                     });
                                 }
                                 finally {
