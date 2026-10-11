@@ -21,7 +21,8 @@ export const COMMERCIAL_MODEL_TEMPLATES: CommercialModelTemplate[] = [
     id: 'deepseek',
     label: 'DeepSeek',
     baseURL: 'https://api.deepseek.com/v1',
-    models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    // 2026-10-11: pro 已下线, 且官方模型名改用 deepseek-flash (旧名 deepseek-v4-flash 走别名)
+    models: ['deepseek-flash'],
     docsUrl: 'https://platform.deepseek.com/api-keys',
     color: '#10B981',
     contextWindow: 1_000_000,

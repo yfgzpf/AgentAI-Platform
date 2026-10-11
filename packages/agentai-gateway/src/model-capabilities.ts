@@ -99,17 +99,8 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
     rateLimitTPM: 100_000,
     costPer1K: 0.00022,
   },
-  {
-    id: 'deepseek-pro',
-    label: 'DeepSeek V4 Pro (1M)',
-    provider: 'deepseek',
-    subModel: 'deepseek-v4-pro',
-    contextWindow: 1_048_576,  // 1M
-    isFree: false,
-    rateLimitRPM: 50,
-    rateLimitTPM: 50_000,
-    costPer1K: 0.00066,
-  },
+  // 2026-10-11: `deepseek-pro` 条目已删除 —— 官方 2026-09-14 12:00 起下线 V4 Pro,
+  // 请求全部路由到 V4.1 Flash。旧 id 引用由下方 LEGACY_MODEL_ALIASES 兜底。
 
   // ─── ALRC 聚合平台 ───
   {
@@ -241,6 +232,8 @@ export function getDefaultContextWindow(provider: string): number {
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
   'deepseek-v4-flash': 'deepseek-flash',
   'deepseek-v4-flash-vision-exp': 'deepseek-flash',
+  // 2026-10-11: V4 Pro 已下线, 官方声明请求全部路由到 V4.1 Flash, 本地做同样映射。
+  'deepseek-v4-pro': 'deepseek-flash',
 };
 
 /** model 名 → contextWindow (与 llm-router.ts PROVIDER_CONTEXT_WINDOW 等价，但按 model 粒度) */

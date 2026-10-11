@@ -65,7 +65,7 @@ export const useFrameworkStore = create<FrameworkState>()(
 
 // 3. Settings 状态 (LLM provider / API key 状态)
 interface SettingsState {
-  provider: string; // "cline:deepseek-v4-flash" | "agentai:agnes-v4" | "deepseek:v4-pro" | "openai:gpt-4o-mini" | ...
+  provider: string; // "cline:deepseek-v4-flash" | "agentai:agnes-v4" | "deepseek:deepseek-flash" | "openai:gpt-4o-mini" | ...
   hasKey: boolean;
   setProvider: (p: string) => void;
   setHasKey: (b: boolean) => void;

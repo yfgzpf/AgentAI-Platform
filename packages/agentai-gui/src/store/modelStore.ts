@@ -100,7 +100,8 @@ const OFFICIAL_CHAT_MODELS: ModelConfig[] = [
   // ⚠️ models[0] 是发给 API 的真实模型名 (ChatView → gateway 的 modelConfig.modelName), 与 label 无关;
   //    缺了它 ChatView 会回退到 label, 于是 "DeepSeek Flash (V4.1, 1M)" 被当模型名发出 → 官方接口 400
   { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 1M)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'deepseek', models: ['deepseek-flash'], contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (1.6T)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#059669', enabled: false, isBuiltIn: true, provider: 'deepseek', models: ['deepseek-v4-pro'], contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
+  // 2026-10-11: deepseek-v4-pro 条目已删除 —— 官方 2026-09-14 12:00 起下线 V4 Pro,
+  //   V4.1 Flash 在性能/费用/速度上全面超越, 请求亦全部路由到 Flash。GUI 不再展示 Pro。
   // OpenAI
   { id: 'openai-gpt4o', label: 'OpenAI GPT-4o / o1/o3-mini', baseURL: 'https://api.openai.com/v1', apiKeyEnv: 'OPENAI_API_KEY', color: '#F59E0B', enabled: false, isBuiltIn: true, provider: 'openai', models: ['gpt-4o'], contextWindow: 128000, isCommercial: true, groupLabel: 'OpenAI', modelType: 'chat' },
   // 通义千问 (阿里云)
@@ -171,7 +172,7 @@ export const FACTORY_KEY_GROUPS = [
 // 模型工厂对话模型 (实际可用, 2026-08-15 同步)
 const FACTORY_CHAT_MODELS: ModelConfig[] = [
   { id: 'factory-deepseek-v4-flash', label: 'DeepSeek V4 Flash', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['deepseek-v4-flash'], contextWindow: 64000, isCommercial: true, groupLabel: '国内·DeepSeek', modelType: 'chat' },
-  { id: 'factory-deepseek-v4-pro', label: 'DeepSeek V4 Pro', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#059669', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['deepseek-v4-pro'], contextWindow: 64000, isCommercial: true, groupLabel: '国内·DeepSeek', modelType: 'chat' },
+  // 2026-10-11: factory-deepseek-v4-pro 已删除 (pro 官方下线)
   { id: 'factory-glm-4.7', label: 'GLM 4.7', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#3B82F6', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-4.7'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
   { id: 'factory-glm-5', label: 'GLM 5', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#2563EB', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-5'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
   { id: 'factory-glm-5.1', label: 'GLM 5.1', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#1D4ED8', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-5.1'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
@@ -228,10 +229,11 @@ function isFreeModelById(id: string): boolean {
 }
 
 // ===== [P1-2] 合并自 autoModelStore: 自动模型选择 Tier 定义 =====
+// 2026-10-11: 删除 'DeepSeek Pro' 档 (deepseek-v4-pro 官方已下线)。
+// 现在最高档就是 DeepSeek Flash —— V4.1 Flash 已全面超越 V4 Pro。
 export const MODEL_TIERS = [
   { label: 'Free (Agnes 3.0)', apiProvider: 'agentai', model: 'agnes-3.0-flash', strength: 3, keywords: [] },
-  { label: 'DeepSeek Flash', apiProvider: 'deepseek', model: 'deepseek-flash', strength: 4, keywords: ['review', 'analyze', 'refactor', 'implement'] },
-  { label: 'DeepSeek Pro', apiProvider: 'deepseek', model: 'deepseek-v4-pro', strength: 8, keywords: ['architecture', 'security', 'optimization'] },
+  { label: 'DeepSeek Flash', apiProvider: 'deepseek', model: 'deepseek-flash', strength: 8, keywords: ['review', 'analyze', 'refactor', 'implement', 'architecture', 'security', 'optimization'] },
 ];
 
 /** 分析消息复杂度，推荐合适模型层级 */
@@ -247,7 +249,10 @@ export function analyzeComplexity(text: string): AnalysisResult {
   if (/审查|分析|review|analyze|explain/.test(msg)) score += 1;
 
   const isComplex = score >= 4;
-  const tier = score >= 7 ? MODEL_TIERS[2] : score >= 4 ? MODEL_TIERS[1] : MODEL_TIERS[0];
+  // 2026-10-11: 不再硬编码 MODEL_TIERS[2] —— Pro 档删除后该下标会 undefined 直接崩。
+  // 改为「取最高档 (数组末项)」, 对后续增删档位免疫。
+  const topTier = MODEL_TIERS[MODEL_TIERS.length - 1]!;
+  const tier = isComplex ? topTier : MODEL_TIERS[0]!;
 
   return {
     isComplex,

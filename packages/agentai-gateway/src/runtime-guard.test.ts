@@ -1,11 +1,18 @@
 /**
  * 运行时守卫回归测试 — 批次1「止血」(2026-10-11)
  * ==========================================================================
- * 本轮修的是 4 个**真缺口**(不是新建功能层), 每个都配行为级回归:
+ * 批次1 修的是 4 个**真缺口**(不是新建功能层), 每个都配行为级回归:
  *   改-1  _failTracker   跨迭代连续失败计数 (原每轮重建 → "失败3次换方案"从未生效)
  *   改-2  repeat_write   同目标反复写提醒 (全签名去重拦不到"同文件改来改去")
  *   改-3  tool_budget    工具调用总预算 + 独立迭代硬闸 (原上限埋在超时块里)
  *   改-4  goal anchor    冷启动从 active-plan.json 回填目标
+ *
+ * 批次2「模型切换 / 自动化让路」(2026-10-11, 见文件下半部分):
+ *   改-5  pro 下线        deepseek-v4-pro 从注册表/推荐/救援链/GUI 删除 + 别名兜底
+ *   改-6  modelLocked     用户显式选定的模型不再被跨模型替换
+ *   改-7  rescue budget   救援链 60s 预算改 180s (原来每层窗口短于正常 300s 必挂)
+ *   改-8  history-compress MAX_MSGS 比较对象修正 — user 消息不再被吞 (空回复根因)
+ *   改-9  runtime-activity 用户任务期间 cron 让路 + officecli 不再同步阻塞事件循环
  *
  * ⚠️ 诚实边界: 这里的 LLM 是打桩的, 验证的是**循环控制流**, 不是"模型真的变聪明了"。
  *    无 LLM 环境下无法端到端证明"换方案", 故行为测试断言的是可观测的守卫出口
@@ -18,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentAILoop } from './agentai-loop.js';
 import { clearLedgers } from './task-ledger.js';
+import { touchUserTask, isUserTaskActive, _resetRuntimeActivity, USER_TASK_TTL_MS } from './runtime-activity.js';
 
 vi.mock('./llm-router.js');
 vi.mock('./tool-registry.js');
@@ -25,6 +33,10 @@ vi.mock('./memory-manager.js');
 
 const LOOP_SRC = readFileSync(new URL('./agentai-loop.ts', import.meta.url), 'utf-8');
 const LEDGER_SRC = readFileSync(new URL('./task-ledger.ts', import.meta.url), 'utf-8');
+const ROUTER_SRC = readFileSync(new URL('./llm-router.ts', import.meta.url), 'utf-8');
+const AUTOMATION_SRC = readFileSync(new URL('./automation-engine.ts', import.meta.url), 'utf-8');
+const CAPS_SRC = readFileSync(new URL('./model-capabilities.ts', import.meta.url), 'utf-8');
+const CLASSIFIER_SRC = readFileSync(new URL('./model-classifier.ts', import.meta.url), 'utf-8');
 
 let WS: string;
 
@@ -321,3 +333,145 @@ describe('改-4 目标锚点回填', () => {
     expect((loop as any).ledger.getGoal()).toContain('重构支付模块');
   }, 60000);
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 批次2 (2026-10-11): 模型切换逻辑 + 自动化让路
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('改-5 pro 下线 — 注册表 / 别名兜底', () => {
+  it('classifier 与 capabilities 都不再注册 deepseek-v4-pro', () => {
+    // provider 级条目
+    expect(CLASSIFIER_SRC).not.toMatch(/id: 'deepseek:v4-pro'/);
+    expect(CAPS_SRC).not.toMatch(/id: 'deepseek-pro'/);
+    // 但保留「为什么删」的痕迹, 免得后人以为是误删又加回来
+    expect(CLASSIFIER_SRC).toMatch(/deepseek:v4-pro 已下线/);
+  });
+
+  it('推荐规则不再把任务派给 pro (改指向 v4-flash)', () => {
+    expect(CLASSIFIER_SRC).not.toMatch(/recommended: 'deepseek:v4-pro'/);
+    expect(CLASSIFIER_SRC.match(/recommended: 'deepseek:v4-flash'/g)?.length).toBe(4);
+  });
+
+  it('flash 的 complexityRange 放宽到 hard (补 pro 删除后的覆盖空洞)', () => {
+    expect(CLASSIFIER_SRC).toMatch(/complexityRange: \['ultraSimple', 'hard'\]/);
+  });
+
+  it('router 层按 provider 作用域做别名兜底 (中继厂商不能被误改成 deepseek-flash)', () => {
+    expect(ROUTER_SRC).toMatch(/const RETIRED_MODEL_ALIASES: Record<string, string>/);
+    expect(ROUTER_SRC).toMatch(/'deepseek:deepseek-v4-pro': 'deepseek-flash'/);
+    // 中继厂商目录里没有 deepseek-flash, 只能退到它们认识的 deepseek-v4-flash
+    expect(ROUTER_SRC).toMatch(/'alrc:deepseek-v4-pro': 'deepseek-v4-flash'/);
+    // 两个 modelName 计算分支都必须过别名
+    expect(ROUTER_SRC.match(/modelName = resolveRetiredModelAlias\(id,/g)?.length).toBe(2);
+  });
+
+  it('capabilities 别名表覆盖 pro (旧 id 的 contextWindow 仍可解析)', () => {
+    expect(CAPS_SRC).toMatch(/'deepseek-v4-pro': 'deepseek-flash'/);
+  });
+});
+
+describe('改-6 modelLocked — 用户显式选定的模型不被跨模型替换', () => {
+  it('loop 在 userPickedModel 时把 modelLocked 传给 router', async () => {
+    const { loop, router } = makeLoop((round) =>
+      round > 1 ? { content: '收尾', finishReason: 'stop' } : { content: 'ok', finishReason: 'stop' },
+    { userPickedModel: true, maxIterations: 3 });
+
+    await loop.run('用我选的模型跑');
+
+    const payload = (router.chat as any).mock.calls[0]?.[0];
+    expect(payload?.modelLocked, '用户指定模型必须带 modelLocked, 否则 router 会静默换成付费模型').toBe(true);
+  });
+
+  it('未指定模型时 modelLocked 为 false (保留自动降级能力)', async () => {
+    const { loop, router } = makeLoop(() => ({ content: 'ok', finishReason: 'stop' }), { maxIterations: 3 });
+
+    await loop.run('随便聊聊');
+
+    expect((router.chat as any).mock.calls[0]?.[0]?.modelLocked).toBe(false);
+  });
+
+  it('router 的跨 provider 兜底分支都被 modelLocked 关掉', () => {
+    // 免费限流 → 静默换 deepseek(付费) 是用户明确抱怨的「不该切的时候切」
+    expect(ROUTER_SRC).toMatch(/req\.modelLocked \? undefined : this\.providers\.get\('deepseek'\)/);
+    expect(ROUTER_SRC).toMatch(/req\.modelLocked \? undefined : this\.providers\.get\('dxnt'\)/);
+  });
+
+  it('loop 侧的自动切换也被 userPickedModel 拦住, 且给用户可理解的说明', () => {
+    expect(LOOP_SRC).toMatch(/this\.opts\.userPickedModel\) \{[\s\S]{0,600}?model:lock-refused/);
+    expect(LOOP_SRC).toMatch(/🔒 用户显式选定的模型不可用/);
+  });
+});
+
+describe('改-7 救援链预算', () => {
+  it('预算 180s, 且 L2「跨模型升级到 pro」已删除', () => {
+    expect(LOOP_SRC).toMatch(/const RESCUE_BUDGET_MS = 180_000/);
+    // 救援等级只剩 3 层: L1 同模型 / L3 最小工具 / L4 无工具。
+    // 计数比字符串匹配可靠 —— 注释里提到 "L2 ... pro" 是解释"为什么删", 不该被判失败。
+    expect(LOOP_SRC.match(/rescueReq\(\d/g)?.length, 'L2 若回来会多出第 4 个救援层').toBe(3);
+    expect(LOOP_SRC).not.toMatch(/✓ L2 rescue/);
+  });
+});
+
+describe('改-8 历史压缩不再吞掉 user 消息', () => {
+  it('被压掉的 user 消息原样搬回 recent (不再出现 appendOnlyLog 0 条 user)', () => {
+    // 原实现 head.slice(-10) 之外的东西全进摘要后丢弃, 用户原始诉求不再是真实 user turn
+    // → router 注入泛泛的"请继续完成之前的任务。" → 空回复 → 救援链 → 任务中断。
+    expect(LOOP_SRC).toMatch(/const headUsers = head\.filter\(m => m\.role === 'user'\)/);
+    expect(LOOP_SRC).toMatch(/const carriedUsers = headUsers\.length <= 3/);
+    expect(LOOP_SRC).toMatch(/const recent = \[\.\.\.carriedUsers, \.\.\.tail\]/);
+    // 三个重建 messages 的分支都必须用 recent (而非裸 tail)
+    expect(LOOP_SRC.match(/\.\.\.recent,/g)?.length, 'summary 分支必须带上 carriedUsers').toBe(3);
+  });
+
+  it('摘要输入仍包含 user (否则被压掉的诉求连摘要里都看不到)', () => {
+    // 实测教训: 曾把 old 改成"非 user", 直接打破 context-fidelity 的 3 条契约, 且
+    // head 全为 user 时 old.length===0 → 整段压缩被 if (old.length>0) 跳过 → 摘要彻底消失。
+    expect(LOOP_SRC).toMatch(/const old = head;/);
+    expect(LOOP_SRC).not.toMatch(/const old = head\.filter\(m => m\.role !== 'user'\)/);
+    expect(LOOP_SRC).toMatch(/if \(old\.length > 0\) \{/);
+  });
+});
+
+describe('改-9 自动化让路 + 不再同步阻塞事件循环', () => {
+  it('cron:tick 顶部按 isUserTaskActive() 让路', () => {
+    expect(AUTOMATION_SRC).toMatch(/import \{ isUserTaskActive \} from '\.\/runtime-activity\.js'/);
+    const tickIdx = AUTOMATION_SRC.indexOf("this.on('cron:tick'");
+    const guardIdx = AUTOMATION_SRC.indexOf('isUserTaskActive()');
+    expect(tickIdx, '找不到 cron:tick 处理器').toBeGreaterThan(-1);
+    expect(guardIdx, '让路判断必须在 handler 顶部').toBeGreaterThan(tickIdx);
+    // 让路 ≠ 失败: 不得走 failCount / 自动禁用路径
+    expect(AUTOMATION_SRC.slice(guardIdx, guardIdx + 200)).not.toMatch(/failCount/);
+  });
+
+  it('loop 在入口 + 每轮迭代续期心跳', () => {
+    expect(LOOP_SRC).toMatch(/import \{ touchUserTask \} from '\.\/runtime-activity\.js'/);
+    expect(LOOP_SRC.match(/touchUserTask\(\)/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('TTL 心跳语义: 过期自动失效, 无需 enter/exit 配对 (无泄漏风险)', () => {
+    vi.useFakeTimers();
+    try {
+      _resetRuntimeActivity();
+      expect(isUserTaskActive(), '未开始时应为 false').toBe(false);
+      touchUserTask();
+      expect(isUserTaskActive()).toBe(true);
+      vi.advanceTimersByTime(USER_TASK_TTL_MS - 1);
+      expect(isUserTaskActive(), 'TTL 内仍视为进行中').toBe(true);
+      vi.advanceTimersByTime(2);
+      expect(isUserTaskActive(), 'TTL 过期后自动让路结束 (无需清理代码)').toBe(false);
+    } finally {
+      _resetRuntimeActivity();
+      vi.useRealTimers();
+    }
+  });
+
+  it('officecli 不再用 execSync 阻塞事件循环', () => {
+    const TOOLS_SRC = readFileSync(new URL('./tools.ts', import.meta.url), 'utf-8');
+    const officeStart = TOOLS_SRC.indexOf('officecli: async (args)');
+    expect(officeStart).toBeGreaterThan(-1);
+    const officeBody = TOOLS_SRC.slice(officeStart, officeStart + 4000);
+    expect(officeBody, 'execSync 会冻结整个 gateway (SSE 停推/其他会话卡死)').not.toMatch(/execSync\(/);
+    expect(officeBody).toMatch(/exec\(cmd, \{/);
+  });
+});
+

@@ -3252,7 +3252,6 @@ putChain(userId, ws, chain);
   },
   officecli: async (args) => {
     try {
-      const { execSync } = await import('child_process');
       const { action, file, path, type, prop, commands, input, output, depth, json } = args;
 
       if (!action) {
@@ -3297,7 +3296,20 @@ putChain(userId, ws, chain);
       if (json) cmd += ' --json';
 
       // 执行命令
-      const result = execSync(cmd, { encoding: 'utf-8', timeout: 60000 });
+      // ═══ 2026-10-11: execSync → 异步 exec ═══
+      // execSync 会**同步阻塞整个 Node 事件循环**, 期间 gateway 无法处理任何请求
+      // (流式 SSE 停推、其他会话全卡住) —— 用户反馈的「任务老是卡住 不流畅」的
+      // 结构性来源之一 (同批次 run_command / run_shell_command 已是异步, 唯剩本处)。
+      // 行为保持不变: 非零退出仍视为失败; 只返回 stdout —— 下方有 JSON.parse(result)
+      // 分支, 混入 stderr 会直接解析失败。
+      const { exec } = await import('child_process');
+      const result = await new Promise<string>((resolve, reject) => {
+        exec(cmd, { encoding: 'utf-8', timeout: 60000, maxBuffer: 10 * 1024 * 1024, windowsHide: true },
+          (err: any, stdout: string) => {
+            if (err) { reject(err); return; }
+            resolve(String(stdout ?? ''));
+          });
+      });
 
       // 尝试解析 JSON 输出
       try {

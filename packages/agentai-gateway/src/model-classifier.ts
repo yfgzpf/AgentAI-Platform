@@ -89,15 +89,24 @@ export const MODELS: ModelMeta[] = [
 
   // --- DeepSeek (付费, 强力推理) ---
   // ═══ 2026-09-05 校准 (官方 api-docs.deepseek.com) ═══
-  // V4-Flash/Pro 官方均 1M 上下文; 8/16 起 peak/off-peak 计价。
-  // 成本 = off-peak cache-miss USD/1K (flash 0.00022/0.00066, pro 0.00066/0.00198)。
+  // V4-Flash 官方 1M 上下文; 8/16 起 peak/off-peak 计价。
+  // 成本 = off-peak cache-miss USD/1K (flash 0.00022/0.00066)。
   // 同步改动: model-capabilities.ts / routes/chat.ts / GUI modelStore.ts
+  //
+  // ═══ 2026-10-11: deepseek:v4-pro 已下线, 条目删除 ═══
+  // 官方公告: 北京时间 2026-09-14 12:00 起, deepseek-v4-pro 请求全部路由到 V4.1 Flash,
+  // 且 V4.1 Flash 在性能/费用/速度/总用时上全面超越 V4 Pro。
+  // 保留 pro 条目会让推荐规则/救援链继续派活给一个必被降级到 flash 的别名, 白烧一次转发。
+  // 旧配置里的 pro 引用由 llm-router 别名 (deepseek-v4-pro → deepseek-flash) + model-capabilities
+  // LEGACY_MODEL_ALIASES 兜底, 不会报错。
   {
     id: 'deepseek:v4-flash',
     label: 'DS Flash',
     provider: 'deepseek',
     subModel: 'deepseek-flash',   // 2026-10-11: 官方 V4.1-Flash 起模型名改为 deepseek-flash
-    complexityRange: ['ultraSimple', 'complex'],
+    // 2026-10-11: 上限由 'complex' 放宽到 'hard' —— pro 删除后 hard 段无人覆盖,
+    // 不收口会让 hard 任务落不到 deepseek 任何模型。
+    complexityRange: ['ultraSimple', 'hard'],
     maxContext: 1_000_000,
     costPer1kInput: 0.00022,
     costPer1kOutput: 0.00066,
@@ -110,28 +119,6 @@ export const MODELS: ModelMeta[] = [
     reasoningLevel: 'enhanced',
     speedTier: 'fast',
     maxOutputTokens: 8192,
-    supportsStreaming: true,
-    supportsThinking: true,
-    supportsJsonMode: true,
-  },
-  {
-    id: 'deepseek:v4-pro',
-    label: 'DS Pro',
-    provider: 'deepseek',
-    subModel: 'deepseek-v4-pro',
-    complexityRange: ['complex', 'hard'],
-    maxContext: 1_000_000,
-    costPer1kInput: 0.00066,
-    costPer1kOutput: 0.00198,
-    isFree: false,
-    supportsTools: true,
-    // 2026-10-11 实测更正: 同一 vision 探针下 pro 返回 200 但自述"image unsupported / cannot see image",
-    // 即只接受结构不真正读图。原值 true 会让 needsVision 路由把图片请求错误地派给 pro。
-    supportsImages: false,
-    priority: 4,
-    reasoningLevel: 'advanced',
-    speedTier: 'thorough',
-    maxOutputTokens: 16384,
     supportsStreaming: true,
     supportsThinking: true,
     supportsJsonMode: true,
@@ -309,17 +296,11 @@ export const MODELS: ModelMeta[] = [
   // 注: 服务端按令牌分组分配模型, 当前密钥分配的是"国内模型"分组
   {
     id: 'alrc:deepseek-v4-flash', label: 'DeepSeek V4 Flash', provider: 'alrc', subModel: 'deepseek-v4-flash',
-    complexityRange: ['simple', 'complex'], maxContext: 64_000,
+    // 2026-10-11: pro 条目删除后上限放宽到 hard, 避免 alrc 分组内 hard 任务无 deepseek 可选。
+    complexityRange: ['simple', 'hard'], maxContext: 64_000,
     costPer1kInput: 0.0000345, costPer1kOutput: 0.000104, isFree: false,
     supportsTools: true, supportsImages: false, priority: 5,
     reasoningLevel: 'enhanced', speedTier: 'fast', maxOutputTokens: 8192,
-  },
-  {
-    id: 'alrc:deepseek-v4-pro', label: 'DeepSeek V4 Pro', provider: 'alrc', subModel: 'deepseek-v4-pro',
-    complexityRange: ['medium', 'hard'], maxContext: 64_000,
-    costPer1kInput: 0.0001035, costPer1kOutput: 0.000311, isFree: false,
-    supportsTools: true, supportsImages: false, priority: 4,
-    reasoningLevel: 'advanced', speedTier: 'balanced', maxOutputTokens: 8192,
   },
   // 智谱 GLM
   {
@@ -933,27 +914,33 @@ export function getBestFreeModel(forTools: boolean, forImages: boolean): string 
 
 // ===== 智能模型推荐: 复杂任务建议切换强模型 =====
 
-/** 需要强模型的关键词模式 */
+/**
+ * 需要强模型的关键词模式
+ * 2026-10-11: 推荐目标由 deepseek:v4-pro 改为 deepseek:v4-flash。
+ * 注意: 以下字段名 (needsPro / getProModelKeyInfo / PRO_MODEL_PATTERNS) 是历史命名,
+ * 语义已变为「需要强模型」——V4.1 Flash 就是当前 deepseek 唯一的强模型。
+ * 不改名是为了避免动到 export 出去的类型/API (GUI 侧有引用), 属有意为之。
+ */
 const PRO_MODEL_PATTERNS: { pattern: RegExp; label: string; recommended: string }[] = [
   {
     pattern: /审查.*代码|代码.*审查|code\s*review|安全.*审查|漏洞.*扫描/i,
     label: '代码审查',
-    recommended: 'deepseek:v4-pro',
+    recommended: 'deepseek:v4-flash',
   },
   {
     pattern: /架构.*设计|系统.*设计|design.*architecture|重构.*方案|性能.*优化/i,
     label: '架构/性能优化',
-    recommended: 'deepseek:v4-pro',
+    recommended: 'deepseek:v4-flash',
   },
   {
     pattern: /安全.*分析|漏洞.*分析|security.*analy|渗透.*测试/i,
     label: '安全分析',
-    recommended: 'deepseek:v4-pro',
+    recommended: 'deepseek:v4-flash',
   },
   {
     pattern: /复杂.*bug|疑难.*问题|深度.*调试|complex.*bug/i,
     label: '复杂Bug调试',
-    recommended: 'deepseek:v4-pro',
+    recommended: 'deepseek:v4-flash',
   },
 ];
 
@@ -989,7 +976,7 @@ export function recommendModel(message: string, currentModelId: string): ModelRe
         needsPro: true,
         reason: `当前任务「${label}」需要更强的推理能力`,
         recommendedModel: recommended,
-        recommendedLabel: rec?.label || 'DeepSeek V4 Pro',
+        recommendedLabel: rec?.label || 'DeepSeek V4.1 Flash',
         currentIsFree,
       };
     }
@@ -1003,7 +990,7 @@ export function recommendModel(message: string, currentModelId: string): ModelRe
  */
 export function getProModelKeyInfo(modelId: string): { envVar: string; provider: string; signupUrl: string } | null {
   const info: Record<string, { envVar: string; provider: string; signupUrl: string }> = {
-    'deepseek:v4-pro': { envVar: 'DEEPSEEK_API_KEY', provider: 'deepseek', signupUrl: 'https://platform.deepseek.com' },
+    'deepseek:v4-flash': { envVar: 'DEEPSEEK_API_KEY', provider: 'deepseek', signupUrl: 'https://platform.deepseek.com' },
   };
   return info[modelId] || null;
 }
@@ -1023,7 +1010,8 @@ export const COMMERCIAL_MODEL_TEMPLATES: CommercialModelTemplate[] = [
     id: 'deepseek',
     label: 'DeepSeek',
     baseURL: 'https://api.deepseek.com/v1',
-    models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    // 2026-10-11: pro 已下线; 且官方模型名已改为 deepseek-flash (旧名 deepseek-v4-flash 仍走别名)
+    models: ['deepseek-flash'],
     docsUrl: 'https://platform.deepseek.com/api-keys',
     color: '#10B981',
   },

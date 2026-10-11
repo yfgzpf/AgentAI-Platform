@@ -103,7 +103,8 @@ describe('一致性验证 (与 chat.ts 原有逻辑)', () => {
     const expectedModels = [
       { id: 'agentai', provider: 'agnes', subModel: 'agnes-2.5-flash' }, // agentai 映射到 agnes，有 subModel
       { id: 'deepseek', provider: 'deepseek', subModel: 'deepseek-flash' },
-      { id: 'deepseek-pro', provider: 'deepseek', subModel: 'deepseek-v4-pro' },
+      // 2026-10-11: pro 官方已下线 → 'deepseek-pro' 变为别名, subModel 也指向 deepseek-flash
+      { id: 'deepseek-pro', provider: 'deepseek', subModel: 'deepseek-flash' },
       { id: 'openai', provider: 'openai', hasSubModel: false },
       { id: 'zhipu', provider: 'zhipu', subModel: 'glm-4.7-flash' },
     ];

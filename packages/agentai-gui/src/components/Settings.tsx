@@ -242,14 +242,15 @@ interface ModelTemplate {
   docsUrl: string;
   color: string;
   contextWindow: number;
-  /** 在 modelStore 中与该模板共用同一密钥的其他 model id (例: deepseek-flash → deepseek-v4-pro) */
+  /** 在 modelStore 中与该模板共用同一密钥的其他 model id (例: deepseek → deepseek-flash) */
   extraModelIds?: string[];
 }
 
 const MODEL_TEMPLATES: ModelTemplate[] = [
-  // id 是 provider 名 ('deepseek' → DEEPSEEK_API_KEY), 而 store 里的模型 id 是 'deepseek-flash'/'deepseek-v4-pro',
+  // id 是 provider 名 ('deepseek' → DEEPSEEK_API_KEY), 而 store 里的模型 id 是 'deepseek-flash',
   // 两者不再同名, 因此必须靠 extraModelIds 才能把模型置为 enabled —— 只写 id 会静默失效。
-  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-flash', 'deepseek-v4-pro'], docsUrl: 'https://platform.deepseek.com/api-keys', color: 'var(--success)', contextWindow: 1000000, extraModelIds: ['deepseek-flash', 'deepseek-v4-pro'] },
+  // 2026-10-11: deepseek-v4-pro 已下线 (官方 2026-09-14 12:00 起全部路由到 V4.1 Flash), 从列表移除。
+  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-flash'], docsUrl: 'https://platform.deepseek.com/api-keys', color: 'var(--success)', contextWindow: 1000000, extraModelIds: ['deepseek-flash'] },
   { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'], docsUrl: 'https://platform.openai.com/api-keys', color: '#F59E0B', contextWindow: 128000 },
   { id: 'qwen', label: '通义千问 (阿里云)', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-turbo', 'qwen-plus', 'qwen-max'], docsUrl: 'https://help.aliyun.com/zh/dashscope', color: '#FF6A00', contextWindow: 128000 },
   { id: 'moonshot', label: '月之暗面 Moonshot', baseURL: 'https://api.moonshot.cn/v1', models: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k3'], docsUrl: 'https://platform.moonshot.cn/console/api-keys', color: '#6466F1', contextWindow: 128000 },
@@ -277,7 +278,7 @@ interface ALRCModel {
 const FACTORY_MODEL_LIST: ALRCModel[] = [
   // DeepSeek
   { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1) ⭐', color: 'var(--success)', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', color: '#059669', priceIn: '$1.035', priceOut: '$3.11', level: '专业版' },
+  // 2026-10-11: deepseek-v4-pro 已下线, 从计费列表移除
   // 智谱 GLM
   { id: 'glm-4.7', label: 'GLM 4.7', color: '#3B82F6', priceIn: '$0.103', priceOut: '$0.31', level: '智谱' },
   { id: 'glm-5', label: 'GLM 5', color: '#2563EB', priceIn: '$0.207', priceOut: '$0.62', level: '智谱' },
@@ -1240,7 +1241,7 @@ return (
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <Space>
                         <ThunderboltOutlined style={{ color: 'var(--warning)' }} />
-                        <Text strong>DeepSeek V4 Pro</Text>
+                        <Text strong>DeepSeek Flash (V4.1)</Text>
                         <Tag color="orange">付费</Tag>
                         <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>强力推理, 适合代码审查/架构/安全</span>
                       </Space>
@@ -1257,7 +1258,7 @@ return (
                     </div>
                   </div>
                   <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginTop: 4 }}>
-                    💡 提示: 配置 DeepSeek Key 后, 当你执行代码审查、架构设计、安全分析等任务时, AI 会自动建议切换到 V4 Pro。你也可以随时在模型选择器中手动切换。
+                    💡 提示: 配置 DeepSeek Key 后, 当你执行代码审查、架构设计、安全分析等任务时, AI 会自动建议切换到 DeepSeek Flash (V4.1)。你也可以随时在模型选择器中手动切换。
                   </div>
                 </Space>
               </Card>

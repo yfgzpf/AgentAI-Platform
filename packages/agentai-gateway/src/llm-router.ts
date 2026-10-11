@@ -49,6 +49,38 @@ export const FREE_PROVIDERS = new Set([
 export const DEEPSEEK_FLASH_MODEL = 'deepseek-flash';
 
 /**
+ * 已下线模型名 → 当前有效模型名 (provider 作用域)。
+ *
+ * 2026-10-11: DeepSeek 官方公告 —— 北京时间 2026-09-14 12:00 起, `deepseek-v4-pro`
+ * 的请求全部路由到 V4.1 Flash。本地做同样映射, 使旧配置 / 旧会话 / 旧持久化数据里
+ * 残留的 pro 名字在**发出请求前**被静默改写, 不报 400
+ * ("The supported API model names are deepseek-flash, ...")。
+ *
+ * ⚠️ 必须按 provider 分作用域: 官方端点改名了, 但中继厂商 (alrc/factory/sensenova)
+ * 的上游目录里**没有 `deepseek-flash` 这个名字**, 只认自己的 `deepseek-v4-flash`。
+ * 若全局替换会把 alrc 的 flash 请求打成不存在的模型。
+ */
+const RETIRED_MODEL_ALIASES: Record<string, string> = {
+  // 官方 deepseek 端点: pro 下线 + flash 由 deepseek-v4-flash 更名为 deepseek-flash
+  'deepseek:deepseek-v4-pro': 'deepseek-flash',
+  'deepseek:deepseek-v4-flash': 'deepseek-flash',
+  'deepseek:deepseek-v4-flash-vision-exp': 'deepseek-flash',
+  // 中继厂商: 只把 pro 退到它们已知的 deepseek-v4-flash (不要改成 deepseek-flash)
+  'alrc:deepseek-v4-pro': 'deepseek-v4-flash',
+  'factory:deepseek-v4-pro': 'deepseek-v4-flash',
+  'sensenova:deepseek-v4-pro': 'deepseek-v4-flash',
+};
+
+/** 按 provider 作用域解析已下线模型名; 未命中返回原名。 */
+function resolveRetiredModelAlias(providerId: string, name: string): string {
+  const target = RETIRED_MODEL_ALIASES[`${providerId}:${name}`];
+  if (target && target !== name) {
+    console.info(`[router] 🔁 已下线模型名别名: ${providerId}:${name} → ${target}`);
+  }
+  return target || name;
+}
+
+/**
  * 判定 provider/model id 是否属于免费档 (含 agnes 各免费别名)。
  *
  * ⚠️ 2026-10-11 修复: 原实现用 `id.startsWith('agnes')` 做兜底, 会把
@@ -115,6 +147,13 @@ onThinking?: (delta: string) => void;
   modelConfig?: { baseURL: string; modelName: string; provider: string };
   /** 用户中断信号 (与 fetch 超时信号合并, 实现用户点中断时取消 in-flight 请求) */
   abortSignal?: AbortSignal;
+  /**
+   * 2026-10-11 新增: 用户是否**显式选定了模型** (GUI 选择器选的那个)。
+   * 为 true 时 router 不得跨 provider 换模型兜底 —— 特别是「闪电交替:
+   * 免费全限流 → 尝试 DeepSeek」(见 tryProviders)。用户选什么就用什么,
+   * 失败交由 agentai-loop 如实报错, 不静默替他换成 (可能是付费的) 别的模型。
+   */
+  modelLocked?: boolean;
 }
 
 export interface ChatResponse {
@@ -766,7 +805,10 @@ factory: 'FACTORY_CHAT_KEY',
     }
 
     // === 闪电交替: 免费全限流 → 尝试 DeepSeek (如果有 API Key) ===
-    const deepseekProvider = this.providers.get('deepseek');
+    // 2026-10-11: 用户显式选定的模型不参与跨 provider 替换 (req.modelLocked)。
+    // 原行为: 选了免费 agnes-3.0-flash → 免费档全限流 → 静默改打付费 deepseek-flash,
+    // 用户侧只看到"我选的模型怎么变成 deepseek 了"。现在该情况直接判定不可用, 由上层如实报错。
+    const deepseekProvider = req.modelLocked ? undefined : this.providers.get('deepseek');
     if (deepseekProvider && process.env.DEEPSEEK_API_KEY) {
       if (this.isRateLimited(deepseekProvider)) {
         const wait = Math.min((deepseekProvider.rateLimitCooldownUntil ?? Date.now()) - Date.now(), 3000);
@@ -786,7 +828,8 @@ factory: 'FACTORY_CHAT_KEY',
     }
 
     // === DXNT 紧急兜底 (免费100次/天) ===
-    const dxntProvider = this.providers.get('dxnt');
+    // 2026-10-11: 同上, modelLocked 时不做跨 provider 替换
+    const dxntProvider = req.modelLocked ? undefined : this.providers.get('dxnt');
     if (dxntProvider && process.env.DXNT_API_KEY) {
       if (this.isRateLimited(dxntProvider)) {
         const wait = Math.min((dxntProvider.rateLimitCooldownUntil ?? Date.now()) - Date.now(), 3000);
@@ -1438,7 +1481,7 @@ factory: 'FACTORY_CHAT_KEY',
       const baseEnv = `${id.toUpperCase()}_BASE_URL`;
       apiKey = process.env[keyEnv];
       baseUrl = ((req as any).modelConfig?.baseURL || process.env[baseEnv] || '').replace(/\/+$/, '');
-      modelName = subModel || (req as any).modelConfig?.modelName || id;
+      modelName = resolveRetiredModelAlias(id, subModel || (req as any).modelConfig?.modelName || id);
 
       if (!apiKey || !baseUrl) {
         const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
@@ -1502,7 +1545,7 @@ factory: 'FACTORY_CHAT_KEY',
       } else {
         baseUrl = rawUrl;
       }
-      modelName = subModel || process.env[cfg.modelEnv] || cfg.defaultModel;
+      modelName = resolveRetiredModelAlias(id, subModel || process.env[cfg.modelEnv] || cfg.defaultModel);
       
       // 调试日志：显示配置详情（隐藏密钥）
 if (id === 'sensenova') {

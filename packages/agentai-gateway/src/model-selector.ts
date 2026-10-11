@@ -28,10 +28,13 @@ export const BUILTIN_MODELS: Record<string, ModelConfig> = {
   // 2026-10-11: 官方 V4.1-Flash 起, flash 档模型名改为 `deepseek-flash`
   // (旧名 deepseek-v4-flash 官方仅"暂时"兼容路由 → 保留为别名, 指向同一 subModel)
   'deepseek': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
-  'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  // 2026-10-11: V4 Pro 官方已下线 (2026-09-14 12:00 起请求全部路由到 V4.1 Flash)。
+  // 两个 pro id 保留为**别名**指向 deepseek-flash —— 旧配置/旧会话里残留的 pro 引用
+  // 走这里静默降级, 与官方行为一致, 不报错。
+  'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 原 Pro 别名)' },
   'deepseek-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
   'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
-  'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 原 Pro 别名)' },
   // OpenAI
   'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
   'openai-gpt4o': { provider: 'openai', label: 'OpenAI GPT-4o' },
@@ -205,15 +208,11 @@ export function selectModelByPreference(
   
   if (isValidModel(preferred)) {
     const config = getModelConfig(preferred)!;
-    const msg = (message || '').toLowerCase();
-    const isDeepReason = /架构|设计模式|性能优化|并发|安全|漏洞|内存泄漏|重构|复杂|体系|设计|security|vulnerability|memory leak|race|deadlock/i.test(msg);
-    
-    let subModel = config.subModel;
-    if (preferred === 'deepseek' && isDeepReason) {
-      subModel = 'deepseek-v4-pro';
-    }
-    
-    return { ...config, subModel, fallback: false, requested: preferred };
+    // 2026-10-11: 删除「复杂任务自动升级到 deepseek-v4-pro」的覆盖。
+    // 两条理由: ① pro 官方已下线, 升级目标不存在; ② 用户显式选定的模型不再被自动换成别的
+    // (用户报「选 4.1 却跑到 pro 频繁中断」的直接来源之一)。
+    // deepseek 现在只有 deepseek-flash 一档, 它就是该 provider 的强模型, 无需再升。
+    return { ...config, fallback: false, requested: preferred };
   }
   
   return { ...BUILTIN_MODELS['agentai']!, fallback: true, requested: preferred };

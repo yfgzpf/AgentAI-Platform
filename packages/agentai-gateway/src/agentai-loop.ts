@@ -64,6 +64,7 @@ import { selfManager } from './self-manager.js';
 // sanitizeToolMessages 已统一使用独立模块, 移除 agentai-loop.ts 内的重复实现。
 import { SystemDirectiveManager } from './system-directive-manager.js';
 import { getLedger, type TaskLedger } from './task-ledger.js';
+import { touchUserTask } from './runtime-activity.js';
 import { extractDecisions } from './decision-extractor.js';
 import { consolidateSystemInjections, sanitizeToolMessages } from './message-utils.js';
 
@@ -2043,6 +2044,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
   this._failTracker.clear();   // 2026-10-11: 失败计数按任务隔离 (不跨 run 累积)
   this._toolCallCount = 0;     // 2026-10-11: 工具调用预算按任务归零
   this._iterCapWarned = false; // 2026-10-11: 迭代上限软着陆标记按任务归零
+  // 2026-10-11: 标记「用户任务开始」→ 自动化引擎的 cron:tick 期间让路 (runtime-activity.ts)
+  touchUserTask();
   logger.debug(`[loop] task isolation: _taskType=${this._taskType}, _forceSkill cleared`);
 
   // ═══ 任务自监督系统: 启动计时器 + 重置统计 ═══
@@ -2796,6 +2799,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
       }
       this.iteration++;
       this.emit('loop:iteration', { n: this.iteration });
+      // 2026-10-11: 每轮续期「用户任务进行中」心跳 → 自动化 cron 持续让路 (见 runtime-activity.ts)
+      touchUserTask();
 
       // ═══ 2026-10-11 独立迭代硬闸 (G4) ═══
       // 之前唯一的迭代上限判断埋在下面的超时块内 —— 没超时 = 无上限。
@@ -3216,13 +3221,41 @@ if (isComplexTask) {
        const estimatedTokens = messages.reduce((sum: number, m) =>
          sum + (typeof m.content === 'string' ? m.content.length / 4 : 0), 0);
        const MAX_TOKENS_EST = (this as any)._contextCompressThreshold || 50_000;
+      // ═══ 2026-10-11 记录事实 (不改判据) ═══
+      // messages.length 里包含 immutablePrefix 的 36+ 条 system 消息 (实测 49 处 systemMsgs.push),
+      // 所以 `messages.length > MAX_MSGS(30)` 在生产环境**每轮都为真** —— 即"每轮都压缩"是既有实际行为,
+      // 不是偶发。曾试图把判据改成非 system 计数, 结果压缩几乎不再触发, 直接打破了
+      // context-fidelity 的 3 条契约 (摘要必须存活)。故此处**刻意保留原判据**。
+      //
+      // 用户消息消失的真正根因不在触发频率, 而在压缩时把 user 消息整个丢掉:
+      //   原始消息是最早的一条 non-system → 被扫进 old 后丢弃, 只剩摘要里一段文字,
+      //   不再是真实 user turn → appendOnlyLog 里 0 条 user → llm-router 兜底塞一句
+      //   "请继续完成之前的任务。" → 模型不知道要干什么 → 空回复 → 救援链 → 任务中断。
+      //   [history-compress] 50 → 49 msgs (users:0) / has 0 user msgs / Empty LLM response (iter=7)
+      // 修复见下方 carriedUsers (原样保留真实 user turn) —— 与用户消息是否被压缩无关,
+      // 而是"被压缩后是否还活着"。
       const MAX_MSGS = 30;
       if (estimatedTokens > MAX_TOKENS_EST || messages.length > MAX_MSGS) {
         const systemMsgs = messages.filter(m => m.role === 'system');
         const nonSystem = messages.filter(m => m.role !== 'system');
         const keepRecent = 10;
-        const recent = nonSystem.slice(-keepRecent);
-        const old = nonSystem.slice(0, -keepRecent);
+        const tail = nonSystem.slice(-keepRecent);
+        const head = nonSystem.slice(0, -keepRecent);
+        // ═══ 2026-10-11 P0: 双重保险保证 user 诉求不丢 ═══
+        // ① 被压掉的旧 user 消息**原样搬回** recent (最多 3 条) —— 保证 appendOnlyLog
+        //    重写后仍有真实 user turn, 不再出现「0 user msgs → router 注入泛泛的请继续」。
+        //    上限 3 条 (任务锚点第一条 + 最近 2 条追加要求): 全钉住会让 30+ 轮的会话
+        //    永远满足压缩条件, 反而每轮都触发压缩。
+        // ② 摘要的输入仍是整个 head (含 user) —— 超出的旧 user 请求以文字浓缩保留在
+        //    「## 用户请求」段; 若把 user 排除在摘要输入之外, 被压掉的诉求在摘要里也看不到。
+        //    (实测教训: 曾把 old 改成"非 user", 直接打破 context-fidelity 的 3 条契约,
+        //     且 head 全为 user 时 old.length===0 → 整段压缩被跳过 → 摘要彻底消失)
+        const headUsers = head.filter(m => m.role === 'user');
+        const carriedUsers = headUsers.length <= 3
+          ? headUsers
+          : [headUsers[0]!, ...headUsers.slice(-2)];
+        const recent = [...carriedUsers, ...tail];
+        const old = head;
 
         if (old.length > 0) {
           // 结构化压缩: 按类别提取关键信息
@@ -3425,6 +3458,8 @@ if (isComplexTask) {
         stream: true,
         modelConfig: this.opts.modelConfig,
         abortSignal: this.opts.abortSignal, // 用户中断信号传给 router → fetch
+        // 2026-10-11: 用户显式选定的模型 → router 层禁止跨 provider 换模型兜底
+        modelLocked: this.opts.userPickedModel === true,
         onDelta: this._createThrottledOnDelta(),
         onThinking: (delta: string) => {
           // 推理内容直接通过专用回调发送, 不再污染 onDelta
@@ -3570,7 +3605,8 @@ if (isComplexTask) {
     } catch { /* hook optional */ }
       console.log('[run:chat] router.chat returned, provider=', res?.provider, 'contentLen=', res?.content?.length);
 
-      // ═══ 终极重试链: flash 空 → Pro → 最小工具 → 无工具 → 放弃 ═══
+      // ═══ 终极重试链: 同模型空 → 最小工具 → 无工具 → 放弃 ═══
+      // 2026-10-11: 原 L2「跨模型升级到 deepseek-v4-pro」已删除 (pro 官方下线 + 模型锁定策略)。
       // 对标 WorkBuddy: 任何模型都可能在复杂场景下空返, 但系统不应中断任务
       // ═══ 2026-10-05 P0 修复: 工具调用响应不得被误判为"空响应" ═══
       // OpenAI 兼容协议下，assistant 发起 tool_calls 时 content 必然是 null/''
@@ -3597,11 +3633,18 @@ if (isComplexTask) {
           return msgs;
         };
         
-        // ═══ 2026-09-04 P0 流畅度修复: 救援链总预算 60s + 每层短超时 ═══
-        // 原 L1-L4 每层 router.chat 内部还有 MAX_RETRY=3(1s/2s/4s 退避) + 单请求最长 5 分钟超时,
-        // 嵌套相乘后单轮最坏数分钟~十几分钟 → 免费模型一抖动, 体验从"秒级"恶化到"分钟级"。
-        // 现在: 每层 10-20s 短超时; 整条链 60s 封顶, 预算耗尽即走兜底回复。
-        const RESCUE_BUDGET_MS = 60_000;
+        // ═══ 2026-09-04 P0 流畅度修复 / 2026-10-11 重新校准 ═══
+        // 原 L1-L4 每层 router.chat 内部还有 3 次重试(1s/2s 退避) + 单请求最长 5 分钟超时,
+        // 嵌套相乘后单轮最坏数分钟 → 免费模型一抖动, 体验从"秒级"恶化到"分钟级"。
+        // 2026-09-04 把每层压到 10-20s。但那次压过头了 —— 实测 (2026-10-11 日志):
+        //   L1 20s → L2 15s → L3 12s → L4 10s, 17:18:32 → 17:19:05 全灭, 33s 全烧在
+        //   "注定超时"的重试上, 最后返回"当前 AI 模型暂时繁忙"。
+        // 结构性矛盾: 同一模型正常路径给 300s (llm-router FLAKY 之外的默认),
+        //   救援路径只给 10-20s → 一个"慢但能回"的模型 (带 313 个工具定义) 永远救不回来。
+        // 现在: 每层预算 ≥ 3× 单次可接受耗时 (router 内部 3 次重试共用同一个信号,
+        //   信号一次到期后续两次会瞬时失败 → 每层窗口必须按"覆盖全部重试"给)。
+        //   总结算 180s 封顶, 比正常路径宽松, 但绝不再是"比正常还苛刻"。
+        const RESCUE_BUDGET_MS = 180_000;
         const _rescueStartAt = Date.now();
         const rescueReq = (levelMaxMs: number): typeof req | null => {
           const left = RESCUE_BUDGET_MS - (Date.now() - _rescueStartAt);
@@ -3622,7 +3665,7 @@ if (isComplexTask) {
         }
         this.directives.add('empty_response', '[SYSTEM] 上一轮回复为空，请重新回复。', 'high');
         req.messages = rebuildMessages();
-        const l1Req = rescueReq(20_000);
+        const l1Req = rescueReq(60_000);
         let retryRes = l1Req ? await this.router.chat(l1Req) : null;
         if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
           console.log(`[loop] ✓ L1 rescue (same model)`);
@@ -3630,22 +3673,14 @@ if (isComplexTask) {
           lastResponse = retryRes; continue;
         }
 
-        // Level 2: 切 deepseek-v4-pro (重建消息)
-        if (this.opts.model === 'deepseek' && this.opts.modelName !== 'deepseek-v4-pro') {
-          logger.warn(`[loop] L2 rescue: deepseek-v4-pro`);
-          const orig = this.opts.modelName;
-          this.opts.modelName = 'deepseek-v4-pro';
-          req.model = this.opts.model as any;
-          req.subModel = 'deepseek-v4-pro';
-          req.messages = rebuildMessages();
-          const l2Req = rescueReq(15_000);
-          retryRes = l2Req ? await this.router.chat(l2Req) : null;
-          this.opts.modelName = orig;
-          if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
-            console.log(`[loop] ✓ L2 rescue (pro)`);
-            lastResponse = retryRes; continue;
-          }
-        }
+        // ═══ 2026-10-11: L2「跨模型升级到 deepseek-v4-pro」已删除 ═══
+        // 两条理由:
+        //  1) deepseek-v4-pro 官方已下线 (2026-09-14 12:00 起全部路由到 V4.1 Flash),
+        //     本次已从模型列表/注册表/推荐规则中一并移除。继续拿它当救援目标是打空气:
+        //     实测日志 17:18:32 起连打 3×3 次全部 timeout, 白烧 60s 预算。
+        //  2) 用户显式选定的模型不再被跨模型替换 (见下方 :3706 自动切换门控 + router
+        //     req.modelLocked)。救援只允许「同模型 + 换参数/换工具集」。
+        // 原逻辑见 git 历史 (c5c6151 之前: agentai-loop.ts:3633-3648)。
 
         // Level 3: 最小工具集 (只发核心 8 工具 — 任何模型都能处理)
         if (req.tools && req.tools.length > 8) {
@@ -3654,7 +3689,7 @@ if (isComplexTask) {
           const origTools = req.tools;
           req.tools = origTools.filter(t => coreNames.includes(t.name));
           req.messages = rebuildMessages();
-          const l3Req = rescueReq(12_000);
+          const l3Req = rescueReq(60_000);
           retryRes = l3Req ? await this.router.chat(l3Req) : null;
           req.tools = origTools;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
@@ -3681,7 +3716,7 @@ if (isComplexTask) {
             req.messages.push({ role: 'user', content: fallback });
             logger.warn(`[L4-rescue] 兜底注入 user 消息`);
           }
-          const l4Req = rescueReq(10_000);
+          const l4Req = rescueReq(45_000);
           retryRes = l4Req ? await this.router.chat(l4Req) : null;
           req.tools = origTools;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
@@ -3703,6 +3738,24 @@ if (isComplexTask) {
 
       // 🎯 智能模型切换: 检测连续熔断，自动切换模型
       // 路由器内部正常降级 (如 deepseek→agentai 成功响应) 不算熔断
+      // ═══ 2026-10-11: 用户显式选定的模型不再被自动更换 ═══
+      // 原逻辑在全部 provider 不可用时直接改 this.opts.model, 而 switchModelMap 的兜底值是
+      // DEEPSEEK_FLASH_MODEL → 用户选了免费 agnes-3.0-flash 会被静默换成付费 deepseek。
+      // 这正是"选了 A 结果跑到 B"的现场 (用户实机反馈: 3.0flash 被切到 deepseek, 任务随之中断)。
+      // 现在: 显式选定的模型失败 → 如实报错并给出可选动作, 不替用户做决定。
+      if (res?.provider === 'none' && this.opts.userPickedModel) {
+        const sel = `${this.opts.model}${this.opts.modelName ? ':' + this.opts.modelName : ''}`;
+        logger.warn(`[loop] 🔒 用户显式选定的模型不可用, 按锁定策略不自动切换 (model=${sel})`);
+        this.emit('model:lock-refused', { model: this.opts.model, subModel: this.opts.modelName || null, reason: '所选模型全部 provider 不可用' });
+        return {
+          content: `你选定的模型 **${sel}** 当前不可用 (上游无响应 / 限流中 / 密钥失效)。\n\n`
+            + `按当前设置, 系统不会自动换成别的模型。可选: ①稍后重试 ②在模型选择器里换一个模型 ③检查该 provider 的 API Key。`,
+          provider: 'none' as any,
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+          iterations: this.iteration,
+          durationMs: Date.now() - startedAt,
+        };
+      }
       if (res?.provider === 'none') {
         this.trippedCount++;
         console.log(`[smart-switch] 全部 provider 不可用, 熔断计数: ${this.trippedCount}/3`);

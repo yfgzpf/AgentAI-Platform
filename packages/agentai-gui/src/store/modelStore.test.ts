@@ -20,12 +20,14 @@ describe('analyzeComplexity', () => {
     expect(r.suggestedTier).toBeDefined();
   });
 
-  it('架构/安全类关键词 → 高分并推荐 Pro 层', () => {
+  it('架构/安全类关键词 → 高分并推荐最高档 (DeepSeek Flash)', () => {
     const long = '背景与需求描述。'.repeat(60);
     const r = analyzeComplexity(`请帮我做系统架构设计，关注安全与并发性能。${long}`);
     expect(r.score).toBeGreaterThanOrEqual(7);
     expect(r.isComplex).toBe(true);
-    expect(r.suggestedTier?.label).toContain('Pro');
+    // 2026-10-11: 原断言 'Pro' —— deepseek-v4-pro 官方下线后已从 MODEL_TIERS 删除,
+    // 最高档改为 DeepSeek Flash (V4.1 Flash 性能全面超越 V4 Pro)。
+    expect(r.suggestedTier?.label).toContain('DeepSeek Flash');
   });
 
   it('仅架构关键词（短消息）→ +3 分但未达复杂阈值', () => {
@@ -71,14 +73,15 @@ describe('getImageEditModelIds', () => {
  * -------------------------------------------------
  * ChatView 把 `models[0]` 当作真实 API 模型名透传给 gateway; 若条目缺 models,
  * 它会回退到显示 label (如 "DeepSeek Flash (V4.1, 1M)"), 被当成模型名发给官方接口
- * → HTTP 400 "The supported API model names are deepseek-flash, deepseek-v4-pro,
+ * → HTTP 400 "The supported API model names are deepseek-flash,
  *   but you passed DeepSeek Flash (V4.1, 1M)"
+ * (2026-10-11: deepseek-v4-pro 已下线, 不再出现在支持列表中)
  */
 describe('官方模型条目的 modelName 契约', () => {
   const store = () => useModelStore.getState().models;
 
   it('deepseek / openai 条目必须声明真实 API 模型名', () => {
-    for (const id of ['deepseek-flash', 'deepseek-v4-pro', 'openai-gpt4o']) {
+    for (const id of ['deepseek-flash', 'openai-gpt4o']) {
       const m = store().find(x => x.id === id);
       expect(m, `${id} 应存在于 store`).toBeTruthy();
       const apiName = m!.models?.[0];

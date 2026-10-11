@@ -525,3 +525,70 @@ grep -c "systemMsgs.push({ role: 'system'" src/agentai-loop.ts   # 32
 grep -c "systemMsgs.push(" src/agentai-loop.ts                   # 49
 awk 'NR>=812 && NR<=1927 && /^    try \{/ {c++} END {print c+0}' src/agentai-loop.ts  # 14
 ```
+
+---
+
+## 八、2026-10-11 批次2 addendum：模型下线 + 用户锁定 + 历史压缩 + 自动化让路
+
+用户实机日志（选择 4.1 却被路由到已下架的 pro；任务频繁中断；自动化卡顿）根因共 5 条，本次修掉全部。
+
+### 8.1 deepseek-v4-pro 下线（官方 2026-09-14 12:00 起 pro→V4.1 Flash）
+
+| 位置 | 改动 | 核验 |
+|---|---|---|
+| `model-classifier.ts` | 删 `deepseek:v4-pro` / `alrc:deepseek-v4-pro` 条目；4× `recommended` 指向 `deepseek:v4-flash` | `grep -rn "v4-pro" src/model-classifier.ts` → 仅注释 |
+| `model-capabilities.ts` | 删 `deepseek-pro` 能力条目；`LEGACY_MODEL_ALIASES` 加 `'deepseek-v4-pro': 'deepseek-flash'` | 同 grep |
+| `model-selector.ts` | pro id 映射到 `subModel: 'deepseek-flash'`；删 `isDeepReason → v4-pro` 覆写 | `grep -n "deepseek-v4-pro" src/model-selector.ts` |
+| `routes/chat.ts` | 2 张映射表 pro id 改指 flash；删 `isDeepReason` 自动升级 | — |
+| `llm-router.ts` | **新增** `RETIRED_MODEL_ALIASES`（**provider 作用域**） | `grep -n "RETIRED_MODEL_ALIASES" src/llm-router.ts` |
+| GUI `modelStore.ts` / `Settings.tsx` | 删 pro 卡片/模板行；`MODEL_TIERS` 由 3 行减为 2 行（含 `[2]`→末元素修正） | GUI vitest 252 passed |
+
+**为什么别名必须按 provider 分键**：中转商（alrc / factory / sensenova）**没有** `deepseek-flash` 这个名字，
+它们有自己的 `deepseek-v4-flash`。全局 map 会把请求发到一个不存在的模型上 —— 这正是"修 bug 引入新 bug"的典型。
+
+### 8.2 用户选定模型锁定（`modelLocked`）
+
+- loop 侧：`this.opts.userPickedModel === true` → 自动切换守卫拦下，返回诚实错误（`model:lock-refused`）。
+- router 侧：`modelLocked` 置位后**两条跨模型 fallback 全关**（free→deepseek 闪电交替、dxnt 兜底）。
+- 救援链收敛为 **3 级同模型重试**：`RESCUE_BUDGET_MS=180_000`，各级 60s/60s/45s；原 **L2「跨模型升级到 v4-pro」删除**。
+  （原设计是"每层 15s 必挂" vs 正常请求 300s 超时 —— 结构性矛盾，等于必然触发，故同时放宽。）
+- ⚠️ **副作用**：GUI 几乎每请求都带 `userPickedModel`，故"免费用完自动切商用"对显式选定的模型**不再成立**（用户要求的取舍）。
+
+### 8.3 历史压缩吞掉 user 消息（真 P0）
+
+原判据 `messages.length > MAX_MSGS(30)` 里含 immutablePrefix 的 36+ 条 system → **恒真** →
+每轮压缩 → 最早的 user 消息（就是用户原始诉求）被扫进 `old` 丢弃 → `appendOnlyLog` **0 条 user** →
+`llm-router` 兜底注入"请继续完成之前的任务。" → 模型不知道要干什么 → 空回复 → 救援链 → 任务中断。
+
+**修复**：被压掉的旧 user **原样搬回** `recent`（`carriedUsers`，上限 3 条：任务锚点第一条 + 最近 2 条）；
+摘要输入仍是整个 `head`（含 user），保证 `## 用户请求` 段有内容且 `old.length > 0` 恒成立。
+**没有**改触发判据 —— 实测改判据会让压缩几乎不触发，直接打破 `context-fidelity` 的 3 条契约。
+
+### 8.4 自动化让路
+
+- 新增 `runtime-activity.ts`：TTL 心跳（`USER_TASK_TTL_MS=300_000`，须 > router 300s 超时）。
+  **为什么用 TTL 不用计数器**：`run()` 有 15+ 个 return 出口（含 throw / 中断 / 超时），计数器漏一次 `--` 就**永久停摆**。
+- `automation-engine.ts` 的 `cron:tick` 顶部：`if (isUserTaskActive()) { ...; return; }` —— 纯让路（不计 success/fail，不自动禁用）。
+- `tools.ts` 的 `officecli` 由 `execSync` 改异步 exec（stdout-only）—— 原实现冻结整个事件循环。
+
+### 8.5 本轮核验命令
+
+```bash
+cd packages/agentai-gateway
+npx tsc --noEmit                                   # 0 error
+npx vitest run src/runtime-guard.test.ts --reporter=dot   # 27 passed
+npx vitest run src/context-fidelity.test.ts --reporter=dot # 9 passed
+npx vitest run --reporter=dot                      # 832 / 2 failed (b1-security 1, code-runner 1 — 改动前既有)
+node scripts/verify-tool-consistency.mjs           # 202 声明 / 203 实现, ERROR=0
+grep -c "rescueReq(" src/agentai-loop.ts           # 3
+grep -c "✓ L2 rescue" src/agentai-loop.ts          # 0
+```
+
+### 8.6 如实披露（未能端到端验证的项）
+
+- **无 LLM 环境**：无法真机跑"选 4.1 → 全程只走 4.1"。`modelLocked` 的行为验证是**契约级 + mock 级**
+  （`runtime-guard.test.ts` 断言 `router.chat` 收到的 `modelLocked === true`），未做真实 provider 调用。
+- **自动化让路的时序**：TTL 行为用 fake timers 验证；真实"用户任务进行中恰好有 cron tick"未在活环境复现。
+- `docs/reports/REVOLUTIONARY_PROACTIVE_ENGINE_REPORT.md:319`（`model: 'deepseek-pro'`）与
+  `docs/wechat-article-pulseflow.md:104` 仍提 V4 Pro —— 属**历史文档，有意不动**。
+- `packages/agentai-gui/src/utils/modelPicker.test.ts:130-132` 用合成 `deepseek-v4-pro` 夹具（能通过），按精准修改原则未动。

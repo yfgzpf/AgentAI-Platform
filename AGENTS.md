@@ -155,6 +155,23 @@ color: '#ddd';
 
 #### 1.2 LLM 路由 (llm-router.ts 2245 行 + model-classifier.ts 1091 行)
 8 Provider: agentai(免费) / deepseek / openai / zhipu / superapi / dxnt / sensenova / longcat
+
+**★ 2026-10-11 deepseek-v4-pro 正式下线**（DeepSeek 官方已于 2026-09-14 12:00 起把 pro 请求全量路由到 V4.1 Flash）
+- 从注册表 / 推荐规则 / 救援链 / GUI 模型列表 / capabilities 里**彻底移除**（`grep -rn "v4-pro" src/model-classifier.ts src/model-capabilities.ts src/model-selector.ts` 只剩注释与别名）
+- 新增 **provider 作用域**别名兜底 `RETIRED_MODEL_ALIASES`（`llm-router.ts`）：旧引用 `deepseek:deepseek-v4-pro → deepseek-flash`、
+  `alrc:deepseek-v4-pro → deepseek-v4-flash`。**必须按 provider 命名空间分键** —— 中转商（alrc/factory/sensenova）没有 `deepseek-flash` 这个名字，
+  用全局 map 会把请求发到不存在的模型上。
+- 模型列表里已无 "pro"，用户选 Flash 即选 Flash，**不再有深层推理自动升级到 pro 的路径**（`selectModelByPreference` / `chat.ts` 里的 `isDeepReason → v4-pro` 覆写已删）。
+
+**★ 2026-10-11 用户选定模型锁定（"不该切的时候别切"）**
+- `ChatRequest.modelLocked`（`llm-router.ts`）：GUI 显式选模型时置位（`agentai-loop.ts` 传 `this.opts.userPickedModel === true`）。
+- 置位后 **router 侧两条跨模型 fallback 全关**（free→deepseek "闪电交替"、dxnt 兜底），失败**如实上报**而不是偷偷换模型。
+- 置位后 **loop 侧自动切换关闭**：原 `smart-model-switcher` 触发的自动切模型路径被 `model:lock-refused` 守卫拦下，改为返回诚实错误
+  （`你选定的模型 **X** 当前不可用 …`）。
+- ⚠️ **副作用（必须知情）**：GUI 几乎每个请求都带 `userPickedModel`，因此本文档旧述"**免费用完自动切商用**"对显式选定的模型
+  **已不再成立**。这是用户明确要求的取舍（宁可任务报错也不静默换模型）。未选模型时（无 `userPickedModel`）降级链仍生效。
+- 救援链同步收敛为 **3 级同模型重试**（`RESCUE_BUDGET_MS=180_000`，各级 60s/60s/45s；原 L2 "跨模型升级到 v4-pro" 已删）。
+  `grep -c "rescueReq(" src/agentai-loop.ts` = 3，`grep -c "✓ L2 rescue" src/agentai-loop.ts` = 0。
 - **五维评分实现在 `model-classifier.ts:580 computeScore()`**（不是 llm-router.ts，常见误引）:
   复杂度 30% + 上下文 15% + 成本 20% + 成功率 25% + 延迟 10%
   - 冷启动保护: 无成功率/延迟数据时给 **0.5 中性分**（给 0 会让新模型永不被选中）
@@ -179,12 +196,12 @@ color: '#ddd';
 5. **tool call JSON 自动修复** — 尾逗号/单引号/无引号 key/undefined
 6. **text→tool_call 回退** — 解析 func(args)/```tool```/XML/DSML 模式
 
-### 二、工具系统 (198 声明 / 203 实现)
+### 二、工具系统 (202 声明 / 203 实现)
 
-⚠️ **实测更正 (2026-10-10)**：原文档称"141 工具"，实测为 **EXTRA_TOOLS 声明 198 个 / EXTRA_HANDLERS 实现 203 个**
+⚠️ **实测更正 (2026-10-11)**：原文档称"141 工具"，实测为 **EXTRA_TOOLS 声明 202 个 / EXTRA_HANDLERS 实现 203 个**
 （`tools.ts:749-1382` 声明，`:1383-7459` 实现）。tools.ts 全文件 `@ts-nocheck`，工具参数无类型保障。
 
-风险等级分布（AST 实测）：**low 117 / medium 59 / high 21 / critical 1**
+风险等级分布（AST 实测，2026-10-11 重测）：**low 119 / medium 61 / high 21 / critical 1**
 
 **一致性校验（2026-10-10 新增，构建期 fail-fast）**
 ```bash
@@ -672,6 +689,8 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 1. **框架完整度惊人** — 元认知、置信度、进化记忆、任务拆解、自主修复 8 种模式... 这些能力在开源 Agent 框架中极为少见。大部分框架只有工具调用，没有决策层。
 2. **256K 上下文是真正的优势** — 免费模型有这个窗口长度，意味着可以做长任务而不截断。配合工作记忆摘要，理论上无限任务长度。
 3. **多模型路由 + 熔断 + 降级** — 这是生产级的设计。免费用完自动切商用，商用没密钥提示用户，全链路不中断。
+   ⚠️ **2026-10-11 更正**：该"自动切"仅在**未显式选模型**时成立。GUI 显式选定的模型会被 `modelLocked` 锁定
+   （见 §1.2「用户选定模型锁定」），此时失败**如实上报**而非静默换模型。这是用户明确要求的取舍。
 4. **自进化能力** — evolve_prompt + create_tool 让 AI 不再是"用完即忘"的工具，而是越用越强的伙伴。
 
 ### 需要改进的
@@ -759,7 +778,7 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 指标 | 原文档 | 实际 | 核验方式 |
 |------|--------|------|---------|
 | LLM Provider | 4 | 8 | llm-router.ts |
-| 工具数量 | 57+ | **201 声明 / 202 实现** (2026-10-11 补 get_symbols/knowledge_explore 声明后) | `pnpm verify:tools`（AST） |
+| 工具数量 | 57+ | **202 声明 / 203 实现** (2026-10-11 重测: `node scripts/verify-tool-consistency.mjs`) | `pnpm verify:tools`（AST） |
 | 评分维度 | 3D | 5D | model-classifier.ts:511-515 |
 | MAX_AUTO_RESUME | 5 | 10 | agentai-loop.ts:2601 |
 | 绝对超时 | 3 分钟 | 60 分钟 | agentai-loop.ts:1963 |
@@ -768,8 +787,11 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 上下文注入 | 8 层 | **8 层是目标，实际 32 处字面量 / 49 处 `systemMsgs.push` / 14 个顶层 try-catch**（buildImmutablePrefix `:812-1927`）| `grep -c "systemMsgs.push(" src/agentai-loop.ts`；`awk 'NR>=812 && NR<=1927 && /^    try \{/' …` |
 | system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
 | 60K 上下文预算实际覆盖 | "硬闸门" | **只覆盖 7 条 soul 注入, 其中仅 priority=30 的 5 条可丢**；44 条注入不可触碰 | `grep -n "track('" src/agentai-loop.ts` → 7 |
-| 测试覆盖 | "无 E2E" | 68 文件 / **815 测试 / 2 失败**（2026-10-11；原 804/7 中 5 个是循环无上限导致的超时） | vitest |
+| 测试覆盖 | "无 E2E" | 68 文件 / **832 测试 / 2 失败**（2026-10-11 重测；原 804/7 中 5 个是循环无上限导致的超时） | vitest |
 | 运行时守卫 | 无 | **4 个真缺口已补**（`_failTracker` / `repeat_write` / `TOOL_CALL_BUDGET=200` / 独立迭代硬闸），**对所有 tier 生效** | `packages/agentai-gateway/src/runtime-guard.test.ts` |
+| 历史压缩吞 user 消息 | 压缩后 `appendOnlyLog` 里 **0 条 user** → router 注入"请继续完成之前的任务。" → 空回复 → 救援链 → 任务中断 | **修**: 被压掉的旧 user 原样搬回 `recent`（`carriedUsers` 上限 3 条）；摘要输入仍是整个 `head` | `grep -n "const carriedUsers" packages/agentai-gateway/src/agentai-loop.ts`；`npx vitest run src/context-fidelity.test.ts` → 9/9 |
+| 自动化抢用户任务 | cron tick 与用户任务并发 → 卡顿 | **修**: 用户任务期间跳过 cron tick（TTL 心跳 `runtime-activity.ts`，`USER_TASK_TTL_MS=300_000`），纯让路（不计数、不自动禁用）；`officecli` 的 `execSync` 改异步 exec | `grep -n "isUserTaskActive" packages/agentai-gateway/src/automation-engine.ts` |
+| deepseek-v4-pro | 强模型/救援目标/GUI 列表均有"pro" | **已下线**（官方 2026-09-14 已停）；provider 作用域别名兜底 `RETIRED_MODEL_ALIASES` | `grep -rn "v4-pro" packages/agentai-gateway/src/model-classifier.ts`（仅注释） |
 | @ts-nocheck 文件 | - | **30 个** (22 源文件 + 8 测试文件, 2026-10-11 实测) | `grep -rl "@ts-nocheck" src/ \| wc -l` |
 | 中栏宽度 | "大屏居中 800px" | **`clamp(880px, 90%, 1600px)` 自适应**, 2 处消费 (原 token 零消费) | `grep -rn "var(--chat-max-width)" packages/agentai-gui/src/` |
 | 页面内可拖面板 | 写死不可拖 (420/380/320/240) | **4 处 `<PaneGrip>`**, 把手命中区 5/5px | `packages/agentai-gui/src/layout-panes.test.ts` |
@@ -805,9 +827,9 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 - 上下文注入点：`grep -c "role: 'system'" packages/agentai-gateway/src/agentai-loop.ts`
 - 核心文件规模：`wc -l packages/agentai-gateway/src/*.ts | sort -rn | head`
 - 测试基线：`cd packages/agentai-gateway && npx vitest run --reporter=dot`
-  （⚠️ **2026-10-11 更新：815 测试 / 2 失败**。原 `804 / 7 失败` 里的
+  （⚠️ **2026-10-11 更新：832 测试 / 2 失败**。原 `804 / 7 失败` 里的
   `context-fidelity 3 + ledger-wiring 2` **不是断言写错, 而是 `Test timed out in 10000ms`** ——
   循环无迭代上限导致空转（实测跑到 `iter=48`）；批次1 的 G4 迭代硬闸修好了它们。
   剩余 2 个**与本轮无关且改动前就在失败**：b1-security 1（断言 `tools.ts` 用 `execFile('git')`）、
   safety/code-runner 1（断言 `scanForbiddenPatterns` 拒绝 `fs` import）。）
-- 运行时守卫回归：`cd packages/agentai-gateway && npx vitest run src/runtime-guard.test.ts --reporter=dot`（11 项）
+- 运行时守卫回归：`cd packages/agentai-gateway && npx vitest run src/runtime-guard.test.ts --reporter=dot`（27 项）

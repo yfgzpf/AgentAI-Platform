@@ -855,7 +855,9 @@ export function autoRouteModel(message: string, availableModels: string[]): Mode
   
   // 推理任务 — 需要强推理能力
   if (msg.match(/分析|推理|为什么|原因|逻辑|证明|推导|方案|策略|比较|优劣/i)) {
-    const reasonModel = availableModels.find(m => m.includes('deepseek-v4-pro'))
+    // 2026-10-11: 首选由 deepseek-v4-pro 改为 deepseek-flash (pro 官方已下线)。
+    // 同时保留 v4-flash 旧名匹配, 兼容 provider 列表尚未改名的场景。
+    const reasonModel = availableModels.find(m => m.includes('deepseek-flash') || m.includes('deepseek-v4-pro') || m.includes('deepseek-v4-flash'))
       || availableModels.find(m => m.includes('glm-5'))
       || availableModels.find(m => m.includes('minimax-m3'));
     if (reasonModel) {

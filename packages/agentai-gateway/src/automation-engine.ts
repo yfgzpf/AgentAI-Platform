@@ -14,6 +14,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
+import { isUserTaskActive } from './runtime-activity.js';
 
 // ===== 类型定义 =====
 
@@ -127,6 +128,16 @@ export class AutomationEngine extends EventEmitter {
     // 监听所有 cron:tick → 执行 action + 蒸馏特殊处理
     this.on('cron:tick', async (job: CronJob) => {
       try {
+        // ═══ 2026-10-11: 用户任务进行中 → 本次 tick 让路 ═══
+        // 用户反馈「自动化任务会影响任务进程, 导致任务老是卡住 不流畅」。
+        // cron 与用户任务共用同一 gateway 进程 / workspace, 同时跑会互相抢工具与子进程。
+        // 「跳过」= 纯让路: 不执行 action、不累加 successCount/failCount、不触发自动禁用。
+        // (lastRun 由 scheduleCron 的 emit 处统一更新, 与本次是否执行无关)
+        if (isUserTaskActive()) {
+          console.log(`[automation] ⏸️ 用户任务进行中, ${job.name} 本次 tick 跳过 (让路)`);
+          return;
+        }
+
         console.log(`[automation] ⏰ 定时任务触发: ${job.name} (action=${job.action})`);
 
         // 蒸馏任务: 特殊逻辑

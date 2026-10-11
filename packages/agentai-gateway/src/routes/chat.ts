@@ -519,10 +519,11 @@ const sendEvent = (event: string, data: any) => {
           'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash', contextWindow: 200000 },
           // ===== DeepSeek (前端 id + 旧兼容 id) =====
           'deepseek': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)', contextWindow: 1000000 },
-          'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', contextWindow: 1000000 },
+          // 2026-10-11: pro 官方已下线 → 两个 pro id 保留为别名, 指向 deepseek-flash (旧配置静默降级)
+          'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 原 Pro 别名)', contextWindow: 1000000 },
           'deepseek-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)', contextWindow: 1000000 },
           'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)', contextWindow: 1000000 },
-          'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', contextWindow: 1000000 },
+          'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 原 Pro 别名)', contextWindow: 1000000 },
           // ===== OpenAI =====
           'openai': { provider: 'openai', label: 'OpenAI GPT-4o', contextWindow: 128000 },
           'openai-gpt4o': { provider: 'openai', label: 'OpenAI GPT-4o', contextWindow: 128000 },
@@ -551,7 +552,8 @@ const sendEvent = (event: string, data: any) => {
           // ALRC 聚合平台 (https://alro.huazhiweilai.com/v1) — 实际可用模型 (2026-08-15 同步)
           // DeepSeek
           'alrc-deepseek-v4-flash': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash' },
-          'alrc-deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-pro', label: 'ALRC · DeepSeek V4 Pro' },
+          // 2026-10-11: V4 Pro 已下线 → 别名指向 flash (旧持久化数据静默降级)
+          'alrc-deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash (原 Pro 别名)' },
           // 智谱 GLM
           'alrc-glm-4.7': { provider: 'alrc', subModel: 'glm-4.7', label: 'ALRC · GLM 4.7' },
           'alrc-glm-5': { provider: 'alrc', subModel: 'glm-5', label: 'ALRC · GLM 5' },
@@ -570,7 +572,8 @@ const sendEvent = (event: string, data: any) => {
           'alrc-hy3': { provider: 'alrc', subModel: 'hy3', label: 'ALRC · HY3' },
           // 兼容旧格式: alrc:model-name
           'alrc:deepseek-v4-flash': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash' },
-          'alrc:deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-pro', label: 'ALRC · DeepSeek V4 Pro' },
+          // 2026-10-11: V4 Pro 已下线 → 别名指向 flash
+          'alrc:deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash (原 Pro 别名)' },
           'alrc:glm-4.7': { provider: 'alrc', subModel: 'glm-4.7', label: 'ALRC · GLM 4.7' },
           'alrc:glm-5': { provider: 'alrc', subModel: 'glm-5', label: 'ALRC · GLM 5' },
           'alrc:glm-5.1': { provider: 'alrc', subModel: 'glm-5.1', label: 'ALRC · GLM 5.1' },
@@ -1385,10 +1388,11 @@ req.on('close', () => {
         'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
         // ===== DeepSeek =====
         'deepseek': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
-        'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+        // 2026-10-11: pro 已下线 → 别名指向 deepseek-flash
+        'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 原 Pro 别名)' },
         'deepseek-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
         'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
-        'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+        'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 原 Pro 别名)' },
         // ===== OpenAI =====
         'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },
         'openai-gpt4o': { provider: 'openai', label: 'OpenAI GPT-4o' },
@@ -1468,16 +1472,15 @@ req.on('close', () => {
           });
         } else {
           // 未指定模型或模型不在 MODEL_MAP 中: 优先读取用户偏好, 默认 agentai (免费)
-          const msg = (message || '').toLowerCase();
-          const isDeepReason = /架构|设计模式|性能优化|并发|安全|漏洞|内存泄漏|重构|复杂|体系|设计|security|vulnerability|memory leak|race|deadlock/i.test(msg);
           // 从用户偏好读取模型 (GUI 切换同步过来的值)
           const userPref = userModel?.get(userId)?.preferences?.preferredModel || 'agentai';
           // 通过 nss_MODEL_MAP 统一查找用户偏好模型, 避免硬编码遗漏
           const prefMapped = nss_MODEL_MAP[userPref];
           let chatModel = prefMapped?.provider || 'agentai';
           let modelName = prefMapped?.subModel || '';
-          // 如果用户偏好是 deepseek 但消息需要深度推理, 自动升到 pro
-          if (chatModel === 'deepseek' && isDeepReason && !modelName?.includes('pro')) { modelName = 'deepseek-v4-pro'; }
+          // 2026-10-11: 删除「deepseek + 复杂任务 → 自动升到 deepseek-v4-pro」。
+          // ① pro 官方已下线; ② 用户显式选的模型不再被自动替换 (这正是用户抱怨
+          //   「选 4.1 却跑到 pro 从而频繁中断」的两处来源之一, 另一处是 model-selector.ts)。
           console.log(`[chat:non-stream] no explicit model, using user preference: ${userPref} → ${chatModel}/${modelName || '(default)'}`);
           // 自动化任务使用更高的 maxIterations，避免复杂任务被提前截断
           const autoMaxIters = auto ? 30 : 10;

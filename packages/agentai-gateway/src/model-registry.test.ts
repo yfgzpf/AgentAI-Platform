@@ -6,7 +6,8 @@
  * 本测试将官方窗口/成本 (WebSearch 核实, 2026-09-05) 固化断言, 防止数据再次漂移。
  *
  * 官方口径:
- *   - DeepSeek V4-Flash/Pro: 1M context; off-peak USD/1K: flash 0.00022/0.00066, pro 0.00066/0.00198
+ *   - DeepSeek V4-Flash: 1M context; off-peak USD/1K: 0.00022/0.00066
+ *     (2026-10-11: V4-Pro 官方已下线, 请求全量路由到 V4.1 Flash, 故 pro 条目已从两表删除)
  *   - GLM-4.7-Flash: 200K (text-only), 免费; Kimi K2.5: 256K, 0.0006/0.003
  *   - Qwen-Max: 32,768 (阿里云官方), 0.00034/0.00137
  *   - GPT-4o-mini: 128K, 0.00015/0.0006; Claude Sonnet 4.5: 200K, 0.003/0.015
@@ -42,11 +43,16 @@ describe('classifier MODELS — 官方窗口/成本 (2026-09-05 校准)', () => 
     expect(m.costPer1kOutput).toBe(0.00066);
   });
 
-  it('DeepSeek V4-Pro = 1M / 0.00066 / 0.00198', () => {
-    const m = classifier('deepseek:v4-pro');
-    expect(m.maxContext).toBe(1_000_000);
-    expect(m.costPer1kInput).toBe(0.00066);
-    expect(m.costPer1kOutput).toBe(0.00198);
+  it('DeepSeek V4-Pro 已下线: classifier 不再注册该条目', () => {
+    // 2026-10-11: 官方 2026-09-14 12:00 起 pro 请求全部路由到 V4.1 Flash。
+    // 若日后有人把 pro 条目加回来, 这条断言会挡住并给出理由。
+    expect(MODELS.find(x => x.id === 'deepseek:v4-pro')).toBeUndefined();
+  });
+
+  it('DeepSeek Flash 的 complexityRange 已放宽到 hard (补 pro 删除后的覆盖空洞)', () => {
+    const m = classifier('deepseek:v4-flash');
+    expect(m.complexityRange).toContain('ultraSimple');
+    expect(m.complexityRange).toContain('hard');
   });
 
   it('Qwen-Max = 32K (非虚标 131K/1M) / 0.00034 / 0.00137', () => {
@@ -94,11 +100,11 @@ describe('classifier MODELS — 官方窗口/成本 (2026-09-05 校准)', () => 
 });
 
 describe('MODEL_CAPABILITIES — 官方窗口/成本 (2026-09-05 校准)', () => {
-  it('DeepSeek = 1M / 0.00022, deepseek-pro = 1M / 0.00066', () => {
+  it('DeepSeek = 1M / 0.00022; deepseek-pro 条目已移除', () => {
     expect(capability('deepseek').contextWindow).toBe(1_048_576);
     expect(capability('deepseek').costPer1K).toBe(0.00022);
-    expect(capability('deepseek-pro').contextWindow).toBe(1_048_576);
-    expect(capability('deepseek-pro').costPer1K).toBe(0.00066);
+    // 2026-10-11: pro 下线 → capability 条目删除, 旧 id 由 LEGACY_MODEL_ALIASES 兜底 (见下组)
+    expect(getCapability('deepseek-pro')).toBeUndefined();
   });
 
   it('zhipu (GLM-4.7-Flash) = 200K / 免费', () => {
@@ -143,6 +149,8 @@ describe('getModelContextWindow — subModel 精确命中 (死路径回归)', ()
     expect(getModelContextWindow('gpt-4o-mini')).toBe(131_072);
     expect(getModelContextWindow('claude-sonnet-4-5-20250929')).toBe(200_000);
     expect(getModelContextWindow('deepseek-v4-flash')).toBe(1_048_576);
+    // 2026-10-11: pro 条目已删, 此断言现在走 LEGACY_MODEL_ALIASES (deepseek-v4-pro → deepseek-flash)
+    // 的兜底路径 —— 正是「旧配置/旧会话残留 pro 引用不报错」的本地保证。
     expect(getModelContextWindow('deepseek-v4-pro')).toBe(1_048_576);
   });
 
