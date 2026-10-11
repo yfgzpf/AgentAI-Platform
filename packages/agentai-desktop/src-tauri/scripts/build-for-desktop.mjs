@@ -17,7 +17,7 @@
  */
 
 import { execSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, cpSync, rmSync, readdirSync, unlinkSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, cpSync, rmSync, readdirSync, readFileSync, renameSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -111,23 +111,63 @@ const guiDistDir = resolve(guiDir, 'dist');
     run('npx vite build', guiDir);
   }
 
-  // 验证: 只能有 1 个 index-*.js (hash 必须唯一)
+  // 验证: dist/index.html 引用的 entry 必须存在。
+  //
+  // ⚠️ 原实现是「按文件名排序后 slice(1) 删掉多余的 index-*.js」—— 这是**会删掉真入口的 bug**,
+  //    直接对应「打包后功能缺失」:
+  //      dist/index.html 引用 `index-e5M0SC7-.js` (610KB, **真入口**)
+  //      assets/js 里另有一个 `index-CZSKxFA7.js` (33KB) —— 实测它是 **DecorAI 的懒加载 chunk**
+  //        (在 index-e5M0SC7-.js 里以 `lazy(() => import("./index-CZSKxFA7.js"))` 引用)
+  //      readdirSync 在 Windows NTFS 上返回字母序, 且 Node 不保证顺序:
+  //        'C'(0x43) < 'e'(0x65) → 33KB 的排在前 → slice(1) 保留懒加载 chunk、
+  //        **删掉 610KB 真入口** → 安装包里 index.html 指向不存在的文件 = 整站白屏。
+  //      即使顺序反过来, 删掉的也是 DecorAI 的懒加载 chunk = 「装饰」功能包内白屏。
+  //      **两种排序都错** —— 因为 `index-*.js` 这个名字本身无法区分入口与懒加载 chunk
+  //      (vite.config.ts 的 chunkFileNames 是 `assets/js/[name]-[hash].js`, 名为 index 的模块
+  //       产出的 chunk 也叫 index-<hash>.js), "只保留一个"这个前提从一开始就不成立。
+  //    现在改为: 以 dist/index.html 的 <script src> 为**唯一裁判** —— 被引用的永不删,
+  //    未被引用的**只报告不删除** (它很可能正是懒加载 chunk)。
   if (existsSync(guiDistDir)) {
     const assetsJsDir = resolve(guiDistDir, 'assets', 'js');
-    if (existsSync(assetsJsDir)) {
-      const indexFiles = readdirSync(assetsJsDir)
-        .filter(f => /^index-.*\.js$/.test(f));
-      if (indexFiles.length === 1) {
-        logOk(`  dist 验证通过: 1 个 entry (${indexFiles[0]})`);
-      } else if (indexFiles.length > 1) {
-        logWarn(`  ⚠️  dist 中存在 ${indexFiles.length} 个 index-*.js, 清理中...`);
-        indexFiles.slice(1).forEach(f => {
-          try { unlinkSync(resolve(assetsJsDir, f)); } catch {}
-        });
-      logOk(`  已清理 ${indexFiles.length - 1} 个旧 entry`);
+    const htmlPath = resolve(guiDistDir, 'index.html');
+    if (existsSync(assetsJsDir) && existsSync(htmlPath)) {
+      const html = readFileSync(htmlPath, 'utf8');
+      const referenced = new Set(
+        [...html.matchAll(/\/assets\/js\/([A-Za-z0-9._-]+\.js)/g)].map(m => m[1])
+      );
+      const indexFiles = readdirSync(assetsJsDir).filter(f => /^index-.*\.js$/.test(f));
+      const entries = indexFiles.filter(f => referenced.has(f));
+      if (entries.length > 0) {
+        logOk(`  dist 验证通过: entry = ${entries.join(', ')}`);
+      } else {
+        logWarn(`  ❌ index.html 未引用任何 index-*.js (引用: ${[...referenced].join(', ') || '无'})`);
+      }
+      const orphan = indexFiles.filter(f => !referenced.has(f));
+      if (orphan.length) {
+        logWarn(`  另有未被 index.html 引用的 index-*.js: ${orphan.join(', ')}`);
+        logWarn('     (不删除 —— 文件名无法区分入口与懒加载 chunk, 误删即白屏)');
+      }
     } else {
-      logWarn('  ❌ dist 中未找到 index-*.js!');
+      logWarn('  ❌ dist 缺少 assets/js 或 index.html!');
     }
+  }
+
+  // 构建后一致性门 (fail-fast): title / entry 引用 / 资源存在性 / chunk 完整性。
+  // 上面那些 logWarn 只是提示, 这里才是**真的会拦住**打包的地方 ——
+  // 「打包后与开发状态显示不一致」正是因为过去这里只 warn 不 exit。
+  const gateScript = resolve(SRC_TAUDI, 'scripts', 'verify-web-build.mjs');
+  if (existsSync(gateScript)) {
+    log('运行构建一致性门 (verify-web-build.mjs)...');
+    const gate = spawnSync(process.execPath, [gateScript], {
+      cwd: SRC_TAUDI, stdio: 'inherit', shell: false,
+    });
+    if (gate.status !== 0) {
+      logWarn('❌ 构建一致性校验未通过 —— 产物会与开发状态不一致, 已中止打包');
+      process.exit(1);
+    }
+    logOk('构建一致性门通过');
+  } else {
+    logWarn('verify-web-build.mjs 不存在, 跳过一致性校验');
   }
 }
 
