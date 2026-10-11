@@ -85,13 +85,25 @@ export const GitStatusBar: React.FC<GitStatusBarProps> = ({ onClick }) => {
 
   const totalChanges = status.summary.modified + status.summary.added + status.summary.deleted + status.summary.untracked;
 
+  // ⚠️ gateway 在 git 取不到分支时返回字面量 'unknown' (routes/git-simple.ts:48),
+  //    直接渲染成 "🌿 unknown" —— 一个给机器看的哨兵值泄漏到了用户界面。
+  //    常见诱因: 工作区被设成了一个非仓库目录 (如盘符根 F:\), 见 workspace.json。
+  //    这里不给 sentinel 兜底文案, 而是明确告诉用户"这不是仓库", 并解释为什么。
+  const hasBranch = !!status.branch && status.branch !== 'unknown';
+
   return (
     <div style={styles.container} onClick={onClick}>
       {/* Branch */}
-      <span style={styles.branch}>
-        <span style={styles.branchIcon}>🌿</span>
-        {status.branch}
-      </span>
+      {hasBranch ? (
+        <span style={styles.branch}>
+          <span style={styles.branchIcon}>🌿</span>
+          {status.branch}
+        </span>
+      ) : (
+        <span style={styles.text} title={`当前工作区不是 Git 仓库, 或 git 不可用\n(${status.branch || '无分支信息'})`}>
+          📦 非 Git 仓库
+        </span>
+      )}
 
       {/* Changes */}
       {totalChanges > 0 && (

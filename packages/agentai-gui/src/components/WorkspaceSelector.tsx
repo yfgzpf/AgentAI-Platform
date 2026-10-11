@@ -213,7 +213,9 @@ export const WorkspaceSelector: React.FC = () => {
       const root = data.projectRoot || data.cwd || '';
       if (root) {
         applyWorkspace(root);
-        message.success(`项目目录: ${root}`);
+        // 不弹提示: 这是用户没要求过的自动探测, 成功提示纯属噪声 ——
+        // 实测它会连弹两条并压住上方的任务提醒条按钮。路径本身就显示在工作区栏里, 不需要再说一遍。
+        // (显式选择/手动设置那条路径仍然照常提示, 见 handleBrowserOk)
       }
     } catch {
       message.warning('获取项目根目录失败');
@@ -223,7 +225,13 @@ export const WorkspaceSelector: React.FC = () => {
   };
 
   /** 首次加载自动获取项目根目录 (Gateway 不可达立即回退) */
+  // ⚠️ ref 守卫: main.tsx 启用了 React.StrictMode, 开发模式下 effect 会被刻意跑两次,
+  //    这个 effect 带网络请求 + message.success 副作用 → 用户看到两条一模一样的
+  //    "项目目录: X" 提示叠在一起 (实测截图确认)。守卫后只跑一次, 且顺带省掉一次重复请求。
+  const autoDetectRef = useRef(false);
   useEffect(() => {
+    if (autoDetectRef.current) return;
+    autoDetectRef.current = true;
     if (!workspace) {
       const fallback = () => { setEditing(true); setValue(''); };
       const timer = setTimeout(fallback, 2000); // 2秒超时
