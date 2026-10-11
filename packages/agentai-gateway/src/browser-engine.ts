@@ -104,6 +104,8 @@ export interface DehydratedElement {
   tag: string;
   text: string;
   attrs?: Record<string, string>;
+  /** 脱水时生成的定位选择器。⚠️ 是**顶层**字段, 不在 attrs 里 (clickByIndex/typeByIndex 依赖它) */
+  selector?: string;
   role?: string;
   ariaLabel?: string;
   placeholder?: string;
@@ -793,6 +795,10 @@ class BrowserEngine extends EventEmitter {
       tag: e.tag,
       text: e.text,
       attrs: e.attrs,
+      // ⚠️ 必须搬运: DEHYDRATE_JS 把 selector 放在元素**顶层** (不塞 attrs)。
+      //    原实现漏搬, 于是索引工具从 attrs 里取 selector 恒为 undefined,
+      //    两个工具一律抛"缺少定位信息" —— 按索引操作整条链路从上线起就没通过。
+      selector: e.selector || undefined,
       href: e.attrs?.href || undefined,
       type: e.attrs?.type || undefined,
       ariaLabel: e.attrs?.['aria-label'] || undefined,
@@ -827,21 +833,20 @@ class BrowserEngine extends EventEmitter {
     const el = this._indexedElements[index];
     if (!el) throw new Error(`索引 ${index} 无效。请重新调用 browser_extract type=dehydration 获取当前页面索引。`);
 
-    if (!el.attrs?.selector) {
-      // 用坐标点击作为兜底
+    // selector 在顶层 (见 DehydratedElement 注释), 不在 attrs 里
+    const sel = el.selector;
+    if (!sel) {
       throw new Error(`索引 ${index} (${el.tag}: ${el.text}) 缺少定位信息, 请重新扫描`);
     }
 
     // 直接用 Playwright click
-    const sel = el.attrs?.selector;
     try {
-      if (!sel) throw new Error(`索引 ${index} 缺少定位信息`);
       await page.click(sel, { timeout: 8000 });
     } catch {
       // selector 失效: 用 evaluate 直接操作 DOM (JS 字符串运行在浏览器上下文)
       await page.evaluate(`
         (function(){
-          var e = document.querySelector(${JSON.stringify(el.attrs?.selector || '')});
+          var e = document.querySelector(${JSON.stringify(sel)});
           if (e) { e.click(); return; }
           var els = Array.from(document.querySelectorAll('*')).filter(function(x){
             var r = x.getBoundingClientRect();
@@ -870,10 +875,9 @@ class BrowserEngine extends EventEmitter {
     const el = this._indexedElements[index];
     if (!el) throw new Error(`索引 ${index} 无效。请重新调用 browser_extract type=dehydration。`);
 
-    if (!el.attrs?.selector) throw new Error(`索引 ${index} 缺少定位信息`);
-
-    const selector = el.attrs?.selector;
-    if (!selector) throw new Error(`索引 ${index} 缺少定位信息`);
+    // selector 在顶层 (见 DehydratedElement 注释), 不在 attrs 里
+    const selector = el.selector;
+    if (!selector) throw new Error(`索引 ${index} 缺少定位信息, 请重新扫描`);
     await page.fill(selector, text, { timeout: 5000 }).catch(async () => {
       await page.click(selector, { timeout: 3000 }).catch(() => {});
       await page.keyboard.type(text);

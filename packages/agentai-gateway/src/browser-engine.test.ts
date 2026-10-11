@@ -35,4 +35,12 @@ describe('browser-engine 注入脚本', () => {
     expect(src, 'page.evaluate 不得裸传 SCAN_FN').not.toMatch(/page\.evaluate\(\s*SCAN_FN\s*\)/);
     expect(src, 'page.evaluate 不得裸传 DEHYDRATE_JS').not.toMatch(/page\.evaluate\(\s*DEHYDRATE_JS\s*\)/);
   });
+
+  it('dehydrate 必须把 selector 搬到顶层, 索引工具不得再读 attrs.selector', () => {
+    const src = fs.readFileSync(path.join(__dirname, 'browser-engine.ts'), 'utf8');
+    // DEHYDRATE_JS 产出的是顶层 selector; 映射层漏搬过一次, 导致 clickByIndex/typeByIndex
+    // 一律抛"缺少定位信息" (实测: 修复前两个工具都点不动, 修复后均返回"点击成功")
+    expect(src, 'dehydrate 映射必须搬运 e.selector').toMatch(/selector:\s*e\.selector/);
+    expect(src, '不得再读 el.attrs?.selector (那里永远没有 selector)').not.toMatch(/el\.attrs\?\.selector/);
+  });
 });
