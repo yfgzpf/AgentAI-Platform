@@ -71,6 +71,26 @@ function updateStoredTask(taskId: string, updates: Partial<StoredVideoTask>) {
   } catch {}
 }
 
+// ===== 视频引擎目录 (单一真源) =====
+// 供 POST /v1/video 的"未指定模型时自动选择"与 GET /v1/video/engines 共用。
+//
+// 2026-10-11: 新增 engines 自检端点的原因 —— 在它之前, 前端**没有任何途径**知道
+// 哪个引擎配了 Key。用户选了「Agnes Video 2.5 正式版」或「Seedance 2.5」后必然
+// 拿到 400, 观感就是"生成不成功", 却无从判断是自己选错还是系统坏了。
+// 实测 (2026-10-11): AGNES_VIDEO_API_KEY / VOLCANO_API_KEY 均未配置 ——
+// 4 个引擎里 2 个恒 400, 只有 cogvideo 与 agnes(免费档, 受 429 限流)可用。
+const VIDEO_ENGINES: Array<{ name: string; label: string; env: string[] }> = [
+  { name: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版', env: ['AGNES_VIDEO_API_KEY'] },
+  { name: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', env: ['AGENTAI_API_KEY', 'AGNES_API_KEY'] },
+  { name: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', env: ['VOLCANO_API_KEY'] },
+  { name: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', env: ['ZHIPU_API_KEY'] },
+];
+
+/** 引擎是否已具备可用 Key (env 列表中任一为真即可) */
+function engineAvailable(e: { env: string[] }): boolean {
+  return e.env.some((k) => !!process.env[k]);
+}
+
 export function createVideoRouter(io?: any) {
   const router = Router();
 
@@ -203,13 +223,8 @@ export function createVideoRouter(io?: any) {
 
       // ---- 未指定 model: 只在唯一可用引擎时自动选，避免多义----
       if (!requested) {
-        const candidates: Array<{ name: string; env: string[] }> = [
-          { name: 'agnes-video-2.5', env: ['AGNES_VIDEO_API_KEY'] },
-          { name: 'agnes', env: ['AGENTAI_API_KEY', 'AGNES_API_KEY'] },
-          { name: 'seedance-2.5', env: ['VOLCANO_API_KEY'] },
-          { name: 'cogvideo', env: ['ZHIPU_API_KEY'] },
-        ];
-        const available = candidates.filter((c) => c.env.some((e) => process.env[e]));
+        // 复用模块级 VIDEO_ENGINES —— 与 GET /v1/video/engines 同源, 避免两处漂移
+        const available = VIDEO_ENGINES.filter(engineAvailable);
         if (available.length === 1) {
           // 唯一可用引擎 → 直接按它分发（而不是"提醒"了事，否则用户永远拿不到 taskId）
           const only = available[0].name;
@@ -237,6 +252,25 @@ export function createVideoRouter(io?: any) {
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
     }
+  });
+
+  // GET /v1/video/engines — 视频引擎可用性自检 (2026-10-11)
+  //
+  // 前端 VideoGen 据此**禁用**未配置 Key 的引擎, 从源头消除
+  // "选了 agnes-video-2.5 才知道要另外配 Key → 生成不成功" 这一体验。
+  //
+  // ⚠️ 必须注册在 GET /v1/video/:taskId **之前**: 否则 Express 会把
+  //    /v1/video/engines 匹配成 taskId='engines' 而吞掉本路由
+  //    —— 与 /v1/video/query 被吞是同一类 bug。
+  router.get('/v1/video/engines', (_req, res) => {
+    return res.json({
+      engines: VIDEO_ENGINES.map((e) => ({
+        name: e.name,
+        label: e.label,
+        available: engineAvailable(e),
+        requiredEnv: e.env,
+      })),
+    });
   });
 
   // GET /v1/video/:taskId — 查询任务状态

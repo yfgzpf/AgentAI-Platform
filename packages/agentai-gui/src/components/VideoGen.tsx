@@ -199,10 +199,37 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
   const [editingModelId, setEditingModelId] = useState<string | null>(null); // P1: 编辑模式
   const [testingModel, setTestingModel] = useState<string | null>(null); // P1: 测试中
 
+  // 引擎可用性自检 (GET /v1/video/engines) — 2026-10-11
+  // 此前前端**无从知道**哪个引擎配了 Key: 用户选中 agnes-video-2.5 / seedance-2.5
+  // 提交后必然 400「生成不成功」, 却无法判断是自己选错还是系统坏了。
+  // 未拉到状态时(后端未启动)一律视为可用 —— 保持旧行为, 真实错误由提交阶段给出。
+  const [engineStatus, setEngineStatus] = useState<Record<string, { available: boolean; requiredEnv: string[] }>>({});
+  useEffect(() => {
+    fetch(`${httpUrl}/v1/video/engines`)
+      .then(r => r.json())
+      .then((d: any) => {
+        const m: Record<string, { available: boolean; requiredEnv: string[] }> = {};
+        for (const e of d?.engines || []) m[e.name] = { available: !!e.available, requiredEnv: e.requiredEnv || [] };
+        setEngineStatus(m);
+      })
+      .catch(() => { /* 后端不可达: 不拦截, 交给提交阶段报真实错误 */ });
+  }, [httpUrl]);
+
+  /** 引擎是否可用 (状态未加载时不阻止, 保持旧行为) */
+  const isEngineAvailable = (name: string) => !engineStatus[name] || engineStatus[name].available;
+
   // 合并内置模型和自定义模型
   const videoModels = useModelStore.getState().models.filter(m => m.modelType === 'video' && m.enabled);
   const allModelOptions = [
-    ...MODELS.map(m => ({ value: m.value, label: m.label })),
+    // 未配置 Key 的引擎直接禁用 —— 让用户在**选之前**就知道, 而不是提交后收 400
+    ...MODELS.map(m => {
+      const unavailable = !!engineStatus[m.value] && !engineStatus[m.value].available;
+      return {
+        value: m.value,
+        label: unavailable ? `${m.label} — 未配置 Key` : m.label,
+        disabled: unavailable,
+      };
+    }),
     ...videoModels.map(m => ({ value: m.id, label: `${m.label}${m.freeQuotaNote ? ' ' + m.freeQuotaNote : ''}` })),
     ...customModels.map(m => ({ value: `custom:${m.id}`, label: `🔑 ${m.name}`, isCustom: true })),
   ];
@@ -605,7 +632,11 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
             setLastFrame(frameData.lastFrame);
           }
           // 自动切换到支持首尾帧的模型
-          if (model === 'cogvideo' || model === 'agnes') {
+          // ⚠️ 必须检查引擎可用性: 原先无条件切到 agnes-video-2.5, 而该引擎要独立的
+          //    AGNES_VIDEO_API_KEY —— 未配置时后端直接 400, 用户看到的"生成不成功"
+          //    正是这次自动切换造成的。未配置就保持当前引擎: agnes/cogvideo 同样
+          //    支持 keyframe 首尾帧, 只是参考图/音频上限更小。
+          if ((model === 'cogvideo' || model === 'agnes') && isEngineAvailable('agnes-video-2.5')) {
             setModel('agnes-video-2.5');
           }
         } else {
@@ -1003,7 +1034,8 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
                                 setPrompt('续集: ' + (item.params?.prompt || item.prompt).slice(0, 60) + '...\n请延续上一段视频的内容和风格, 生成后续画面。');
                                 setFirstFrame(fallbackData.tailFrameUrl);
                                 setRefImages([]);
-                                setModel('agnes-video-2.5');
+                                // 同 extract-frames: 缺 AGNES_VIDEO_API_KEY 时不要切到正式版
+                                if (isEngineAvailable('agnes-video-2.5')) setModel('agnes-video-2.5');
                                 message.success({ content: '✅ 尾帧已提取 (降级模式), 请手动编辑提示词', key: 'seq-extract', duration: 4 });
                               } else {
                                 // 2026-10-06: 不再只说"尾帧提取失败"。

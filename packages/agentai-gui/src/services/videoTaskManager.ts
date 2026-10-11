@@ -70,6 +70,8 @@ const QUEUE_KEY = 'agentai-video-queue';
 const POLL_INTERVAL = 15000;
 const MAX_POLLS = 200;
 const MAX_PARALLEL = 1; // Agnes Flash 不支持并发, 串行提交
+// 限流/队列满的重试上限 —— 见 submitTaskToBackend 中的说明
+const MAX_THROTTLE_RETRIES = 5;
 
 class VideoTaskManager {
   private tasks: VideoTask[] = [];
@@ -289,14 +291,36 @@ aspect_ratio?: string;
       const data = await resp.json();
 
       if (data.error) {
-        // 队列满 → 30秒后重试
-        const isQueueFull = resp.status === 503 || data.code === 'video_queue_full' || String(data.error).includes('队列');
-        if (isQueueFull) {
-          next.status = 'queued';
-          this.queue.unshift(next); // 重新放回队首
+        // 限流/队列满 → 30秒后重试, 最多 MAX_THROTTLE_RETRIES 次
+        //
+        // ⚠️ 原先**没有次数上限**: 每次限流都 unshift 回队首 + 30s 后重投, 于是
+        //    任务永远停在"排队中" —— 既不会成功, 也永远不报错, 用户只能干等。
+        // 2026-10-11 实测: agnes 免费档返回 429「您已达到免费用户的 API 速率限制」,
+        //    该额度一旦耗尽, 重试多久都不会成功, 必须让用户看到可执行的下一步。
+        //    同时补上 429 —— 原先只认 503, 429 会被立刻标失败(丢失退避机会)。
+        const isThrottled = resp.status === 503 || resp.status === 429
+          || data.code === 'video_queue_full'
+          || String(data.error).includes('队列')
+          || String(data.error).includes('速率限制');
+        if (isThrottled) {
+          const tries = ((next as any)._throttleTries || 0) + 1;
+          (next as any)._throttleTries = tries;
+          if (tries <= MAX_THROTTLE_RETRIES) {
+            next.status = 'queued';
+            this.queue.unshift(next); // 重新放回队首
+            this.activePollIds.delete(next.id);
+            setTimeout(() => this.processQueue(), 30000);
+            this.notify();
+            return;
+          }
+          // 重试耗尽 — 明确失败并给出可执行的替代方案
+          next.status = 'failed';
+          next.error = `${data.error}${data.hint ? '\n' + data.hint : ''}`
+            + `\n已重试 ${MAX_THROTTLE_RETRIES} 次仍被限流。建议改用「CogVideoX-Flash (智谱免费)」，`
+            + '或在设置页配置 AGNES_VIDEO_API_KEY 以解锁独立额度。';
           this.activePollIds.delete(next.id);
-          setTimeout(() => this.processQueue(), 30000);
           this.notify();
+          this.processQueue();
           return;
         }
         next.status = 'failed';
