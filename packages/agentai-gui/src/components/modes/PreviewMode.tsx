@@ -67,7 +67,7 @@ const ImagePreview: React.FC<{ src: string; fileName: string }> = ({ src, fileNa
         flexShrink: 0,
       }}>
         <Tooltip title="缩小"><Button type="text" size="small" icon={<ZoomOutOutlined />} onClick={handleZoomOut} /></Tooltip>
-        <div style={{ width: 80, textAlign: 'center', fontSize: 12, color: 'var(--text-secondary,#aaa)' }}>
+        <div style={{ width: 80, textAlign: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
           {Math.round(zoom * 100)}%
         </div>
         <Tooltip title="放大"><Button type="text" size="small" icon={<ZoomInOutlined />} onClick={handleZoomIn} /></Tooltip>
@@ -161,7 +161,7 @@ const PdfPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileName
           disabled={currentPage <= 1}
           onClick={() => setCurrentPage(p => p - 1)}
         />
-        <span style={{ fontSize: 12, color: 'var(--text-secondary,#aaa)', minWidth: 80, textAlign: 'center' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 80, textAlign: 'center' }}>
           第 {currentPage} 页 / 共 {numPages || '?'} 页
         </span>
         <Button
@@ -172,7 +172,7 @@ const PdfPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileName
         />
         <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)' }} />
         <Tooltip title="缩小"><Button type="text" size="small" icon={<ZoomOutOutlined />} onClick={() => setScale(s => Math.max(0.5, s - 0.2))} /></Tooltip>
-        <span style={{ fontSize: 12, color: 'var(--text-secondary,#aaa)' }}>{Math.round(scale * 100)}%</span>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{Math.round(scale * 100)}%</span>
         <Tooltip title="放大"><Button type="text" size="small" icon={<ZoomInOutlined />} onClick={() => setScale(s => Math.min(3, s + 0.2))} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined />} onClick={() => {
           const a = document.createElement('a');
@@ -272,12 +272,12 @@ const AudioPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileNa
       height: '100%',
       gap: 24,
     }}>
-      <SoundOutlined style={{ fontSize: 64, color: 'var(--text-tertiary,#555)' }} />
+      <SoundOutlined style={{ fontSize: 64, color: 'var(--text-tertiary)' }} />
       <audio controls preload="metadata" style={{ width: 'min(400px, 80%)' }}>
         <source src={audioUrl} />
         您的浏览器不支持音频播放
       </audio>
-      <span style={{ fontSize: 12, color: 'var(--text-tertiary,#666)' }}>{fileName}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fileName}</span>
     </div>
   );
 };
@@ -290,7 +290,7 @@ const MarkdownPreview: React.FC<{ content: string; filePath: string }> = React.m
       height: '100%',
       overflow: 'auto',
       padding: '24px 40px',
-      background: 'var(--bg-primary,#111)',
+      background: 'var(--bg-primary)',
     }}>
       <MdComponent content={content} />
     </div>
@@ -329,7 +329,7 @@ const HtmlPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileNam
         borderBottom: '1px solid rgba(255,255,255,0.08)',
         flexShrink: 0,
       }}>
-        <span style={{ fontSize: 12, color: 'var(--text-secondary,#aaa)' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
           🌐 HTML 预览
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -384,8 +384,8 @@ const TextPreview: React.FC<{ content: string; filePath: string }> = ({ content,
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
     fontSize: 13,
     lineHeight: 1.7,
-    color: 'var(--text-primary,#ccc)',
-    background: 'var(--bg-primary,#111)',
+    color: 'var(--text-primary)',
+    background: 'var(--bg-primary)',
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
     tabSize: 2,
@@ -435,7 +435,7 @@ export const PreviewMode: React.FC = () => {
     return (
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        height: '100%', gap: 16, color: 'var(--text-tertiary,#666)',
+        height: '100%', gap: 16, color: 'var(--text-tertiary)',
       }}>
         <FileTextOutlined style={{ fontSize: 48, opacity: 0.3 }} />
         <p>没有选择要预览的文件</p>
@@ -454,7 +454,7 @@ export const PreviewMode: React.FC = () => {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100%', color: 'var(--text-tertiary,#666)',
+        height: '100%', color: 'var(--text-tertiary)',
       }}>
         正在加载预览...
       </div>
@@ -469,7 +469,7 @@ export const PreviewMode: React.FC = () => {
         height: '100%', gap: 12,
       }}>
         <span style={{ fontSize: 32 }}>⚠️</span>
-        <p style={{ color: 'var(--text-secondary,#999)' }}>预览失败: {error}</p>
+        <p style={{ color: 'var(--text-secondary)' }}>预览失败: {error}</p>
         <Button size="small" onClick={() => loadContent(currentFile)}>重试</Button>
       </div>
     );

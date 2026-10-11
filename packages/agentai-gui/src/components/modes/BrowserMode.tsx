@@ -139,7 +139,7 @@ export const BrowserMode: React.FC = () => {
               icon={<ArrowLeftOutlined />}
               disabled={!canGoBack}
               onClick={() => navigateBrowserHistory('back')}
-              style={{ color: canGoBack ? 'var(--text-primary,#ccc)' : 'var(--text-tertiary,#444)' }}
+              style={{ color: canGoBack ? 'var(--text-primary)' : 'var(--text-tertiary)' }}
             />
           </Tooltip>
           <Tooltip title="前进 (Alt+→)">
@@ -149,7 +149,7 @@ export const BrowserMode: React.FC = () => {
               icon={<ArrowRightOutlined />}
               disabled={!canGoForward}
               onClick={() => navigateBrowserHistory('forward')}
-              style={{ color: canGoForward ? 'var(--text-primary,#ccc)' : 'var(--text-tertiary,#444)' }}
+              style={{ color: canGoForward ? 'var(--text-primary)' : 'var(--text-tertiary)' }}
             />
           </Tooltip>
           <Tooltip title="刷新 (F5)">
@@ -160,7 +160,7 @@ export const BrowserMode: React.FC = () => {
               onClick={() => {
                 if (currentUrl) pushBrowserHistory(currentUrl);
               }}
-              style={{ color: 'var(--text-primary,#ccc)' }}
+              style={{ color: 'var(--text-primary)' }}
             />
           </Tooltip>
         </div>
@@ -196,7 +196,7 @@ export const BrowserMode: React.FC = () => {
             style={{
               flex: 1,
               fontSize: 13,
-              color: 'var(--text-primary,#ddd)',
+              color: 'var(--text-primary)',
               background: 'transparent',
               padding: 0,
             }}
@@ -223,7 +223,7 @@ export const BrowserMode: React.FC = () => {
               icon={<RobotOutlined />}
               onClick={() => setAiControlled(!aiControlled)}
               style={{
-                color: aiControlled ? '#fff' : 'var(--text-tertiary,#666)',
+                color: aiControlled ? '#fff' : 'var(--text-tertiary)',
                 background: aiControlled ? 'var(--accent,#f97316)' : 'transparent',
                 fontSize: 11,
               }}
@@ -249,7 +249,7 @@ export const BrowserMode: React.FC = () => {
               size="small"
               icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
               onClick={toggleFullscreen}
-              style={{ color: 'var(--text-primary,#ccc)' }}
+              style={{ color: 'var(--text-primary)' }}
             />
           </Tooltip>
         </div>
@@ -310,7 +310,7 @@ export const BrowserMode: React.FC = () => {
           paddingLeft: 12,
           paddingRight: 12,
           fontSize: 11,
-          color: 'var(--text-tertiary,#555)',
+          color: 'var(--text-tertiary)',
           background: 'rgba(0,0,0,0.25)',
           borderTop: '1px solid rgba(255,255,255,0.04)',
           flexShrink: 0,

@@ -77,7 +77,7 @@ export const UserMsg: React.FC<{
           padding: '10px 16px',
           borderRadius: '16px 16px 4px 16px',
           background: 'linear-gradient(135deg, var(--accent), var(--accent-strong))',
-          color: 'var(--fg-on-accent, #fff)',
+          color: 'var(--fg-on-accent)',
           fontSize: 'var(--chat-font-size)', lineHeight: 'var(--chat-line-height)',
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
           boxShadow: '0 4px 16px var(--accent-soft), 0 1px 4px rgba(0,0,0,0.1)',

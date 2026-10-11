@@ -277,7 +277,7 @@ export const TaskCenterPanel: React.FC = () => {
           <Tooltip title={goal}>
             <span style={{ fontWeight: 500 }}>{goal || '(无目标)'}</span>
           </Tooltip>
-          <span style={{ fontSize: 11, color: 'var(--text-secondary, #888)' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
             {t.taskId.slice(0, 30)}...
           </span>
         </Space>

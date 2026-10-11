@@ -51,7 +51,53 @@
   --shadow-hover: 0 8px 24px -8px rgba(0, 0, 0, 0.25);
 
   --radius: 8px;
-  --radius-lg: 12px;
+
+  /* ── 通用文本尺度 (2026-10-11) ────────────────────────────────────
+     主题里**已有**的字号 token 只有对话域那 5 个 (--chat-font-size 12.5 /
+     --chat-code-font-size 11.5 / --tool-font-size 10.5 / --ui-font-size 11, 见下方
+     "对话字体大小系统") 以及 --icon-size-* 5 档图标尺寸; **通用页面/面板/状态栏没有尺度**。
+     实测后果: tsx 里 23 种 fontSize (0,1,7,8,9,10,11,12,13,14,15,16,18,20,22,24,28,32,36,40,46,48,64),
+     其中 ≤12px 有 874 处 —— 一个健康体系是 6 档。
+     ⚠️ >=20 的大值绝大多数是**图标/emoji/hero** (如 `ThunderOutlined style={{fontSize:40}}`、
+     `{avatar}` 的 fontSize:64), 不属于文本尺度, 收敛时不能把它们算进去。
+     本档给通用文本用: micro(徽标/状态栏) / sm(辅助) / md(正文) / lg(小标题) / xl(标题) / hero。 */
+  --fs-micro: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-hero: 28px;
+
+  /* ── 语义别名层 (2026-10-11) ──────────────────────────────────────
+     tsx 大量消费 --text-primary/--text-secondary/--text-tertiary/--bg-1/--muted-1/...
+     但主题里**一个都没定义** → 每个调用点各自带硬编码 fallback, 同一语义在不同文件
+     落到不同颜色, 这是"看着乱"最直接的来源 (实测):
+       --text-secondary → #aaa(4) / #888(2) / #999(2)   同一"次要文字"三种灰
+       --text-tertiary  → #666(8) / #555(4) / #444(2) / #777(1)   四种灰
+       --text-primary   → #ccc(5) / #eee(2) / #ddd(1)   三种"正文色"
+     另有 --bg-1/--muted-1/--muted-3/--color-text-muted 等**连 fallback 都没有**,
+     var() 无 fallback 且未定义 → 该属性整条失效 (静默不生效)。
+     这里统一收敛为指向既有词汇的别名; 用 var() 间接引用, 因此 light/midnight/ember
+     等主题覆盖 --fg/--muted 后别名会跟着变, 无需每个主题重复定义。 */
+  --text-primary: var(--fg);
+  --text-secondary: var(--muted);
+  --text-tertiary: var(--muted-2);
+  --fg-on-accent: #ffffff;
+  --fg-muted: var(--muted);
+  --muted-1: var(--muted);
+  --muted-3: var(--muted-2);
+  --muted-soft: var(--panel-2);
+  --bg-1: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--bg-2);
+  --bg-active: var(--accent-soft);
+  --border-color: var(--border);
+  --color-text-muted: var(--muted);
+  --accent-bg: var(--accent-soft);
+  --hover: var(--card-hover);
+  /* demo 卡片原先是 CSS 里写死的靛蓝 #6366f1, 与主题橙 accent 并列出现 →
+     收敛到 accent, 由主题驱动 */
+  --demo-color: var(--accent);
 
   /* ── 对话布局 Tokens (统一间距/宽度) ── */
   --chat-row-padding-x: 16px;           /* 消息行左右内边距 */
@@ -374,8 +420,9 @@
   --chat-font-size: 12.5px;
   --chat-line-height: 1.6;
   --chat-code-font-size: 11.5px;
-  --tool-font-size: 10.5px;
-  --ui-font-size: 11px;
+  /* 10.5px 是 0.5 步长的产物, 归到 micro 档 (2026-10-11) */
+  --tool-font-size: 11px;
+  --ui-font-size: var(--fs-micro);
 
   /* ── 图标尺寸标准 ── */
   --icon-size-xs: 10px;   /* 标签/徽章内小图标 */
@@ -1150,17 +1197,17 @@ html, body {
   content: '';
   position: absolute;
   top: 0; left: 0; right: 0; height: 3px;
-  background: linear-gradient(90deg, transparent, var(--demo-color, #6366f1), transparent);
+  background: linear-gradient(90deg, transparent, var(--demo-color), transparent);
   opacity: 0;
   transition: opacity 0.25s ease;
 }
 .demo-card:hover {
   transform: translateY(-3px) !important;
-  border-color: var(--demo-color, #6366f1) !important;
+  border-color: var(--demo-color) !important;
   box-shadow: 
     0 8px 24px rgba(0,0,0,0.12),
     0 0 0 1px rgba(99,102,241,0.1),
-    0 0 20px color-mix(in srgb, var(--demo-color, #6366f1) 15%, transparent) !important;
+    0 0 20px color-mix(in srgb, var(--demo-color) 15%, transparent) !important;
 }
 .demo-card:hover::before {
   opacity: 1;

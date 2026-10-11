@@ -53,8 +53,8 @@ const WorkspaceErrorFallback: React.FC<{ onRetry: () => void }> = ({ onRetry }) 
     padding: 40,
   }}>
     <span style={{ fontSize: 48 }}>😕</span>
-    <h3 style={{ color: 'var(--text-secondary, #888)', margin: 0 }}>工作区加载失败</h3>
-    <p style={{ color: 'var(--text-tertiary, #666)', margin: 0 }}>
+    <h3 style={{ color: 'var(--text-secondary)', margin: 0 }}>工作区加载失败</h3>
+    <p style={{ color: 'var(--text-tertiary)', margin: 0 }}>
       当前模式遇到问题，可以尝试刷新或切换到其他模式
     </p>
     <button
@@ -62,9 +62,9 @@ const WorkspaceErrorFallback: React.FC<{ onRetry: () => void }> = ({ onRetry }) 
       style={{
         padding: '8px 24px',
         borderRadius: 8,
-        border: '1px solid var(--border-color, #333)',
-        background: 'var(--bg-secondary, #222)',
-        color: 'var(--text-primary, #eee)',
+        border: '1px solid var(--border-color)',
+        background: 'var(--bg-secondary)',
+        color: 'var(--text-primary)',
         cursor: 'pointer',
         fontSize: 14,
       }}
@@ -201,7 +201,7 @@ const ModeIndicator: React.FC<{ mode: string }> = ({ mode }) => {
         background: 'rgba(255,255,255,0.06)',
         border: '1px solid rgba(255,255,255,0.08)',
         fontSize: 11,
-        color: 'var(--text-tertiary, #777)',
+        color: 'var(--text-tertiary)',
         pointerEvents: 'none',
         userSelect: 'none',
       }}
@@ -223,7 +223,7 @@ const WORKSPACE_STYLES = `
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--bg-primary, #111);
+  background: var(--bg-primary);
 }
 
 .workspace-mode-content {

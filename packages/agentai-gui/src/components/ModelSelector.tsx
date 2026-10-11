@@ -335,7 +335,7 @@ const GroupTags: React.FC<{
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 2,
                       padding: '2px 4px', borderRadius: 4,
-                      background: isActive ? 'var(--accent-bg, rgba(79,70,229,0.1))' : 'transparent',
+                      background: isActive ? 'var(--accent-bg)' : 'transparent',
                       cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap',
                     }}
                     onClick={() => onSelect(m.id)}
@@ -387,7 +387,7 @@ onChange={(e) => {
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 2,
                   padding: '2px 4px', borderRadius: 4,
-                  background: isActive ? 'var(--accent-bg, rgba(79,70,229,0.1))' : 'transparent',
+                  background: isActive ? 'var(--accent-bg)' : 'transparent',
                   cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap',
                 }}
                 onClick={() => onSelect(m.id)}

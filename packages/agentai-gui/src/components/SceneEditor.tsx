@@ -441,7 +441,7 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
               style={{
                 display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', marginBottom: 4,
                 borderRadius: 6, cursor: 'pointer',
-                background: selectedLayerId === layer.id ? 'var(--bg-active, rgba(24,144,255,0.1))' : 'var(--bg)',
+                background: selectedLayerId === layer.id ? 'var(--bg-active)' : 'var(--bg)',
                 border: `1px solid ${selectedLayerId === layer.id ? '#1890ff' : 'transparent'}`,
               }}>
               {/* 缩略图 */}

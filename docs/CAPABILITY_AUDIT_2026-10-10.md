@@ -235,23 +235,45 @@ create_tool    → .agentai/custom-tools/ + registry.json
 - **布局特点：绝大多数测试与源码同目录并置**，`__tests__/` 只有 2 个文件
 - 安全测试做得扎实：`b1-security.test.ts`(10.7KB)、sandbox 四件套、safety 三件套
 - **缺口：6416 行的 agentai-loop.ts 零覆盖，repairPipeline 六步无专项测试**
-- 前端(`packages/agentai-gui`)基线 **130 测试 / 8 文件**（2026-10-11：在 109/7 基础上新增
-  `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21)，均为源码文本断言：
+- 前端(`packages/agentai-gui`)基线 **162 测试 / 9 文件**（2026-10-11：在 109/7 基础上新增
+  `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(32)，均为源码文本断言：
   前者锁布局机制 —— 中栏宽度必须自适应 `clamp()`、页面内面板必须两层结构、页面根高度必须 `100%`
   而非 `calc(100vh - N)`；后者锁右栏 信息/浏览器 双模式（`agentai.pane.browser.width` 分轨宽度、
   右栏内容判 `effectiveRailMode` 而非持久化的 `railMode`、恰好 2 个 `.pane-grip`）、
   文件卡片行点击就地展开（`PREVIEW_LINE_CAP=400`）、**浏览器宿主唯一性**
   （`browser-host.ts` 恰好 6 个 `addEventListener`、`GlobalBrowserDrawer.tsx` 为 0，
   防双挂 `EmbeddedBrowser` 导致 `/browser` 命名空间重复订阅）、
-  浏览器空态不叠层（iframe 空态必须 `!playwrightMode`）与内容区不写死 `#fff`。
+  浏览器空态不叠层（iframe 空态必须 `!playwrightMode`）与内容区不写死 `#fff`；
+  token-layer 锁 **CSS token 层契约** —— 18 条语义别名必须真实存在、其依赖的 9 个底层 token
+  必须在全部 5 个主题块里有定义（否则换主题即解析失败）、别名调用点不得残留硬编码死 fallback、
+  `--radius-lg` 不得同层重复定义、通用文本尺度 `--fs-*` 必须存在。
   核验：`cd packages/agentai-gui && npx vitest run`）
-- ⚠️ **前端设计尺度未收敛（2026-10-11 实测，用户选择"只修硬伤"故延后）**：
+- ✅ **前端 CSS token 层已修（2026-10-11，这是"乱"的根因，非审美问题）**：
+  **18 个变量被 tsx 消费但从未在任何 CSS 中定义** —— `--text-primary/secondary/tertiary`、`--bg-1`、
+  `--muted-1`/`--muted-3`、`--muted-soft`、`--border-color`、`--color-text-muted`、`--bg-primary/secondary`、
+  `--bg-active`、`--accent-bg`、`--fg-on-accent`、`--hover`、`--demo-color`。
+  因为每个调用点自带硬编码 fallback，同一"语义角色"渲染成 3–6 种颜色
+  （`--text-secondary` → `#aaa`×4 / `#888`×2 / `#999`×2；`--text-tertiary` → `#666`×8 / `#555`×4 / `#444`×2 / `#777`×1；
+  `--text-primary` → `#ccc`×5 / `#eee`×2 / `#ddd`×1）；少数调用点连 fallback 都没有
+  （`SoulPanel` 的 `var(--bg-1)`×4、`Composer.tsx:904` 的 `var(--muted-3)`、`WorkspaceSelector.tsx:249` 的
+  `var(--color-text-muted)`）→ **整条声明无效被静默忽略**。另有 `--radius-lg` 在同一暗色 hex 层重复定义
+  （14px 再 12px）→ 暗色 12px / 浅色 14px 不一致。
+  修法：建 18 条别名全部指向已有底层 token（底层 token 在 5 个主题块里均已定义）；补 6 级通用文本尺度
+  `--fs-micro/sm/md/lg/xl/hero` = 11/12/13/16/20/28（此前主题只有对话域字号 `--chat-font-size` 等，
+  没有通用尺度）；`--tool-font-size: 10.5px → 11px`、`--ui-font-size → var(--fs-micro)`；
+  清掉 39 处已失效的硬编码死 fallback + 3 处 `var(--demo-color, #6366f1)` 的靛蓝残留。
+  核验：残留死 fallback
+  `grep -rEoh "var\(--(text-primary|text-secondary|text-tertiary|bg-1|hover|bg-active|accent-bg|fg-on-accent|muted-1|muted-3|muted-soft|color-text-muted|bg-primary|bg-secondary|border-color) ?, ?(#|rgba)" --include=*.tsx packages/agentai-gui/src | wc -l` → **0**（修复前 39）；
+  `grep -n "radius-lg" packages/agentai-gui/src/styles/agentai-theme.css` → 仅 2 处且均为 14px
+- ⚠️ **前端设计尺度（调用点层面）仍未收敛（2026-10-11 实测）**：token 层已就绪，但调用点尚未改动 ——
   `fontSize` **23 种**（0,1,7,8,9,10,11,12,13,14,15,16,18,20,22,24,28,32,36,40,46,48,64），
   其中 ≤12px **874 处**；`borderRadius` **19 种**；tsx 里硬编码 hex **208 种**（1012 次），
   而 CSS 变量只用到 **57 个**；内联 `style={{` **3417 处 / 111 个 tsx 文件**。
   同语义多值是最直接的"看着乱"来源：成功绿 4 个（`#52c41a`/`#10b981`/`#4ade80`/`#22c55e`）、
   错误红 3 个（`#ef4444`/`#ff4d4f`/`#f5222d`）、灰阶 5 个（`#666`/`#999`/`#888`/`#333`/`#ccc`）、
-  纯白 `#fff` 72 次。核验：
+  纯白 `#fff` 72 次。⚠️ 收敛 fontSize 时**不可一刀切**：≥20 的值压倒性是图标/emoji/hero
+  （如 `ThunderboltOutlined style={{fontSize:40}}`、`{avatar}` 的 `fontSize:64`），不得并入文本尺度。
+  核验：
   `grep -rEoh "fontSize: ?['\"]?[0-9]+" --include=*.tsx packages/agentai-gui/src | grep -oE "[0-9]+$" | sort -nu | wc -l`
 
 ---

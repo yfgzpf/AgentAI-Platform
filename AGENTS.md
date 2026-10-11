@@ -381,18 +381,39 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
    同一个「模式」被两处争用，用户分不清点哪边。文案已改为「选一个风格预设，或直接输入描述」+「套用此风格」。
    核验：`grep -rn "选择模式" packages/agentai-gui/src/` → **0**
 
-**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts`
+8. **token 层本身是坏的（这才是「乱」的根因，2026-10-11 修复）** —— 不是审美问题：
+   有 **18 个 CSS 变量被 tsx 消费，却从未在任何 CSS 里定义**：`--text-primary/secondary/tertiary`、
+   `--bg-1`、`--muted-1/3`、`--muted-soft`、`--border-color`、`--color-text-muted`、`--bg-primary/secondary`、
+   `--bg-active`、`--accent-bg`、`--fg-on-accent`、`--hover`、`--demo-color`。
+   因为每个调用点都自带硬编码 fallback，同一「语义角色」在页面上渲染成 3–6 种不同颜色
+   （`--text-secondary` → `#aaa`(4)/`#888`(2)/`#999`(2)）；少数调用点**连 fallback 都没有**
+   （`SoulPanel` 的 `var(--bg-1)` ×4、`Composer.tsx:904` 的 `var(--muted-3)`、
+   `WorkspaceSelector.tsx:249` 的 `var(--color-text-muted)`）→ 整条声明无效、被静默忽略。
+   另 `--radius-lg` 在同一个暗色 hex 层定义两次（14px 再 12px）→ 暗色 12px / 浅色 14px 不一致。
+   修法：**建语义别名层**（18 条，全部指向已有底层 token），底层 token 在 5 个主题块里都已定义，
+   故别名在任意主题下都能解析；同时补通用文本尺度 `--fs-micro/sm/md/lg/xl/hero`（11/12/13/16/20/28），
+   把 `--tool-font-size: 10.5px` 归到 micro 档、`--ui-font-size → var(--fs-micro)`。
+   核验：别名调用点残留死 fallback `grep -rEoh "var\(--(text-primary|text-secondary|text-tertiary|bg-1|hover|bg-active|accent-bg|fg-on-accent|muted-1|muted-3|muted-soft|color-text-muted|bg-primary|bg-secondary|border-color) ?, ?(#|rgba)" --include=*.tsx packages/agentai-gui/src | wc -l` → **0**（修复前 39）；
+   `grep -n "radius-lg" packages/agentai-gui/src/styles/agentai-theme.css` → **仅 2 处，均为 14px**
+   ⚠️ 别名层只做「把没定义的补上」，**没有**替换既有调用点的色值 —— 收敛调用点本身是下方仍未做的 Commit B/C。
+
+**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts` + `token-layer.test.ts`
 （源码文本断言 + `stripComments` 辅助，因为修复点注释本身会引用「坏掉的旧代码」）。
-核验：`cd packages/agentai-gui && npx vitest run` → **8 文件 / 130 通过**（基线 90/6 → 109/7 → 125/8 → 130/8；
-rail-browser 从 16 条增至 21 条，新增的锁的是 `effectiveRailMode`、空态不叠层、`#fff` 白斑、ImageStudio 消歧）。
+核验：`cd packages/agentai-gui && npx vitest run` → **9 文件 / 162 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9；
+rail-browser 16 → 21 条（`effectiveRailMode`、空态不叠层、`#fff` 白斑、ImageStudio 消歧），
+token-layer 新增 32 条（18 别名定义 + 9 底层 token × 5 主题块 + 死 fallback 归零 + `radius-lg` 不重复 + 字号尺度存在））。
 ⚠️ **仍未做（用户 2026-10-11 明确选择「只修硬伤」，设计尺度与信息架构延后）**：
-字号尺度（**23 种** fontSize，≤12px **874 处**）、圆角（**19 种**）、硬编码色（**208 种**，同语义
-成功绿 4 个/错误红 3 个/灰阶 5 个）、内联 `style={{` **3417 处**；
+**调用点**层面的收敛 —— 字号（**23 种** fontSize，≤12px **874 处**）、圆角（**19 种**）、硬编码色（**208 种**，
+同语义成功绿 4 个/错误红 3 个/灰阶 5 个/`#fff` ×72）、内联 `style={{` **3417 处**；
 标题栏 11 控件 + 「免费内置模型」常驻 nag 条 + 底部状态栏 **12 项 @9–10px**。
+（token 层已先修好，是这些收敛的前置条件 —— 没有别名层，改调用点只会换个 fallback 再分叉一次。）
 核验：`grep -rEoh "fontSize: ?['\"]?[0-9]+" --include=*.tsx packages/agentai-gui/src | grep -oE "[0-9]+$" | sort -nu | wc -l`
-⚠️ 上一轮活体验收**未覆盖**两项：`tab.screenshot()` 降级（`browser screenshot activity capture failed
-for guest`）与 FileCard 就地展开的点击穿透（IAB `click()` 全线超时，页面停在 ImageStudio）。
-这两项**仅有源码文本测试 + `tsc` 干净**，非活体证据 —— 补验时优先重测这两条。
+⚠️ 活体验收**披露**：截图通道本轮恢复（`tab.screenshot()` 可用），已截对话页 / 编辑器页 / 信息栏；
+但 IAB 的**元素点击大面积不可用**（`click()` 报 `pointer probe returned no click point`、
+`force: true` 同样失败、`tab.elementInfo()` 报 broker id mismatch）——
+最终只能靠 `data-testid`（`nav-chat` / `nav-editor` / `rail-mode-info`）点进去，
+坐标 `cua.click` 无效果。故**逐页视觉取证不完整**；FileCard 就地展开的点击穿透**至今未活体验证**，
+只有源码文本测试 + `tsc` 干净。
 
 ### 六、安全机制
 
@@ -516,8 +537,9 @@ for guest`）与 FileCard 就地展开的点击穿透（IAB `click()` 全线超�
 | 浏览器宿主 | 仅右侧浮层 Drawer | **右栏 信息/浏览器 双模式**, 事件中枢唯一 (`browser-host.ts` 6 监听 / Drawer 0) | `grep -c "addEventListener" packages/agentai-gui/src/services/browser-host.ts packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` |
 | 右栏浏览器宽度 | - | **`agentai.pane.browser.width` 默认 520** (320–900), 与信息栏 320 分轨 | `grep -n "agentai.pane.browser.width" packages/agentai-gui/src/App.tsx` |
 | 文件卡片查看 | 整行点击 → 跳 editor 页 | **行点击就地展开全文**, 仅「编辑器」按钮跳页 | `grep -n "PREVIEW_LINE_CAP\|label=\"编辑器\"" packages/agentai-gui/src/components/FileCard.tsx` |
-| GUI 测试基线 | 90 测试 / 6 文件 | **130 测试 / 8 文件** | `cd packages/agentai-gui && npx vitest run` |
-| 设计尺度 | — (无 token 体系) | ⚠️ **未收敛**: fontSize **23 种**(≤12px 874 处) / radius **19 种** / 硬编码色 **208 种** / 内联 `style={{` **3417 处** | `grep -rEoh "fontSize: ?['\"]?[0-9]+" --include=*.tsx packages/agentai-gui/src \| grep -oE "[0-9]+$" \| sort -nu \| wc -l` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **162 测试 / 9 文件** | `cd packages/agentai-gui && npx vitest run` |
+| token 层 | 18 变量被消费但**从未定义** (调用点各带 fallback → 同语义 3–6 种色) | **已修**: 建 18 条语义别名 + 6 级 `--fs-*` 尺度; 死 fallback 39 → 0 | `grep -rEoh "var\(--(text-secondary\|bg-1\|hover) ?, ?(#\|rgba)" --include=*.tsx packages/agentai-gui/src \| wc -l` |
+| 设计尺度 | — (无 token 体系) | ⚠️ **调用点仍未收敛**: fontSize **23 种**(≤12px 874 处) / radius **19 种** / 硬编码色 **208 种** / 内联 `style={{` **3417 处** (token 层已就绪, 是收敛前置) | `grep -rEoh "fontSize: ?['\"]?[0-9]+" --include=*.tsx packages/agentai-gui/src \| grep -oE "[0-9]+$" \| sort -nu \| wc -l` |
 | 右栏内容判据 | — | **`effectiveRailMode`** (非 chat 页恒为浏览器, 320/900 与 240/560 分轨) | `grep -n "effectiveRailMode" packages/agentai-gui/src/App.tsx` |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）

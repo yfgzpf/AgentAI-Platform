@@ -224,7 +224,7 @@ body.is-pane-resizing canvas {
 
 /* 只在鼠标悬停时可点击（避免误触） */
 .u-clickable-hover { cursor: pointer; transition: background 0.12s ease; }
-.u-clickable-hover:hover { background: var(--hover, rgba(255, 255, 255, 0.04)); }
+.u-clickable-hover:hover { background: var(--hover); }
 /* ═══════════════════════════════════════════════════════════════════════
    页面内可拖拽面板 (2026-10-11)
    ═══════════════════════════════════════════════════════════════════════

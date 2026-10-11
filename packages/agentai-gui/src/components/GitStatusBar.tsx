@@ -167,7 +167,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '14px',
   },
   text: {
-    color: 'var(--fg-muted, #888)',
+    color: 'var(--fg-muted)',
   },
   branch: {
     display: 'flex',

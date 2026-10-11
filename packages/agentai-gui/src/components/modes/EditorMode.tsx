@@ -50,10 +50,10 @@ const EditorEmptyState: React.FC = () => {
       justifyContent: 'center',
       height: '100%',
       gap: 20,
-      color: 'var(--text-tertiary, #666)',
+      color: 'var(--text-tertiary)',
     }}>
       <CodeOutlined style={{ fontSize: 64, opacity: 0.3 }} />
-      <h2 style={{ margin: 0, fontWeight: 500, fontSize: 18, color: 'var(--text-secondary, #999)' }}>
+      <h2 style={{ margin: 0, fontWeight: 500, fontSize: 18, color: 'var(--text-secondary)' }}>
         选择文件开始编辑
       </h2>
       <p style={{ margin: 0, fontSize: 13, maxWidth: 360, textAlign: 'center', lineHeight: 1.6 }}>
@@ -92,7 +92,7 @@ const EditorEmptyState: React.FC = () => {
         background: 'rgba(255,255,255,0.03)',
         border: '1px solid rgba(255,255,255,0.06)',
         fontSize: 12,
-        color: 'var(--text-tertiary, #555)',
+        color: 'var(--text-tertiary)',
         lineHeight: 2,
       }}>
         <div><kbd>Ctrl+N</kbd> &nbsp; 新建文件</div>
@@ -263,7 +263,7 @@ export const EditorMode: React.FC = () => {
               padding: '0 12px',
               height: '100%',
               fontSize: 12,
-              color: isActive ? 'var(--text-primary, #eee)' : 'var(--text-tertiary, #666)',
+              color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
               background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
               borderBottom: isActive ? '2px solid var(--accent, #f97316)' : '2px solid transparent',
               cursor: 'pointer',
@@ -329,7 +329,7 @@ export const EditorMode: React.FC = () => {
         {loading ? (
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            height: '100%', color: 'var(--text-tertiary, #666)',
+            height: '100%', color: 'var(--text-tertiary)',
           }}>
             加载中...
           </div>
@@ -355,7 +355,7 @@ export const EditorMode: React.FC = () => {
         paddingLeft: 12,
         paddingRight: 12,
         fontSize: 11,
-        color: 'var(--text-tertiary, #555)',
+        color: 'var(--text-tertiary)',
         background: 'rgba(0,0,0,0.2)',
         borderTop: '1px solid rgba(255,255,255,0.04)',
         flexShrink: 0,
