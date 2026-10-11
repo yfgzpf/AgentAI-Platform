@@ -27,12 +27,22 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const GUI = 'packages/agentai-gui';
 const ROOT = resolve(__dirname, '..', '..', '..');
 const src = (p: string) => readFileSync(join(ROOT, GUI, 'src', p), 'utf-8');
+
+/** GUI src 下所有 tsx (跳过测试文件自身) —— D 组要跨全项目数 EmbeddedBrowser 挂载点 */
+const walkTsx = (dir: string, acc: string[] = []): string[] => {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walkTsx(p, acc);
+    else if (/\.tsx$/.test(name) && !/\.test\./.test(name)) acc.push(p);
+  }
+  return acc;
+};
 
 /** 去掉注释行 —— 修复点旁边的注释会引用被禁掉的旧写法, 直接 grep 会假阳性 */
 const stripComments = (code: string) =>
@@ -236,5 +246,59 @@ describe('C 浏览器宿主: 唯一事件中枢', () => {
     expect(host).toContain('export function openGlobalBrowser');
     expect(host).toContain('export function navigateGlobalBrowser');
     expect(drawer).toContain('export { openGlobalBrowser, navigateGlobalBrowser }');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// D. 宿主唯一化: 中心区不再有第二个浏览器 (2026-10-12)
+// ════════════════════════════════════════════════════════════════════════
+
+describe('D 浏览器宿主唯一化', () => {
+  const app = stripComments(src('App.tsx'));
+  const uw = stripComments(src('components/UnifiedWorkspace.tsx'));
+  const editor = stripComments(src('components/Editor.tsx'));
+  const ws = stripComments(src('store/workspaceStore.ts'));
+
+  it('全项目 <EmbeddedBrowser> 挂载点恰好 2 处 (右栏 + 独立大窗), 二者互斥', () => {
+    // 背景: 编辑器页中心区曾按 localStorage 'agentai.workspace.lastMode' 恢复 browser,
+    // 于是「中心 BrowserMode」与「右栏」同时挂 EmbeddedBrowser —— 而 EmbeddedBrowser
+    // 每次挂载都 io(gatewayUrl()+'/browser') + emit('subscribe') → 双份 socket 订阅、
+    // 双份帧解码、两个宿主互相抢"当前标签页"。这是"编辑器里有两个浏览器"的真身。
+    const mounts: string[] = [];
+    for (const f of walkTsx(join(ROOT, GUI, 'src'))) {
+      const n = count(stripComments(readFileSync(f, 'utf-8')), /<EmbeddedBrowser\b/g);
+      for (let i = 0; i < n; i++) mounts.push(f.replace(/\\/g, '/'));
+    }
+    expect(mounts.length).toBe(2);
+    expect(mounts.some(f => f.includes('App.tsx'))).toBe(true);
+    expect(mounts.some(f => f.includes('GlobalBrowserDrawer.tsx'))).toBe(true);
+  });
+
+  it('中心区的 browser 模式已删除 (连组件文件一起)', () => {
+    expect(uw).not.toContain("from './modes/BrowserMode'");
+    expect(uw).not.toMatch(/<BrowserMode\b/);
+    expect(existsSync(join(ROOT, GUI, 'src', 'components', 'modes', 'BrowserMode.tsx'))).toBe(false);
+  });
+
+  it('编辑器页不再把中心区恢复成浏览器', () => {
+    expect(editor).not.toContain("last === 'browser'");
+    expect(editor).toContain("setMode(last === 'preview' ? 'preview' : 'editor')");
+  });
+
+  it("Ctrl+2 保留能力但改为唤起右栏宿主, 不再 setMode('browser')", () => {
+    expect(uw).toContain("e.key === '2') { e.preventDefault(); BrowserHost.open()");
+    expect(uw).not.toContain("setMode('browser')");
+  });
+
+  it('store 不再有"有 URL 就把中心区切 browser"的隐患 (及随之失效的 openBrowser 死 API)', () => {
+    expect(ws).not.toContain('openBrowser');
+    expect(ws).not.toMatch(/setCurrentUrl[\s\S]{0,240}?mode: 'browser'/);
+    // 持久化数据里可能还残留历史值 'browser', 解析时必须落回 editor
+    expect(ws).toContain("mode === 'browser' ? 'editor' : mode");
+  });
+
+  it('AI 唤起链路未受影响 (AI 打开浏览器仍走右栏宿主)', () => {
+    expect(app).toContain('hostVisible && hostIntent');
+    expect(src('services/browser-host.ts')).toContain("addEventListener('agentai:show-browser'");
   });
 });

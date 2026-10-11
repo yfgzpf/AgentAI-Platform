@@ -57,13 +57,25 @@
   overflow: hidden;
 }
 
-/* 中间内容区 */
+/* 中间内容区 —— 氛围场「星野·深空」的载体 (2026-10-12)
+   光晕 + 细网格 与底色写在**同一条 background 声明**里, 不是叠层 div:
+   var(--bg) 的不透明底散在 25 个文件约 50 处, 任何独立浮层都会被这些面盖死。
+   background-attachment 默认 scroll → 网格钉在容器上, 内容滚动时它不动 (大气氛感)。
+   页面根若自己画了不透明 var(--bg) 就会盖掉本场 —— ChatView / WritePage / ImageStudio
+   的根已改为不画底色 (透明), 让这里透出来。 */
 .app-content {
   flex: 1;
   min-width: 0;       /* ★ 让 flex 子项可收缩，否则内容撑破三栏 */
   overflow: auto;
-  background: var(--bg);
   position: relative;
+  background-color: var(--bg);
+  background-image:
+    var(--aurora),
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: auto, var(--grid-size) var(--grid-size), var(--grid-size) var(--grid-size);
+  background-repeat: no-repeat, repeat, repeat;
+  background-position: center top, left top, left top;
 }
 
 /* ── 侧栏通用 ──────────────────────────────────────────────────────── */
@@ -75,14 +87,20 @@
   overflow: hidden;    /* 内部滚动交给子元素 */
   background: var(--panel);
   position: relative;
+  /* 氛围层「星野·深空」(2026-10-12): 顶部内高光 —— 侧栏原来只有一根 1px 边框,
+     与内容区之间无层次可言 */
+  box-shadow: var(--panel-hi);
 }
 
 .app-pane-left {
   border-right: 1px solid var(--border);
+  /* 边缘柔和投影, 与内容区拉开层次 (--shadow-md 各主题已按明暗分别调过强度) */
+  box-shadow: var(--panel-hi), var(--shadow-md);
 }
 
 .app-pane-right {
   border-left: 1px solid var(--border);
+  box-shadow: var(--panel-hi), var(--shadow-md);
 }
 
 /* 侧栏内容区可滚动 */

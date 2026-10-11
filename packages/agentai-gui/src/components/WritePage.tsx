@@ -198,7 +198,8 @@ export const WritePage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
+    // 2026-10-12: 根不再画不透明 var(--bg) —— 让 .app-content 的氛围场透出来
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 工具栏 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: '1px solid var(--panel-2)', background: 'var(--bg-2)', flexWrap: 'wrap' }}>
         <input value={title} onChange={e => { setTitle(e.target.value); }}

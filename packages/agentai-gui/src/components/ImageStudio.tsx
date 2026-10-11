@@ -560,7 +560,8 @@ const sendToVideo = (imageUrl: string) => {
         return (
             // 高度用 100% 而非 calc(100vh - 50px): 实测外壳吃掉 60px (标题栏 36 + 状态栏 24),
             // 且未激活时外面还有 FeatureGuide 的 ~41px 提示条 → 原写法必然溢出。
-            <div style={{ display: 'flex', height: '100%', color: 'var(--fg)', background: 'var(--bg)' }}>
+            // 2026-10-12: 根不再画不透明 var(--bg) —— 让 .app-content 的氛围场「星野·深空」透出来
+            <div style={{ display: 'flex', height: '100%', color: 'var(--fg)' }}>
                 {/* ===== 左侧侧边栏: 历史 + 快捷操作 ===== */}
                 <div ref={editLeftPane.paneRef} className="page-pane page-pane--left" style={{ width: editLeftPane.width, background: 'var(--panel)' }}>
                     <PaneGrip resizable={editLeftPane} min={240} max={480} label="调整历史面板宽度" />

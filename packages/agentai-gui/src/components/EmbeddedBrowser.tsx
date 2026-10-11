@@ -65,7 +65,7 @@ interface HistoryItem {
 interface Props {
   initialUrl?: string;
   compact?: boolean;
-  hideToolbar?: boolean;  // 由外部 BrowserMode 提供工具栏时隐藏内部导航栏
+  hideToolbar?: boolean;  // 由宿主 (GlobalBrowserDrawer) 提供工具栏时隐藏内部导航栏
   aiControlled?: boolean;
   style?: React.CSSProperties;
   onElementsDetected?: (elements: IdentifiedElement[], url: string) => void;
@@ -76,7 +76,7 @@ interface Props {
 const gatewayUrl = () => gatewayFallback.url || 'http://127.0.0.1:18789';
 
 /** 防护: 兜底函数 (防止 AI/iframe postMessage 引用未定义变量导致 ReferenceError)
- *  BrowserMode 之外的挂载点 (GlobalBrowserDrawer) 没有这些函数, 必须兜底
+ *  宿主 (GlobalBrowserDrawer) 没有这些函数, 必须兜底
  *  v3.1 (2026-07-15) 修复 hideToolbar is not defined 死循环
  */
 const safeNoop = () => { /* 防止 ReferenceError: hideToolbar is not defined */ };

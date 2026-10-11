@@ -1888,7 +1888,9 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
     <div
       style={{
         display: 'flex', flexDirection: 'column', height: '100%',
-        position: 'relative', background: 'var(--bg)',
+        // 2026-10-12: 根不再画不透明底色 —— 让 .app-content 的氛围场「星野·深空」透出来
+        // (光晕 + 细网格画在 .app-content 的 background 上, 这里再画一层 var(--bg) 会整块盖掉)
+        position: 'relative',
       }}
       onDragOver={e => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}

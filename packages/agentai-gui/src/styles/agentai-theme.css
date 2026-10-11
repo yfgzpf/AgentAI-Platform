@@ -55,6 +55,23 @@
   --shadow-bubble: 0 4px 16px var(--accent-soft), 0 1px 4px rgba(0,0,0,0.1);
   --shadow-hover: 0 8px 24px -8px rgba(0, 0, 0, 0.25);
 
+  /* ── 氛围层「星野·深空」(2026-10-12) ────────────────────────────────
+     原来全站背景是**平涂** --bg, 面板之间只有 1px 边框区分 → 观感"一片平灰, 没特色"。
+     这里加两个纯装饰原语 (顶部光晕 + 1px 细网格) 和一层面板内高光。
+     为什么不做叠层 / backdrop-filter: var(--bg) 的不透明底散在 25 个文件约 50 处
+     (外壳 / ChatView / WritePage / ImageStudio …), 任何独立浮层都会被这些面盖死;
+     而且侧栏与标题栏背后没有内容, 模糊也无从谈起。所以氛围直接做成
+     **面自己的 background** —— 见 layout.css 里 .app-content 那条声明。
+     色标走 var(--accent)/var(--fg), 换主题自动跟随, 无需每个主题重定义。
+     强度实测过一次: 初版按 --accent-soft(15%) 单色标铺开, 在 640px 视口下**几乎看不见**,
+     等于白做 —— 所以内核改用 accent 本色 + 双色标衰减, 网格提到 5%。 */
+  --aurora: radial-gradient(130% 62% at 50% -12%, rgba(232, 144, 85, 0.13) 0%, rgba(232, 144, 85, 0.05) 40%, transparent 68%);
+  --aurora: radial-gradient(130% 62% at 50% -12%, color-mix(in srgb, var(--accent) 13%, transparent) 0%, color-mix(in srgb, var(--accent) 5%, transparent) 40%, transparent 68%);
+  --grid-line: rgba(255, 255, 255, 0.035);              /* color-mix 不支持时的回退 */
+  --grid-line: color-mix(in srgb, var(--fg) 5%, transparent);
+  --grid-size: 32px;
+  --panel-hi: inset 0 1px 0 rgba(255, 255, 255, 0.05);  /* 面板顶部内高光 (替代"只有边框"的单薄层次) */
+
   /* ── 通用文本尺度 (2026-10-11) ────────────────────────────────────
      主题里**已有**的字号 token 只有对话域那 5 个 (--chat-font-size 12.5 /
      --chat-code-font-size 11.5 / --tool-font-size 10.5 / --ui-font-size 11, 见下方
@@ -497,6 +514,14 @@
   --muted: #6b665c;
   --muted-2: #8a8478;
 
+  /* 氛围层「星野·深空」亮色档: 光晕压到几乎看不见, 网格用深色细线且更淡 ——
+     亮底上堆纹理很容易变成一层"脏灰", 亮色主题的层次感靠阴影而不是纹理。 */
+  --aurora: radial-gradient(130% 62% at 50% -12%, rgba(184, 101, 26, 0.09) 0%, transparent 60%);
+  --aurora: radial-gradient(130% 62% at 50% -12%, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 60%);
+  --grid-line: rgba(0, 0, 0, 0.05);
+  --grid-line: color-mix(in srgb, var(--fg) 5%, transparent);
+  --panel-hi: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.04);
+
   --accent: #b8651a;
   --accent-soft: rgba(184, 101, 26, 0.1);
   --accent-strong: #a05510;
@@ -583,6 +608,13 @@
 
   --accent: oklch(58% 0.18 36);
   --accent-soft: oklch(58% 0.18 36 / 0.1);
+
+  /* 氛围层「星野·深空」瓷白档 —— 与亮色档同策略 (光晕极弱 + 深色细网格) */
+  --aurora: radial-gradient(130% 62% at 50% -12%, oklch(58% 0.18 36 / 0.09) 0%, transparent 60%);
+  --aurora: radial-gradient(130% 62% at 50% -12%, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 60%);
+  --grid-line: rgba(0, 0, 0, 0.045);
+  --grid-line: color-mix(in srgb, var(--fg) 4.5%, transparent);
+  --panel-hi: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.04);
   --accent-strong: oklch(52% 0.2 34);
 
   --success: oklch(48% 0.13 155);
@@ -772,6 +804,7 @@ html, body {
   border-bottom: 1px solid var(--titlebar-border);
   gap: 8px;       /* 从 12px 减到 8px */
   backdrop-filter: blur(8px);
+  box-shadow: var(--panel-hi);  /* 氛围层「星野·深空」: 标题栏底部内高光 */
   -webkit-app-region: drag;
   position: relative;
   z-index: 100;
@@ -968,6 +1001,7 @@ html, body {
   padding: 0 12px;
   background: var(--bg-2);
   border-top: 1px solid var(--border);
+  box-shadow: var(--panel-hi);  /* 氛围层「星野·深空」: 底栏顶部内高光 */
   font-size: var(--fs-micro);
   color: var(--muted);
   gap: 14px;

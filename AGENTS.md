@@ -486,11 +486,17 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
     「发现 N 个可恢复的长任务」恢复条**不是**常驻 —— 它由 `AutoHideTaskBar` 8 秒后自动收起
     （`ChatView.tsx:13`，已核实），只在首屏短暂出现，故本轮不动。
 
-**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts` + `token-layer.test.ts` + `info-arch.test.ts`
+**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts` + `token-layer.test.ts` + `info-arch.test.ts` + `brand.test.ts`
 （源码文本断言 + `stripComments` 辅助，因为修复点注释本身会引用「坏掉的旧代码」）。
-核验：`cd packages/agentai-gui && npx vitest run` → **10 文件 / 187 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9 → 165/9 → 173/9 → 187/10；
-rail-browser 16 → 21 条（`effectiveRailMode`、空态不叠层、`#fff` 白斑、ImageStudio 消歧），
-token-layer 32 → **43** 条（18 别名定义 + 9 底层 token × 5 主题块 + 死 fallback 归零 + `radius-lg` 不重复 +
+核验：`cd packages/agentai-gui && npx vitest run` → **11 文件 / 209 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9 → 165/9 → 173/9 → 187/10 → **209/11**；
+★ 分文件实测：`brand 9 / info-arch 14 / layout-panes 19 / layout-regression 28 / media-contract 25 / rail-browser 27 / token-layer 50 /
+CleanerPanel.format 7 / chatStore 6 / modelStore 9 / modelPicker 15`）；
+rail-browser 16 → 21 → **27** 条（`effectiveRailMode`、空态不叠层、`#fff` 白斑、ImageStudio 消歧 +
+**新增 D 组「浏览器宿主唯一化」6 条**：全项目 `<EmbeddedBrowser>` 挂载数**恰 2**、`modes/BrowserMode.tsx` 不存在、
+`Editor.tsx` 无 `last === 'browser'`、`Ctrl+2` 走 `BrowserHost.open()`、store 无 `openBrowser` 且 `'browser'→'editor'` 回退、AI 唤起链完好），
+**新文件 `brand.test.ts` 9 条**（标题栏用 `BrandLogo` 且全项目无 `favicon-32.png`、`岐枢`+`PulseFlow` 双名、
+`favicon.svg` 与 `BrandLogo` 路径串逐字相同、`useId()` 渐变 id 唯一、`Avatar` 无 `PulseFlow` label、title 一致），
+token-layer 32 → 43 → **50** 条（18 别名定义 + 9 底层 token × 5 主题块 + 死 fallback 归零 + `radius-lg` 不重复 +
 字号尺度存在 + **文本档禁止裸数字** + **`var(--fs-*)` 必须真被消费（防僵尸 token）** +
 **圆角恰 4 档** + **`--radius-lg/pill` 必须被消费** + **禁止裸数字 borderRadius** +
 **绿/红/灰/白四类语义色不得再散落** + **底层 token 死 fallback 归零**），
@@ -509,6 +515,68 @@ info-arch **14** 条（渠道/本次会话折叠入口 + 裸 chip 消失 + `Toke
 （对话/编辑器/医案/浏览器/创作/系统）。**未取证**：「系统」下拉的 5 个段标题（需要点击才能展开，
 输入通道已死）、nag 条的关闭按钮、`本次会话` Popover 内容本身（无会话数据，入口按设计缺席）——
 这三项只有源码文本测试覆盖。FileCard 就地展开的点击穿透**至今未活体验证**。
+⚠️ 活体验收**披露**（2026-10-12 第三轮）：本会话**指针与键盘通道全线失效，比上一轮更彻底** ——
+`locator.click()` 报 `Timeout waiting for locator`；`cua.click({x,y})`（bbox 已确认在视口内）**返回成功但无任何效果**；
+`cua.keypress({keys:'Control+b'})` 报 **`Browser broker response id mismatch`**；`dom_cua.click({node_id:'e2'})` **返回成功但无效果**；
+`tab.screenshot()` 本轮**时好时坏**（3 次成功 / 2 次 `browser screenshot activity capture failed for guest`）。
+**已活体取证（只读通道）**：`getComputedStyle('.app-content')` 证明氛围层真的生效（见第 14 条）、
+`title` = `岐枢 PulseFlow Studio`、标题栏渲染 `岐枢 | PulseFlow`、
+dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `BrandLogo`×3 且无 `favicon-32.png`；
+`Editor.tsx` 出 `setMode(last === "preview" ? "preview" : "editor")`；
+`UnifiedWorkspace.tsx` 只 import `EditorMode`/`PreviewMode` 且出 `BrowserHost.open()`；
+`favicon.svg` 出 `rx="16"`/`#1a1a22`/新路径）。
+**未取证（明确不假装通过）**：① 编辑器页实测只挂 1 个浏览器 —— **需要点导航，点不动**；
+② 右栏浏览器模式的出帧画面（同上）；③ **`/browser` 命名空间的 socket 连接数**（这是第 12 条双挂风险的唯一可信证据，
+读不到）—— ①③ 目前**只有源码文本测试覆盖**（`rail-browser.test.ts` D 组 6 条 + 契约断言「挂载点恰 2 处」）。
+
+12. **浏览器宿主唯一化：编辑器页不再「双开浏览器」（2026-10-12）** —— 用户报「编辑器搞两个浏览器」。
+    **这是真缺陷，不是偏好**：`EmbeddedBrowser` 自带 `io(gateway+'/browser')` + `ws.emit('subscribe')`，
+    而当时有 **3 个挂载点**（App 右栏 / `GlobalBrowserDrawer` / `modes/BrowserMode` 中心区），
+    编辑器页恰好同时命中两个 → **双份 socket 订阅 + 双份帧解码 + 两个「当前标签」声明**。
+    根因链：`Editor.tsx` 从 `localStorage 'agentai.workspace.lastMode'` 恢复了 `'browser'`
+    （中心区），而 `effectiveRailMode` 在非 chat 页恒为 `'browser'`（右栏）→ 两个宿主同时在线。
+    修法（**中心区彻底去掉浏览器模式**，不是加锁）：
+    - 删 `modes/BrowserMode.tsx`（12,230 B，仅 `UnifiedWorkspace` 引用，无测试引用）；
+    - `Editor.tsx` 只恢复 `preview`，其余一律落 `editor`（浏览器与本页无关）；
+    - `UnifiedWorkspace` 的 `ModeRenderer` 只剩 `preview` / `editor`；`Ctrl+2` 改为 `BrowserHost.open()`；
+    - `workspaceStore` 删掉 `openBrowser`；`setCurrentUrl` **不再**自动切 mode（否则中心区落空态）；
+      `useResolvedWorkspaceMode` 把历史值 `'browser'` 映射回 `'editor'` → 已持久化的旧状态不会把中心区卡死。
+    核验：`grep -rn "<EmbeddedBrowser" packages/agentai-gui/src --include=*.tsx` → **恰好 2 处**
+    （`App.tsx` / `GlobalBrowserDrawer.tsx`，且由 `drawerHostActive` 互斥）；
+    `grep -rn "last === 'browser'" packages/agentai-gui/src/` → **0**；
+    `grep -c "BrowserMode" packages/agentai-gui/src/components/UnifiedWorkspace.tsx` → **0**。
+
+13. **LOGO 统一：标题栏栅格图标 → `BrandLogo` 矢量标（2026-10-12）** —— 用户报「LOGO 不统一」。
+    标题栏当时用的是**栅格** `favicon-32.png`，而启动页/其他处用的是 `BrandLogo.tsx` 的**几何矢量标**，
+    两套图形同屏。现 `BrandLogo` 是**品牌标唯一出口**（标题栏 size=20），`public/favicon.svg`
+    重写成**同一几何**（`rx="16"` / `#1a1a22` / 同两条路径 / 同渐变）。栅格 PNG 集未动。
+    ⚠️ **改一处必须改两处**（`favicon.svg` 与 `BrandLogo` 的路径串必须逐字相同，测试锁定）。
+    ⚠️ 渐变 `id` **必须逐实例唯一**：该组件同时出现在标题栏/启动页/编辑器侧聊（同一 DOM 多实例），
+    固定 `id="pf-grad"` 会让全部 `url(#pf-grad)` 解析到文档里**第一个** `<defs>`，
+    该实例卸载后引用即失效 → 用 `useId()`（`:` 需剥掉，否则 `url(#a:b)` 非法）。
+    品牌名文案：中文主名 **岐枢** + 英文副名 **PulseFlow**（`index.html` title = `岐枢 PulseFlow Studio`，
+    `Avatar.tsx` 的 provider label 由 `PulseFlow` 改 `岐枢`）；**内部代码标识符一律不动**。
+    核验：`grep -rn "favicon-32.png" packages/agentai-gui/src --include=*.tsx` → **0**；
+    `grep -c "useId()" packages/agentai-gui/src/components/BrandLogo.tsx` → **1**；
+    `grep -n "<title>" packages/agentai-gui/index.html`
+
+14. **氛围层「星野·深空」：从「平涂 --bg」到有纵深的面（2026-10-12）** —— 用户报「太普通，没特色」。
+    ⚠️ **氛围层不能做成叠层**：不透明的 `var(--bg)` 散在 **25 个文件约 50 处**
+    （外壳 / `ChatView` / `WritePage` / `ImageStudio`×10 / `ApprovalCard` / `TerminalPanel` …），
+    任何独立浮层都会被这些面盖死。所以氛围做成**面自己的 `background`**（`.app-content`），
+    并把三个页面根节点的 `background: var(--bg)` 改透明，让底下的「场」透出来。
+    四个纯装饰 token（**色标走 `var(--accent)`/`var(--fg)`，五个主题自动跟随**）：
+    `--aurora`（顶部光晕）/ `--grid-line` + `--grid-size`（1px 细网格）/ `--panel-hi`（面板顶部内高光）。
+    亮色 / 瓷白两档**必须重定义**（亮底上堆纹理容易变成一层「脏灰」，亮色档靠阴影而非纹理）。
+    ⚠️ **强度实测过一次**：初版按 `--accent-soft`（15%）单色标铺开，在 640px 视口下**几乎看不见**，
+    等于白做 → 内核改 `var(--accent)` 本色 + 双色标衰减（13%→5%→透明），网格 3%→5%。
+    活体 computed-style 取证（`getComputedStyle($('.app-content')).backgroundImage`）：
+    修复后为 `radial-gradient(130% 62% at 50% -12%, color(srgb ... / 0.13) 0%, ... 0.05) 40%, transparent 68%)` +
+    两层 `color(srgb 0.945 0.947 0.959 / 0.05)` 网格，`backgroundSize: auto, 32px 32px, 32px 32px`。
+    ⚠️ **`backdrop-filter` 毛玻璃有意未做**（并如实披露）：右栏与标题栏背后没有内容，模糊无从谈起；
+    且半透明面板会在 5 个主题上把文字对比度打下来。
+    核验：`grep -n "grid-line\|--aurora\|--panel-hi" packages/agentai-gui/src/styles/agentai-theme.css`；
+    `grep -A8 "^\.app-content" packages/agentai-gui/src/styles/layout.css`
 
 ### 六、安全机制
 
@@ -632,7 +700,7 @@ info-arch **14** 条（渠道/本次会话折叠入口 + 裸 chip 消失 + `Toke
 | 浏览器宿主 | 仅右侧浮层 Drawer | **右栏 信息/浏览器 双模式**, 事件中枢唯一 (`browser-host.ts` 6 监听 / Drawer 0) | `grep -c "addEventListener" packages/agentai-gui/src/services/browser-host.ts packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` |
 | 右栏浏览器宽度 | - | **`agentai.pane.browser.width` 默认 520** (320–900), 与信息栏 320 分轨 | `grep -n "agentai.pane.browser.width" packages/agentai-gui/src/App.tsx` |
 | 文件卡片查看 | 整行点击 → 跳 editor 页 | **行点击就地展开全文**, 仅「编辑器」按钮跳页 | `grep -n "PREVIEW_LINE_CAP\|label=\"编辑器\"" packages/agentai-gui/src/components/FileCard.tsx` |
-| GUI 测试基线 | 90 测试 / 6 文件 | **187 测试 / 10 文件** | `cd packages/agentai-gui && npx vitest run` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **209 测试 / 11 文件** | `cd packages/agentai-gui && npx vitest run` |
 | token 层 | 18 变量被消费但**从未定义** (调用点各带 fallback → 同语义 3–6 种色) | **已修**: 建 18 条语义别名 + 6 级 `--fs-*` 尺度; 死 fallback 39 → 0 | `grep -rEoh "var\(--(text-secondary\|bg-1\|hover) ?, ?(#\|rgba)" --include=*.tsx packages/agentai-gui/src \| wc -l` |
 | 字号尺度 | 23 种 fontSize (≤12px **1164 处**), 7/8/9/10 与 12/13/14/15 差 1px 无法分辨 | **已收敛**: 1429 处走 `var(--fs-*)`, 尺度 **11/12/13/16/20/28** 六档; ≥32px 图标/emoji 档 35 处有意保留 | `grep -rEoh "var\(--fs-[a-z]+\)" --include=*.tsx packages/agentai-gui/src \| sort \| uniq -c` |
 | 圆角尺度 | 19 种裸数字 (2/3/4/5 与 6/8/10 差 1–2px 不可辨); `--radius-lg` 零消费 | **已收敛**: 437 处走 `var(--radius-*)`, 尺度 **4/8/12/999 四档** (消费 md 218 / sm 185 / lg 40 / pill 5) | `grep -rEoh "var\(--radius[a-z-]*\)" --include=*.tsx --include=*.css packages/agentai-gui/src \| sort \| uniq -c` |
@@ -640,6 +708,9 @@ info-arch **14** 条（渠道/本次会话折叠入口 + 裸 chip 消失 + `Toke
 | 设计尺度 | — (无 token 体系) | token 层已建 (**18 语义别名 + 6 级文本尺度 + 4 档圆角 + 语义色**); ⚠️ 内联 `style={{` **3417 处** 仍在 (结构性) | `grep -rEoh "style=\{\{" --include=*.tsx packages/agentai-gui/src \| wc -l` |
 | 信息架构 | 状态栏 15 chip 平铺 (QQ/微信常驻 + 6 个 tooltip-only 诊断值); 标题栏 3 个「关于」控件; 系统下拉 15 项平铺; 免费模型 nag 条不可关 | **已折叠**: 渠道 popover + `本次会话` popover (`TokenPressureBar` 保持常驻); 用户菜单 (3→1); 系统下拉按 **5 段** section 分段; nag 条可关 (localStorage) | `grep -c 'statusbar-channels\|statusbar-session' packages/agentai-gui/src/components/StatusBar.tsx` / `grep -c "group: 'system'.*section:" packages/agentai-gui/src/App.tsx` |
 | 右栏内容判据 | — | **`effectiveRailMode`** (非 chat 页恒为浏览器, 320/900 与 240/560 分轨) | `grep -n "effectiveRailMode" packages/agentai-gui/src/App.tsx` |
+| 浏览器宿主数 | **3 个挂载点** (App 右栏 / Drawer / `modes/BrowserMode`), 编辑器页同时命中 2 个 → **双份 `/browser` socket 订阅** | **已唯一化为 2 处且互斥**: 中心区浏览器模式整块删除 (`modes/BrowserMode.tsx` 已删), 只留 App 右栏 + Drawer | `grep -rn "<EmbeddedBrowser" packages/agentai-gui/src --include=*.tsx \| wc -l` → **2** |
+| 品牌标 | 标题栏用**栅格** `favicon-32.png`, 启动页用 `BrandLogo` 矢量标 → 两套图形同屏 | **唯一出口 `BrandLogo.tsx`** (渐变 id 走 `useId()`); `favicon.svg` 同几何; 主名 **岐枢** / 副名 **PulseFlow** | `grep -rn "favicon-32.png" packages/agentai-gui/src --include=*.tsx \| wc -l` → **0** |
+| 前端氛围层 | 全站**平涂** `--bg`, 面板只靠 1px 边框区分 | **「星野·深空」**: 顶部光晕 + 1px 细网格 + 面板内高光, 做成 `.app-content` **自己的 background** (叠层会被 25 文件/约 50 处不透明 `var(--bg)` 盖死) | `grep -n "grid-line\\\|--aurora" packages/agentai-gui/src/styles/agentai-theme.css` |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）
 

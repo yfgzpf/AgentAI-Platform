@@ -56,6 +56,7 @@ const SoulPanel = lazy(() => import('./components/SoulPanel').then(m => ({ defau
 import { RightPanel } from './components/RightPanel';
 import { PulseFlowSidebar } from './components/PulseFlowSidebar';
 import { GuideModal } from './components/GuideModal';
+import { BrandLogo } from './components/BrandLogo';  // 品牌标唯一出口 (标题栏原用栅格 favicon, 已统一)
 import { StatusBar } from './components/StatusBar';
 import { GitStatusBar } from './components/GitStatusBar';
 import { SimpleGitPanel } from './components/SimpleGitPanel';  // 使用简化版 Git 面板
@@ -1120,8 +1121,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
         <div className="app-titlebar">
           {/* 品牌 (精简: 小图标 + 文字) */}
           <div className="app-brand" style={{ gap: 4 }}>
-            <img src="/favicon-32.png" alt="岐枢"
-              style={{ width: 20, height: 20, borderRadius: 'var(--radius-sm)' }} />
+            <BrandLogo size={20} />
             <span className="app-brand-name" style={{ fontSize: 'var(--fs-sm)', display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ fontWeight: 600, color: 'var(--fg)' }}>岐枢</span>
               <span style={{ opacity: 0.6, fontSize: 'var(--fs-micro)' }}>|</span>

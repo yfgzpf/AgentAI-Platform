@@ -75,9 +75,6 @@ export interface WorkspaceState {
   /** 根据上下文推断最佳模式 */
   inferMode: () => WorkspaceMode;
 
-  /** 切换到浏览器模式并导航 */
-  openBrowser: (url: string) => void;
-
   /** 切换到编辑器模式并打开文件 */
   openEditor: (file: FileNode) => void;
 

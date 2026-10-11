@@ -35,12 +35,13 @@ export interface AvatarProps {
   onClick?: () => void;
 }
 
-/** provider → 配色 */
+/** provider → 配色
+ *  注: 这里的 label 是**provider 名** (与 DeepSeek/OpenAI 并列的第三方名), 品牌主名统一为「岐枢」。 */
 const PROVIDER_PALETTE: Record<string, { grad: string; ring: string; label: string; letter: string }> = {
   agentai: {
     grad: 'linear-gradient(135deg, #A78BFA 0%, #6366F1 50%, #4338CA 100%)',
     ring: 'rgba(99,102,241,0.85)',
-    label: 'PulseFlow',
+    label: '岐枢',
     letter: 'A',
   },
   deepseek: {
@@ -70,7 +71,7 @@ const PROVIDER_PALETTE: Record<string, { grad: string; ring: string; label: stri
   default: {
     grad: 'linear-gradient(135deg, #A78BFA 0%, #6366F1 50%, #4338CA 100%)',
     ring: 'rgba(99,102,241,0.85)',
-    label: 'PulseFlow',
+    label: '岐枢',
     letter: 'A',
   },
 };
@@ -107,7 +108,7 @@ export const Avatar: React.FC<AvatarProps> = ({
   const userPal = !isAI ? userPalette(name || 'U') : null;
 
   const tooltipText = isAI
-    ? `${aiPal!.label} · ${name || 'PulseFlow'}`
+    ? `${aiPal!.label} · ${name || '岐枢'}`
     : name || '你';
 
   // 字号按尺寸缩放

@@ -6,7 +6,7 @@
  * 设计原则：
  *   - 与现有 modeStore（App 级别页面切换）不冲突，workspaceStore 是工作区内部模式
  *   - 支持 persist 中间件，刷新后恢复上次模式
- *   - 提供 openBrowser/openEditor/openPreview 便捷方法
+ *   - 提供 openEditor/openPreview 便捷方法
  */
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
@@ -45,12 +45,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
       },
 
+      // 2026-10-12: 去掉「一旦有 URL 就自动把中心区切成 browser」——
+      // 中心区已无浏览器宿主 (唯一化到右栏, 见 UnifiedWorkspace / Editor.tsx 注释)。
+      // 只记录 URL, 不再改 mode (否则中心区会落到空态)。
       setCurrentUrl: (url: string) => {
         set({ currentUrl: url });
-        if (get().mode === 'auto' && url) {
-          set({ mode: 'browser', transitioning: true });
-          setTimeout(() => set({ transitioning: false }), 300);
-        }
       },
 
       // ===== 浏览器历史 =====
@@ -139,12 +138,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       // ===== 便捷方法 =====
-      openBrowser: (url: string) => {
-        get().pushBrowserHistory(url);
-        set({ mode: 'browser', transitioning: true, loading: true });
-        setTimeout(() => set({ transitioning: false, loading: false }), 300);
-      },
-
       openEditor: (file: FileNode) => {
         get().addOpenFile(file);
         set({ mode: 'editor', transitioning: true });
@@ -177,12 +170,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 /** Hook: 获取当前应渲染的实际模式（解析 auto） */
 export function useResolvedWorkspaceMode(): WorkspaceMode {
   const mode = useWorkspaceStore(s => s.mode);
-  const currentUrl = useWorkspaceStore(s => s.currentUrl);
   const currentFile = useWorkspaceStore(s => s.currentFile);
 
-  if (mode !== 'auto') return mode;
+  // 2026-10-12: 'browser' 已成历史值 (浏览器宿主唯一化到右栏), 中心区没有浏览器可渲染 ——
+  // 持久化数据里可能还残留 mode='browser' / currentUrl, 一律落到 editor; 因此不再订阅 currentUrl。
+  if (mode !== 'auto') return mode === 'browser' ? 'editor' : mode;
 
-  if (currentUrl) return 'browser';
   if (currentFile) {
     if (isPreviewable(currentFile)) return 'preview';
     return 'editor';

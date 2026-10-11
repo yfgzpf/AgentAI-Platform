@@ -257,3 +257,42 @@ describe('token 层: 语义色不得再散落 (2026-10-11)', () => {
     expect(scan(new RegExp(`var\\(--(?:${BASE})\\s*,\\s*(?:#[0-9a-fA-F]{3,8}|rgba)`), [], false)).toEqual([]);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════
+// 8) 氛围层「星野·深空」(2026-10-12)
+// ════════════════════════════════════════════════════════════════════════
+
+describe('token 层: 氛围层「星野·深空」必须真被消费', () => {
+  const layoutCss = readFileSync(join(ROOT, GUI, 'src', 'styles', 'layout.css'), 'utf-8');
+  const ATMOS = ['aurora', 'grid-line', 'grid-size', 'panel-hi'];
+
+  for (const t of ATMOS) {
+    it(`--${t} 在主题里有定义`, () => {
+      expect(themeNoComments).toMatch(new RegExp(`^\\s*--${t}\\s*:`, 'm'));
+    });
+  }
+
+  it('4 个氛围 token 全部有真实消费点 (防僵尸 token —— --radius-lg 当年就零消费)', () => {
+    for (const t of ['aurora', 'grid-line', 'grid-size']) {
+      expect(layoutCss).toContain(`var(--${t})`);
+    }
+    // --panel-hi 是内高光, 消费在侧栏 (layout.css) 与标题栏/状态栏 (agentai-theme.css)
+    expect(layoutCss).toContain('box-shadow: var(--panel-hi)');
+    expect(themeNoComments).toContain('box-shadow: var(--panel-hi)');
+  });
+
+  it('亮色档 (light + porcelain) 必须自己覆写光晕与网格, 不能只靠 :root 继承', () => {
+    // 暗色档的 --grid-line 是"白线 3%", 直接继承到亮底上等于没有; --panel-hi 同理
+    const fromLight = themeNoComments.slice(themeNoComments.indexOf('[data-theme="light"]'));
+    const n = (fromLight.match(/^\s*--grid-line\s*:/gm) || []).length;
+    expect(n).toBeGreaterThanOrEqual(2);
+  });
+
+  it('氛围场画在 .app-content 自己的 background 上, 不是叠层 div / backdrop-filter', () => {
+    // 为什么必须这样: var(--bg) 的不透明底散在 25 个文件约 50 处 (外壳/ChatView/
+    // WritePage/ImageStudio…), 任何独立浮层都会被这些面盖死; 侧栏与标题栏背后
+    // 也没有内容可模糊。所以氛围是"面自己的背景", 不是覆盖层。
+    expect(layoutCss).toMatch(/\.app-content\s*\{[\s\S]{0,900}?background-image:/);
+    expect(layoutCss).not.toMatch(/\.app-content\s*\{[\s\S]{0,900}?backdrop-filter/);
+  });
+});

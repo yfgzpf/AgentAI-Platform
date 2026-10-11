@@ -3,6 +3,21 @@
 > **实测日期**：2026-10-10
 > **实测方式**：源码级审计（AST/行区间精确统计），非文档摘抄
 > **代码基线**：`agentai-gateway` 292 文件 / 29 子系统 / 18090 行核心四件套
+> **增补（2026-10-12，GUI 侧三项，均只动 `packages/agentai-gui/**`）**：
+> 1. **浏览器宿主唯一化** —— 原先 `EmbeddedBrowser` 有 **3 个挂载点**（App 右栏 / `GlobalBrowserDrawer` / 中心区 `modes/BrowserMode`），
+>    编辑器页同时命中 2 个 → **双份 `io('/browser')` socket 订阅 + 双份帧解码**。
+>    现中心区浏览器模式整块删除（`modes/BrowserMode.tsx` 已删），`Editor.tsx` 不再从 `localStorage` 恢复 `'browser'`，
+>    `Ctrl+2` 改走 `BrowserHost.open()`，store 去掉 `openBrowser` 且历史 `'browser'` 值回退 `'editor'`。
+>    核验：`grep -rn "<EmbeddedBrowser" packages/agentai-gui/src --include=*.tsx | wc -l` → **2**。
+>    ⚠️ **未活体验证**：本会话指针/键盘输入通道全线失效（详见 §4 测试布局末段的披露），
+>    故「编辑器页实测只挂 1 个浏览器」与「`/browser` socket 连接数」**只有源码文本测试覆盖**。
+> 2. **品牌标统一** —— 标题栏原用栅格 `favicon-32.png`，启动页用 `BrandLogo.tsx` 矢量标，两套图形同屏。
+>    现 `BrandLogo` 为唯一出口，`favicon.svg` 重写为同几何；文案 中文主名 **岐枢** + 英文副名 **PulseFlow**
+>    （内部代码标识符不动）。核验：全项目 tsx 里 `favicon-32.png` → **0**。
+> 3. **前端氛围层「星野·深空」** —— 原全站平涂 `--bg`、面板仅靠 1px 边框区分。
+>    氛围做成 **`.app-content` 自己的 `background`**（顶部光晕 + 1px 细网格 + 面板内高光），
+>    而非叠层 —— 因为不透明 `var(--bg)` 散在 **25 个文件约 50 处**，任何浮层都会被盖死。
+>    `backdrop-filter` 毛玻璃**有意不做**并在 AGENTS.md 里披露了原因。
 
 ---
 
@@ -235,7 +250,21 @@ create_tool    → .agentai/custom-tools/ + registry.json
 - **布局特点：绝大多数测试与源码同目录并置**，`__tests__/` 只有 2 个文件
 - 安全测试做得扎实：`b1-security.test.ts`(10.7KB)、sandbox 四件套、safety 三件套
 - **缺口：6416 行的 agentai-loop.ts 零覆盖，repairPipeline 六步无专项测试**
-- 前端(`packages/agentai-gui`)基线 **187 测试 / 10 文件**（2026-10-11：在 109/7 基础上新增
+- 前端(`packages/agentai-gui`)基线 **209 测试 / 11 文件**（2026-10-12：在 187/10 基础上
+  `rail-browser` 21→**27**、`token-layer` 43→**50**，新增 `src/brand.test.ts`(**9**)。
+  分文件实测：`brand 9 / info-arch 14 / layout-panes 19 / layout-regression 28 / media-contract 25 /
+  rail-browser 27 / token-layer 50 / CleanerPanel.format 7 / chatStore 6 / modelStore 9 / modelPicker 15`。
+  本轮三处新增契约：
+  (a) **浏览器宿主唯一化** —— 全项目 `<EmbeddedBrowser>` 挂载点**恰 2 处**（`App.tsx` / `GlobalBrowserDrawer.tsx`，
+  由 `drawerHostActive` 互斥）、`modes/BrowserMode.tsx` 必须**不存在**、`Editor.tsx` 不得再出现 `last === 'browser'`、
+  `Ctrl+2` 必须走 `BrowserHost.open()`、store 不得有 `openBrowser` 且历史值 `'browser'` 必须回退成 `'editor'`；
+  (b) **品牌标统一** —— 标题栏必须用 `<BrandLogo>` 且全项目 tsx 不得再出现 `favicon-32.png`、
+  `岐枢`/`PulseFlow` 双名 lockup 存在、`favicon.svg` 与 `BrandLogo` 的两条 path 串**逐字相同**、
+  渐变 id 必须 `useId()` 派生（防多实例 `url(#pf-grad)` 全部解析到第一个 `<defs>`）、`Avatar` 不得再有 `PulseFlow` label；
+  (c) **氛围层必须真被消费**（防僵尸 token，前车之鉴是 `--radius-lg` 定义了却零消费）——
+  `--aurora/--grid-line/--grid-size/--panel-hi` 四个装饰 token 必须都定义**且**都被引用，
+  亮色/瓷白两档必须各自重定义 `--grid-line`，`.app-content` 必须真画 `background-image` 且**不得**出现 `backdrop-filter`（毛玻璃本轮有意不做）。
+  （2026-10-11：在 109/7 基础上新增
   `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(43)
   + `src/info-arch.test.ts`(14)，均为源码文本断言：
   前者锁布局机制 —— 中栏宽度必须自适应 `clamp()`、页面内面板必须两层结构、页面根高度必须 `100%`

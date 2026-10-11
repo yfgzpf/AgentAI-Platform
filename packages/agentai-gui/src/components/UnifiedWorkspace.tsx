@@ -3,9 +3,14 @@
  * ----------------------------------------------------
  * 根据 workspaceStore 的 mode 自动渲染对应子组件：
  *   - editor   → EditorMode（代码/文本编辑）
- *   - browser  → BrowserMode（内嵌浏览器）
  *   - preview  → PreviewMode（图片/PDF/视频预览）
  *   - auto     → 自动推断最佳模式
+ *
+ * ⚠️ 2026-10-12: 中心区**不再**有 browser 模式。
+ *   浏览器宿主唯一化到右栏 (App.tsx / GlobalBrowserDrawer), 因为 EmbeddedBrowser 每次挂载
+ *   都会 `io(gatewayUrl() + '/browser')` + `emit('subscribe')` —— 中心区再挂一份就是双份
+ *   socket 订阅 + 两个帧解码器, 两个宿主还会互相抢"当前标签页"。
+ *   Ctrl+2 保留能力但改为唤起右栏宿主 (见 handleKeyDown)。
  *
  * 特性：
  *   - 模式切换带 CSS 过渡动画（300ms cubic-bezier）
@@ -22,10 +27,11 @@ import {
 import type { WorkspaceMode } from '../types/workspace';
 import { ErrorBoundary } from './ErrorBoundary';
 
-// 直接导入三个子模式组件（避免 Vite dynamic import 的依赖链加载失败问题）
+// 直接导入子模式组件（避免 Vite dynamic import 的依赖链加载失败问题）
 import { EditorMode } from './modes/EditorMode';
-import { BrowserMode } from './modes/BrowserMode';
 import { PreviewMode } from './modes/PreviewMode';
+// 浏览器唯一宿主 (右栏) 的状态中枢, Ctrl+2 用它唤起
+import { BrowserHost } from '../services/browser-host';
 
 /** 工作区内容加载态 */
 const WorkspaceLoading: React.FC = () => (
@@ -85,12 +91,6 @@ const ModeRenderer: React.FC<{ mode: ReturnType<typeof useResolvedWorkspaceMode>
   ].filter(Boolean).join(' ');
 
   switch (mode) {
-    case 'browser':
-      return (
-        <div className={contentClass} key="browser-mode">
-          <BrowserMode />
-        </div>
-      );
     case 'preview':
       return (
         <div className={contentClass} key="preview-mode">
@@ -116,7 +116,8 @@ export const UnifiedWorkspace: React.FC = () => {
   // ===== 全局键盘快捷键 =====
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === '1') { e.preventDefault(); setMode('editor'); }
-    if ((e.ctrlKey || e.metaKey) && e.key === '2') { e.preventDefault(); setMode('browser'); }
+    // Ctrl+2: 浏览器宿主已唯一化到右栏, 不再切中心区模式, 改为唤起右栏宿主
+    if ((e.ctrlKey || e.metaKey) && e.key === '2') { e.preventDefault(); BrowserHost.open(); }
     if ((e.ctrlKey || e.metaKey) && e.key === '3') { e.preventDefault(); setMode('preview'); }
     if ((e.ctrlKey || e.metaKey) && e.key === '0') { e.preventDefault(); setMode('auto'); inferMode(); }
   }, [setMode, inferMode]);

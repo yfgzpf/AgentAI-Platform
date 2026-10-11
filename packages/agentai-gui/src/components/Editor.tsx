@@ -241,11 +241,13 @@ const filteredTree = filterTree(tree, searchQ);
   // 启动时: 恢复上次使用的模式 (默认编辑器), 有缓存就恢复文件树
   useEffect(() => {
     // 修复: 之前每次进编辑器页都强制切到 browser, 导致"打开文件却停在浏览器界面"
-    // 现在默认 editor; 上次用的是 browser/preview 才恢复, 保持用户习惯
+    // 2026-10-12: 中心区不再恢复 browser —— 浏览器宿主已唯一化到右栏 (App.tsx 右栏 / 独立大窗),
+    // 再恢复 browser 会让本页同时挂出第二个 EmbeddedBrowser
+    // (EmbeddedBrowser.tsx 每次挂载都 io('/browser') + emit('subscribe') → 双份 socket 订阅)。
+    // 只保留 preview 的恢复: "预览"看的是当前文件, 与浏览器宿主无关。
     try {
       const last = localStorage.getItem('agentai.workspace.lastMode');
-      const target = (last === 'browser' || last === 'preview') ? last : 'editor';
-      useWorkspaceStore.getState().setMode(target);
+      useWorkspaceStore.getState().setMode(last === 'preview' ? 'preview' : 'editor');
     } catch {
       useWorkspaceStore.getState().setMode('editor');
     }
