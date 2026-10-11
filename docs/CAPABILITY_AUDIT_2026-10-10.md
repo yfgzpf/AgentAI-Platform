@@ -250,10 +250,11 @@ create_tool    → .agentai/custom-tools/ + registry.json
 - **布局特点：绝大多数测试与源码同目录并置**，`__tests__/` 只有 2 个文件
 - 安全测试做得扎实：`b1-security.test.ts`(10.7KB)、sandbox 四件套、safety 三件套
 - **缺口：6416 行的 agentai-loop.ts 零覆盖，repairPipeline 六步无专项测试**
-- 前端(`packages/agentai-gui`)基线 **209 测试 / 11 文件**（2026-10-12：在 187/10 基础上
-  `rail-browser` 21→**27**、`token-layer` 43→**50**，新增 `src/brand.test.ts`(**9**)。
+- 前端(`packages/agentai-gui`)基线 **252 测试 / 12 文件**（2026-10-12 第二轮：在 209/11 基础上新增
+  `src/shell.test.ts`(**42**)。上一轮为 209/11 —— 在 187/10 基础上 `rail-browser` 21→**27**、`token-layer` 43→**50**，
+  新增 `src/brand.test.ts`(**9**)）。
   分文件实测：`brand 9 / info-arch 14 / layout-panes 19 / layout-regression 28 / media-contract 25 /
-  rail-browser 27 / token-layer 50 / CleanerPanel.format 7 / chatStore 6 / modelStore 9 / modelPicker 15`。
+  rail-browser 27 / token-layer 50 / shell 42 / CleanerPanel.format 7 / chatStore 6 / modelStore 9 / modelPicker 15`。
   本轮三处新增契约：
   (a) **浏览器宿主唯一化** —— 全项目 `<EmbeddedBrowser>` 挂载点**恰 2 处**（`App.tsx` / `GlobalBrowserDrawer.tsx`，
   由 `drawerHostActive` 互斥）、`modes/BrowserMode.tsx` 必须**不存在**、`Editor.tsx` 不得再出现 `last === 'browser'`、
@@ -262,8 +263,11 @@ create_tool    → .agentai/custom-tools/ + registry.json
   `岐枢`/`PulseFlow` 双名 lockup 存在、`favicon.svg` 与 `BrandLogo` 的两条 path 串**逐字相同**、
   渐变 id 必须 `useId()` 派生（防多实例 `url(#pf-grad)` 全部解析到第一个 `<defs>`）、`Avatar` 不得再有 `PulseFlow` label；
   (c) **氛围层必须真被消费**（防僵尸 token，前车之鉴是 `--radius-lg` 定义了却零消费）——
-  `--aurora/--grid-line/--grid-size/--panel-hi` 四个装饰 token 必须都定义**且**都被引用，
-  亮色/瓷白两档必须各自重定义 `--grid-line`，`.app-content` 必须真画 `background-image` 且**不得**出现 `backdrop-filter`（毛玻璃本轮有意不做）。
+  ⚠️ **本项已于 2026-10-12 第二轮反转**：原断言「`--aurora/--grid-line/--grid-size/--panel-hi` 四个装饰 token 必须都定义」
+  已**作废** —— 用户实测判定「底背景网格太花」，`--grid-line`/`--grid-size` **两个 token 已整条删除**，
+  现在只剩 `--aurora`（顶部柔光）+ `--panel-hi`（面板内高光）两层，断言改为「`--grid-*` 声明数必须为 **0**」。
+  `.app-content` 必须真画 `background-image` 且**不得**出现 `backdrop-filter`（毛玻璃本有意不做）这一点不变。
+  详见下方「六·补、2026-10-12 第二轮」。
   （2026-10-11：在 109/7 基础上新增
   `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(43)
   + `src/info-arch.test.ts`(14)，均为源码文本断言：
@@ -379,3 +383,98 @@ create_tool    → .agentai/custom-tools/ + registry.json
 | `xuanji/` | 1232 | 任务规划器（真闭环） |
 | `skills/` | ~2100 | 技能加载 + 匹配 + 热更新 |
 | `mcp/host.ts` | 301 | 手写 JSON-RPC MCP 客户端 |
+
+---
+
+## 六·补、2026-10-12 第二轮增量：GUI 页面统一 + 桌面打包一致性
+
+> 触发：用户反馈「**底背景网格太花**，优化没到位；要**所有页面**的**统一**优化；
+> **打包后**功能缺失 / 与开发状态显示不一致 / 溢出 / 控件与开发状态显示不一致的问题不应再出现」。
+> 运行形态确认：**桌面安装包（Tauri 打的 .exe）** —— 所以根因路径是 `build-for-desktop.mjs`，不是 `vite build`。
+
+### 1. 底背景：网格整条删除（对上一轮 §四.4(c) 的反转）
+
+- `--grid-line` / `--grid-size` 从 **3 个主题块（dark / light / porcelain）全部删除**，
+  `layout.css` 的 `background-size` 一并删除（网格是唯一需要它的层）。
+- 氛围层降到**两层**：`--aurora`（顶部 `radial-gradient` 光晕）+ `--panel-hi`（面板顶部内高光）。
+- ⚠️ **`.app-content` 曾被双写**：`agentai-theme.css`（不透明 `background: var(--bg)`）+ `layout.css`（氛围层），
+  谁赢只靠 **import 顺序** —— 打包后 CSS 合并顺序一变，氛围层就被冲掉（正是「打包后显示不一致」的一类）。
+  现删掉 theme 里那份，**全库只剩 1 处定义**（`layout.css`）。
+- 核验：`grep -cE "^\s*--grid-(line|size)\s*:" packages/agentai-gui/src/styles/agentai-theme.css` → **0**；
+  `grep -rc "^\.app-content" packages/agentai-gui/src/styles/*.css` → `layout.css:1`，其余 0。
+  （⚠️ 朴素 `grep "grid-line"` 会命中「说明为何移除」的注释而返回 1，**别被注释误导** —— 本轮实测踩过一次。）
+
+### 2. 页面壳三件 + 24 页根契约（「所有页面统一」的落地方式）
+
+新增 `src/components/shell/{PageShell,PageHeader,EmptyState}.tsx` + `src/styles/shell.css`
+（`main.tsx` **第 5 层** import，排在 `layout.css` 之后 —— CSS 顺序是有意义的，见第 1 条）。
+
+```css
+.page-shell  { height:100%; display:flex; flex-direction:column; min-height:0; }
+.page-header { height:var(--page-head-h); padding:0 var(--page-pad-x); flex-shrink:0;
+               display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--border); }
+.page-body   { flex:1; min-height:0; overflow:auto; padding:var(--page-pad-y) var(--page-pad-x); }
+```
+
+- ⚠️ `.page-body` 的 **`min-height:0`** 就是**根治 flex 子项溢出**的那一行：
+  `flex:1` + `overflow:auto` 缺了它，子项会被内容顶破父容器（对应「溢出」）。
+- ⚠️ **24 页统一不靠改 24 个文件**：`App.tsx` 在**唯一渲染点**把 `currentPage.comp` 包进 `<PageShell>`
+  （`PAGES` 里 24 个 `comp` 共享这一处）→ 新页面自动继承契约，不会再回到「12 页写 `height:'100%'`、其余不写」的分叉。
+- **页头转换本轮只落地 5 页**（`MonitoringPanel` / `StatsPanel` / `ProactiveSuggestionsPanel` /
+  `QQBotPanel` / `KnowledgeBasePanel`）→ `<PageHeader title subtitle icon actions>`，
+  消掉各页自写的「`padding:24` + `<Title level={3|4}>`」；**其余 ~17 页有意未动**（避免大规模重排）。
+- **页面级空态 1 页**（`SoulPanel` 整页为空）→ `<EmptyState>`；**卡片/页签内小空态有意不动**。
+- **3 个不透明页根改透明**（`WorkflowPanel` `var(--panel)` / `SoulPanel` `var(--bg-1)` / `Editor` `var(--editor-bg)`）
+  —— 否则它们各自把第 1 条的氛围层盖死。
+- 核验：`grep -oE "^\.page-(shell|header|body) \{" packages/agentai-gui/src/styles/shell.css | sort -u | wc -l` → **3**；
+  `<PageHeader>` 消费方 5 个真实页面（+1 是定义文件自身）。
+
+### 3. 视口单位 dvh 兜底（「溢出」的另一半）
+
+- `#root` 与 `.app-root` 同时写 `height:100vh` + `height:100dvh`（Tauri WebView2 下 `dvh` 是正确值，`vh` 是旧内核兜底）。
+- **零使用的死选择器 `.app-shell` 已删** —— 它曾是「有 `dvh` 兜底但没人用」的假真相，删掉以免出现第三份外壳高度。
+- 3 处魔法高度收口：`GlobalBrowserDrawer`(-44) / `GovernorPanel`(-48) / `Scene3DViewer`(-140) →
+  `calc(100dvh - var(--chrome-h) …)`，其中 `--chrome-h = 60px = --titlebar-h(36) + --statusbar-h(24)`。
+- 核验：`grep -rnE "[:=]\s*['\"]?calc\(100vh" --include=*.tsx --include=*.css packages/agentai-gui/src` → **空**。
+
+### 4. 桌面打包：修掉一个真实的白屏 bug + 新增一致性门
+
+⚠️ **这是本轮最严重的真 bug（实测，非推测）**：旧 `build-for-desktop.mjs:114-131` 用
+`readdirSync` 的**字母序** + `slice(1)` 删除「多余」的 `index-*.js`。而 NTFS 排序下：
+
+| 文件 | 内容 | 排序 |
+|---|---|---|
+| `index-BcQDIzDV.js` (**30.15 kB**) | DecorAI 子应用的**懒加载 chunk** | `B` = 0x42 → **先** |
+| `index-CRuT4Reg.js` (**588.61 kB**) | **真入口**（`dist/index.html` 引用的那个） | `C` = 0x43 → **后** |
+
+→ `slice(1)` 保留前者、**删除的恰是真入口** → 安装包启动即**白屏**。
+（成因：Vite `chunkFileNames: 'assets/js/[name]-[hash].js'`，任何名叫 `index` 的模块都会产出同名 chunk 撞车。）
+
+**修法**：不再按文件名猜，改为**只从 `dist/index.html` 正则抽出真实 entry，永不删除**；其余 `index-*.js` 只 `logWarn` 报告。
+
+**新增构建后一致性门** `packages/agentai-desktop/src-tauri/scripts/verify-web-build.mjs`
+（由 `build-for-desktop.mjs` 打包前 spawn，**非零退出即中止打包**，沿用 `verify-tool-consistency.mjs` 的 fail-fast 风格）：
+
+| 检查 | 拦什么 |
+|---|---|
+| E1 `dist/index.html` 的 `<title>` == `src/index.html` 的 `<title>` | 「与开发状态显示不一致」（实测：陈旧 dist 里是旧名 `PulseFlow Studio`，源码是 `岐枢 PulseFlow Studio`） |
+| E2 HTML 引用的每个 `/assets/**` 真实存在 | 「功能缺失」（白屏第一因） |
+| E3 chunk 闭包（产物 JS 的静态 import 都能落地） | 「功能缺失」 |
+| E4 favicon 引用与文件均存在 | 图标 404 |
+| W1 dist 比源码旧（mtime） | 忘了重新构建 |
+| W2 存在未被 HTML 引用的 `index-*.js` | 孤儿 chunk（**只告警，绝不自动删** —— 就是上面那个 bug 的教训） |
+
+**双向实测过**：对**陈旧 dist** exit 1（title 不一致 + W1 + W2）；`npx vite build` 后对**干净构建** exit 0
+（6 项通过 / 1 个 WARN=孤儿 chunk，合法）。
+
+### 5. 本轮验收与如实披露
+
+- `cd packages/agentai-gui && npx tsc --noEmit` 干净；`npx vitest run` → **12 文件 / 252 通过**。
+- **网关门零改动**，既有基线 `804 测试 / 7 失败`（b1-security 1 / context-fidelity 3 / ledger-wiring 2 / code-runner 1，优化前就在）不变。
+- **逐页浏览器取证**：`PAGES` 共 **24** 项，其中 `pascal`（建筑编辑）/ `decorai`（建筑装饰）为 `hidden:true` 无导航入口，
+  **其余 22 页全部截图确认** —— 网格消失、顶部柔光在、无横向溢出、状态栏完整（`Gateway 在线 · … · fix/strict-audit-2026-10-03`）。
+  ⚠️ **诚实披露**：`pascal` / `decorai` **无法通过点击到达**（无菜单项），本轮**未做视觉取证**；
+  它们同样经 `App.tsx` 唯一渲染点套了 `<PageShell>`，但「套上了」是从代码路径推断的，不是截图证据。
+- ⚠️ **仍延后（明确未做）**：全库约 **460 处**裸 `fontWeight`/`lineHeight`/`fontFamily` 未批量替换
+  （新 token 只在**新增的页壳层**强制使用）；`packages/*/dist/` 未移出 git；3417 处内联 `style={{` 未重构；
+  剩余 ~17 页的自有标题条未转 `PageHeader`。

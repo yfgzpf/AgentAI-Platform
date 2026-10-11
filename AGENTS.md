@@ -488,9 +488,15 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
 
 **回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts` + `token-layer.test.ts` + `info-arch.test.ts` + `brand.test.ts`
 （源码文本断言 + `stripComments` 辅助，因为修复点注释本身会引用「坏掉的旧代码」）。
-核验：`cd packages/agentai-gui && npx vitest run` → **11 文件 / 209 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9 → 165/9 → 173/9 → 187/10 → **209/11**；
+核验：`cd packages/agentai-gui && npx vitest run` → **12 文件 / 252 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9 → 165/9 → 173/9 → 187/10 → 209/11 → **252/12**；
 ★ 分文件实测：`brand 9 / info-arch 14 / layout-panes 19 / layout-regression 28 / media-contract 25 / rail-browser 27 / token-layer 50 /
-CleanerPanel.format 7 / chatStore 6 / modelStore 9 / modelPicker 15`）；
+shell 42 / CleanerPanel.format 7 / chatStore 6 / modelStore 9 / modelPicker 15`）；
+**新文件 `shell.test.ts` 42 条**（A 页壳三件存在 + `.page-body` 有 `min-height:0` + `shell.css` 在 `layout.css` 之后 import +
+`App.tsx` 恰 1 处 `<PageShell>` 包裹 `currentPage.comp` + 24 个 `key:` 条目 +
+**两条反僵尸**：`PageHeader` 消费方 ≥4 / `EmptyState` ≥1、已改页头页不得残留旧 `padding:24` 写法；
+B `#root` 与 `.app-root` 双写 `100vh`+`100dvh`、`.app-shell` 不得复活；C 全库 `calc(100vh -` 归零 + `calc(100dvh - var(--chrome-h)` 存在；
+D `.app-content` 的 `background-image` 恰为 `var(--aurora)` 单层；E 三页不透明底已去 + 无 `height:'100%'`+`var(--bg)` 组合；
+F 13 个新 token 均已**定义且有消费点** + `--fw-medium` 必须不存在），
 rail-browser 16 → 21 → **27** 条（`effectiveRailMode`、空态不叠层、`#fff` 白斑、ImageStudio 消歧 +
 **新增 D 组「浏览器宿主唯一化」6 条**：全项目 `<EmbeddedBrowser>` 挂载数**恰 2**、`modes/BrowserMode.tsx` 不存在、
 `Editor.tsx` 无 `last === 'browser'`、`Ctrl+2` 走 `BrowserHost.open()`、store 无 `openBrowser` 且 `'browser'→'editor'` 回退、AI 唤起链完好），
@@ -560,23 +566,70 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
     `grep -c "useId()" packages/agentai-gui/src/components/BrandLogo.tsx` → **1**；
     `grep -n "<title>" packages/agentai-gui/index.html`
 
-14. **氛围层「星野·深空」：从「平涂 --bg」到有纵深的面（2026-10-12）** —— 用户报「太普通，没特色」。
+14. **氛围层：从「平涂 --bg」→「星野·深空」→ **去掉网格只留顶部柔光**（2026-10-12，同日二次修订）**
+    —— 一轮用户报「太普通，没特色」（加了 1px 细网格）；**紧接着用户二次反馈「底背景网格太花」**。
+    终结状态：**只有两层视觉** —— `--aurora`（顶部 `radial-gradient` 光晕）+ `--panel-hi`（面板顶部内高光）。
+    ⚠️ **`--grid-line` / `--grid-size` 已从三个主题块（dark / light / porcelain）整条删除**，
+    `layout.css` 的 `background-size` 也随之删除（网格是唯一需要它的层）。
     ⚠️ **氛围层不能做成叠层**：不透明的 `var(--bg)` 散在 **25 个文件约 50 处**
     （外壳 / `ChatView` / `WritePage` / `ImageStudio`×10 / `ApprovalCard` / `TerminalPanel` …），
     任何独立浮层都会被这些面盖死。所以氛围做成**面自己的 `background`**（`.app-content`），
-    并把三个页面根节点的 `background: var(--bg)` 改透明，让底下的「场」透出来。
-    四个纯装饰 token（**色标走 `var(--accent)`/`var(--fg)`，五个主题自动跟随**）：
-    `--aurora`（顶部光晕）/ `--grid-line` + `--grid-size`（1px 细网格）/ `--panel-hi`（面板顶部内高光）。
+    并把三个页面根节点的 `background: var(--bg)` 改透明（见第 15 条 (d)），让底下的「场」透出来。
+    色标走 `var(--accent)`/`var(--fg)` 本色 + 双色标衰减（13%→5%→透明），**五个主题自动跟随**。
     亮色 / 瓷白两档**必须重定义**（亮底上堆纹理容易变成一层「脏灰」，亮色档靠阴影而非纹理）。
-    ⚠️ **强度实测过一次**：初版按 `--accent-soft`（15%）单色标铺开，在 640px 视口下**几乎看不见**，
-    等于白做 → 内核改 `var(--accent)` 本色 + 双色标衰减（13%→5%→透明），网格 3%→5%。
-    活体 computed-style 取证（`getComputedStyle($('.app-content')).backgroundImage`）：
-    修复后为 `radial-gradient(130% 62% at 50% -12%, color(srgb ... / 0.13) 0%, ... 0.05) 40%, transparent 68%)` +
-    两层 `color(srgb 0.945 0.947 0.959 / 0.05)` 网格，`backgroundSize: auto, 32px 32px, 32px 32px`。
+    ⚠️ **`.app-content` 曾被双写**：`agentai-theme.css`（不透明 `background: var(--bg)`）+ `layout.css`（氛围层），
+    谁赢全靠 import 顺序 —— 打包后 CSS 合并顺序一变氛围层就被冲掉。**现已删除 theme 里的那份**，
+    全库**只剩 1 处定义**（`layout.css`），消除这一类打包风险。
     ⚠️ **`backdrop-filter` 毛玻璃有意未做**（并如实披露）：右栏与标题栏背后没有内容，模糊无从谈起；
     且半透明面板会在 5 个主题上把文字对比度打下来。
-    核验：`grep -n "grid-line\|--aurora\|--panel-hi" packages/agentai-gui/src/styles/agentai-theme.css`；
-    `grep -A8 "^\.app-content" packages/agentai-gui/src/styles/layout.css`
+    核验：`grep -cE "^\s*--grid-(line|size)\s*:" packages/agentai-gui/src/styles/agentai-theme.css` → **0**
+    （⚠️ 只看**声明**：CSS 里留了说明移除原因的注释，朴素 `grep "grid-line"` 会命中注释得 1，别被误导）；
+    `grep -rc "^\.app-content" packages/agentai-gui/src/styles/*.css` → `layout.css:1`，其余 0；
+    `grep -A6 "^\.app-content" packages/agentai-gui/src/styles/layout.css`（应只有 `var(--aurora)` 一层）
+
+15. **页面统一：页壳三件 + 24 页根契约 + 视口 dvh 兜底 + 桌面构建一致性门（2026-10-12）**
+    —— 用户报「要**所有页面**的**统一**优化」「打包后**功能缺失 / 与开发状态显示不一致 / 溢出 / 控件与开发状态显示不一致** 不应再出现」。
+    四项各对应一条技术根因，逐条落地：
+
+    **(a) 页壳三件**（新增）：`src/components/shell/{PageShell,PageHeader,EmptyState}.tsx` + `src/styles/shell.css`
+    （`main.tsx` 第 5 层 import，排在 `layout.css` 之后）。
+    `.page-shell{height:100%;display:flex;flex-direction:column;min-height:0}` /
+    `.page-header{height:var(--page-head-h);padding:0 var(--page-pad-x);flex-shrink:0;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}` /
+    `.page-body{flex:1;min-height:0;overflow:auto;padding:var(--page-pad-y) var(--page-pad-x)}`。
+    ⚠️ `.page-body` 的 `min-height:0` 就是**根治 flex 子项溢出**的那一行 —— `flex:1` + `overflow:auto` 缺它必然顶破。
+    ⚠️ **24 页统一不靠改 24 个文件**：`App.tsx` 在**唯一渲染点**把 `currentPage.comp` 包进 `<PageShell>`
+    （`PAGES` 里 24 个 `comp` 共享这一处）→ 新页面自动继承契约。
+
+    **(b) T2 页头转换（本轮只落地 5 页，**有意非全量**）**：`MonitoringPanel` / `StatsPanel` /
+    `ProactiveSuggestionsPanel` / `QQBotPanel` / `KnowledgeBasePanel` → `<PageHeader title subtitle icon actions>`，
+    消掉各页自写的「`padding:24` + `<Title level={3\|4}>`」标题条。其余 ~17 页保留自有标题条。
+
+    **(c) T3 页面级空态**：`SoulPanel` 整页为空 → `<EmptyState>`。**卡片/页签内的小空态有意不动**
+    （`EmptyState.tsx` 头注释已写明它只服务页面级）。
+
+    **(d) T4 三个不透明页根改透明**：`WorkflowPanel`(`var(--panel)`) / `SoulPanel`(`var(--bg-1)`) /
+    `Editor`(`var(--editor-bg)`) —— 否则第 14 条的氛围层被这些面盖死。
+
+    **(e) 视口 dvh 兜底（对应「溢出」）**：`#root` 与 `.app-root` 同时写 `height:100vh` + `height:100dvh`
+    （Tauri WebView2 下 `dvh` 才是正确值，`vh` 是旧内核兜底）。**零使用的死选择器 `.app-shell` 已删**，
+    避免外壳高度出现第三份真相。全库 `calc(100vh -` **归零**，改为 `calc(100dvh - var(--chrome-h) …)`，
+    `--chrome-h=60px = --titlebar-h(36) + --statusbar-h(24)`。
+
+    **(f) 桌面构建一致性门（对应「功能缺失 / 与开发状态显示不一致」）**：
+    `packages/agentai-desktop/src-tauri/scripts/verify-web-build.mjs`（由 `build-for-desktop.mjs` 打包前 spawn，
+    非零退出即**中止打包**）：E1 `dist/index.html` 的 `<title>` == `src/index.html` 的 title；
+    E2 HTML 引用的每个 `/assets/**` 真实存在；E3 chunk 闭包；E4 favicon 引用；W1 dist 陈旧（mtime）告警；W2 孤儿 `index-*.js` 告警。
+    ⚠️ **同时修掉一个真实的「入口删除」bug**：旧 `build-for-desktop.mjs` 用 `readdirSync` 字母序 + `slice(1)`
+    删除多余 `index-*.js`。而 NTFS 下 `index-BcQDIzDV.js`（DecorAI 懒加载 chunk，`B`=0x42）**排在**
+    `index-CRuT4Reg.js`（**真入口**，`C`=0x43）**之前** → 被删的**恰是真入口** → 安装包白屏。
+    现改为**只从 `dist/index.html` 反查真入口、永不删除**，其余只告警。
+
+    核验：`cd packages/agentai-gui && npx vitest run src/shell.test.ts`（**42 测试**：含「24 个 `key:` 条目」
+    「`PageHeader`/`EmptyState` 消费方 >0，防僵尸组件」「全库 `calc(100vh -` 归零」等契约断言；
+    ⚠️ **断言走 `stripAll` 先剥注释**：`calc(100vh -` / `grid-line` 在注释里大量出现（都在说明「这里**原来**是坏的」），
+    朴素 grep 会命中注释而误报，所以上表核验命令一律用**声明/取值上下文**的正则，不用裸字符串匹配。
+    `node packages/agentai-desktop/src-tauri/scripts/verify-web-build.mjs`
+    （对**干净构建** exit 0；对**陈旧 dist** exit 1 —— 两个方向都实测过）。
 
 ### 六、安全机制
 
@@ -700,7 +753,7 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 浏览器宿主 | 仅右侧浮层 Drawer | **右栏 信息/浏览器 双模式**, 事件中枢唯一 (`browser-host.ts` 6 监听 / Drawer 0) | `grep -c "addEventListener" packages/agentai-gui/src/services/browser-host.ts packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` |
 | 右栏浏览器宽度 | - | **`agentai.pane.browser.width` 默认 520** (320–900), 与信息栏 320 分轨 | `grep -n "agentai.pane.browser.width" packages/agentai-gui/src/App.tsx` |
 | 文件卡片查看 | 整行点击 → 跳 editor 页 | **行点击就地展开全文**, 仅「编辑器」按钮跳页 | `grep -n "PREVIEW_LINE_CAP\|label=\"编辑器\"" packages/agentai-gui/src/components/FileCard.tsx` |
-| GUI 测试基线 | 90 测试 / 6 文件 | **209 测试 / 11 文件** | `cd packages/agentai-gui && npx vitest run` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **252 测试 / 12 文件** | `cd packages/agentai-gui && npx vitest run` |
 | token 层 | 18 变量被消费但**从未定义** (调用点各带 fallback → 同语义 3–6 种色) | **已修**: 建 18 条语义别名 + 6 级 `--fs-*` 尺度; 死 fallback 39 → 0 | `grep -rEoh "var\(--(text-secondary\|bg-1\|hover) ?, ?(#\|rgba)" --include=*.tsx packages/agentai-gui/src \| wc -l` |
 | 字号尺度 | 23 种 fontSize (≤12px **1164 处**), 7/8/9/10 与 12/13/14/15 差 1px 无法分辨 | **已收敛**: 1429 处走 `var(--fs-*)`, 尺度 **11/12/13/16/20/28** 六档; ≥32px 图标/emoji 档 35 处有意保留 | `grep -rEoh "var\(--fs-[a-z]+\)" --include=*.tsx packages/agentai-gui/src \| sort \| uniq -c` |
 | 圆角尺度 | 19 种裸数字 (2/3/4/5 与 6/8/10 差 1–2px 不可辨); `--radius-lg` 零消费 | **已收敛**: 437 处走 `var(--radius-*)`, 尺度 **4/8/12/999 四档** (消费 md 218 / sm 185 / lg 40 / pill 5) | `grep -rEoh "var\(--radius[a-z-]*\)" --include=*.tsx --include=*.css packages/agentai-gui/src \| sort \| uniq -c` |
@@ -710,7 +763,10 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 右栏内容判据 | — | **`effectiveRailMode`** (非 chat 页恒为浏览器, 320/900 与 240/560 分轨) | `grep -n "effectiveRailMode" packages/agentai-gui/src/App.tsx` |
 | 浏览器宿主数 | **3 个挂载点** (App 右栏 / Drawer / `modes/BrowserMode`), 编辑器页同时命中 2 个 → **双份 `/browser` socket 订阅** | **已唯一化为 2 处且互斥**: 中心区浏览器模式整块删除 (`modes/BrowserMode.tsx` 已删), 只留 App 右栏 + Drawer | `grep -rn "<EmbeddedBrowser" packages/agentai-gui/src --include=*.tsx \| wc -l` → **2** |
 | 品牌标 | 标题栏用**栅格** `favicon-32.png`, 启动页用 `BrandLogo` 矢量标 → 两套图形同屏 | **唯一出口 `BrandLogo.tsx`** (渐变 id 走 `useId()`); `favicon.svg` 同几何; 主名 **岐枢** / 副名 **PulseFlow** | `grep -rn "favicon-32.png" packages/agentai-gui/src --include=*.tsx \| wc -l` → **0** |
-| 前端氛围层 | 全站**平涂** `--bg`, 面板只靠 1px 边框区分 | **「星野·深空」**: 顶部光晕 + 1px 细网格 + 面板内高光, 做成 `.app-content` **自己的 background** (叠层会被 25 文件/约 50 处不透明 `var(--bg)` 盖死) | `grep -n "grid-line\\\|--aurora" packages/agentai-gui/src/styles/agentai-theme.css` |
+| 前端氛围层 | 全站**平涂** `--bg`, 面板只靠 1px 边框区分 | **顶部柔光** (`--aurora` 单层 radial) + 面板内高光 (`--panel-hi`); 做成 `.app-content` **自己的 background** (叠层会被 25 文件/约 50 处不透明 `var(--bg)` 盖死); ⚠️ **初版的 1px 细网格已被用户否决并整条删除** | `grep -c "grid-line\|grid-size" packages/agentai-gui/src/styles/agentai-theme.css` → **0** |
+| 页面壳契约 | 各页自写根样式 (`height:'100%'` 的 12 页 / 内边距 12·16·20 各写各 / 三页不透明底盖住氛围层) | **`.page-shell` / `.page-header` / `.page-body` 三件** + `shell.css`; 24 页在 `App.tsx` **唯一渲染点**统一包 `<PageShell>`; `.page-body` 带 `min-height:0` (根治 flex 溢出); 5 页页头转换 / 3 页不透明根改透明 | `grep -oE "^\.page-(shell\|header\|body) \{" packages/agentai-gui/src/styles/shell.css \| sort -u \| wc -l` → **3**; `<PageHeader>` 消费方 `grep -rl "<PageHeader" --include=*.tsx packages/agentai-gui/src/components \| wc -l` → **5**(+1 是定义文件) |
+| 视口单位 | 内联裸 `100vh` (`App.tsx` / `#root`), 3 处 `calc(100vh - 44/48/140px)` 魔法值; `.app-shell` 是**零使用的死选择器** | **`100vh` + `100dvh` 双写兜底**; 魔法值改 `calc(100dvh - var(--chrome-h) …)`; `.app-shell` 已删; 全库 `calc(100vh -` **归零** | `grep -rnE "[:=]\s*['\"]?calc\(100vh" --include=*.tsx --include=*.css packages/agentai-gui/src` → **空**（注释里的旧值不算, 见第 14/15 条核验说明） |
+| 桌面构建一致性门 | 打包脚本按 `readdirSync` 字母序 `slice(1)` 删多余 `index-*.js` → **误删真入口** → 白屏; 无任何构建后校验 | `scripts/verify-web-build.mjs` 打包前 spawn (E1 title 一致 / E2 HTML 引用文件存在 / E3 chunk 闭包 / E4 favicon; W1 陈旧 / W2 孤儿); 入口改为**从 HTML 反查、永不删除** | `node packages/agentai-desktop/src-tauri/scripts/verify-web-build.mjs`（干净构建 exit 0 / 陈旧 dist exit 1） |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）
 
