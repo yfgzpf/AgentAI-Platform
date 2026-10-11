@@ -3659,12 +3659,14 @@ const ws = getWs();
   browser_close: async (args: any, ctx?: any) => {
     try {
       const reason = args?.reason || '任务已完成';
-      // 通知前端关闭浏览器
-      const { getBrowserBridge } = await import('./browser-bridge.js');
-      const bridge = getBrowserBridge();
-      if (bridge.isConnected()) {
-        bridge.broadcast({ type: 'browser_close', reason });
-      }
+      // 关闭 Playwright 引擎, 真正释放 Chromium 进程。
+      // ⚠️ 原实现调 `bridge.broadcast()` —— BrowserBridge 根本没有这个方法, 每次都抛
+      //   TypeError 被外层 catch 吞掉, 结果是 browser_close 恒返回失败 + 引擎一直活着。
+      //   前端收面板本来也不走 socket: ChatView 读工具结果的 _browser_action 派发
+      //   'pulseflow:browser:close' CustomEvent, 所以那次 broadcast 调用纯属多余。
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      if (engine.isRunning()) await engine.stop();
       return { success: true, output: `✅ 浏览器已关闭 (${reason})`, _show_browser: false, _browser_action: 'close' };
     } catch (e: any) { return { success: false, output: `browser_close error: ${e.message}`, _show_browser: false }; }
   },
