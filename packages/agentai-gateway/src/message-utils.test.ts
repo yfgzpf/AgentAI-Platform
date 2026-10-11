@@ -75,3 +75,63 @@ describe('sanitizeToolMessages — tool_calls ↔ tool 逐 id 配对', () => {
     expect((assts[0] as any).tool_calls.map((tc: any) => tc.id)).toEqual(['b']);
   });
 });
+
+/**
+ * 协议合法性不变量 —— 直接封死「insufficient tool messages」这一类 400。
+ * 违反这条的请求必然被 OpenAI/DeepSeek 拒收, 与具体触发路径无关。
+ */
+function assertProtocolLegal(messages: any[]) {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== 'assistant' || !m.tool_calls?.length) continue;
+    const ids = m.tool_calls.map((tc: any) => tc.id);
+    const following: string[] = [];
+    let j = i + 1;
+    while (j < messages.length && messages[j].role === 'tool') following.push(messages[j++].tool_call_id);
+    for (const id of ids) {
+      expect(following, `tool_call ${id} 缺少紧随其后的 tool 回复 → 上游必 400`).toContain(id);
+    }
+  }
+}
+
+describe('sanitizeToolMessages — 协议合法性不变量 (2026-10-11 第二起 400)', () => {
+  it('事故形状: 已配对的 assistant A 不得「掩护」零回复的 assistant B (asst=1/tool=0)', () => {
+    // 旧 llm-router 手写块: 新 assistant 到达时只重置 pendingToolIds, 未清 matchedSet,
+    // 于是 A 的配对记录让 B 被误判为"已配对"而留下 → 一条 tool_calls 零回复 → 400
+    const out = sanitizeToolMessages([
+      { role: 'user', content: 'hi' },
+      asst(['a']), tool('a'),
+      asst(['b']),
+      { role: 'user', content: 'next' },
+    ] as any);
+    assertProtocolLegal(out);
+    // B 无正文 → 整条摘除; A 的完整配对保留
+    const assts = out.filter((m: any) => m.role === 'assistant');
+    expect(assts).toHaveLength(1);
+    expect((assts[0] as any).tool_calls.map((tc: any) => tc.id)).toEqual(['a']);
+    expect(out.filter((m: any) => m.role === 'tool')).toHaveLength(1);
+  });
+
+  it('事故形状变体: B 有正文时保留文本但摘除 tool_calls', () => {
+    const out = sanitizeToolMessages([
+      asst(['a']), tool('a'),
+      asst(['b'], '我继续说明'),
+      { role: 'user', content: 'next' },
+    ] as any);
+    assertProtocolLegal(out);
+    const b = out.find((m: any) => m.role === 'assistant' && m.content === '我继续说明') as any;
+    expect(b).toBeTruthy();
+    expect(b.tool_calls).toBeUndefined();
+  });
+
+  it('不变量: 多种残破输入下, 输出一律不含「无回复的 tool_calls」', () => {
+    const shapes: any[][] = [
+      [{ role: 'user', content: 'u' }, asst(['a']), { role: 'user', content: 'u2' }],
+      [asst(['a', 'b']), tool('a'), tool('a'), { role: 'system', content: 's' }, tool('b')],
+      [{ role: 'user', content: 'u' }, tool('ghost'), asst(['z'])],
+      [asst(['a']), asst(['b']), asst(['c']), tool('c')],
+      [{ role: 'tool', tool_call_id: 'x', content: 'r' }, { role: 'user', content: 'u' }],
+    ];
+    for (const s of shapes) assertProtocolLegal(sanitizeToolMessages(s as any));
+  });
+});

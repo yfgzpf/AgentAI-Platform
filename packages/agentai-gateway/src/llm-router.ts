@@ -1642,6 +1642,17 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
       }
 
       // ═══ 完整性修复: 确保 tool 消息有前置 assistant(tool_calls) ═══
+      // ⚠️ 2026-10-11 必读 (排查两次 400 时被这段日志误导过):
+      //   下面这段手写追踪块已被 1703 行的 sanitizeToolMessages **完全覆盖**, 属于冗余:
+      //   它只能处理「0 个 tool 回复」的整块残留, 且有两个缺陷 ——
+      //     ① 新 assistant 到达时只重置 pendingToolIds, **没清 matchedSet**,
+      //        于是前一个 assistant 的配对记录会「掩护」后一个零回复的 assistant,
+      //        残留一条无回复的 tool_calls → 上游 400
+      //        "insufficient tool messages following tool_calls message" ← 真实事故
+      //     ② 命中时整条 splice 掉 assistant(连同正文) → 信息丢失,
+      //        而协议只要求摘除 tool_calls (sanitize 就是这样做的, 更优)
+      //   因此: **不要**依据这里的 `[truncate] removed/dropped ...` 日志判断 400 根因,
+      //   真正生效的是末尾的 sanitizeToolMessages。保留本段仅为最小改动, 可选清理。
       // DeepSeek/OpenAI 要求: tool 消息前面必须有 assistant 消息包含 tool_calls
       // 截断可能导致 assistant(tool_calls) 被丢弃但 tool 消息保留 → 400 错误
       // 同时也需要去掉 result 被丢弃的 assistant(tool_calls) → 否则 AI 看到孤立的 tool_calls 无回复 → 空内容
