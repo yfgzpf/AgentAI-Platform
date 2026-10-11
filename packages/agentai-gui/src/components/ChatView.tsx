@@ -2037,7 +2037,12 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         onScroll={handleScroll}
         style={{
           flex: 1, overflowY: 'auto',
-          padding: `var(--chat-scroll-padding-y) 0`,
+          // 2026-10-11: 大屏居中。--chat-max-width (800px) 是设计时就定好的
+          // token, 注释写着「消息流最大宽度 (大屏居中)」, 但**全项目零消费** ——
+          // 消息行一直是从最左拉到最右。这里补上消费点。
+          // 用 padding 而非 maxWidth: 滚动条仍贴在容器右边缘, 不会内缩到画面中间。
+          // max(16px, …) 兜住窄屏 (列宽 < 832px 时 calc 会算出负数)。
+          padding: `var(--chat-scroll-padding-y) max(16px, calc((100% - var(--chat-max-width)) / 2))`,
           position: 'relative',
           maxWidth: '100%',
         }}
@@ -2186,8 +2191,13 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         </button>
       )}
 
-      {/* Empty state margin adjustment */}
-      {messages.length === 0 && <div style={{ flex: 1 }} />}
+      {/* Empty state margin adjustment
+       *  2026-10-11: 删除此处原有的 `{messages.length === 0 && <div style={{ flex: 1 }} />}`。
+       *  它与上方的 Messages area 同为 `flex: 1`, 于是剩高被**两家平分** ——
+       *  消息/欢迎区只拿到一半高度, 下面永远留一块等高的纯黑空档 (1280×720 实测约 300px)。
+       *  而输入区本来就靠 flex 布局钉在底部, 这个占位块从未起过"把输入框推下去"的作用,
+       *  纯属从欢迎区手里偷高度。删掉后空态欢迎块才会在整块空白里真正居中。
+       *  注: 仅在 messages.length === 0 时渲染, 有消息时本就不存在 → 影响面仅空态。 */}
 
 
       {/* Queue sends */}
@@ -2404,8 +2414,8 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         </div>
       )}
 
-      {/* Composer */}
-      <div style={{ position: 'relative' }}>
+      {/* Composer — 与消息流共用 --chat-max-width, 否则大屏上"上面缩着、下面摊开" */}
+      <div style={{ position: 'relative', width: '100%', maxWidth: 'var(--chat-max-width)', margin: '0 auto' }}>
         <Composer
           ref={composerRef}
           onSend={(text, opts) => handleSend(text, undefined, opts)}

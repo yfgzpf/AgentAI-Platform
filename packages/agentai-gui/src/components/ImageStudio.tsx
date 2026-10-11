@@ -24,6 +24,8 @@ import { RegionEditor } from './RegionEditor';
 import { GATEWAY_HTTP } from '../services/config';
 import { useModelStore } from '../store/modelStore';
 import { apiPost } from '../services/api';
+import { useResizable } from '../hooks/useResizable';
+import { PaneGrip } from './PaneGrip';
 
 // ======================== 常量 ========================
 
@@ -535,12 +537,33 @@ const sendToVideo = (imageUrl: string) => {
         </div>
     );
 
+    // ===== 面板宽度可调 (2026-10-11) =====
+    //  原为写死 320 / 240 / 380 + flexShrink:0。1280 宽实测 .app-content 仅 700px,
+    //  非 edit 模式先扣 380 → 预览区剩 ~320px; 用户无法按需让出/收回空间。
+    //  三个 hook 必须**无条件**调用 (下方 `if (mode === 'edit') return` 是提前返回,
+    //  把 hook 写进分支里会违反 hooks 规则并触发 React 报错)。
+    const editLeftPane = useResizable({
+        storageKey: 'agentai.imageStudio.editLeftW',
+        defaultWidth: 320, minWidth: 240, maxWidth: 480, side: 'right',
+    });
+    const editRightPane = useResizable({
+        storageKey: 'agentai.imageStudio.editRightW',
+        defaultWidth: 240, minWidth: 180, maxWidth: 400, side: 'left',
+    });
+    const studioLeftPane = useResizable({
+        storageKey: 'agentai.imageStudio.leftW',
+        defaultWidth: 380, minWidth: 260, maxWidth: 560, side: 'right',
+    });
+
     // ===== 对话改图模式: 左右格局 — 左侧历史/快捷, 右侧消息流 =====
     if (mode === 'edit') {
         return (
-            <div style={{ display: 'flex', height: 'calc(100vh - 50px)', color: 'var(--fg)', background: 'var(--bg)' }}>
+            // 高度用 100% 而非 calc(100vh - 50px): 实测外壳吃掉 60px (标题栏 36 + 状态栏 24),
+            // 且未激活时外面还有 FeatureGuide 的 ~41px 提示条 → 原写法必然溢出。
+            <div style={{ display: 'flex', height: '100%', color: 'var(--fg)', background: 'var(--bg)' }}>
                 {/* ===== 左侧侧边栏: 历史 + 快捷操作 ===== */}
-                <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)', background: 'var(--panel)', overflow: 'hidden' }}>
+                <div ref={editLeftPane.paneRef} className="page-pane page-pane--left" style={{ width: editLeftPane.width, background: 'var(--panel)' }}>
+                    <PaneGrip resizable={editLeftPane} min={240} max={480} label="调整历史面板宽度" />
                     {/* 模式切换 */}
                     <div style={{ display: 'flex', gap: 4, padding: '8px' }}>
                         {MODES.map(m => (
@@ -815,8 +838,11 @@ const sendToVideo = (imageUrl: string) => {
                     </div>
                 </div>
 
-                {/* 右侧: 预设模版区 (240px) */}
-                <div style={{ width: 240, flexShrink: 0, borderLeft: '1px solid var(--border)', background: 'var(--panel)', overflow: 'auto', padding: '8px 10px' }}>
+                {/* 右侧: 预设模版区 (宽度可调) */}
+                <div ref={editRightPane.paneRef} className="page-pane page-pane--right" style={{ width: editRightPane.width, background: 'var(--panel)' }}>
+                    <PaneGrip resizable={editRightPane} min={180} max={400} label="调整预设模版面板宽度" />
+                    {/* 内层滚动: .pane-grip 是 position:absolute, 放进滚动容器会随内容一起滚走 */}
+                    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '8px 10px' }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 4 }}>
                         <BulbOutlined /> 预设模版
                     </div>
@@ -841,6 +867,7 @@ const sendToVideo = (imageUrl: string) => {
                     <div style={{ fontSize: 9, color: 'var(--muted-2)', textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
                         点击模版自动填入输入框<br/>可在此基础上修改后发送
                     </div>
+                    </div>{/* /内层滚动 */}
                 </div>
                 </div>
 
@@ -904,9 +931,13 @@ const sendToVideo = (imageUrl: string) => {
 
     // ===== 非对话模式: 左右分栏 =====
     return (
-        <div style={{ display: 'flex', gap: 12, height: 'calc(100vh - 50px)', color: 'var(--fg)' }}>
-            {/* 左侧: 控制面板 */}
-            <div style={{ width: 380, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
+        // 同 edit 分支: 100% 由 .app-content / FeatureGuide 的 flex 体给出确定高度
+        <div style={{ display: 'flex', gap: 12, height: '100%', color: 'var(--fg)' }}>
+            {/* 左侧: 控制面板 (宽度可调) */}
+            <div ref={studioLeftPane.paneRef} className="page-pane page-pane--left" style={{ width: studioLeftPane.width }}>
+                <PaneGrip resizable={studioLeftPane} min={260} max={560} label="调整控制面板宽度" />
+                {/* 内层滚动: 把手是 absolute, 不能放进滚动容器 (否则拖动时会滚走) */}
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
                 {/* 模式选择 */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
                     {MODES.map(m => {
@@ -1057,6 +1088,7 @@ const sendToVideo = (imageUrl: string) => {
                         </div>
                     </div>
                 </Card>
+                </div>{/* /内层滚动 */}
             </div>
 
             {/* 右侧: 结果展示 */}

@@ -13,6 +13,7 @@ import { AimOutlined, HistoryOutlined, FileTextOutlined,
 import { Tooltip, Tag, Spin } from 'antd';
 import { useChatStore } from '../store/chatStore';
 import { useWorkspaceStore } from '../store/workspaceStore';
+import { useTaskOrchestrator } from '../store/taskStore';
 import { AIContextPanel } from './AIContextPanel';
 import { AIInjectContextPanel } from './AIInjectContextPanel';
 import { AIToolCallPanel } from './AIToolCallPanel';
@@ -95,6 +96,23 @@ export const RightPanel: React.FC = () => {
     });
     return { additions, deletions, files: writeOps.length };
   }, [messages]);
+
+  // ═══ 右栏空态合并 (2026-10-11) ═══
+  //  「任务执行计划」与「生成的文件」都是 antd <Card> + <Empty> 插画, 空态各约 100px;
+  //  两者同时为空时, 右栏顶部会被两张空卡片占掉 ~200px, 往下才是真正有用的 AIContextPanel。
+  //  这里在**父级**判断是否两个都空, 空则合并为一行提示, 不再渲染插画。
+  //  判空依据必须与子组件一致 (否则会出现"父级以为有内容、子组件渲染空卡"):
+  //    · TaskPlanPanel 空 ⇔ taskStore.activeTask == null
+  //    · GeneratedFilesPanel 空 ⇔ 全部消息里存在写文件类工具调用
+  //  这里用**更宽松**的判据 (只看工具名, 不解析路径) —— 宁可多显示面板, 不可漏内容。
+  const activeTask = useTaskOrchestrator(s => s.activeTask);
+  const hasGeneratedFiles = useMemo(() => {
+    const WRITE_RE = /^(write_file|edit_file|create_file|multi_edit|str_replace|run_code|generate_image|generate_diagram)$/i;
+    return (messages || []).some(m => m.segments?.some(
+      (s: any) => s.kind === 'tool' && s.name && WRITE_RE.test(s.name)
+    ));
+  }, [messages]);
+  const railHasProgress = !!activeTask || hasGeneratedFiles;
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--panel)' }}>
@@ -273,14 +291,26 @@ export const RightPanel: React.FC = () => {
                 </div>
               </div>
             )}
-            {/* 任务计划 */}
-            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 4 }}>
-              <TaskPlanPanel />
-            </div>
-            {/* 生成的文件 */}
-            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 4 }}>
-              <GeneratedFilesPanel />
-            </div>
+            {/* 任务计划 / 生成的文件 — 两个都空时合并成一行, 不再叠两张 Empty 插画 */}
+            {railHasProgress ? (
+              <>
+                {!!activeTask && (
+                  <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 4 }}>
+                    <TaskPlanPanel />
+                  </div>
+                )}
+                {hasGeneratedFiles && (
+                  <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 4 }}>
+                    <GeneratedFilesPanel />
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 2px', fontSize: 10, color: 'var(--muted-2)' }}>
+                <MinusOutlined style={{ fontSize: 9, opacity: 0.6 }} />
+                暂无任务计划 / 生成文件
+              </div>
+            )}
             {/* 工具调用快照 */}
             <AIToolCallPanel />
           </div>

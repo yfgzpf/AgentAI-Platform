@@ -146,7 +146,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({ handleSend }) => {
       {/* 快捷入口 — 最多 4 个, 两列自适应 */}
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
-        gap: 12, maxWidth: 460, width: '100%',
+        gap: 12, maxWidth: 'var(--chat-welcome-grid-max)', width: '100%',
       }}>
         {actions.map(action => (
           <button

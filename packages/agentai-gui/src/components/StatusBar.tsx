@@ -304,13 +304,18 @@ export const StatusBar: React.FC = () => {
       {/* ═══ P3-3: 透明度仪表盘 ═══ */}
       <span className="ui-divider" />
 
-      {/* 置信度 */}
-      <Tooltip title={`AI 置信度: ${dash.confidence != null ? dash.confidence + '%' : '暂无数据'}`} mouseEnterDelay={0.3}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-          <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>置信</span>
-          <span style={{ fontSize: 10, fontWeight: 700, color: confColor }}>{confLabel}</span>
-        </span>
-      </Tooltip>
+      {/* 置信度 — 无数据时整个隐藏 (原实现恒显 "置信 --", 而强模型 tier 的
+          置信度评估层在 gateway 侧被 `!== 'autonomous'` 门控跳过, 该占位符
+          实际上永远填不上, 只会长期占宽度。与下方 意图/计划/费用/模型 的
+          "有则显示" 保持一致。) */}
+      {dash.confidence != null && (
+        <Tooltip title={`AI 置信度: ${dash.confidence}%`} mouseEnterDelay={0.3}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
+            <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>置信</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: confColor }}>{confLabel}</span>
+          </span>
+        </Tooltip>
+      )}
 
       {/* 意图 */}
       {dash.intent && (
@@ -373,6 +378,7 @@ export const StatusBar: React.FC = () => {
         </Tooltip>
       )}
 
+      {/* 分组分隔: 左=AI 本次会话透明度 / 右=账号与用量 (跨会话累计) */}
       <span className="ui-divider" />
 
       {/* 用量统计 */}

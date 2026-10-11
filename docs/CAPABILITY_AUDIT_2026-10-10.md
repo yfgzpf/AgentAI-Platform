@@ -235,6 +235,9 @@ create_tool    → .agentai/custom-tools/ + registry.json
 - **布局特点：绝大多数测试与源码同目录并置**，`__tests__/` 只有 2 个文件
 - 安全测试做得扎实：`b1-security.test.ts`(10.7KB)、sandbox 四件套、safety 三件套
 - **缺口：6416 行的 agentai-loop.ts 零覆盖，repairPipeline 六步无专项测试**
+- 前端(`packages/agentai-gui`)基线 **109 测试 / 7 文件**（2026-10-11：新增 `src/layout-panes.test.ts`，
+  源码文本断言锁定布局机制 —— 中栏宽度必须自适应 `clamp()`、页面内面板必须两层结构、
+  页面根高度必须 `100%` 而非 `calc(100vh - N)`）。核验：`cd packages/agentai-gui && npx vitest run`
 
 ---
 

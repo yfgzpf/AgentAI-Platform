@@ -302,6 +302,40 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
 | chatStore.ts | **throttled localStorage** (2 秒写入一次, 避免流式阻塞) |
 | SessionSidebar.tsx | 对话摘要列表, 双击编辑标题 |
 
+### 五·补、布局机制（2026-10-11 实测，附核验方式）
+
+**外观层三处缺陷已修**：
+
+1. **中栏宽度 token 写死 → 大屏中间一条窄栏**
+   `--chat-max-width` / `--chat-welcome-grid-max` 原为常量 `800px` / `480px`，
+   注释写着「大屏居中」但**全项目零消费** —— 消息行实际从最左拉到最右。
+   现改为自适应 `clamp(880px, 90%, 1600px)` / `clamp(480px, 60%, 900px)`，
+   消费点 2 处：消息流滚动区 `padding` 居中 + Composer `maxWidth`（两者共用同一 token，
+   否则大屏上「上面缩着、下面摊开」）。
+   核验：`grep -rn "var(--chat-max-width)" packages/agentai-gui/src/` → 2 处
+   ⚠️ 本轮曾一度改成**固定** 800px 上限，被用户实测打回 ——「对话缩小到只有中间一点了，
+   没有自适应中屏」。**这个 token 禁止再写死 px**（`layout-panes.test.ts` 已加断言）。
+
+2. **页面内面板不可拖拽** —— VideoGen 控制栏写死 420、ImageStudio 写死 320/240/380 + `flexShrink:0`。
+   现复用外壳同一套 `useResizable`，新增通用类 `.page-pane` + `<PaneGrip>`。
+   核验：`grep -rn "<PaneGrip resizable" packages/agentai-gui/src/components/{VideoGen,ImageStudio}.tsx | wc -l` → 4
+
+   - **结构必须两层**：`.pane-grip` 是 `position:absolute`，放进滚动容器会随内容一起滚走
+     → 外层 `.page-pane`（不滚动，承载把手）/ 内层滚动容器。
+   - **把手定位用 `right:0`，不是外壳那套 `-2px`**：`.page-pane` 带 `overflow:hidden`，
+     外探的 2px 会**连命中区一起被裁** —— 活体 DOM 实测 `right:-2px` 时 grip 盒 x∈[317,322]、
+     面板右缘 320，真正可抓只剩 **3px**（鼠标差 1px 就抓不住，实拍复现）；
+     改 `0` 后实测 grip x∈[314,319]，`grabbed = 5/5`。
+
+3. **页面根高度 `calc(100vh - 50px)` 绕过 flex 链** —— 实测外壳实际吃 **60px**
+   （titlebar 36 + statusbar 24）→ 页面高 10px、永久多一条滚动条；
+   未激活页面外面还套 FeatureGuide 的 ~41px 提示条 → 溢出 51px、底部控件被裁。
+   现改为 `height: 100%`（由 `.app-content` / FeatureGuide 的 `flex:1` 体给出确定高度，不再猜 chrome 高度）。
+
+**回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts`（源码文本断言 + `stripComments` 辅助，
+因为修复点注释本身会引用「坏掉的旧代码」）。
+核验：`cd packages/agentai-gui && npx vitest run` → **7 文件 / 109 通过**（本轮 90/6 → 109/7）。
+
 ### 六、安全机制
 
 - 沙箱守卫 v3.2: **默认全放行, 仅拒系统路径** (C:/Windows, ~/.ssh 等) — "只要不动操作系统权限全放行"
@@ -419,6 +453,9 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
 | system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
 | 测试覆盖 | "无 E2E" | 65 文件 / ~790 测试，但 **agentai-loop.ts(6416行) 零覆盖** | vitest |
 | @ts-nocheck 文件 | - | **30 个** (22 源文件 + 8 测试文件, 2026-10-11 实测) | `grep -rl "@ts-nocheck" src/ \| wc -l` |
+| 中栏宽度 | "大屏居中 800px" | **`clamp(880px, 90%, 1600px)` 自适应**, 2 处消费 (原 token 零消费) | `grep -rn "var(--chat-max-width)" packages/agentai-gui/src/` |
+| 页面内可拖面板 | 写死不可拖 (420/380/320/240) | **4 处 `<PaneGrip>`**, 把手命中区 5/5px | `packages/agentai-gui/src/layout-panes.test.ts` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **109 测试 / 7 文件** | `cd packages/agentai-gui && npx vitest run` |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）
 

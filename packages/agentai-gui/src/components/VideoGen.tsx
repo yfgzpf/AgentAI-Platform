@@ -11,6 +11,8 @@ import { StoryboardPanel } from './StoryboardPanel';
 import { useModelStore } from '../store/modelStore';
 import { videoTaskManager, type VideoTask } from '../services/videoTaskManager';
 import { apiPost } from '../services/api';
+import { useResizable } from '../hooks/useResizable';
+import { PaneGrip } from './PaneGrip';
 
 const PRESETS = [
   { label: '风景', prompt: 'A cinematic sunset over a misty mountain valley, soft golden light', category: '自然' },
@@ -169,6 +171,10 @@ const saveCustomModels = (models: CustomModel[]) => {
 
 const STORAGE_KEY = 'agentai-video-history';
 
+/** 控制面板的可拖拽范围 (2026-10-11) — 原为写死 420 */
+const CTRL_PANE_MIN = 260;
+const CTRL_PANE_MAX = 620;
+
 export const VideoGen: React.FC = () => {
   const httpUrl = GATEWAY_HTTP;
   const [prompt, setPrompt] = useState('');
@@ -230,6 +236,15 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
   const lockedTagStyle: React.CSSProperties = getModelCaps(model).ignoresParams
     ? { fontSize: 11, opacity: 0.45, cursor: 'not-allowed', pointerEvents: 'none' }
     : { fontSize: 11 };
+
+  // 控制面板宽度 (2026-10-11): 原为写死 420, 用户无法调整
+  const ctrlPane = useResizable({
+    storageKey: 'agentai.videoGen.ctrlW',
+    defaultWidth: 420,
+    minWidth: CTRL_PANE_MIN,
+    maxWidth: CTRL_PANE_MAX,
+    side: 'right',
+  });
 
   // 合并内置模型和自定义模型
   const videoModels = useModelStore.getState().models.filter(m => m.modelType === 'video' && m.enabled);
@@ -586,8 +601,16 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
     }
   };
 
+// 2026-10-11: 高度从 `calc(100vh - 50px)` 改为 `100%`。
+//  实测 (1280×720 活体 DOM): .app-titlebar=36px, .app-statusbar=24px
+//  → 外壳实际吃掉 60px, 而这里只减 50px → 页面比 .app-content 高 10px,
+//  永久多出一条滚动条。
+//  更糟的是未激活时外面套了 FeatureGuide: 它有一条 ~41px 提示条 +
+//  `flex:1` 内容区, 于是可用高度只剩 619px, 而页面仍按 670px 画 →
+//  溢出 51px, 底部控件被裁掉。`100%` 在两个分支下都由 flex 给出确定高度
+//  (直接父级是 .app-content 或 FeatureGuide 的 flex:1 体), 无需再猜 chrome 高度。
 return (
-<div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 50px)', color: 'var(--fg)' }}>
+<div style={{ display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--fg)' }}>
 {/* 顶部 Tab 切换 */}
 <div style={{ display: 'flex', gap: 0, flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
   <button onClick={() => setViewMode('single')} style={{ padding: '8px 20px', fontSize: 13, cursor: 'pointer', background: viewMode === 'single' ? 'rgba(99,102,241,0.1)' : 'transparent', border: 'none', borderBottom: viewMode === 'single' ? '2px solid #6366f1' : '2px solid transparent', color: viewMode === 'single' ? '#6366f1' : 'var(--muted)', fontWeight: 600 }}>
@@ -606,8 +629,13 @@ return (
 ) : (
   /* 单次生成模式 — 原有左右分栏 */
 <div style={{ display: 'flex', gap: 12, flex: 1, overflow: 'hidden' }}>
-{/* 左侧: 控制面板 */}
-<div style={{ width: 420, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
+{/* 左侧: 控制面板 — 宽度可拖拽 (2026-10-11)
+ *  原为 `width: 420, flexShrink: 0` 写死; .app-content 在 1280 宽下只有 700px,
+ *  于是预览区被挤到 ~268px 且用户无从调整。改走 useResizable (与外壳三栏同一套)。 */}
+<div ref={ctrlPane.paneRef} className="page-pane page-pane--left" style={{ width: ctrlPane.width, gap: 8 }}>
+      <PaneGrip resizable={ctrlPane} min={CTRL_PANE_MIN} max={CTRL_PANE_MAX} label="调整控制面板宽度" />
+      {/* 内层滚动: 把手留在不滚动外层, 否则拖动时把手会随内容滚走 */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
       <Card size="small" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
         title={<Space><VideoCameraOutlined /> AI 生视频</Space>}
 extra={<Select size="small" value={model} onChange={handleModelChange} style={{ width: 180 }} popupMatchSelectWidth={false} getPopupContainer={() => document.body} options={allModelOptions}
@@ -802,7 +830,7 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
           </div>
         </div>
 </Card>
-
+      </div>{/* /内层滚动 */}
 </div>
 
 {/* 右侧: 结果展示 */}

@@ -59,11 +59,19 @@
   --chat-bubble-padding-y: 10px;         /* 气泡上下内边距 */
   --chat-bubble-padding-x: 14px;         /* 气泡左右内边距 */
   --chat-scroll-padding-y: 6px;          /* 滚动区上下内边距 */
-  --chat-max-width: 800px;              /* 消息流最大宽度 (大屏居中) */
+  --chat-max-width: clamp(880px, 90%, 1600px);  /* 消息流最大宽度 — 必须**自适应**:
+                                                  * 1920 屏实测 .app-content=1340px, 曾写死 800px
+                                                  * 导致对话只剩中间 795px 一条, 两侧各空 ~270px,
+                                                  * 长文本频繁折行看不清 (用户实测反馈)。
+                                                  * 现在 = 容器宽度的 90%, 仅超宽屏 (>=1778px
+                                                  * 容器) 才收到 1600px 上限; 容器 < 880px
+                                                  * (窄屏/三栏挤压) 时不产生任何居中内边距。 */
   --chat-avatar-size: 24px;             /* 头像尺寸 */
   --chat-card-margin-y: 4px;            /* 卡片上下外边距 */
   --chat-card-margin-x: 36px;           /* 卡片左右外边距 (头像 + gap) */
-  --chat-welcome-grid-max: 480px;        /* 欢迎页 demo 卡片宽度 */
+  --chat-welcome-grid-max: clamp(480px, 60%, 900px);  /* 欢迎页 demo 卡片宽度 —
+                                                  * 同样改为自适应 (原 480px 在 1340px 容器里
+                                                  * 只能排 2 列, 右侧大片留白) */
   --page-padding: 8px 12px;               /* 页面容器内边距 */
   --chat-turn-divider-padding: 16px;    /* 轮次分隔符内边距 */
 

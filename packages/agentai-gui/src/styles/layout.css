@@ -225,3 +225,34 @@ body.is-pane-resizing canvas {
 /* 只在鼠标悬停时可点击（避免误触） */
 .u-clickable-hover { cursor: pointer; transition: background 0.12s ease; }
 .u-clickable-hover:hover { background: var(--hover, rgba(255, 255, 255, 0.04)); }
+/* ═══════════════════════════════════════════════════════════════════════
+   页面内可拖拽面板 (2026-10-11)
+   ═══════════════════════════════════════════════════════════════════════
+   背景: 外壳三栏早就能拖 (useResizable + .app-pane), 但**页面内部**的
+   控制栏/结果栏仍是硬编码 `width: 420/380/320/240` + `flexShrink: 0`。
+   1280 宽实测: .app-content 只有 700px, VideoGen 先扣掉 420 → 预览区仅 ~268px,
+   而用户无法调整 —— 只能改代码。
+   这里抽出与 .app-pane 同族的通用类, 复用同一套 .pane-grip 视觉/交互/无障碍。
+
+   结构约定 (与 .app-pane / .app-pane-body 一致):
+     .page-pane        外层: 不滚动, 承载 absolute 把手
+       .pane-grip      拖拽把手
+       内层滚动容器      由使用方用内联 style 给出 (flex:1; minHeight:0; overflow:auto)
+   为什么必须两层: 把手是 position:absolute, 若放在滚动容器内会随内容一起滚走。 */
+.page-pane {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 面板在左 → 把手贴它的右缘; 面板在右 → 贴左缘。
+   注意这里用 `0` 而**不是**外壳那套 `-2px` 外探写法:
+   .page-pane 带 overflow: hidden, 会连命中区域一起裁掉 —— 实测 `right: -2px`
+   时 5px 里有 2px 被裁, 只剩 3px 可抓, 鼠标差 1px 就抓不住 (实拍复现)。
+   完全落在面板内 → 5px 全可点, 视觉上看不出差别。 */
+.page-pane--left  { border-right: 1px solid var(--border); }
+.page-pane--right { border-left: 1px solid var(--border); }
+.page-pane--left  > .pane-grip { right: 0; }
+.page-pane--right > .pane-grip { left: 0; }

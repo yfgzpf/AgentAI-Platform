@@ -106,15 +106,25 @@ export const GitStatusBar: React.FC<GitStatusBarProps> = ({ onClick }) => {
       )}
 
       {/* Changes */}
+      {/* 2026-10-11: 原来直接渲染 `-30528` —— 5 位数、无单位、无说明, 用户看不出这是"删除了
+          30528 行"。加千分位 + 单位 + 悬浮说明 (title, 不引入新的 antd 依赖)。 */}
       {totalChanges > 0 && (
-        <span style={styles.changes}>
+        <span
+          style={styles.changes}
+          title={
+            `已变更 ${totalChanges} 个文件` +
+            (status.summary.totalAdditions > 0 ? `\n新增 ${status.summary.totalAdditions.toLocaleString()} 行` : '') +
+            (status.summary.totalDeletions > 0 ? `\n删除 ${status.summary.totalDeletions.toLocaleString()} 行` : '') +
+            `\n点击打开 Git 面板`
+          }
+        >
           <span style={styles.changeIcon}>✏️</span>
-          {totalChanges}
+          {totalChanges} 个文件
           {status.summary.totalAdditions > 0 && (
-            <span style={styles.additions}>+{status.summary.totalAdditions}</span>
+            <span style={styles.additions}>+{status.summary.totalAdditions.toLocaleString()}</span>
           )}
           {status.summary.totalDeletions > 0 && (
-            <span style={styles.deletions}>-{status.summary.totalDeletions}</span>
+            <span style={styles.deletions}>−{status.summary.totalDeletions.toLocaleString()}</span>
           )}
         </span>
       )}
@@ -138,11 +148,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
-    padding: '4px 12px',
+    // 2026-10-11: 原 padding '4px 12px' + fontSize 12 → 实测整块高 31px,
+    // 而宿主 .app-statusbar 只有 24px (agentai-theme.css:907) → 底栏被顶出 4px,
+    // 全页多出一条 4px 滚动条 (活体 DOM: body.scrollHeight 724 vs clientHeight 720)。
+    // 改为无纵向内边距 + height 100% + 继承 11px 字号, 与底栏对齐。
+    padding: '0 10px',
+    height: '100%',
+    boxSizing: 'border-box',
     background: 'var(--bg, #252525)',
     borderRadius: '4px',
     cursor: 'pointer',
-    fontSize: '12px',
+    fontSize: '11px',
     color: 'var(--fg, #e0e0e0)',
     transition: 'background 0.2s',
     userSelect: 'none',
