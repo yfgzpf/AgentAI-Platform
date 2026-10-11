@@ -99,7 +99,7 @@ const MCPConfigModal: React.FC<MCPConfigModalProps> = ({ open, onClose }) => {
               style={{
                 padding: '10px 12px',
                 background: 'var(--card)',
-                borderRadius: 8,
+                borderRadius: 'var(--radius-md)',
                 marginBottom: 8,
                 border: '1px solid var(--border)',
               }}

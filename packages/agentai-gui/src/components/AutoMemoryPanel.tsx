@@ -255,7 +255,7 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
                   key={`${item.entityId}-${idx}`}
                   style={{
                     border: '1px solid var(--border)',
-                    borderRadius: 6,
+                    borderRadius: 'var(--radius-md)',
                     padding: 8,
                     background: 'var(--card)',
                     borderLeft: `3px solid ${cfg.color}`,

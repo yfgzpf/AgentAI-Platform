@@ -207,12 +207,12 @@ export const TaskBoard: React.FC = () => {
         {[
           { label: '待办', key: 'pending', color: '#d9d9d9' },
           { label: '执行中', key: 'running', color: '#1677ff' },
-          { label: '完成', key: 'done', color: '#52c41a' },
-          { label: '失败', key: 'failed', color: '#ff4d4f' },
+          { label: '完成', key: 'done', color: 'var(--success)' },
+          { label: '失败', key: 'failed', color: 'var(--danger)' },
         ].map(({ label, key, color }) => (
-          <div key={key} style={{ flex: 1, textAlign: 'center', padding: '4px 8px', background: `${color}20`, borderRadius: 4 }}>
+          <div key={key} style={{ flex: 1, textAlign: 'center', padding: '4px 8px', background: `${color}20`, borderRadius: 'var(--radius-sm)' }}>
             <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, color }}>{counts[key as keyof TaskCounts]}</div>
-            <div style={{ fontSize: 'var(--fs-sm)', color: '#888' }}>{label}</div>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>{label}</div>
           </div>
         ))}
       </div>
@@ -256,7 +256,7 @@ export const TaskBoard: React.FC = () => {
               <List.Item
                 style={{
                   background: task.status === 'running' ? '#e6f4ff' : task.status === 'failed' ? '#fff2f0' : 'transparent',
-                  borderRadius: 6,
+                  borderRadius: 'var(--radius-md)',
                   padding: '8px 12px',
                   marginBottom: 4,
                 }}
@@ -266,7 +266,7 @@ export const TaskBoard: React.FC = () => {
                       <Tooltip title="标记完成">
                         <Button
                           type="text"
-                          icon={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+                          icon={<CheckCircleOutlined style={{ color: 'var(--success)' }} />}
                           size="small"
                           onClick={() => handleComplete(task.id)}
                         />
@@ -286,7 +286,7 @@ export const TaskBoard: React.FC = () => {
                 }
               >
                 <List.Item.Meta
-                  avatar={<Avatar style={{ background: cfg.color, color: '#fff' }}>{cfg.icon}</Avatar>}
+                  avatar={<Avatar style={{ background: cfg.color, color: 'var(--fg-on-accent)' }}>{cfg.icon}</Avatar>}
                   title={
                     <Space>
                       <Text strong>{task.title}</Text>

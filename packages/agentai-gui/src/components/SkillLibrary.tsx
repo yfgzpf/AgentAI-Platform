@@ -124,7 +124,7 @@ export const SkillLibrary: React.FC = () => {
                 <List.Item.Meta
                   avatar={<span style={{ fontSize: 'var(--fs-lg)', color: '#4F46E5' }}>{s.icon}</span>}
                   title={<span style={{ fontSize: 'var(--fs-md)' }}>{s.name}</span>}
-                  description={<span style={{ fontSize: 'var(--fs-micro)', color: '#888' }}>{s.description}</span>}
+                  description={<span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{s.description}</span>}
                 />
                 <Tag color={CATEGORIES.find((c) => c.key === s.category)?.color || 'default'}>{s.category || 'unknown'}</Tag>
               </List.Item>

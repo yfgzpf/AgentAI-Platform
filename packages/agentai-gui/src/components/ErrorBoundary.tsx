@@ -78,7 +78,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
         >
           <div
             style={{
-              padding: 20, borderRadius: 10,
+              padding: 20, borderRadius: 'var(--radius-md)',
               background: 'var(--card)',
               border: '1px solid var(--border)',
               display: 'flex', flexDirection: 'column',
@@ -104,7 +104,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
                   fontSize: 'var(--fs-micro)',
                   color: 'var(--danger)',
                   padding: '4px 10px',
-                  borderRadius: 6,
+                  borderRadius: 'var(--radius-md)',
                   background: 'var(--danger-soft)',
                 }}
               >

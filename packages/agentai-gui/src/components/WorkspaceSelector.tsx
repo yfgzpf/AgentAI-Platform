@@ -358,7 +358,7 @@ export const WorkspaceSelector: React.FC = () => {
         {selectedPath && (
           <div style={{
             marginBottom: 8, padding: '6px 10px',
-            background: 'var(--panel)', borderRadius: 4,
+            background: 'var(--panel)', borderRadius: 'var(--radius-sm)',
             fontSize: 'var(--fs-sm)', fontFamily: 'monospace',
             color: 'var(--accent)', wordBreak: 'break-all',
           }}>

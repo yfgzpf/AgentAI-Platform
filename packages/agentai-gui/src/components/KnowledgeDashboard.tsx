@@ -175,7 +175,7 @@ export const KnowledgeDashboard: React.FC = () => {
                         </Tag>
                         <strong>{activity.concept}</strong>
                       </p>
-                      <p style={{ color: '#999', fontSize: 'var(--fs-sm)' }}>
+                      <p style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)' }}>
                         <ClockCircleOutlined /> {new Date(activity.timestamp).toLocaleString()}
                       </p>
                     </>
@@ -284,7 +284,7 @@ export const KnowledgeDashboard: React.FC = () => {
                   </Tag>
                 }
               >
-                <p style={{ color: '#666', marginBottom: 8 }}>{repo.description}</p>
+                <p style={{ color: 'var(--muted-2)', marginBottom: 8 }}>{repo.description}</p>
                 <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
                   <span><StarOutlined /> {repo.stars}</span>
                   <span><ForkOutlined /> {repo.forks}</span>
@@ -296,7 +296,7 @@ export const KnowledgeDashboard: React.FC = () => {
                     size="small" 
                     style={{ flex: 1 }}
                   />
-                  <span style={{ fontSize: 'var(--fs-sm)', color: '#999' }}>知识密度</span>
+                  <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>知识密度</span>
                 </div>
               </Card>
             </List.Item>

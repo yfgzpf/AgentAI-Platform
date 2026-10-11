@@ -358,7 +358,7 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
                   onClick={() => setCurrent(i)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '10px 14px', borderRadius: 10,
+                    padding: '10px 14px', borderRadius: 'var(--radius-md)',
                     border: isCurrent
                       ? '1px solid var(--accent)'
                       : '1px solid var(--border)',
@@ -404,7 +404,7 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
             style={{
               padding: '14px 18px',
               background: 'var(--bg-2)',
-              borderRadius: 12,
+              borderRadius: 'var(--radius-lg)',
               marginBottom: 16,
               border: '1px solid var(--border)',
             }}

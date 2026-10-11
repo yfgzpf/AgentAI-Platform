@@ -138,7 +138,7 @@ export const Avatar: React.FC<AvatarProps> = ({
               position: 'absolute', right: -2, top: -2, zIndex: 'var(--z-base)',
               width: 7, height: 7, borderRadius: '50%',
               background: 'var(--danger)',
-              border: '1.5px solid var(--panel, #141414)',
+              border: '1.5px solid var(--panel)',
               boxShadow: '0 0 4px rgba(239,68,68,0.6)',
             }}
           />
@@ -151,7 +151,7 @@ export const Avatar: React.FC<AvatarProps> = ({
             style={{
               position: 'relative',
               width: size, height: size, borderRadius: '50%',
-              background: 'var(--panel, #141414)',
+              background: 'var(--panel)',
               border: `${ringWidth}px solid ${aiPal!.ring}`,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               boxShadow: isPending

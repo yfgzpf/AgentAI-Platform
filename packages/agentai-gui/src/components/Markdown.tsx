@@ -45,7 +45,7 @@ const CollapsibleCodeBlock: React.FC<{
   return (
     <div style={{
       margin: '8px 0',
-      borderRadius: 6,
+      borderRadius: 'var(--radius-md)',
       border: '1px solid var(--border)',
       background: '#1a1a2e',
       overflow: 'hidden',
@@ -61,9 +61,9 @@ const CollapsibleCodeBlock: React.FC<{
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--muted-2)' }}>
           <span style={{
             background: 'var(--accent)',
-            color: '#fff',
+            color: 'var(--fg-on-accent)',
             padding: '1px 6px',
-            borderRadius: 3,
+            borderRadius: 'var(--radius-sm)',
             fontSize: 'var(--fs-micro)',
             fontWeight: 600,
           }}>{langLabel}</span>
@@ -168,7 +168,7 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
               window.dispatchEvent(new CustomEvent('agentai:show-diff', { detail: { path: filePath } }));
             }
           }}
-          style={{ color: '#22c55e', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.9em' }}
+          style={{ color: 'var(--success)', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.9em' }}
         >
           {props.children}
         </a>
@@ -182,13 +182,13 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
     if (child?.props?.className?.includes('language-') || child?.props?.className === undefined) {
       return <CollapsibleCodeBlock className={child?.props?.className}>{child?.props?.children}</CollapsibleCodeBlock>;
     }
-    return <pre style={{ background: 'var(--bg-2)', color: 'var(--fg)', padding: 12, borderRadius: 6, margin: '8px 0', overflow: 'auto' }}>{children}</pre>;
+    return <pre style={{ background: 'var(--bg-2)', color: 'var(--fg)', padding: 12, borderRadius: 'var(--radius-md)', margin: '8px 0', overflow: 'auto' }}>{children}</pre>;
   },
   code: ({ className, children, ...props }: any) => {
     if (className?.includes('language-')) {
       return <CollapsibleCodeBlock className={className} language={className.replace('language-', '')}>{children}</CollapsibleCodeBlock>;
     }
-    return <code className={className} style={{ background: '#2a2a2a', color: '#ce9178', padding: '2px 4px', borderRadius: 3 }} {...props}>{children}</code>;
+    return <code className={className} style={{ background: '#2a2a2a', color: '#ce9178', padding: '2px 4px', borderRadius: 'var(--radius-sm)' }} {...props}>{children}</code>;
   },
   ul: (props) => <ul style={{ paddingLeft: 20, margin: '4px 0' }} {...props} />,
   ol: (props) => <ol style={{ paddingLeft: 20, margin: '4px 0' }} {...props} />,
@@ -345,12 +345,12 @@ const SvgDiagram: React.FC<{ svg: string }> = ({ svg }) => {
       />
       <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
         <button onClick={handleCopy} style={{
-          fontSize: 'var(--fs-micro)', padding: '2px 8px', borderRadius: 4,
+          fontSize: 'var(--fs-micro)', padding: '2px 8px', borderRadius: 'var(--radius-sm)',
           background: 'transparent', border: '1px solid var(--border)',
           color: 'var(--muted)', cursor: 'pointer',
         }}>复制 SVG</button>
         <button onClick={handleDownload} style={{
-          fontSize: 'var(--fs-micro)', padding: '2px 8px', borderRadius: 4,
+          fontSize: 'var(--fs-micro)', padding: '2px 8px', borderRadius: 'var(--radius-sm)',
           background: 'transparent', border: '1px solid var(--border)',
           color: 'var(--muted)', cursor: 'pointer',
         }}>下载 SVG</button>

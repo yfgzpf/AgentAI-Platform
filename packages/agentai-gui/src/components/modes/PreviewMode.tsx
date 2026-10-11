@@ -209,7 +209,7 @@ const PdfPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileName
             fontSize: 'var(--fs-md)',
           }}>
             <p>无法在浏览器中直接预览 PDF</p>
-            <a href={pdfUrl} download={fileName} style={{ color: 'var(--accent,#f97316)' }}>
+            <a href={pdfUrl} download={fileName} style={{ color: 'var(--accent)' }}>
               点击下载 {fileName}
             </a>
           </div>
@@ -247,7 +247,7 @@ const VideoPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileNa
       >
         <source src={videoUrl} />
         您的浏览器不支持视频播放。{' '}
-        <a href={videoUrl} download={fileName} style={{ color: 'var(--accent,#f97316)' }}>下载</a>
+        <a href={videoUrl} download={fileName} style={{ color: 'var(--accent)' }}>下载</a>
       </video>
     </div>
   );

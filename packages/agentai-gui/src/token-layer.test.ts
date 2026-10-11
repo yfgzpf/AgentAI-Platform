@@ -19,6 +19,13 @@
  *   2. 别名指向的底层 token 必须在**每个**主题块里都有定义 (否则换主题即失效)
  *   3. 已定义 token 的调用点不得再留死 fallback (死 fallback = 语义分叉的温床)
  *   4. --radius-lg 不得在同一层重复定义
+ *   5. 字号必须走 --fs-* 六档尺度, 文本档 (7–28px) 不得裸写数字
+ *   6. 圆角必须走 --radius-* 四档尺度, 不得裸写数字 (0 = 显式直角除外)
+ *   7. 语义色统一: 成功绿 → var(--success) / 错误红 → var(--danger) /
+ *      灰阶文字 → var(--muted|--muted-2|--fg-2) / 彩色底上的白字 → var(--fg-on-accent)
+ *      —— 例外是**真正的分类色板** (同色相多档 = 有意区分, 如情绪 8 色、
+ *      疼痛 5 档、Token 压力 5 档) 与**自带表面主题**的文件 (终端/编辑器内部/
+ *      DecorAI 子应用/打印纸张 HTML), 它们在测试里显式列出并注明理由。
  */
 
 import { describe, it, expect } from 'vitest';
@@ -159,5 +166,94 @@ describe('token 层: 字号调用点必须走尺度 (2026-10-11 收敛)', () => 
     // 这些是 Antd 图标 size / emoji / Splash 大标题, 不是文字尺度 (如 fontSize: 64 是头像)
     const themeScale = themeNoComments.match(/--fs-(hero)\s*:\s*(\d+)px/);
     expect(themeScale && parseFloat(themeScale[2])).toBe(28);
+  });
+});
+
+// ── Commit C (2026-10-11): 圆角与语义色收敛 ──────────────────────────────
+// 收敛前: 圆角 19 种裸数字 (1,2,3,4,5,6,8,10,11,12,14,16,17,18,20,24,100),
+// 且 --radius-lg 定义了却**零消费**; 成功绿 4 种 (#52c41a/#10b981/#4ade80/#22c55e)、
+// 错误红 3 种 (#ef4444/#ff4d4f/#f5222d) 各自渲染同一个"状态色"。
+describe('token 层: 圆角尺度收敛 (2026-10-11)', () => {
+  const SCALE: Record<string, string> = {
+    '--radius-sm': '4px', '--radius-md': '8px', '--radius-lg': '12px', '--radius-pill': '999px',
+  };
+
+  it('圆角尺度恰好 4 档, 每档取值固定', () => {
+    for (const [t, v] of Object.entries(SCALE)) {
+      expect(themeNoComments).toMatch(new RegExp(`^\\s*${t}\\s*:\\s*${v.replace('(', '\\(')}`, 'm'));
+    }
+  });
+
+  it('--radius-lg / --radius-pill 必须被调用点消费 (不得是零消费僵尸 token)', () => {
+    for (const t of ['--radius-lg', '--radius-pill']) {
+      const used = SOURCES.some(f => stripComments(readFileSync(f, 'utf-8')).includes(`var(${t}`));
+      expect(used, `${t} 零消费`).toBe(true);
+    }
+  });
+
+  it('不得裸写数字 borderRadius, 必须走 var(--radius-*)', () => {
+    // 白名单: 值会被传给**只接受 number 的第三方 API**
+    const ALLOW: Array<{ file: string; reason: string }> = [
+      { file: 'src/App.tsx', reason: 'Antd ConfigProvider theme.token.borderRadius 只接受 number' },
+    ];
+    const allowed = (f: string) => ALLOW.some(a => f.replace(/\\/g, '/').endsWith(a.file));
+
+    const offenders: string[] = [];
+    for (const f of SOURCES) {
+      if (/\.test\./.test(f) || !/\.(tsx|ts)$/.test(f) || allowed(f)) continue;
+      for (const line of stripComments(readFileSync(f, 'utf-8')).split('\n')) {
+        const m = line.match(/borderRadius:\s*(\d+)(?![\d.])/);
+        if (m && Number(m[1]) !== 0) offenders.push(`${f}: ${line.trim()}`);  // 0 = 显式直角
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('token 层: 语义色不得再散落 (2026-10-11)', () => {
+  // 真正的**分类色板** (同色相多档 = 有意区分) 与自带表面主题的文件豁免
+  const COLOR_SKIP = ['EmotionIndicator.tsx', 'SoulPanel.tsx', 'TokenPressureBar.tsx', 'store/modeStore.ts', 'store/modelStore.ts'];
+  const GREY_SKIP = ['DecorAI/', 'VoiceDictation.tsx', 'TerminalPanel.tsx', 'modes/PreviewMode.tsx'];
+  // 打印/导出 HTML 模板用的是"亮色纸张"配色 (白底黑字), 与 App 主题无关, 不得 token 化
+  const PRINT_SKIP = ['PrescriptionCard.tsx', 'WritePage.tsx'];
+  const norm = (f: string) => f.replace(/\\/g, '/');
+  const skip = (f: string, list: string[]) => list.some(s => norm(f).includes(s));
+  const src = (f: string) => stripComments(readFileSync(f, 'utf-8'));
+  // token **定义** 行 (`--danger: #ef4444;`) 是色值的唯一声明处, 不算散落
+  const isTokenDef = (line: string) => /^\s*--[\w-]+\s*:/.test(line);
+
+  const scan = (re: RegExp, skips: string[], allowGradient = true) => {
+    const offenders: string[] = [];
+    for (const f of SOURCES) {
+      if (/\.test\./.test(f) || skip(f, skips)) continue;
+      for (const line of src(f).split('\n')) {
+        if (isTokenDef(line)) continue;
+        if (allowGradient && line.includes('gradient')) continue;   // 渐变艺术, 非语义色
+        if (re.test(line)) offenders.push(`${f}: ${line.trim()}`);
+        re.lastIndex = 0;
+      }
+    }
+    return offenders;
+  };
+
+  it('成功绿统一走 var(--success) (原 #52c41a/#10b981/#4ade80/#22c55e 四值并存)', () => {
+    expect(scan(/#(52c41a|10b981|4ade80|22c55e|16a34a|238636)\b/gi, COLOR_SKIP)).toEqual([]);
+  });
+
+  it('错误红统一走 var(--danger) (原 #ef4444/#ff4d4f/#f5222d 三值并存)', () => {
+    expect(scan(/#(ef4444|ff4d4f|f5222d|dc2626|f87171|da3633)\b/gi, COLOR_SKIP)).toEqual([]);
+  });
+
+  it('灰阶文字色统一走 var(--muted / --muted-2 / --fg-2)', () => {
+    expect(scan(/\bcolor:\s*'#(999|888|aaa|777|666|555|ccc|ddd|eee)'/i, GREY_SKIP, false)).toEqual([]);
+  });
+
+  it('纯白文字走 var(--fg-on-accent), 不再裸写 (权重不同但角色相同: 彩色底上的文字)', () => {
+    expect(scan(/\bcolor:\s*'?#(fff|ffffff)\b/i, PRINT_SKIP, false)).toEqual([]);
+  });
+
+  it('已定义底层 token 的调用点不得再留死 fallback (本轮再清 35 处)', () => {
+    const BASE = 'bg|bg-2|panel|panel-2|card|card-hover|border|border-strong|fg|fg-2|muted|muted-2|accent|accent-strong|success|danger|warning';
+    expect(scan(new RegExp(`var\\(--(?:${BASE})\\s*,\\s*(?:#[0-9a-fA-F]{3,8}|rgba)`), [], false)).toEqual([]);
   });
 });

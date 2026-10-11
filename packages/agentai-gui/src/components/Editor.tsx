@@ -687,7 +687,7 @@ const filteredTree = filterTree(tree, searchQ);
               }}>
                 <FolderOutlined /> 文件
                 <Button size="small" type="text" icon={<FolderOutlined />} onClick={() => setShowFileTree(false)}
-                  style={{ fontSize: 'var(--fs-micro)', height: 18, color: '#555' }} title="收起文件树" />
+                  style={{ fontSize: 'var(--fs-micro)', height: 18, color: 'var(--muted-2)' }} title="收起文件树" />
               </div>
               {/* 文件树内容 */}
               <div style={{ flex: 1, overflow: 'auto', padding: 4 }}>
@@ -714,7 +714,7 @@ const filteredTree = filterTree(tree, searchQ);
                 ) : (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={<div style={{ color: '#666', fontSize: 'var(--fs-micro)' }}>还没打开文件夹</div>}
+                    description={<div style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>还没打开文件夹</div>}
                   />
                 )}
               </div>
@@ -735,7 +735,7 @@ const filteredTree = filterTree(tree, searchQ);
               }}
               title="拖拽调整大小"
             >
-              <div style={{ width: 60, height: 3, borderRadius: 2, background: '#3a3a3a' }} />
+              <div style={{ width: 60, height: 3, borderRadius: 'var(--radius-sm)', background: '#3a3a3a' }} />
             </div>
 
             {/* ---- 下区: 终端/问题/日志 ---- */}
@@ -747,7 +747,7 @@ const filteredTree = filterTree(tree, searchQ);
                     key={tab}
                     onClick={() => setBottomPanelTab(tab)}
                     style={{
-                      padding: '2px 12px', cursor: 'pointer', borderRadius: 3, fontSize: 'var(--fs-sm)',
+                      padding: '2px 12px', cursor: 'pointer', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-sm)',
                       color: bottomPanelTab === tab ? 'var(--editor-tab-active-fg)' : 'var(--muted)',
                       background: bottomPanelTab === tab ? 'var(--editor-tab-active)' : 'transparent',
                     }}
@@ -758,7 +758,7 @@ const filteredTree = filterTree(tree, searchQ);
                 <div style={{ flex: 1 }} />
                 <div
                   onClick={() => setShowBottomPanel(v => !v)}
-                  style={{ cursor: 'pointer', color: '#666', fontSize: 'var(--fs-micro)', padding: '0 4px' }}
+                  style={{ cursor: 'pointer', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', padding: '0 4px' }}
                   title="关闭面板"
                 >
                   ✕
@@ -783,7 +783,7 @@ const filteredTree = filterTree(tree, searchQ);
                 }}
                 title="拖拽调整 AI 面板宽度"
               >
-                <div style={{ width: 2, height: 20, borderRadius: 1, background: '#3a3a3a' }} />
+                <div style={{ width: 2, height: 20, borderRadius: 'var(--radius-sm)', background: '#3a3a3a' }} />
               </div>
               {/* AI 面板容器 */}
               <div style={{ width: aiPanelWidth, minWidth: 0, flexShrink: 0, overflow: 'hidden' }}>
@@ -858,7 +858,7 @@ const filteredTree = filterTree(tree, searchQ);
 
           {drivesInfo.common.length > 0 && (
             <div>
-              <div style={{ color: '#888', fontSize: 'var(--fs-sm)', marginBottom: 6 }}>⭐ 常用</div>
+              <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)', marginBottom: 6 }}>⭐ 常用</div>
               <Space direction="vertical" style={{ width: '100%' }}>
                 {drivesInfo.common.map((c: string) => (
                   <Button
@@ -875,7 +875,7 @@ const filteredTree = filterTree(tree, searchQ);
             </div>
           )}
 
-          <div style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', textAlign: 'center', padding: 8, background: 'var(--bg-2)', borderRadius: 4 }}>
+          <div style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', textAlign: 'center', padding: 8, background: 'var(--bg-2)', borderRadius: 'var(--radius-sm)' }}>
             🛡️ 不会访问 node_modules / .git / dist / out 等构建产物目录
           </div>
         </Space>
@@ -1001,7 +1001,7 @@ const BottomPanelContent: React.FC<{ tab: string }> = ({ tab }) => {
                 }}>
                   {/* 命令行 */}
                   <div style={{
-                    color: '#4ade80',
+                    color: 'var(--success)',
                     fontSize: 'var(--fs-micro)',
                     marginBottom: 4,
                     display: 'flex',
@@ -1010,9 +1010,9 @@ const BottomPanelContent: React.FC<{ tab: string }> = ({ tab }) => {
                   }}>
                     <span style={{
                       padding: '1px 6px',
-                      borderRadius: 3,
+                      borderRadius: 'var(--radius-sm)',
                       background: isError ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.1)',
-                      color: isError ? '#f87171' : '#4ade80',
+                      color: isError ? 'var(--danger)' : 'var(--success)',
                       fontSize: 'var(--fs-micro)',
                       fontWeight: 600,
                     }}>
@@ -1139,13 +1139,13 @@ const BottomPanelContent: React.FC<{ tab: string }> = ({ tab }) => {
               detail: { path: e.file, line: e.line, column: e.column },
             }))}
           >
-            <span style={{ color: '#ef4444', flexShrink: 0, marginTop: 1 }}>✕</span>
-            <span style={{ color: '#f87171', flex: 1, fontSize: 'var(--fs-micro)', wordBreak: 'break-all' }}>
+            <span style={{ color: 'var(--danger)', flexShrink: 0, marginTop: 1 }}>✕</span>
+            <span style={{ color: 'var(--danger)', flex: 1, fontSize: 'var(--fs-micro)', wordBreak: 'break-all' }}>
               {e.line != null ? `L${e.line}${e.column ? ':' + e.column : ''} ` : ''}
               {e.code ? `[${e.code}] ` : ''}
               {e.message}
             </span>
-            <span style={{ color: '#666', fontSize: 'var(--fs-micro)', flexShrink: 0 }}>{e.file.split(/[\\/]/).pop()}</span>
+            <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', flexShrink: 0 }}>{e.file.split(/[\\/]/).pop()}</span>
           </div>
         ))}
       </div>
@@ -1153,5 +1153,5 @@ const BottomPanelContent: React.FC<{ tab: string }> = ({ tab }) => {
   }
 
   // logs tab
-  return <div style={{ padding: 8, color: '#888' }}>日志输出区 — Gateway 日志将在此显示</div>;
+  return <div style={{ padding: 8, color: 'var(--muted)' }}>日志输出区 — Gateway 日志将在此显示</div>;
 };

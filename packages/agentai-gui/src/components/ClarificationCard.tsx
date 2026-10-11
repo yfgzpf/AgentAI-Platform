@@ -86,7 +86,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
         margin: '12px 0',
         border: '1px solid var(--accent)',
         background: 'var(--panel)',
-        borderRadius: 12,
+        borderRadius: 'var(--radius-lg)',
       }}
       bodyStyle={{ padding: 16 }}
     >
@@ -112,7 +112,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
         style={{
           padding: 12,
           background: 'var(--bg)',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           marginBottom: 16,
           borderLeft: '3px solid var(--accent)',
         }}

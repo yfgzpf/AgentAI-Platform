@@ -46,9 +46,9 @@ interface HealthReport {
 }
 
 const TIER_COLORS: Record<string, string> = {
-  autonomous: '#52c41a',
+  autonomous: 'var(--success)',
   guided: '#faad14',
-  supervised: '#ff4d4f',
+  supervised: 'var(--danger)',
 };
 
 const TIER_LABELS: Record<string, string> = {
@@ -146,9 +146,9 @@ export function GovernorPanel() {
           {record.tierChanged && (
             <Tooltip title={`${TIER_LABELS[record.staticTier]} → ${TIER_LABELS[record.dynamicTier]}`}>
               {record.dynamicTier === 'autonomous' ? (
-                <ArrowUpOutlined style={{ color: '#52c41a' }} />
+                <ArrowUpOutlined style={{ color: 'var(--success)' }} />
               ) : record.dynamicTier === 'supervised' ? (
-                <ArrowDownOutlined style={{ color: '#ff4d4f' }} />
+                <ArrowDownOutlined style={{ color: 'var(--danger)' }} />
               ) : null}
             </Tooltip>
           )}
@@ -179,7 +179,7 @@ export function GovernorPanel() {
         <Progress
           percent={Math.round(score * 100)}
           size="small"
-          strokeColor={score >= 0.65 ? '#52c41a' : score >= 0.4 ? '#faad14' : '#ff4d4f'}
+          strokeColor={score >= 0.65 ? 'var(--success)' : score >= 0.4 ? '#faad14' : 'var(--danger)'}
           format={(p) => `${p}`}
         />
       ),
@@ -195,7 +195,7 @@ export function GovernorPanel() {
       title: '动态分',
       dataIndex: 'dynamicOverall',
       key: 'dynamicOverall',
-      render: (v: number) => <Text style={{ color: 'var(--accent, #1677ff)' }}>{(v * 100).toFixed(0)}</Text>,
+      render: (v: number) => <Text style={{ color: 'var(--accent)' }}>{(v * 100).toFixed(0)}</Text>,
     },
     {
       title: '成功率',
@@ -205,7 +205,7 @@ export function GovernorPanel() {
         <Progress
           percent={Math.round(v * 100)}
           size="small"
-          strokeColor={v >= 0.75 ? '#52c41a' : v >= 0.5 ? '#faad14' : '#ff4d4f'}
+          strokeColor={v >= 0.75 ? 'var(--success)' : v >= 0.5 ? '#faad14' : 'var(--danger)'}
         />
       ),
     },
@@ -217,7 +217,7 @@ export function GovernorPanel() {
         <Progress
           percent={Math.round(v * 100)}
           size="small"
-          strokeColor={v >= 0.7 ? '#52c41a' : v >= 0.5 ? '#faad14' : '#ff4d4f'}
+          strokeColor={v >= 0.7 ? 'var(--success)' : v >= 0.5 ? '#faad14' : 'var(--danger)'}
         />
       ),
     },
@@ -259,7 +259,7 @@ export function GovernorPanel() {
             <Statistic
               title="追踪模型数"
               value={report.trackedModels}
-              prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+              prefix={<CheckCircleOutlined style={{ color: 'var(--success)' }} />}
             />
           </Card>
         </Col>
@@ -268,7 +268,7 @@ export function GovernorPanel() {
             <Statistic
               title="总样本数"
               value={report.totalSamples}
-              prefix={<ThunderboltFilled style={{ color: 'var(--accent, #1677ff)' }} />}
+              prefix={<ThunderboltFilled style={{ color: 'var(--accent)' }} />}
             />
           </Card>
         </Col>
@@ -346,7 +346,7 @@ export function GovernorPanel() {
                             flex: 1,
                             height: `${(p.healthScore / max) * 100}%`,
                             minHeight: 2,
-                            background: p.healthScore > 0.6 ? '#52c41a' : p.healthScore > 0.4 ? '#faad14' : '#ff4d4f',
+                            background: p.healthScore > 0.6 ? 'var(--success)' : p.healthScore > 0.4 ? '#faad14' : 'var(--danger)',
                             borderRadius: '1px 1px 0 0',
                             opacity: 0.7 + 0.3 * (i / points.length),
                           }} />

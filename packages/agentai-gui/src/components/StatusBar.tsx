@@ -78,8 +78,8 @@ export const StatusBar: React.FC = () => {
       const MOOD_MAP: Record<string, { emoji: string; label: string; color: string }> = {
         calm: { emoji: '😌', label: '平静', color: '#9ca3af' },
         anxious: { emoji: '😟', label: '焦虑', color: '#f59e0b' },
-        frustrated: { emoji: '😣', label: '沮丧', color: '#ef4444' },
-        confident: { emoji: '😊', label: '自信', color: '#10b981' },
+        frustrated: { emoji: '😣', label: '沮丧', color: 'var(--danger)' },
+        confident: { emoji: '😊', label: '自信', color: 'var(--success)' },
         thrilled: { emoji: '🤩', label: '兴奋', color: '#8b5cf6' },
         determined: { emoji: '💪', label: '坚定', color: '#3b82f6' },
         reflective: { emoji: '🤔', label: '沉思', color: '#6366f1' },
@@ -462,7 +462,7 @@ export const StatusBar: React.FC = () => {
         <div style={{
           position: 'fixed', bottom: 60, right: 16,
           background: 'var(--card)', border: '1px solid var(--accent)',
-          borderRadius: 8, padding: '8px 12px',
+          borderRadius: 'var(--radius-md)', padding: '8px 12px',
           boxShadow: 'var(--shadow-md)',
           animation: 'msgSlideIn 0.3s ease-out',
           maxWidth: 280,
@@ -477,7 +477,7 @@ export const StatusBar: React.FC = () => {
           <button
             onClick={() => setShowMusicTip(false)}
             style={{
-              marginTop: 8, padding: '2px 8px', borderRadius: 4,
+              marginTop: 8, padding: '2px 8px', borderRadius: 'var(--radius-sm)',
               background: 'var(--accent)', color: 'var(--fg)',
               border: 'none', fontSize: 'var(--fs-micro)', cursor: 'pointer',
             }}

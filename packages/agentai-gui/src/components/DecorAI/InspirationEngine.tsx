@@ -188,7 +188,7 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
                 width: '100%',
                 height: 100,
                 border: '1px solid var(--border)',
-                borderRadius: 4,
+                borderRadius: 'var(--radius-sm)',
                 padding: 8,
                 background: 'var(--bg)',
                 color: 'var(--fg)',
@@ -254,7 +254,7 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
                 </Title>
                 <Badge 
                   count={`匹配度 ${result.detectedStyles[0].confidence}%`} 
-                  style={{ backgroundColor: '#52c41a' }}
+                  style={{ backgroundColor: 'var(--success)' }}
                 />
               </div>
               <Paragraph>{result.analysis}</Paragraph>
@@ -292,7 +292,7 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
               >
                 <img 
                   src={tier.imageUrl} 
-                  style={{ width: '100%', height: 120, objectFit: 'cover', borderRadius: 4, marginBottom: 12 }}
+                  style={{ width: '100%', height: 120, objectFit: 'cover', borderRadius: 'var(--radius-sm)', marginBottom: 12 }}
                 />
                 
                 <div style={{ textAlign: 'center', marginBottom: 12 }}>
@@ -311,7 +311,7 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
                   <div style={{ marginTop: 4 }}>
                     {tier.highlights.map(h => (
                       <div key={h} style={{ fontSize: 'var(--fs-sm)', marginBottom: 2 }}>
-                        <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+                        <CheckCircleOutlined style={{ color: 'var(--success)', marginRight: 4 }} />
                         {h}
                       </div>
                     ))}

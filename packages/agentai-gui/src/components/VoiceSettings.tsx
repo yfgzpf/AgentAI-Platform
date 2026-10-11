@@ -309,7 +309,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
           onClick={() => state.enabled ? setOpen(v => !v) : toggle()}
           style={{
             position: 'relative',
-            width: 24, height: 24, borderRadius: 4,
+            width: 24, height: 24, borderRadius: 'var(--radius-sm)',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             cursor: 'pointer', border: 'none',
             color: state.enabled ? '#6366F1' : 'var(--muted-2)',
@@ -322,7 +322,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
             <span style={{
               position: 'absolute', top: 1, right: 1,
               width: 5, height: 5, borderRadius: '50%',
-              background: '#22c55e',
+              background: 'var(--success)',
             }} />
           )}
         </button>
@@ -337,7 +337,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
             width: 340,
             background: 'var(--card)',
             border: '1px solid var(--border)',
-            borderRadius: 10,
+            borderRadius: 'var(--radius-md)',
             boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
             padding: '12px 14px',
             zIndex: 'var(--z-modal)',
@@ -381,7 +381,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
 
           {/* MOSS 下载进度 */}
           {state.engine === 'moss' && mossStatus?.download?.phase === 'downloading' && (
-            <div style={{ background: 'rgba(99,102,241,0.08)', borderRadius: 6, padding: '8px 10px' }}>
+            <div style={{ background: 'rgba(99,102,241,0.08)', borderRadius: 'var(--radius-md)', padding: '8px 10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <DownloadOutlined style={{ color: '#6366F1', fontSize: 'var(--fs-sm)' }} />
                 <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg)' }}>正在下载模型 (~2GB)</span>
@@ -404,8 +404,8 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
 
           {/* MOSS 下载失败 */}
           {state.engine === 'moss' && mossStatus?.download?.phase === 'error' && (
-            <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 6, padding: '8px 10px' }}>
-              <span style={{ fontSize: 'var(--fs-micro)', color: '#ef4444' }}>
+            <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 'var(--radius-md)', padding: '8px 10px' }}>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)' }}>
                 模型下载失败: {mossStatus.download.error || '未知错误'}
               </span>
               <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4 }}>

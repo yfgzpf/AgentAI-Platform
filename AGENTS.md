@@ -423,21 +423,57 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
    替换值为 CSS 变量时**必须补引号**，否则生成 `fontSize: var(--fs-micro)` —— 对象字面量里 `var` 是关键字，直接语法错误；
    CSS 侧要用 `(?<![\w-])font-size:` 负向后顾，否则会把 `--tool-font-size: 11px` 这类 **token 定义**也改掉。
 
+10. **圆角 + 语义色收敛（2026-10-11，Commit C）** —— 字号修好后，同一病灶的另一半。
+    **圆角**：收敛前 tsx 裸写 **19 种**值（0,1,2,3,4,5,6,8,10,11,12,14,16,17,18,20,24,100），
+    其中 2/3/4/5 与 6/8/10 互相差 1–2px 人眼不可辨；且 `--radius-lg` **定义了却零消费**（僵尸 token）。
+    修法：尺度定为 **4 档** `--radius-sm 4 / --radius-md 8 / --radius-lg 12 / --radius-pill 999`
+    （`--radius` 保留为 `var(--radius-md)` 的旧名别名），共改 **437 处**（tsx 430 / css 7），
+    最终消费 `md 218 / sm 185 / lg 40 / pill 5`。
+    **语义色**：成功绿 **4 值并存**（`#52c41a`×52 / `#10b981`×31 / `#4ade80`×16 / `#22c55e`×15）、
+    错误红 **3 值并存**（`#ef4444`×34 / `#ff4d4f`×21 / `#f5222d`×13）、灰阶文字 **5 值**
+    （`#999`/`#888`/`#aaa`/`#666`/`#555`/`#ccc`…）—— 同一"状态色"渲染成 3–4 种。
+    统一为 `var(--success)`（114 处）/ `var(--danger)`（71 处）/ `var(--muted|--muted-2|--fg-2)`（54 处），
+    `color: '#fff'` **52 处**改走 `var(--fg-on-accent)`（值等价 `#ffffff`，主题语义正确）。
+    顺带清掉 **35 处**遗留死 fallback（`var(--panel, #141414)`、`var(--accent,#f97316)` —
+    Commit A 只清了别名层，漏了直连底层 token 的这 35 处）。
+    ⚠️ **有意不动的四类**（一刀切会改坏视觉/语义，这是本轮最大的判断成本）：
+    - **分类色板**（同色相多档 = 有意区分，并非散落）：`EmotionIndicator`（情绪 8 色）、
+      `SoulPanel`（疼痛 5 档 severe/critical 都是红）、`TokenPressureBar`（压力 5 档）、
+      `modeStore`/`modelStore`（模式/厂商身份色）；
+    - **自带表面主题的文件**（终端、编辑器内部、DecorAI 子应用）：`TerminalPanel` 的 `#666` 是终端
+      prompt 色、`VoiceDictation` 的 `#ddd` 是自绘浮层、`PreviewMode` 的 `#ccc` 是设备框；
+    - **打印/导出 HTML 模板**（`PrescriptionCard` / `WritePage` 的 `<style>` 块）：按"亮色纸张"配色，
+      与 App 主题无关；
+    - **渐变艺术**（`linear-gradient(135deg, #10b981, #059669)` 等 9 处）：只换一半色标会让渐变
+      在换主题时半主题化、更难看。
+    核验：
+    ```bash
+    # 残留裸数字圆角 (期望: 只有 App.tsx 的 Antd token 与 borderRadius: 0)
+    grep -rnE "\bborderRadius: ?[0-9]" --include=*.tsx --include=*.ts packages/agentai-gui/src
+    # 圆角 token 实际消费分布
+    grep -rEoh "var\(--radius[a-z-]*\)" --include=*.tsx --include=*.css packages/agentai-gui/src | sort | uniq -c
+    # 残留绿/红 (期望: 只落在 token 定义 / 分类色板 / 渐变 / 测试文件)
+    grep -rniE "#(52c41a|10b981|4ade80|22c55e|ef4444|ff4d4f|f5222d)" --include=*.tsx packages/agentai-gui/src
+    ```
+    坑：`borderRadius` 与 `fontSize` 不同 —— **Antd `ConfigProvider` 的 `theme.token.borderRadius`
+    只收 number**（`App.tsx:1069`），codemod 改错会直接 TS2322；测试里用白名单 + 理由兜住。
+
 **回归锁定**：`packages/agentai-gui/src/layout-panes.test.ts` + `rail-browser.test.ts` + `token-layer.test.ts`
 （源码文本断言 + `stripComments` 辅助，因为修复点注释本身会引用「坏掉的旧代码」）。
-核验：`cd packages/agentai-gui && npx vitest run` → **9 文件 / 165 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9 → 165/9；
+核验：`cd packages/agentai-gui && npx vitest run` → **9 文件 / 173 通过**（基线 90/6 → 109/7 → 125/8 → 130/8 → 162/9 → 165/9 → 173/9；
 rail-browser 16 → 21 条（`effectiveRailMode`、空态不叠层、`#fff` 白斑、ImageStudio 消歧），
-token-layer 32 → 35 条（18 别名定义 + 9 底层 token × 5 主题块 + 死 fallback 归零 + `radius-lg` 不重复 +
-字号尺度存在 + **文本档禁止裸数字** + **`var(--fs-*)` 必须真被消费（防僵尸 token）**）。
-⚠️ **仍未做（用户 2026-10-11 明确选择「只修硬伤」，设计尺度与信息架构延后）**：
-**调用点**层面的剩余收敛 —— 圆角（**19 种**）、硬编码色（**208 种**，同语义成功绿 4 个/错误红 3 个/
-灰阶 5 个/`#fff` ×72）、内联 `style={{` **3417 处**；
+token-layer 32 → **43** 条（18 别名定义 + 9 底层 token × 5 主题块 + 死 fallback 归零 + `radius-lg` 不重复 +
+字号尺度存在 + **文本档禁止裸数字** + **`var(--fs-*)` 必须真被消费（防僵尸 token）** +
+**圆角恰 4 档** + **`--radius-lg/pill` 必须被消费** + **禁止裸数字 borderRadius** +
+**绿/红/灰/白四类语义色不得再散落** + **底层 token 死 fallback 归零**）。
+⚠️ **仍未做（用户 2026-10-11 明确选择「只修硬伤」，信息架构延后）**：
+内联 `style={{` **3417 处**（结构性，非本轮目标）；
 标题栏 11 控件 + 「免费内置模型」常驻 nag 条 + 「发现 N 个可恢复的任务」恢复条 + 底部状态栏 **12 项**。
-⚠️ 活体验收**披露**：截图通道本轮恢复（`tab.screenshot()` 可用），已截对话页 / 编辑器页 / 信息栏；
-但 IAB 的**元素点击大面积不可用**（`click()` 报 `pointer probe returned no click point`、
-`force: true` 同样失败、`tab.elementInfo()` 报 broker id mismatch）——
-最终只能靠 `data-testid`（`nav-chat` / `nav-editor` / `rail-mode-info`）点进去，
-坐标 `cua.click` 无效果。故**逐页视觉取证不完整**；FileCard 就地展开的点击穿透**至今未活体验证**，
+⚠️ 活体验收**披露**：`tab.screenshot()` 本轮稳定；`playwright.click()` 仍全线失败
+（`Browser broker response id mismatch`），但 **`tab.cua.click({x,y})` 用坐标是有效的** ——
+本轮靠它在 (200,17) 切到对话页。已活体取证：对话页（2 个状态：恢复条 + 消息流/工具调用行）、
+编辑器页、信息栏。**未取证**：右栏「浏览器」模式标签（`rail-mode-browser` 坐标点击未命中）、
+医案页、设置页（在「系统」下拉里）。FileCard 就地展开的点击穿透**至今未活体验证**，
 只有源码文本测试 + `tsc` 干净。
 
 ### 六、安全机制
@@ -562,10 +598,12 @@ token-layer 32 → 35 条（18 别名定义 + 9 底层 token × 5 主题块 + �
 | 浏览器宿主 | 仅右侧浮层 Drawer | **右栏 信息/浏览器 双模式**, 事件中枢唯一 (`browser-host.ts` 6 监听 / Drawer 0) | `grep -c "addEventListener" packages/agentai-gui/src/services/browser-host.ts packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` |
 | 右栏浏览器宽度 | - | **`agentai.pane.browser.width` 默认 520** (320–900), 与信息栏 320 分轨 | `grep -n "agentai.pane.browser.width" packages/agentai-gui/src/App.tsx` |
 | 文件卡片查看 | 整行点击 → 跳 editor 页 | **行点击就地展开全文**, 仅「编辑器」按钮跳页 | `grep -n "PREVIEW_LINE_CAP\|label=\"编辑器\"" packages/agentai-gui/src/components/FileCard.tsx` |
-| GUI 测试基线 | 90 测试 / 6 文件 | **165 测试 / 9 文件** | `cd packages/agentai-gui && npx vitest run` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **173 测试 / 9 文件** | `cd packages/agentai-gui && npx vitest run` |
 | token 层 | 18 变量被消费但**从未定义** (调用点各带 fallback → 同语义 3–6 种色) | **已修**: 建 18 条语义别名 + 6 级 `--fs-*` 尺度; 死 fallback 39 → 0 | `grep -rEoh "var\(--(text-secondary\|bg-1\|hover) ?, ?(#\|rgba)" --include=*.tsx packages/agentai-gui/src \| wc -l` |
 | 字号尺度 | 23 种 fontSize (≤12px **1164 处**), 7/8/9/10 与 12/13/14/15 差 1px 无法分辨 | **已收敛**: 1429 处走 `var(--fs-*)`, 尺度 **11/12/13/16/20/28** 六档; ≥32px 图标/emoji 档 35 处有意保留 | `grep -rEoh "var\(--fs-[a-z]+\)" --include=*.tsx packages/agentai-gui/src \| sort \| uniq -c` |
-| 设计尺度 | — (无 token 体系) | ⚠️ **圆角/颜色/内联样式仍未收敛**: radius **19 种** / 硬编码色 **208 种** / 内联 `style={{` **3417 处** (token 层与字号已就绪) | `grep -rEoh "borderRadius: ?['\"]?[0-9]+" --include=*.tsx packages/agentai-gui/src \| grep -oE "[0-9]+$" \| sort -nu \| wc -l` |
+| 圆角尺度 | 19 种裸数字 (2/3/4/5 与 6/8/10 差 1–2px 不可辨); `--radius-lg` 零消费 | **已收敛**: 437 处走 `var(--radius-*)`, 尺度 **4/8/12/999 四档** (消费 md 218 / sm 185 / lg 40 / pill 5) | `grep -rEoh "var\(--radius[a-z-]*\)" --include=*.tsx --include=*.css packages/agentai-gui/src \| sort \| uniq -c` |
+| 语义色 | 成功绿 **4 值** / 错误红 **3 值** / 灰阶文字 **5 值** / `color:#fff` 52 处裸写 | **已统一**: 绿→`var(--success)` 114 / 红→`var(--danger)` 71 / 灰→`var(--muted\|-2\|--fg-2)` 54 / 白→`var(--fg-on-accent)` 55; 分类色板+终端/编辑器表面+打印模板 有意豁免 | `grep -rniE "#(52c41a\|10b981\|ef4444\|ff4d4f)" --include=*.tsx packages/agentai-gui/src` |
+| 设计尺度 | — (无 token 体系) | token 层已建 (**18 语义别名 + 6 级文本尺度 + 4 档圆角 + 语义色**); ⚠️ 内联 `style={{` **3417 处** 仍在 (结构性) | `grep -rEoh "style=\{\{" --include=*.tsx packages/agentai-gui/src \| wc -l` |
 | 右栏内容判据 | — | **`effectiveRailMode`** (非 chat 页恒为浏览器, 320/900 与 240/560 分轨) | `grep -n "effectiveRailMode" packages/agentai-gui/src/App.tsx` |
 
 ### ⚠️ 声明可验证规矩（2026-10-10 新增）

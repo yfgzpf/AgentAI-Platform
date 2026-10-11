@@ -86,7 +86,7 @@ export const LastSessionHint: React.FC<{ workspace?: string }> = ({ workspace })
         padding: '10px 14px',
         background: 'linear-gradient(135deg, rgba(205, 122, 58, 0.08) 0%, rgba(26, 26, 34, 0.4) 100%)',
         border: '1px solid rgba(205, 122, 58, 0.25)',
-        borderRadius: 10,
+        borderRadius: 'var(--radius-md)',
         fontSize: 'var(--fs-sm)',
         color: 'var(--fg-2)',
         position: 'relative',
@@ -136,7 +136,7 @@ export const LastSessionHint: React.FC<{ workspace?: string }> = ({ workspace })
           {data.summary && (
             <details style={{ marginTop: 4, opacity: 0.85 }}>
               <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>查看详情</summary>
-              <div style={{ marginTop: 4, padding: 6, background: 'rgba(0,0,0,0.2)', borderRadius: 4, fontSize: 'var(--fs-micro)', lineHeight: 1.5, color: 'var(--muted-2)' }}>
+              <div style={{ marginTop: 4, padding: 6, background: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)', lineHeight: 1.5, color: 'var(--muted-2)' }}>
                 {data.summary.slice(0, 400)}
                 {data.summary.length > 400 && '...'}
               </div>

@@ -77,7 +77,7 @@ class ErrorBoundary extends React.Component<
         >
           <div style={{
             width: '100%', maxWidth: 420,
-            padding: 24, borderRadius: 12,
+            padding: 24, borderRadius: 'var(--radius-lg)',
             background: 'var(--card)',
             border: '1px solid var(--border)',
             boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
@@ -102,7 +102,7 @@ class ErrorBoundary extends React.Component<
                 window.location.reload();
               }}
               style={{
-                padding: '9px 22px', borderRadius: 8,
+                padding: '9px 22px', borderRadius: 'var(--radius-md)',
                 fontSize: 'var(--fs-md)', fontWeight: 500,
                 background: 'var(--accent)',
                 color: 'white',
@@ -120,7 +120,7 @@ class ErrorBoundary extends React.Component<
                 }}
                 style={{
                   marginTop: 8, padding: '6px 14px',
-                  borderRadius: 6, fontSize: 'var(--fs-sm)',
+                  borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-sm)',
                   background: 'transparent',
                   color: 'var(--muted)',
                   border: '1px solid var(--border)',

@@ -323,7 +323,7 @@ export const MusicPlayer: React.FC<{
       width: 320,
       background: 'var(--card)',
       border: '1px solid var(--border)',
-      borderRadius: 12,
+      borderRadius: 'var(--radius-lg)',
       boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
       zIndex: 'var(--z-modal)',
       overflow: 'hidden',
@@ -341,7 +341,7 @@ export const MusicPlayer: React.FC<{
         <button
           onClick={() => setShowList(v => !v)}
           style={{
-            width: 22, height: 22, borderRadius: 4,
+            width: 22, height: 22, borderRadius: 'var(--radius-sm)',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             border: 'none', background: showList ? 'var(--panel)' : 'transparent',
             cursor: 'pointer', color: 'var(--muted-2)',
@@ -352,7 +352,7 @@ export const MusicPlayer: React.FC<{
         <button
           onClick={onClose}
           style={{
-            width: 22, height: 22, borderRadius: 4,
+            width: 22, height: 22, borderRadius: 'var(--radius-sm)',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             border: 'none', background: 'transparent', cursor: 'pointer',
             color: 'var(--muted-2)',
@@ -376,7 +376,7 @@ export const MusicPlayer: React.FC<{
                 style={{
                   width: 3, height: 12 + Math.random() * 8,
                   background: 'var(--accent)',
-                  borderRadius: 2,
+                  borderRadius: 'var(--radius-sm)',
                   animation: `musicBar${i % 3} 0.8s ease-in-out infinite`,
                 }}
               />
@@ -423,7 +423,7 @@ export const MusicPlayer: React.FC<{
           onClick={handlePlayPause}
           style={{
             ...ctrlBtnStyle, width: 32, height: 32, borderRadius: '50%',
-            background: 'var(--accent)', color: '#fff',
+            background: 'var(--accent)', color: 'var(--fg-on-accent)',
           }}
           disabled={!currentTrack}
         >
@@ -475,8 +475,8 @@ export const MusicPlayer: React.FC<{
               onClick={() => fileInputRef.current?.click()}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '2px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
-                background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer',
+                padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
+                background: 'var(--accent)', color: 'var(--fg-on-accent)', border: 'none', cursor: 'pointer',
               }}
             >
               <UploadOutlined style={{ fontSize: 'var(--fs-micro)' }} /> 导入音乐
@@ -486,7 +486,7 @@ export const MusicPlayer: React.FC<{
                 onClick={loadDemoTrack}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '2px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
+                  padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
                   background: 'var(--panel)', border: '1px solid var(--border)',
                   color: 'var(--muted)', cursor: 'pointer',
                 }}
@@ -498,7 +498,7 @@ export const MusicPlayer: React.FC<{
               onClick={loadFreeMusic}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '2px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
+                padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
                 background: 'var(--accent-soft)', border: '1px solid var(--accent)',
                 color: 'var(--accent)', cursor: 'pointer',
               }}
@@ -539,7 +539,7 @@ export const MusicPlayer: React.FC<{
               <button
                 onClick={e => { e.stopPropagation(); handleRemoveTrack(i); }}
                 style={{
-                  width: 16, height: 16, borderRadius: 3,
+                  width: 16, height: 16, borderRadius: 'var(--radius-sm)',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   border: 'none', background: 'transparent', cursor: 'pointer',
                   color: 'var(--muted-2)', opacity: 0.5,
@@ -556,7 +556,7 @@ export const MusicPlayer: React.FC<{
 };
 
 const ctrlBtnStyle: React.CSSProperties = {
-  width: 28, height: 28, borderRadius: 6,
+  width: 28, height: 28, borderRadius: 'var(--radius-md)',
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   border: 'none', background: 'transparent', cursor: 'pointer',
   color: 'var(--muted)', transition: 'all 0.1s',

@@ -318,7 +318,7 @@ const MonitoringPanel: React.FC = () => {
               title="审批提案总数"
               value={dashboard?.approval.totalProposals || 0}
               prefix={<FileProtectOutlined />}
-              valueStyle={{ color: '#52c41a' }}
+              valueStyle={{ color: 'var(--success)' }}
             />
           </Card>
         </Col>
@@ -328,7 +328,7 @@ const MonitoringPanel: React.FC = () => {
               title="今日Token消耗"
               value={costStats?.today.totalTokens?.toLocaleString() || 0}
               prefix={<DollarOutlined />}
-              valueStyle={{ color: costUsagePercent > 80 ? '#f5222d' : '#722ed1' }}
+              valueStyle={{ color: costUsagePercent > 80 ? 'var(--danger)' : '#722ed1' }}
               suffix={costUsagePercent > 0 ? `(${costUsagePercent}%)` : ''}
             />
             {costStats?.budget && (
@@ -350,8 +350,8 @@ const MonitoringPanel: React.FC = () => {
               suffix="/100"
               prefix={<MedicineBoxOutlined />}
               valueStyle={{ 
-                color: diagnosisResult && diagnosisResult.score >= 80 ? '#52c41a' : 
-                       diagnosisResult && diagnosisResult.score >= 60 ? '#faad14' : '#f5222d'
+                color: diagnosisResult && diagnosisResult.score >= 80 ? 'var(--success)' : 
+                       diagnosisResult && diagnosisResult.score >= 60 ? '#faad14' : 'var(--danger)'
               }}
             />
             {criticalIssues > 0 && (
@@ -383,14 +383,14 @@ const MonitoringPanel: React.FC = () => {
                 Agent Bus: {agentBusStats?.onlineCount || 0}/{agentBusStats?.agentCount || 0} 在线
               </Timeline.Item>
               <Timeline.Item
-                dot={<TeamOutlined style={{ color: '#52c41a' }} />}
+                dot={<TeamOutlined style={{ color: 'var(--success)' }} />}
               >
                 消息总数: {agentBusStats?.messageCount?.toLocaleString() || 0}
               </Timeline.Item>
               <Timeline.Item
                 dot={
-                  maintenanceData?.healthTrend === 'improving' ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> :
-                  maintenanceData?.healthTrend === 'degrading' ? <WarningOutlined style={{ color: '#f5222d' }} /> :
+                  maintenanceData?.healthTrend === 'improving' ? <CheckCircleOutlined style={{ color: 'var(--success)' }} /> :
+                  maintenanceData?.healthTrend === 'degrading' ? <WarningOutlined style={{ color: 'var(--danger)' }} /> :
                   <ClockCircleOutlined style={{ color: '#faad14' }} />
                 }
               >
@@ -402,7 +402,7 @@ const MonitoringPanel: React.FC = () => {
               {Object.entries(dashboard?.health.components || {}).map(([name, status]) => (
                 <Timeline.Item
                   key={name}
-                  dot={status === 'ok' ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : <ClockCircleOutlined style={{ color: '#fa8c16' }} />}
+                  dot={status === 'ok' ? <CheckCircleOutlined style={{ color: 'var(--success)' }} /> : <ClockCircleOutlined style={{ color: '#fa8c16' }} />}
                 >
                   {name}: {status === 'ok' ? '正常' : status === 'empty' ? '暂无数据' : status}
                 </Timeline.Item>
@@ -414,10 +414,10 @@ const MonitoringPanel: React.FC = () => {
           <Card title="7天反馈趋势">
             <Row gutter={16}>
               <Col span={8}>
-                <Statistic title="正面" value={dashboard?.feedback.trend7d.positive || 0} valueStyle={{ color: '#52c41a' }} />
+                <Statistic title="正面" value={dashboard?.feedback.trend7d.positive || 0} valueStyle={{ color: 'var(--success)' }} />
               </Col>
               <Col span={8}>
-                <Statistic title="负面" value={dashboard?.feedback.trend7d.negative || 0} valueStyle={{ color: '#f5222d' }} />
+                <Statistic title="负面" value={dashboard?.feedback.trend7d.negative || 0} valueStyle={{ color: 'var(--danger)' }} />
               </Col>
               <Col span={8}>
                 <Statistic title="中性" value={dashboard?.feedback.trend7d.neutral || 0} valueStyle={{ color: '#faad14' }} />
@@ -440,12 +440,12 @@ const MonitoringPanel: React.FC = () => {
               suffix="%"
               prefix={costStats?.trends?.direction === 'up' ? '↑' : costStats?.trends?.direction === 'down' ? '↓' : '→'}
               valueStyle={{ 
-                color: costStats?.trends?.direction === 'up' ? '#f5222d' : 
-                       costStats?.trends?.direction === 'down' ? '#52c41a' : '#faad14'
+                color: costStats?.trends?.direction === 'up' ? 'var(--danger)' : 
+                       costStats?.trends?.direction === 'down' ? 'var(--success)' : '#faad14'
               }}
             />
             <Divider style={{ margin: '16px 0' }} />
-            <div style={{ fontSize: 'var(--fs-sm)', color: '#888' }}>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
               模型使用分布:
               {costStats?.modelDistribution?.slice(0, 3).map(m => (
                 <div key={m.name} style={{ marginTop: 4 }}>
@@ -515,7 +515,7 @@ const MonitoringPanel: React.FC = () => {
                     <Statistic title="总调用次数" value={toolStats.summary.totalCalls} valueStyle={{ color: '#1890ff' }} />
                   </Col>
                   <Col span={6}>
-                    <Statistic title="已清理死工具" value={toolStats.cleanedUp} valueStyle={{ color: toolStats.cleanedUp > 0 ? '#faad14' : '#52c41a' }} />
+                    <Statistic title="已清理死工具" value={toolStats.cleanedUp} valueStyle={{ color: toolStats.cleanedUp > 0 ? '#faad14' : 'var(--success)' }} />
                   </Col>
                   <Col span={6}>
                     <Statistic title="日均调用" value={toolStats.summary.totalCalls > 0 ? Math.round(toolStats.summary.totalCalls / 7) : 0} suffix="次/日" />
@@ -571,7 +571,7 @@ const MonitoringPanel: React.FC = () => {
                     ]}
                   />
                 ) : (
-                  <div style={{ color: '#888', padding: 16, textAlign: 'center' }}>暂无数据</div>
+                  <div style={{ color: 'var(--muted)', padding: 16, textAlign: 'center' }}>暂无数据</div>
                 )}
               </Card>
             </Col>
@@ -589,7 +589,7 @@ const MonitoringPanel: React.FC = () => {
                     ]}
                   />
                 ) : (
-                  <div style={{ color: '#888', padding: 16, textAlign: 'center' }}>暂无数据</div>
+                  <div style={{ color: 'var(--muted)', padding: 16, textAlign: 'center' }}>暂无数据</div>
                 )}
               </Card>
             </Col>
@@ -645,7 +645,7 @@ const MonitoringPanel: React.FC = () => {
               title="成功率"
               value={evolutionStats?.successRate || '0'}
               suffix="%"
-              valueStyle={{ color: '#52c41a' }}
+              valueStyle={{ color: 'var(--success)' }}
             />
           </Card>
         </Col>
@@ -708,7 +708,7 @@ const MonitoringPanel: React.FC = () => {
                     const td = evolutionStats.dailyStats?.find(d => d.date === today);
                     if (!td || (td.success + td.failure) === 0) return '-';
                     return `${(td.success / (td.success + td.failure) * 100).toFixed(1)}%`;
-                  })()} valueStyle={{ color: '#52c41a' }} />
+                  })()} valueStyle={{ color: 'var(--success)' }} />
                 </Col>
                 <Col span={8}>
                   <Statistic title="7日趋势" value={(() => {
@@ -721,7 +721,7 @@ const MonitoringPanel: React.FC = () => {
                 </Col>
               </Row>
               <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 'var(--fs-sm)', color: '#888', marginBottom: 8 }}>每日进化统计</div>
+                <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8 }}>每日进化统计</div>
                 <Table
                   dataSource={evolutionStats.dailyStats?.slice(-7) || []}
                   rowKey="date"
@@ -758,12 +758,12 @@ const MonitoringPanel: React.FC = () => {
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="已通过" value={approvalStats?.approved || 0} valueStyle={{ color: '#52c41a' }} />
+            <Statistic title="已通过" value={approvalStats?.approved || 0} valueStyle={{ color: 'var(--success)' }} />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="已拒绝" value={approvalStats?.rejected || 0} valueStyle={{ color: '#f5222d' }} />
+            <Statistic title="已拒绝" value={approvalStats?.rejected || 0} valueStyle={{ color: 'var(--danger)' }} />
           </Card>
         </Col>
         <Col span={6}>
@@ -831,12 +831,12 @@ const MonitoringPanel: React.FC = () => {
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={6}>
           <Card>
-            <Statistic title="👍 点赞" value={feedbackStats?.thumbsUp || 0} valueStyle={{ color: '#52c41a' }} />
+            <Statistic title="👍 点赞" value={feedbackStats?.thumbsUp || 0} valueStyle={{ color: 'var(--success)' }} />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="👎 点踩" value={feedbackStats?.thumbsDown || 0} valueStyle={{ color: '#f5222d' }} />
+            <Statistic title="👎 点踩" value={feedbackStats?.thumbsDown || 0} valueStyle={{ color: 'var(--danger)' }} />
           </Card>
         </Col>
         <Col span={6}>
@@ -898,7 +898,7 @@ const MonitoringPanel: React.FC = () => {
               title="预算使用率" 
               value={costUsagePercent}
               suffix="%"
-              valueStyle={{ color: costUsagePercent > 80 ? '#f5222d' : '#52c41a' }}
+              valueStyle={{ color: costUsagePercent > 80 ? 'var(--danger)' : 'var(--success)' }}
             />
           </Card>
         </Col>
@@ -956,7 +956,7 @@ const MonitoringPanel: React.FC = () => {
             <Statistic 
               title="在线Agent" 
               value={agentBusStats?.onlineCount || 0}
-              valueStyle={{ color: '#52c41a' }}
+              valueStyle={{ color: 'var(--success)' }}
             />
           </Card>
         </Col>

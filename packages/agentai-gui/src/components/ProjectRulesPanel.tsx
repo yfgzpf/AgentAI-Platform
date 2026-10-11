@@ -27,7 +27,7 @@ export const ProjectRulesPanel: React.FC = () => {
       size="small"
       title={<span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)' }}><FileTextOutlined style={{ marginRight: 4 }} />项目规范</span>}
       extra={<Button size="small" type="text" icon={<ReloadOutlined />} onClick={load} loading={loading} style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', height: 22 }} />}
-      style={{ borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)' }}
+      style={{ borderRadius: 'var(--radius-md)', background: 'var(--card)', border: '1px solid var(--border)' }}
       styles={{ body: { padding: '8px 12px' } }}
     >
       {loading ? (
@@ -40,18 +40,18 @@ export const ProjectRulesPanel: React.FC = () => {
           <div>
             <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4 }}>文件限制</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {sandbox.maxFileSize && <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 3 }}>最大文件: {formatBytes(sandbox.maxFileSize)}</Tag>}
-              {sandbox.maxTotalSize && <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 3 }}>总计上限: {formatBytes(sandbox.maxTotalSize)}</Tag>}
+              {sandbox.maxFileSize && <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)' }}>最大文件: {formatBytes(sandbox.maxFileSize)}</Tag>}
+              {sandbox.maxTotalSize && <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)' }}>总计上限: {formatBytes(sandbox.maxTotalSize)}</Tag>}
             </div>
           </div>
 
           {/* 允许列表 */}
           {sandbox.allowed?.length > 0 && (
             <div>
-              <div style={{ fontSize: 'var(--fs-micro)', color: '#22c55e', marginBottom: 4 }}>允许</div>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--success)', marginBottom: 4 }}>允许</div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {sandbox.allowed.map((a: string, i: number) => (
-                  <Tag key={i} color="green" style={{ fontSize: 'var(--fs-micro)', borderRadius: 3, margin: 0 }}>{a}</Tag>
+                  <Tag key={i} color="green" style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)', margin: 0 }}>{a}</Tag>
                 ))}
               </div>
             </div>
@@ -60,10 +60,10 @@ export const ProjectRulesPanel: React.FC = () => {
           {/* 拒绝列表 */}
           {sandbox.denied?.length > 0 && (
             <div>
-              <div style={{ fontSize: 'var(--fs-micro)', color: '#ef4444', marginBottom: 4 }}>拒绝</div>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)', marginBottom: 4 }}>拒绝</div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {sandbox.denied.map((d: string, i: number) => (
-                  <Tag key={i} color="red" style={{ fontSize: 'var(--fs-micro)', borderRadius: 3, margin: 0 }}>{d}</Tag>
+                  <Tag key={i} color="red" style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)', margin: 0 }}>{d}</Tag>
                 ))}
               </div>
             </div>
@@ -75,7 +75,7 @@ export const ProjectRulesPanel: React.FC = () => {
               <div style={{ fontSize: 'var(--fs-micro)', color: '#f59e0b', marginBottom: 4 }}>需确认</div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {sandbox.prompt.map((p: string, i: number) => (
-                  <Tag key={i} color="orange" style={{ fontSize: 'var(--fs-micro)', borderRadius: 3, margin: 0 }}>{p}</Tag>
+                  <Tag key={i} color="orange" style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)', margin: 0 }}>{p}</Tag>
                 ))}
               </div>
             </div>
@@ -85,7 +85,7 @@ export const ProjectRulesPanel: React.FC = () => {
           {sandbox.workspace && (
             <div>
               <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2 }}>工作区</div>
-              <code style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 3, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <code style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 'var(--radius-sm)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {sandbox.workspace}
               </code>
             </div>
@@ -93,7 +93,7 @@ export const ProjectRulesPanel: React.FC = () => {
 
           {/* 全局规范提示 */}
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', lineHeight: 1.6 }}>
-            规范来自 <code style={{ background: 'var(--bg-2)', padding: '1px 4px', borderRadius: 2 }}>~/.agentai/config/sandbox-rules.json</code>，可在设置 → 沙箱规则中编辑
+            规范来自 <code style={{ background: 'var(--bg-2)', padding: '1px 4px', borderRadius: 'var(--radius-sm)' }}>~/.agentai/config/sandbox-rules.json</code>，可在设置 → 沙箱规则中编辑
           </div>
         </div>
       )}

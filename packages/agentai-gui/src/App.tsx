@@ -148,7 +148,7 @@ const FeatureGuide: React.FC<{
 /* ════════════════ 右栏模式切换条样式 (模块级, 避免每次渲染新建对象) ════════════════ */
 function railTabStyle(active: boolean): React.CSSProperties {
   return {
-    fontSize: 'var(--fs-micro)', fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+    fontSize: 'var(--fs-micro)', fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-sm)',
     cursor: 'pointer', userSelect: 'none',
     color: active ? 'var(--accent)' : 'var(--muted-2)',
     background: active ? 'var(--accent-soft)' : 'transparent',
@@ -158,7 +158,7 @@ function railTabStyle(active: boolean): React.CSSProperties {
 
 const railIconStyle: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  width: 20, height: 20, borderRadius: 4, cursor: 'pointer',
+  width: 20, height: 20, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
   fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
 };
 
@@ -192,7 +192,7 @@ const ChatModeToggle: React.FC = () => {
         onClick={handleToggle}
         style={{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          width: 30, height: 30, borderRadius: 6, cursor: 'pointer',
+          width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
           color: isImageMode ? 'var(--accent)' : 'var(--muted-2)',
           background: isImageMode ? 'var(--accent-soft)' : 'transparent',
           transition: 'all 0.15s ease', marginRight: 8,
@@ -377,7 +377,7 @@ const NavGroupDropdown: React.FC<{
             overflowY: 'auto',
             background: 'var(--panel)',
             border: '1px solid var(--border)',
-            borderRadius: 8,
+            borderRadius: 'var(--radius-md)',
             padding: 4,
             boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
             zIndex: 'var(--z-toast)',
@@ -393,7 +393,7 @@ const NavGroupDropdown: React.FC<{
                 alignItems: 'center',
                 gap: 10,
                 padding: '8px 10px',
-                borderRadius: 6,
+                borderRadius: 'var(--radius-md)',
                 cursor: 'pointer',
                 background: item.active ? 'var(--accent-soft)' : 'transparent',
                 transition: 'background 0.12s',
@@ -408,7 +408,7 @@ const NavGroupDropdown: React.FC<{
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)', fontWeight: item.active ? 600 : 500, color: 'var(--fg)' }}>
                   {item.label}
                   {item.badge && (
-                    <span style={{ fontSize: 'var(--fs-micro)', padding: '0 5px', borderRadius: 8, background: 'var(--accent)', color: '#fff', lineHeight: '14px' }}>
+                    <span style={{ fontSize: 'var(--fs-micro)', padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--accent)', color: 'var(--fg-on-accent)', lineHeight: '14px' }}>
                       {item.badge}
                     </span>
                   )}
@@ -1065,6 +1065,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
         locale={zhCN}
         theme={{
           algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+          // Antd 的 theme token 只接受 number, 不能传 CSS 变量 (对应 --radius-md = 8)
           token: { colorPrimary: accentColor, borderRadius: 8 },
           cssVar: { key: 'agentai-antd', prefix: 'agentai' },
           hashed: false,
@@ -1077,7 +1078,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
           {/* 品牌 (精简: 小图标 + 文字) */}
           <div className="app-brand" style={{ gap: 4 }}>
             <img src="/favicon-32.png" alt="岐枢"
-              style={{ width: 20, height: 20, borderRadius: 4 }} />
+              style={{ width: 20, height: 20, borderRadius: 'var(--radius-sm)' }} />
             <span className="app-brand-name" style={{ fontSize: 'var(--fs-sm)', display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ fontWeight: 600, color: 'var(--fg)' }}>岐枢</span>
               <span style={{ opacity: 0.6, fontSize: 'var(--fs-micro)' }}>|</span>
@@ -1167,7 +1168,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                       key: `theme-${t.value}`,
                       label: (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
-                          <span style={{ width: 16, height: 16, borderRadius: 4, background: t.swatch, border: '1px solid var(--border)' }} />
+                          <span style={{ width: 16, height: 16, borderRadius: 'var(--radius-sm)', background: t.swatch, border: '1px solid var(--border)' }} />
                           <span style={{ fontSize: 'var(--fs-sm)' }}>{t.label}</span>
                           {themeStyle === t.value && <span style={{ marginLeft: 'auto', color: 'var(--accent)' }}>✓</span>}
                         </div>
@@ -1200,7 +1201,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             >
               <span style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 30, height: 30, borderRadius: 6, cursor: 'pointer',
+                width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
                 color: 'var(--muted-2)', transition: 'all 0.15s ease',
               }}
                 onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--card-hover)'; }}
@@ -1218,7 +1219,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                 <span onClick={() => setSidebarVisible(v => !v)}
                   style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 30, height: 30, borderRadius: 6, cursor: 'pointer',
+                    width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
                     color: sidebarVisible ? 'var(--accent)' : 'var(--muted-2)',
                     background: sidebarVisible ? 'var(--accent-soft)' : 'transparent',
                     transition: 'all 0.15s ease', marginLeft: 4,
@@ -1230,7 +1231,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                 <span onClick={() => setRightPanelVisible(v => !v)}
                   style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 30, height: 30, borderRadius: 6, cursor: 'pointer',
+                    width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
                     color: rightPanelVisible ? 'var(--accent)' : 'var(--muted-2)',
                     background: rightPanelVisible ? 'var(--accent-soft)' : 'transparent',
                     transition: 'all 0.15s ease',
@@ -1242,7 +1243,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                 <span onClick={() => setFileTreeVisible(v => !v)}
                   style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 30, height: 30, borderRadius: 6, cursor: 'pointer',
+                    width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
                     color: fileTreeVisible ? 'var(--accent)' : 'var(--muted-2)',
                     background: fileTreeVisible ? 'var(--accent-soft)' : 'transparent',
                     transition: 'all 0.15s ease',
@@ -1258,7 +1259,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             <a href="https://github.com/pulseflow/platform" target="_blank" rel="noopener noreferrer"
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 30, height: 30, borderRadius: 6, cursor: 'pointer',
+                width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
                 color: 'var(--muted-2)', transition: 'all 0.15s ease', marginLeft: 4,
                 textDecoration: 'none',
               }}
@@ -1274,7 +1275,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             <span onClick={() => setWechatModalVisible(true)}
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 30, height: 30, borderRadius: 6, cursor: 'pointer',
+                width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
                 color: 'var(--muted-2)', transition: 'all 0.15s ease', marginLeft: 4,
               }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
@@ -1287,7 +1288,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
           {/* 用户名 */}
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
-            background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 14, marginLeft: 4,
+            background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', marginLeft: 4,
           }}>
             <UserOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }} />
             <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', fontWeight: 500 }}>
@@ -1327,7 +1328,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 4,
                       height: 22, padding: '0 8px', marginRight: 6,
-                      border: '1px solid var(--border)', borderRadius: 11,
+                      border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)',
                       background: updaterStage === 'ready'
                         ? 'color-mix(in srgb, var(--accent) 12%, transparent)'
                         : 'var(--panel)',
@@ -1614,7 +1615,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
           style={{
             width: 200,
             height: 200,
-            borderRadius: 8,
+            borderRadius: 'var(--radius-md)',
             border: '1px solid var(--border)',
             marginBottom: 12,
           }}
@@ -1682,7 +1683,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
               fontSize: 36, lineHeight: 1,
               color: 'var(--accent)',
               padding: '10px 14px',
-              borderRadius: 14,
+              borderRadius: 'var(--radius-lg)',
               background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
             }}>
               <DownloadOutlined />
@@ -1710,14 +1711,14 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             icon={<InfoCircleOutlined />}
             message="和 Trae 一样：关闭应用时自动安装"
             description="点击 [关闭并自动安装重启]，安装完成后应用会自动重新启动，无需手动重新打开。如果你想下次启动再装，选择 [仅关闭，下次启动安装]。"
-            style={{ borderRadius: 10, marginBottom: 14 }}
+            style={{ borderRadius: 'var(--radius-md)', marginBottom: 14 }}
           />
 
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
             padding: '8px 12px',
             border: '1px dashed var(--border)',
-            borderRadius: 10,
+            borderRadius: 'var(--radius-md)',
             fontSize: 'var(--fs-md)',
             color: 'var(--fg)',
             background: 'color-mix(in srgb, var(--panel) 50%, transparent)',

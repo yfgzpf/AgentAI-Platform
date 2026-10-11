@@ -61,7 +61,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
         position: 'absolute', bottom: '100%', left: 12, right: 12,
         marginBottom: 8,
         background: 'var(--card)', border: '1px solid var(--border)',
-        borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+        borderRadius: 'var(--radius-lg)', boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
         maxHeight: 400, overflowY: 'auto', zIndex: 'var(--z-drawer)',
         animation: 'msgSlideIn 0.25s cubic-bezier(0.16,1,0.3,1) forwards',
       }}>
@@ -74,7 +74,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
             ✨ 提示词优化
           </span>
           <button onClick={onClose} style={{
-            width: 22, height: 22, borderRadius: 4, border: 'none',
+            width: 22, height: 22, borderRadius: 'var(--radius-sm)', border: 'none',
             background: 'transparent', cursor: 'pointer', color: 'var(--muted-2)',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           }}>
@@ -98,8 +98,8 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
           {error && !loading && (
             <div style={{
               padding: '8px 12px', background: 'rgba(239,68,68,0.1)',
-              border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6,
-              fontSize: 'var(--fs-micro)', color: '#ef4444',
+              border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--fs-micro)', color: 'var(--danger)',
             }}>
               ❌ {error}
             </div>
@@ -114,7 +114,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
                 </div>
                 <div style={{
                   fontSize: 'var(--fs-micro)', lineHeight: 1.5, color: 'var(--muted)',
-                  padding: '6px 10px', background: 'var(--panel)', borderRadius: 6,
+                  padding: '6px 10px', background: 'var(--panel)', borderRadius: 'var(--radius-md)',
                   border: '1px solid var(--border)', whiteSpace: 'pre-wrap', maxHeight: 60, overflowY: 'auto',
                 }}>
                   {originalRef.current}
@@ -128,7 +128,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
                 </div>
                 <div style={{
                   fontSize: 'var(--fs-micro)', lineHeight: 1.5, color: 'var(--fg)',
-                  padding: '8px 10px', background: 'var(--bg-2)', borderRadius: 6,
+                  padding: '8px 10px', background: 'var(--bg-2)', borderRadius: 'var(--radius-md)',
                   border: '1px solid var(--border)', whiteSpace: 'pre-wrap', maxHeight: 150, overflowY: 'auto',
                 }}>
                   {enhanced}
@@ -139,8 +139,8 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => { onApply(enhanced); onClose(); }} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '5px 14px', borderRadius: 6, fontSize: 'var(--fs-micro)', fontWeight: 600,
-                  background: 'var(--success)', color: '#fff', border: 'none',
+                  padding: '5px 14px', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-micro)', fontWeight: 600,
+                  background: 'var(--success)', color: 'var(--fg-on-accent)', border: 'none',
                   cursor: 'pointer', boxShadow: '0 1px 4px rgba(34,197,94,0.3)',
                 }}>
                   <CheckOutlined style={{ fontSize: 'var(--fs-micro)' }} />
@@ -148,7 +148,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
                 </button>
                 <button onClick={() => { onApply(originalRef.current); onClose(); }} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '5px 14px', borderRadius: 6, fontSize: 'var(--fs-micro)', fontWeight: 600,
+                  padding: '5px 14px', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-micro)', fontWeight: 600,
                   background: 'var(--panel)', color: 'var(--muted)', border: '1px solid var(--border)',
                   cursor: 'pointer',
                 }}>

@@ -78,10 +78,10 @@ export interface FileCardProps {
 }
 
 const OP_META: Record<FileOp, { label: string; color: string; bg: string; icon: string }> = {
-  create: { label: '新建', color: '#10B981', bg: 'rgba(16,185,129,0.12)', icon: '✚' },
+  create: { label: '新建', color: 'var(--success)', bg: 'rgba(16,185,129,0.12)', icon: '✚' },
   edit:   { label: '修改', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)', icon: '✎' },
   read:   { label: '读取', color: '#6366F1', bg: 'rgba(99,102,241,0.12)', icon: '👁' },
-  delete: { label: '删除', color: '#EF4444', bg: 'rgba(239,68,68,0.12)', icon: '🗑' },
+  delete: { label: '删除', color: 'var(--danger)', bg: 'rgba(239,68,68,0.12)', icon: '🗑' },
   batch:  { label: '批量', color: '#8B5CF6', bg: 'rgba(139,92,246,0.12)', icon: '📚' },
 };
 
@@ -223,7 +223,7 @@ export const FileCard: React.FC<FileCardProps> = ({
     return (
       <div
         style={{
-          margin: '3px 0', borderRadius: 8, overflow: 'hidden',
+          margin: '3px 0', borderRadius: 'var(--radius-md)', overflow: 'hidden',
           background: 'var(--card)',
           border: `1px solid ${ok === false ? 'var(--danger)' : 'var(--border)'}`,
           transition: 'all 0.15s',
@@ -239,9 +239,9 @@ export const FileCard: React.FC<FileCardProps> = ({
           }}
         >
           <div style={{
-            width: 24, height: 24, borderRadius: 4,
+            width: 24, height: 24, borderRadius: 'var(--radius-sm)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: color, color: '#fff',
+            background: color, color: 'var(--fg-on-accent)',
             fontSize: 'var(--fs-micro)', fontWeight: 700,
             flexShrink: 0,
           }}>{icon}</div>
@@ -261,7 +261,7 @@ export const FileCard: React.FC<FileCardProps> = ({
             <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flexShrink: 0 }}>{formatBytes(size)}</span>
           )}
           <span style={{
-            fontSize: 'var(--fs-micro)', padding: '1px 5px', borderRadius: 3,
+            fontSize: 'var(--fs-micro)', padding: '1px 5px', borderRadius: 'var(--radius-sm)',
             background: opMeta.bg, color: opMeta.color, flexShrink: 0,
           }}>{opMeta.icon} 已读取</span>
           
@@ -356,7 +356,7 @@ export const FileCard: React.FC<FileCardProps> = ({
   return (
     <div
       style={{
-        margin: '3px 0', borderRadius: 8, overflow: 'hidden',
+        margin: '3px 0', borderRadius: 'var(--radius-md)', overflow: 'hidden',
         background: 'var(--card)',
         border: `1px solid ${ok === false ? 'var(--danger)' : 'var(--border)'}`,
         boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
@@ -374,9 +374,9 @@ export const FileCard: React.FC<FileCardProps> = ({
       >
         {/* 语言徽标 */}
         <div style={{
-          width: 24, height: 24, borderRadius: 4,
+          width: 24, height: 24, borderRadius: 'var(--radius-sm)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: color, color: '#fff',
+          background: color, color: 'var(--fg-on-accent)',
           fontSize: 'var(--fs-micro)', fontWeight: 700,
           flexShrink: 0,
         }}>{icon}</div>
@@ -398,7 +398,7 @@ export const FileCard: React.FC<FileCardProps> = ({
         {/* 操作徽标 */}
         <span style={{
           fontSize: 'var(--fs-micro)', fontWeight: 700,
-          padding: '1px 5px', borderRadius: 3,
+          padding: '1px 5px', borderRadius: 'var(--radius-sm)',
           background: opMeta.bg, color: opMeta.color,
           whiteSpace: 'nowrap',
         }}>{opMeta.icon} {opMeta.label}</span>
@@ -556,7 +556,7 @@ function ActionButton({ onClick, icon, label }: {
       onClick={onClick}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 2,
-        padding: '2px 6px', borderRadius: 3, fontSize: 'var(--fs-micro)',
+        padding: '2px 6px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
         color: 'var(--fg-2)', background: 'transparent',
         border: '1px solid var(--border)', cursor: 'pointer',
         transition: 'all 0.1s',
@@ -679,7 +679,7 @@ export const FilesFromToolSegment: React.FC<{
       <div
         onClick={() => setCollapsed(false)}
         style={{
-          margin: '4px 0', padding: '6px 10px', borderRadius: 6,
+          margin: '4px 0', padding: '6px 10px', borderRadius: 'var(--radius-md)',
           background: 'var(--panel)', border: '1px dashed var(--border)',
           cursor: 'pointer', userSelect: 'none',
           display: 'flex', alignItems: 'center', gap: 6,
@@ -734,8 +734,8 @@ const DiffPreviewLines: React.FC<{ oldContent: string; newContent: string }> = (
     if (ol === nl) {
       rows.push(
         <div key={`ctx-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 'var(--fs-micro)', lineHeight: '18px', fontFamily: "'Consolas', monospace" }}>
-          <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}>{li + 1}</span>
-          <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
+          <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none' }}>{li + 1}</span>
+          <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
           <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: 'var(--fg-2)' }}>{ol}</span>
         </div>
       );
@@ -744,10 +744,10 @@ const DiffPreviewLines: React.FC<{ oldContent: string; newContent: string }> = (
       // 有差异: 显示被删行
       if (ol !== null) {
         rows.push(
-          <div key={`del-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 'var(--fs-micro)', lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(239,68,68,0.08)', borderLeft: '3px solid #ef4444' }}>
-            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}>{li + 1}</span>
-            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}></span>
-            <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: '#dc2626' }}>- {ol}</span>
+          <div key={`del-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 'var(--fs-micro)', lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(239,68,68,0.08)', borderLeft: '3px solid var(--danger)' }}>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none' }}>{li + 1}</span>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none', borderRight: '1px solid var(--border)' }}></span>
+            <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: 'var(--danger)' }}>- {ol}</span>
           </div>
         );
         li++;
@@ -755,10 +755,10 @@ const DiffPreviewLines: React.FC<{ oldContent: string; newContent: string }> = (
       // 显示新增行
       if (nl !== null) {
         rows.push(
-          <div key={`add-${ni}`} style={{ display: 'flex', minHeight: 18, fontSize: 'var(--fs-micro)', lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(34,197,94,0.08)', borderLeft: '3px solid #22c55e' }}>
-            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}></span>
-            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
-            <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: '#16a34a' }}>+ {nl}</span>
+          <div key={`add-${ni}`} style={{ display: 'flex', minHeight: 18, fontSize: 'var(--fs-micro)', lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(34,197,94,0.08)', borderLeft: '3px solid var(--success)' }}>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none' }}></span>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
+            <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: 'var(--success)' }}>+ {nl}</span>
           </div>
         );
         ni++;

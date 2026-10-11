@@ -96,7 +96,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
           const tpl = INDUSTRY_TEMPLATES.find(t => t.id === cur);
           return tpl && cur !== 'general' ? (
             <span style={{
-              padding: '0 5px', borderRadius: 3, fontSize: 'var(--fs-micro)',
+              padding: '0 5px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
               background: 'rgba(99,102,241,0.12)', color: 'var(--accent)',
               flexShrink: 0,
             }}>
@@ -110,9 +110,9 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
         </span>
         {tokenInfo.tokens > 0 && (
           <span style={{
-            padding: '1px 5px', borderRadius: 3, fontSize: 'var(--fs-micro)',
+            padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
             background: tokenInfo.critical ? 'rgba(239,68,68,0.15)' : tokenInfo.nearing ? 'rgba(250,204,21,0.1)' : 'rgba(255,255,255,0.05)',
-            color: tokenInfo.critical ? '#ef4444' : tokenInfo.nearing ? '#eab308' : 'var(--muted)',
+            color: tokenInfo.critical ? 'var(--danger)' : tokenInfo.nearing ? '#eab308' : 'var(--muted)',
           }}>
             {(tokenInfo.tokens / 1000).toFixed(1)}K · {tokenInfo.pct}%
           </span>
@@ -122,7 +122,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
             <span
               onClick={(e) => { e.stopPropagation(); onClear(); }}
               style={{
-                padding: '2px 4px', borderRadius: 3, cursor: 'pointer',
+                padding: '2px 4px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                 color: 'var(--muted-2)',
               }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--panel)'; }}
@@ -163,7 +163,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                 <div
                   onClick={() => { setWsDraft(profile?.workspace || ''); setEditingWs(true); }}
                   style={{
-                    flex: 1, padding: '3px 8px', borderRadius: 4, cursor: 'pointer',
+                    flex: 1, padding: '3px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                     fontSize: 'var(--fs-micro)', fontFamily: 'monospace',
                     color: profile?.workspace ? 'var(--fg-2)' : 'var(--muted-2)',
                     background: 'var(--panel)', border: '1px solid var(--border)',
@@ -239,7 +239,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                         }
                       }}
                       style={{
-                        padding: '2px 6px', borderRadius: 3, fontSize: 'var(--fs-micro)',
+                        padding: '2px 6px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
                         border: active ? '1px solid var(--accent)' : '1px solid transparent',
                         background: active ? 'var(--accent-soft)' : 'transparent',
                         color: active ? 'var(--accent)' : 'var(--muted-2)',
@@ -276,21 +276,21 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                     <span style={{ color: 'var(--muted)' }}>·</span>
                     <span>{(tokenInfo.tokens / 1000).toFixed(1)}K tokens</span>
                     <span style={{
-                      display: 'inline-block', width: 60, height: 4, borderRadius: 2,
+                      display: 'inline-block', width: 60, height: 4, borderRadius: 'var(--radius-sm)',
                       background: 'var(--border)',
                     }}>
                       <span style={{
-                        display: 'block', height: '100%', borderRadius: 2,
+                        display: 'block', height: '100%', borderRadius: 'var(--radius-sm)',
                         width: `${Math.min(100, tokenInfo.pct)}%`,
                         background: tokenInfo.critical
-                          ? '#ef4444'
+                          ? 'var(--danger)'
                           : tokenInfo.nearing
                             ? '#f59e0b'
                             : 'var(--accent)',
                       }} />
                     </span>
                     <span style={{
-                      fontSize: 'var(--fs-micro)', color: tokenInfo.critical ? '#ef4444' : tokenInfo.nearing ? '#f59e0b' : 'var(--muted-2)',
+                      fontSize: 'var(--fs-micro)', color: tokenInfo.critical ? 'var(--danger)' : tokenInfo.nearing ? '#f59e0b' : 'var(--muted-2)',
                     }}>
                       {tokenInfo.pct}%
                     </span>

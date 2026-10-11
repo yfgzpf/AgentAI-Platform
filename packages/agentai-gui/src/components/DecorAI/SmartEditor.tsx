@@ -260,7 +260,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                 position: 'relative',
                 maxWidth: 900,
                 margin: '0 auto',
-                borderRadius: 8,
+                borderRadius: 'var(--radius-md)',
                 overflow: 'hidden',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
               }}
@@ -296,7 +296,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                             ? 'rgba(24,144,255,0.2)' 
                             : 'rgba(255,255,255,0.05)',
                           cursor: 'pointer',
-                          borderRadius: 4,
+                          borderRadius: 'var(--radius-sm)',
                           transition: 'all 0.2s',
                         }}
                         title={element.name}
@@ -306,9 +306,9 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                           top: -24,
                           left: 0,
                           background: selectedElement?.id === element.id ? '#1890ff' : 'rgba(0,0,0,0.7)',
-                          color: '#fff',
+                          color: 'var(--fg-on-accent)',
                           padding: '2px 8px',
-                          borderRadius: 4,
+                          borderRadius: 'var(--radius-sm)',
                           fontSize: 'var(--fs-sm)',
                           whiteSpace: 'nowrap',
                         }}>
@@ -390,7 +390,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
               <div style={{
                 padding: 12,
                 background: 'var(--accent-soft)',
-                borderRadius: 8,
+                borderRadius: 'var(--radius-md)',
                 marginBottom: 12,
               }}>
                 <div style={{ fontSize: 'var(--fs-sm)', color: '#666' }}>{selectedElement.description}</div>
@@ -450,7 +450,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                         padding: 8,
                         cursor: 'pointer',
                         background: index === historyIndex ? 'var(--accent-soft)' : 'transparent',
-                        borderRadius: 4,
+                        borderRadius: 'var(--radius-sm)',
                         marginBottom: 4,
                       }}
                       onClick={() => {

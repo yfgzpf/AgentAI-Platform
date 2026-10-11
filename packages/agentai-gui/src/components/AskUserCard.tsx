@@ -169,7 +169,7 @@ export const AskUserCard: React.FC<Props> = ({
         marginBottom: 12,
         padding: '8px 12px',
         background: 'var(--bg)',
-        borderRadius: 6,
+        borderRadius: 'var(--radius-md)',
         border: '1px solid var(--border)',
       }}>
         {question}
@@ -233,7 +233,7 @@ export const AskUserCard: React.FC<Props> = ({
         marginTop: 8,
         padding: '8px 12px',
         background: 'var(--bg)',
-        borderRadius: 6,
+        borderRadius: 'var(--radius-md)',
         border: '1px solid var(--border)',
       }}>
         {/* 密钥输入框（如果是密钥问卷且选择了"提供密钥"） */}

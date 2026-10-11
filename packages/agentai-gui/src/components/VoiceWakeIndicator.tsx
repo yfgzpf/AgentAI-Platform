@@ -17,7 +17,7 @@ import { isSpeechRecognitionSupported } from '../services/voice';
 const STATE_COLORS: Record<WakeState, string> = {
   idle: 'var(--muted-2)',
   listening: 'var(--accent)',
-  triggered: '#22c55e',
+  triggered: 'var(--success)',
 };
 const STATE_LABELS: Record<WakeState, string> = {
   idle: '唤醒监听已暂停',
@@ -96,13 +96,13 @@ export const VoiceWakeIndicator: React.FC = () => {
             width: 6, height: 6, borderRadius: '50%',
             background: color,
             animation: STATE_ANIMS[wakeState],
-            boxShadow: wakeState === 'triggered' ? '0 0 6px #22c55e' : undefined,
+            boxShadow: wakeState === 'triggered' ? '0 0 6px var(--success)' : undefined,
             transition: 'all 0.3s ease',
           }} />
         )}
       </span>
       {wakeState === 'triggered' && (
-        <span style={{ fontSize: 'var(--fs-micro)', color: '#22c55e', fontWeight: 600, animation: 'blink 1s infinite' }}>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--success)', fontWeight: 600, animation: 'blink 1s infinite' }}>
           已唤醒
         </span>
       )}
@@ -118,7 +118,7 @@ export const VoiceWakeIndicator: React.FC = () => {
           <div>状态: {label}</div>
           <div>唤醒词: "{cfg.keyword}"</div>
           <div>灵敏度: {cfg.sensitivity}</div>
-          <div style={{ marginTop: 4, color: '#888', fontSize: 'var(--fs-micro)' }}>
+          <div style={{ marginTop: 4, color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
             {cfg.enabled ? '点击设置调整参数' : '点击启用语音唤醒'}
           </div>
         </div>
@@ -131,7 +131,7 @@ export const VoiceWakeIndicator: React.FC = () => {
         <div style={{
           position: 'fixed', bottom: 40, left: 20,
           background: 'var(--card)', border: '1px solid var(--border)',
-          borderRadius: 10, padding: '12px 14px',
+          borderRadius: 'var(--radius-md)', padding: '12px 14px',
           boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
           zIndex: 'var(--z-modal)', width: 260,
           animation: 'msgSlideIn 0.2s ease',
@@ -153,7 +153,7 @@ export const VoiceWakeIndicator: React.FC = () => {
               value={cfg.keyword}
               onChange={e => handleKeywordChange(e.target.value)}
               style={{
-                width: '100%', padding: '4px 8px', borderRadius: 4,
+                width: '100%', padding: '4px 8px', borderRadius: 'var(--radius-sm)',
                 border: '1px solid var(--border)', background: 'var(--panel)',
                 color: 'var(--fg)', fontSize: 'var(--fs-sm)', outline: 'none',
               }}
@@ -184,7 +184,7 @@ export const VoiceWakeIndicator: React.FC = () => {
 
           {/* State info */}
           <div style={{
-            marginTop: 10, padding: '4px 8px', borderRadius: 4,
+            marginTop: 10, padding: '4px 8px', borderRadius: 'var(--radius-sm)',
             background: cfg.enabled ? 'var(--accent-soft)' : 'var(--panel)',
             fontSize: 'var(--fs-micro)', color: 'var(--muted)',
           }}>

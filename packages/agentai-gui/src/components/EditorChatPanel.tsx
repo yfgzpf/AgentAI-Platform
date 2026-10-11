@@ -189,7 +189,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
 
   const iconBtn: React.CSSProperties = {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    width: 24, height: 24, borderRadius: 4, border: 'none',
+    width: 24, height: 24, borderRadius: 'var(--radius-sm)', border: 'none',
     background: 'transparent', color: 'var(--muted-2)', cursor: 'pointer',
     fontSize: 'var(--fs-micro)', padding: 0,
   };
@@ -209,22 +209,22 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
             ? 'linear-gradient(90deg, rgba(205, 122, 58, 0.12) 0%, rgba(26, 26, 34, 0.4) 100%)'
             : 'var(--bg)',
           cursor: 'pointer',
-          fontSize: 'var(--fs-micro)', color: '#999',
+          fontSize: 'var(--fs-micro)', color: 'var(--muted)',
         }}
         title="点击打开浏览器"
       >
         <GlobalOutlined style={{ color: browserState.activeTabUrl ? '#CD7A3A' : '#666' }} />
         {browserState.activeTabUrl ? (
           <>
-            <span style={{ color: '#ccc', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: 'var(--fg-2)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {browserState.pageTitle || browserState.activeTabUrl}
             </span>
-            <span style={{ color: '#666' }}>·</span>
-            <span style={{ color: '#888', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: 'var(--muted-2)' }}>·</span>
+            <span style={{ color: 'var(--muted)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {browserState.activeTabUrl}
             </span>
             {browserState.elements.length > 0 && (
-              <span style={{ color: '#666', fontSize: 'var(--fs-micro)' }}>
+              <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
                 [{browserState.elements.length} 元素]
               </span>
             )}
@@ -236,7 +236,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
             )}
           </>
         ) : (
-          <span style={{ color: '#666' }}>浏览器未启动 — 点击右下角 🌐 唤起</span>
+          <span style={{ color: 'var(--muted-2)' }}>浏览器未启动 — 点击右下角 🌐 唤起</span>
         )}
         <span style={{ flex: 1 }} />
         <Button
@@ -255,7 +255,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         background: 'var(--bg-2)',
       }}>
         <BrandLogo size={16} />
-        <span style={{ fontSize: 'var(--fs-micro)', color: '#ccc', fontWeight: 600, marginRight: 4 }}>AI 对话</span>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', fontWeight: 600, marginRight: 4 }}>AI 对话</span>
         <Select
           size="small"
           value={activeModelId}
@@ -273,12 +273,12 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
           }))}
         />
         <Tooltip title="新对话">
-          <Button size="small" type="text" style={{ color: '#888', height: 20, width: 20, fontSize: 'var(--fs-micro)', padding: 0 }}
+          <Button size="small" type="text" style={{ color: 'var(--muted)', height: 20, width: 20, fontSize: 'var(--fs-micro)', padding: 0 }}
             onClick={() => clearMessages()}>
             <PlusOutlined style={{ fontSize: 'var(--fs-micro)' }} />
           </Button>
         </Tooltip>
-        <Button size="small" type="text" style={{ color: '#888', height: 20, width: 20, fontSize: 'var(--fs-micro)', padding: 0 }}
+        <Button size="small" type="text" style={{ color: 'var(--muted)', height: 20, width: 20, fontSize: 'var(--fs-micro)', padding: 0 }}
           onClick={() => clearMessages()}>×</Button>
       </div>
 
@@ -288,9 +288,9 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         display: 'flex', flexDirection: 'column', gap: 4,
       }}>
         {editorMsgs.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#666', fontSize: 'var(--fs-micro)', padding: 20, marginTop: 20 }}>
+          <div style={{ textAlign: 'center', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', padding: 20, marginTop: 20 }}>
             <div style={{ marginBottom: 8 }}><BrandLogo size={40} /></div>
-            <div style={{ fontWeight: 600, color: '#888', fontSize: 'var(--fs-sm)' }}>AI 对话</div>
+            <div style={{ fontWeight: 600, color: 'var(--muted)', fontSize: 'var(--fs-sm)' }}>AI 对话</div>
             <div style={{ marginTop: 4, lineHeight: 1.6 }}>
               输入代码相关的问题<br />AI 可读取当前工作目录文件
             </div>
@@ -357,7 +357,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
           disabled={loading}
           style={{
             width: '100%', padding: '6px 8px',
-            border: '1px solid var(--border)', borderRadius: 8,
+            border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
             background: 'var(--bg)', color: 'var(--fg)',
             fontSize: 'var(--fs-sm)', lineHeight: 1.4,
             outline: 'none', resize: 'none', fontFamily: 'inherit',
@@ -379,7 +379,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
           </Tooltip>
           <Tooltip title={webSearch ? '关闭联网搜索' : '开启联网搜索'}>
             <span onClick={() => setWebSearch(v => !v)} style={{
-              ...iconBtn, color: webSearch ? '#4ade80' : undefined,
+              ...iconBtn, color: webSearch ? 'var(--success)' : undefined,
               background: webSearch ? 'rgba(74,222,128,0.12)' : undefined,
             }}>
               <GlobalOutlined style={{ fontSize: 'var(--fs-micro)' }} />
@@ -389,7 +389,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
             <Tooltip title={recording ? '停止录音' : '语音输入'}>
               <span onClick={handleVoiceToggle} style={{
                 ...iconBtn,
-                color: recording ? '#ef4444' : undefined,
+                color: recording ? 'var(--danger)' : undefined,
                 animation: recording ? 'pulse 1.2s ease-out infinite' : undefined,
               }}>
                 <AudioOutlined style={{ fontSize: 'var(--fs-micro)' }} />
@@ -407,15 +407,15 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
 
           {loading ? (
             <span onClick={handleAbort} style={{
-              padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
-              background: '#ef4444', color: '#fff', fontSize: 'var(--fs-micro)',
+              padding: '2px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+              background: 'var(--danger)', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-micro)',
               display: 'inline-flex', alignItems: 'center', gap: 3,
             }}>
               <StopOutlined style={{ fontSize: 'var(--fs-micro)' }} /> 停止
             </span>
           ) : (
             <span onClick={() => handleSend()} style={{
-              padding: '2px 8px', borderRadius: 4,
+              padding: '2px 8px', borderRadius: 'var(--radius-sm)',
               cursor: draft.trim() ? 'pointer' : 'default',
               background: draft.trim() ? '#6366F1' : '#333',
               color: draft.trim() ? '#fff' : '#666',

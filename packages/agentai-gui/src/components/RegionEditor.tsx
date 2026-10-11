@@ -364,7 +364,7 @@ export const RegionEditor: React.FC<RegionEditorProps> = ({ imageUrl, onApply, o
 
       <div style={{ display: 'flex', gap: 8, flex: 1, minHeight: 0 }}>
         {/* 左侧: 图片画布 */}
-        <div ref={containerRef} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--panel)', borderRadius: 8, overflow: 'hidden', position: 'relative' }}>
+        <div ref={containerRef} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--panel)', borderRadius: 'var(--radius-md)', overflow: 'hidden', position: 'relative' }}>
           <canvas
             ref={canvasRef}
             onMouseDown={onMouseDown}
@@ -374,7 +374,7 @@ export const RegionEditor: React.FC<RegionEditorProps> = ({ imageUrl, onApply, o
             style={{ cursor: 'crosshair', display: 'block' }}
           />
           {regions.length === 0 && !isDrawing && (
-            <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', color: 'var(--muted)', fontSize: 'var(--fs-sm)', background: 'rgba(0,0,0,0.5)', padding: '4px 12px', borderRadius: 6, whiteSpace: 'nowrap' }}>
+            <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', color: 'var(--muted)', fontSize: 'var(--fs-sm)', background: 'rgba(0,0,0,0.5)', padding: '4px 12px', borderRadius: 'var(--radius-md)', whiteSpace: 'nowrap' }}>
               在图片上拖拽画区域 → 下方填写修改描述 → 点击整合发送
             </div>
           )}
@@ -391,7 +391,7 @@ export const RegionEditor: React.FC<RegionEditorProps> = ({ imageUrl, onApply, o
             </div>
           )}
           {regions.map((region, i) => (
-            <div key={region.id} style={{ padding: 8, borderRadius: 8, background: 'var(--panel)', border: `2px solid ${region.color}` }}>
+            <div key={region.id} style={{ padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: `2px solid ${region.color}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                 <div style={{ width: 20, height: 20, borderRadius: '50%', background: region.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--fs-micro)', fontWeight: 700, color: '#000' }}>
                   {i + 1}
@@ -411,13 +411,13 @@ export const RegionEditor: React.FC<RegionEditorProps> = ({ imageUrl, onApply, o
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                 {(region.refImages || []).map((img, idx) => (
                   <div key={idx} style={{ position: 'relative', width: 44, height: 44 }}>
-                    <img src={img} alt={`ref-${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }} />
+                    <img src={img} alt={`ref-${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }} />
                     <button onClick={() => removeRegionRefImage(region.id, idx)}
-                      style={{ position: 'absolute', top: -3, right: -3, width: 14, height: 14, borderRadius: '50%', background: '#ff4d4f', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                      style={{ position: 'absolute', top: -3, right: -3, width: 14, height: 14, borderRadius: '50%', background: 'var(--danger)', color: 'var(--fg-on-accent)', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
                   </div>
                 ))}
                 {(region.refImages || []).length < 2 && (
-                  <label style={{ width: 44, height: 44, borderRadius: 4, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--muted)', fontSize: 'var(--fs-lg)' }}
+                  <label style={{ width: 44, height: 44, borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--muted)', fontSize: 'var(--fs-lg)' }}
                     title="上传参考图">
                     <PictureOutlined />
                     <input type="file" accept="image/*" style={{ display: 'none' }}

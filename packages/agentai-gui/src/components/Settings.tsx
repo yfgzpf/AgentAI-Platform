@@ -186,7 +186,7 @@ const UpdaterPanel: React.FC = () => {
         )}
 
         {downloading && (
-          <Progress percent={progress} status="active" strokeColor={{ from: '#10B981', to: '#3B82F6' }} style={{ marginBottom: 8 }} />
+          <Progress percent={progress} status="active" strokeColor={{ from: 'var(--success)', to: '#3B82F6' }} style={{ marginBottom: 8 }} />
         )}
 
         {error && (
@@ -249,7 +249,7 @@ interface ModelTemplate {
 const MODEL_TEMPLATES: ModelTemplate[] = [
   // id 是 provider 名 ('deepseek' → DEEPSEEK_API_KEY), 而 store 里的模型 id 是 'deepseek-flash'/'deepseek-v4-pro',
   // 两者不再同名, 因此必须靠 extraModelIds 才能把模型置为 enabled —— 只写 id 会静默失效。
-  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-flash', 'deepseek-v4-pro'], docsUrl: 'https://platform.deepseek.com/api-keys', color: '#10B981', contextWindow: 1000000, extraModelIds: ['deepseek-flash', 'deepseek-v4-pro'] },
+  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-flash', 'deepseek-v4-pro'], docsUrl: 'https://platform.deepseek.com/api-keys', color: 'var(--success)', contextWindow: 1000000, extraModelIds: ['deepseek-flash', 'deepseek-v4-pro'] },
   { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'], docsUrl: 'https://platform.openai.com/api-keys', color: '#F59E0B', contextWindow: 128000 },
   { id: 'qwen', label: '通义千问 (阿里云)', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-turbo', 'qwen-plus', 'qwen-max'], docsUrl: 'https://help.aliyun.com/zh/dashscope', color: '#FF6A00', contextWindow: 128000 },
   { id: 'moonshot', label: '月之暗面 Moonshot', baseURL: 'https://api.moonshot.cn/v1', models: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k3'], docsUrl: 'https://platform.moonshot.cn/console/api-keys', color: '#6466F1', contextWindow: 128000 },
@@ -276,7 +276,7 @@ interface ALRCModel {
 // 与 ALRO 平台 (https://alro.huazhiweilai.com) 实际可用模型保持同步
 const FACTORY_MODEL_LIST: ALRCModel[] = [
   // DeepSeek
-  { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1) ⭐', color: '#10B981', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
+  { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1) ⭐', color: 'var(--success)', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
   { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', color: '#059669', priceIn: '$1.035', priceOut: '$3.11', level: '专业版' },
   // 智谱 GLM
   { id: 'glm-4.7', label: 'GLM 4.7', color: '#3B82F6', priceIn: '$0.103', priceOut: '$0.31', level: '智谱' },
@@ -293,7 +293,7 @@ const FACTORY_MODEL_LIST: ALRCModel[] = [
   { id: 'MiniMax-M2.7', label: 'MiniMax M2.7', color: '#7C3AED', priceIn: '$0.207', priceOut: '$0.62', level: 'MiniMax' },
   { id: 'MiniMax/MiniMax-M3', label: 'MiniMax M3', color: '#6D28D9', priceIn: '$0.345', priceOut: '$1.04', level: 'MiniMax最新' },
   // 其他
-  { id: 'hy3', label: 'HY3', color: '#10B981', priceIn: '$0.103', priceOut: '$0.31', level: '其他' },
+  { id: 'hy3', label: 'HY3', color: 'var(--success)', priceIn: '$0.103', priceOut: '$0.31', level: '其他' },
 ];
 // 模型工厂生图模型 (按次计费)
 const FACTORY_IMAGE_MODEL_LIST: { id: string; label: string; color: string; price: string; desc: string }[] = [
@@ -751,7 +751,7 @@ return (
                         const status = allKeyStatus[m.id];
                         return (
                           <div key={m.id} style={{
-                            padding: '12px 16px', border: '1px solid var(--border)', borderRadius: 8,
+                            padding: '12px 16px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
                             background: 'var(--panel)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                           }}>
                             <Space>
@@ -808,7 +808,7 @@ return (
                         const status = allKeyStatus[m.id];
                         return (
                           <div key={m.id} style={{
-                            padding: '12px 16px', border: '1px solid var(--border)', borderRadius: 8,
+                            padding: '12px 16px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
                             background: 'var(--panel)', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                           }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
@@ -867,7 +867,7 @@ return (
                       message={
                         <div style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.8 }}>
                           <div>模型工厂接入 GPT-5、Claude、Grok、豆包等顶级模型，支持对话、生图、生视频等多种能力。</div>
-                          <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--accent-soft)', borderRadius: 6, border: '1px dashed var(--accent)' }}>
+                          <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--accent-soft)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--accent)' }}>
                             <b>🔑 如何获取密钥？</b><br/>
                             添加作者微信 <b>agentai-platform</b> 获取密钥，填入后即可解锁全部模型。
                           </div>
@@ -885,10 +885,10 @@ return (
                         const hasKey = !!factoryKeys[group.envVar]?.trim();
                         const isExpanded = !!groupExpanded[group.id];
                         return (
-                          <div key={group.id} style={{ marginBottom: 12, padding: 10, background: 'var(--bg-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                          <div key={group.id} style={{ marginBottom: 12, padding: 10, background: 'var(--bg-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                             {/* 分组标题 + 密钥输入 */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                              <span style={{ width: 10, height: 10, borderRadius: 2, background: group.color, display: 'inline-block' }} />
+                              <span style={{ width: 10, height: 10, borderRadius: 'var(--radius-sm)', background: group.color, display: 'inline-block' }} />
                               <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--fg-2)' }}>{group.label}</span>
                               <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>{group.desc}</span>
                             </div>
@@ -939,7 +939,7 @@ return (
                                       return (
                                         <div key={m.id} style={{
                                           display: 'flex', alignItems: 'center', gap: 8,
-                                          padding: '6px 10px', borderRadius: 6,
+                                          padding: '6px 10px', borderRadius: 'var(--radius-md)',
                                           background: 'var(--bg)', border: isEnabled ? `1px solid ${group.color}` : '1px solid var(--border)',
                                         }}>
                                           <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
@@ -971,12 +971,12 @@ return (
                               </>
                             )}
                             {groupModels.length === 0 && hasKey && (
-                              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 4 }}>
+                              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
                                 ⏳ 该分组模型列表将从服务端动态加载
                               </div>
                             )}
                             {groupModels.length === 0 && !hasKey && (
-                              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 4 }}>
+                              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
                                 🔒 填入密钥后显示可用模型
                               </div>
                             )}
@@ -1117,7 +1117,7 @@ return (
                               {typeModels.map((m, idx) => (
                                 <div key={m.id} style={{
                                   display: 'flex', alignItems: 'center', gap: 8,
-                                  padding: '8px 12px', borderRadius: 8,
+                                  padding: '8px 12px', borderRadius: 'var(--radius-md)',
                                   background: 'var(--bg-2)', border: '1px solid var(--border)', marginBottom: 6,
                                 }}>
                                   <span style={{ width: 10, height: 10, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
@@ -1236,7 +1236,7 @@ return (
                     message="智能模型切换"
                     description="系统会根据任务复杂度自动推荐合适的模型：简单对话用免费模型，代码审查/架构设计/安全分析等复杂任务建议用强模型以获得更好的结果。"
                   />
-                  <div style={{ padding: '16px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--panel)' }}>
+                  <div style={{ padding: '16px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--panel)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <Space>
                         <ThunderboltOutlined style={{ color: 'var(--warning)' }} />

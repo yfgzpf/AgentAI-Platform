@@ -155,11 +155,11 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 10px',
     height: '100%',
     boxSizing: 'border-box',
-    background: 'var(--bg, #252525)',
-    borderRadius: '4px',
+    background: 'var(--bg)',
+    borderRadius: 'var(--radius-sm)',
     cursor: 'pointer',
     fontSize: 'var(--fs-micro)',
-    color: 'var(--fg, #e0e0e0)',
+    color: 'var(--fg)',
     transition: 'background 0.2s',
     userSelect: 'none',
   },
@@ -183,18 +183,18 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '2px 8px',
-    background: 'var(--panel, #1e1e1e)',
-    borderRadius: '3px',
+    background: 'var(--panel)',
+    borderRadius: 'var(--radius-sm)',
   },
   changeIcon: {
     fontSize: 'var(--fs-micro)',
   },
   additions: {
-    color: '#238636',
+    color: 'var(--success)',
     fontWeight: 500,
   },
   deletions: {
-    color: '#da3633',
+    color: 'var(--danger)',
     fontWeight: 500,
   },
   sync: {
@@ -203,11 +203,11 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '4px',
   },
   ahead: {
-    color: '#238636',
+    color: 'var(--success)',
     fontWeight: 600,
   },
   behind: {
-    color: '#da3633',
+    color: 'var(--danger)',
     fontWeight: 600,
   },
   spinner: {

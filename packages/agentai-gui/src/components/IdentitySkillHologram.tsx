@@ -36,7 +36,7 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
       <div style={{
         position: 'relative', padding: '24px 32px',
         background: 'rgba(99,102,241,0.1)',
-        borderRadius: 16, border: '1px solid rgba(99,102,241,0.3)',
+        borderRadius: 'var(--radius-lg)', border: '1px solid rgba(99,102,241,0.3)',
         marginBottom: 32, overflow: 'hidden',
       }}>
         {/* 扫描线 */}
@@ -59,8 +59,8 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
                 background: visibleSkills.includes(skill)
                   ? 'rgba(16,185,129,0.2)'
                   : 'rgba(255,255,255,0.05)',
-                border: `1px solid ${visibleSkills.includes(skill) ? '#10b981' : 'rgba(255,255,255,0.1)'}`,
-                borderRadius: 8, color: visibleSkills.includes(skill) ? '#10b981' : 'rgba(255,255,255,0.4)',
+                border: `1px solid ${visibleSkills.includes(skill) ? 'var(--success)' : 'rgba(255,255,255,0.1)'}`,
+                borderRadius: 'var(--radius-md)', color: visibleSkills.includes(skill) ? 'var(--success)' : 'rgba(255,255,255,0.4)',
                 fontSize: 'var(--fs-md)', transition: 'all 0.3s ease',
                 animation: visibleSkills.includes(skill) ? 'skillPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' : 'none',
               }}
@@ -81,7 +81,7 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
           onClick={onContinue}
           style={{
             background: 'linear-gradient(135deg, #10b981, #06b6d4)',
-            border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 'var(--fs-lg)',
+            border: 'none', borderRadius: 'var(--radius-lg)', padding: '0 48px', fontSize: 'var(--fs-lg)',
           }}
         >
           激活身份 →

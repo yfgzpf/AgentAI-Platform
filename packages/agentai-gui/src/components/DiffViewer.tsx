@@ -209,14 +209,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           style={{
             display: 'flex', minHeight: 21,
             background: l.type === 'add' ? 'rgba(34,197,94,0.08)' : l.type === 'del' ? 'rgba(239,68,68,0.08)' : 'transparent',
-            borderLeft: l.type === 'add' ? '3px solid #22c55e' : l.type === 'del' ? '3px solid #ef4444' : '3px solid transparent',
+            borderLeft: l.type === 'add' ? '3px solid var(--success)' : l.type === 'del' ? '3px solid var(--danger)' : '3px solid transparent',
             fontSize: 'var(--fs-sm)', lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
           }}
         >
           {/* 行号 - old */}
           <span style={{
             width: 40, textAlign: 'right', paddingRight: 6,
-            fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none',
+            fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none',
             background: l.type === 'del' ? 'rgba(239,68,68,0.12)' : 'transparent',
           }}>
             {l.oldNum}
@@ -224,7 +224,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           {/* 行号 - new */}
           <span style={{
             width: 40, textAlign: 'right', paddingRight: 8,
-            fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none',
+            fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none',
             borderRight: '1px solid var(--border)',
             background: l.type === 'add' ? 'rgba(34,197,94,0.12)' : 'transparent',
           }}>
@@ -234,7 +234,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           <span style={{
             paddingLeft: 8, flex: 1,
             whiteSpace: 'pre', overflowX: 'auto',
-            color: l.type === 'add' ? '#16a34a' : l.type === 'del' ? '#dc2626' : 'var(--fg-2)',
+            color: l.type === 'add' ? 'var(--success)' : l.type === 'del' ? 'var(--danger)' : 'var(--fg-2)',
           }}>
             {l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' '} {l.text}
           </span>
@@ -269,13 +269,13 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             <div key={li} style={{
               display: 'flex', minHeight: 21,
               background: l.type === 'del' ? 'rgba(239,68,68,0.08)' : 'transparent',
-              borderLeft: l.type === 'del' ? '3px solid #ef4444' : '3px solid transparent',
+              borderLeft: l.type === 'del' ? '3px solid var(--danger)' : '3px solid transparent',
               fontSize: 'var(--fs-sm)', lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
             }}>
-              <span style={{ width: 40, textAlign: 'right', paddingRight: 8, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}>{l.num}</span>
+              <span style={{ width: 40, textAlign: 'right', paddingRight: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none' }}>{l.num}</span>
               <span style={{
                 flex: 1, paddingLeft: 4, whiteSpace: 'pre', overflow: 'hidden',
-                color: l.type === 'del' ? '#dc2626' : 'var(--fg-2)',
+                color: l.type === 'del' ? 'var(--danger)' : 'var(--fg-2)',
                 textOverflow: 'ellipsis',
               }}>{l.text}</span>
             </div>
@@ -287,13 +287,13 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             <div key={li} style={{
               display: 'flex', minHeight: 21,
               background: l.type === 'add' ? 'rgba(34,197,94,0.08)' : 'transparent',
-              borderLeft: l.type === 'add' ? '3px solid #22c55e' : '3px solid transparent',
+              borderLeft: l.type === 'add' ? '3px solid var(--success)' : '3px solid transparent',
               fontSize: 'var(--fs-sm)', lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
             }}>
-              <span style={{ width: 40, textAlign: 'right', paddingRight: 8, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}>{l.num}</span>
+              <span style={{ width: 40, textAlign: 'right', paddingRight: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted)', userSelect: 'none' }}>{l.num}</span>
               <span style={{
                 flex: 1, paddingLeft: 4, whiteSpace: 'pre', overflow: 'hidden',
-                color: l.type === 'add' ? '#16a34a' : 'var(--fg-2)',
+                color: l.type === 'add' ? 'var(--success)' : 'var(--fg-2)',
                 textOverflow: 'ellipsis',
               }}>{l.text}</span>
             </div>
@@ -307,7 +307,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
 
   return (
     <div style={{
-      margin: '6px 0', borderRadius: 8, overflow: 'hidden',
+      margin: '6px 0', borderRadius: 'var(--radius-md)', overflow: 'hidden',
       border: '1px solid var(--border)',
       background: 'var(--card)',
       boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
@@ -331,9 +331,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
         {/* 语言彩色标记 */}
         {lang && (
           <span style={{
-            width: 20, height: 20, borderRadius: 4,
+            width: 20, height: 20, borderRadius: 'var(--radius-sm)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: langColor, color: '#fff',
+            background: langColor, color: 'var(--fg-on-accent)',
             fontSize: 'var(--fs-micro)', fontWeight: 700, flexShrink: 0,
           }}>{lang.toUpperCase()}</span>
         )}
@@ -352,14 +352,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
                 <span style={{ 
                   fontSize: 'var(--fs-micro)', 
                   fontFamily: 'monospace', 
-                  color: '#16a34a', 
+                  color: 'var(--success)', 
                   fontWeight: 600,
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 2,
                   padding: '1px 4px',
                   background: 'rgba(34,197,94,0.1)',
-                  borderRadius: 3,
+                  borderRadius: 'var(--radius-sm)',
                 }}>
                   <PlusOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                   {totalAdded}
@@ -371,14 +371,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
                 <span style={{ 
                   fontSize: 'var(--fs-micro)', 
                   fontFamily: 'monospace', 
-                  color: '#dc2626', 
+                  color: 'var(--danger)', 
                   fontWeight: 600,
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 2,
                   padding: '1px 4px',
                   background: 'rgba(239,68,68,0.1)',
-                  borderRadius: 3,
+                  borderRadius: 'var(--radius-sm)',
                 }}>
                   <MinusOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                   {totalDeleted}
@@ -400,7 +400,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
         )}
         {/* 状态标签 */}
         {applied && (
-          <span style={{ fontSize: 'var(--fs-micro)', color: '#16a34a', background: 'rgba(34,197,94,0.1)', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--success)', background: 'rgba(34,197,94,0.1)', padding: '1px 5px', borderRadius: 'var(--radius-sm)', flexShrink: 0 }}>
             已应用
           </span>
         )}
@@ -420,7 +420,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             <span
               onClick={() => setViewMode('unified')}
               style={{
-                padding: '1px 6px', borderRadius: 3, cursor: 'pointer',
+                padding: '1px 6px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                 background: viewMode === 'unified' ? 'var(--accent)' : 'transparent',
                 color: viewMode === 'unified' ? '#fff' : 'var(--muted-2)',
                 fontWeight: viewMode === 'unified' ? 500 : 400,
@@ -429,7 +429,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             <span
               onClick={() => setViewMode('side')}
               style={{
-                padding: '1px 6px', borderRadius: 3, cursor: 'pointer',
+                padding: '1px 6px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                 background: viewMode === 'side' ? 'var(--accent)' : 'transparent',
                 color: viewMode === 'side' ? '#fff' : 'var(--muted-2)',
                 fontWeight: viewMode === 'side' ? 500 : 400,
@@ -450,7 +450,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
               <Tooltip title="拒绝">
                 <CloseOutlined
                   onClick={(e) => { e.stopPropagation(); onReject(previewId); }}
-                  style={{ fontSize: 'var(--fs-micro)', color: '#ef4444', cursor: 'pointer', padding: 2 }}
+                  style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)', cursor: 'pointer', padding: 2 }}
                 />
               </Tooltip>
             )}
@@ -458,7 +458,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
               <Tooltip title="确认应用">
                 <CheckOutlined
                   onClick={(e) => { e.stopPropagation(); onApply(previewId); }}
-                  style={{ fontSize: 'var(--fs-micro)', color: '#22c55e', cursor: 'pointer', padding: 2, fontWeight: 700 }}
+                  style={{ fontSize: 'var(--fs-micro)', color: 'var(--success)', cursor: 'pointer', padding: 2, fontWeight: 700 }}
                 />
               </Tooltip>
             )}

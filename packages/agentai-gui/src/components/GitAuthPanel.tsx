@@ -389,7 +389,7 @@ export const GitAuthPanel: React.FC<GitAuthPanelProps> = ({ visible, onClose }) 
             </Form>
 
             {gitUser.name && (
-              <div style={{ marginTop: 16, padding: 12, background: 'var(--panel)', borderRadius: 4 }}>
+              <div style={{ marginTop: 16, padding: 12, background: 'var(--panel)', borderRadius: 'var(--radius-sm)' }}>
                 <Text type="secondary">当前配置:</Text><br />
                 <Text strong>{gitUser.name}</Text> &lt;{gitUser.email}&gt;
               </div>

@@ -159,7 +159,7 @@ export const RightPanel: React.FC = () => {
                 <span style={{ 
                   display: 'flex', alignItems: 'center', gap: 3,
                   padding: '1px 6px',
-                  borderRadius: 4,
+                  borderRadius: 'var(--radius-sm)',
                   background: 'rgba(34,197,94,0.08)',
                   border: '1px solid rgba(34,197,94,0.15)',
                   cursor: 'help',
@@ -186,7 +186,7 @@ export const RightPanel: React.FC = () => {
                   color: 'var(--muted-2)', 
                   fontSize: 'var(--fs-micro)',
                   padding: '1px 6px',
-                  borderRadius: 3,
+                  borderRadius: 'var(--radius-sm)',
                   border: '1px solid var(--border)',
                 }}
               >
@@ -234,7 +234,7 @@ export const RightPanel: React.FC = () => {
             {currentFile?.path && (
               <div style={{
                 border: '1px solid var(--border)',
-                borderRadius: 5,
+                borderRadius: 'var(--radius-sm)',
                 background: 'rgba(99,102,241,0.04)',
                 overflow: 'hidden',
               }}>

@@ -666,10 +666,10 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
             options={PRESETS.map(p => ({ value: p.label, label: `${p.label} · ${p.category}` }))} />
 
           {/* 四维润色 */}
-          <div style={{ padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+          <div style={{ padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg-2)' }}>提示词润色</span>
-              <Button size="small" icon={<BulbOutlined />} loading={optimizing} onClick={optimizePrompt} disabled={!prompt.trim() || busy} style={{ borderRadius: 6 }}>{optimizing ? '润色中...' : '一键润色'}</Button>
+              <Button size="small" icon={<BulbOutlined />} loading={optimizing} onClick={optimizePrompt} disabled={!prompt.trim() || busy} style={{ borderRadius: 'var(--radius-md)' }}>{optimizing ? '润色中...' : '一键润色'}</Button>
             </div>
             <Checkbox.Group value={dimensions} onChange={(vals) => setDimensions(vals as string[])} style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               <Checkbox value="action" style={{ fontSize: 'var(--fs-micro)' }}>动作增强</Checkbox>
@@ -716,7 +716,7 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
           </div>
 
           {/* 视频做原型: 上传一段视频 → 自动提取首尾帧 */}
-          <div style={{ padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+          <div style={{ padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
               <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg-2)' }}><VideoCameraAddOutlined /> 视频做原型</span>
               {uploadedVideoPath && <Button size="small" type="text" danger icon={<CloseOutlined />} onClick={() => { setUploadedVideoPath(''); setFirstFrame(''); setLastFrame(''); }} />}
@@ -753,15 +753,15 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
 
           {/* 首尾帧预览 */}
           {firstFrame && (
-            <div style={{ display: 'flex', gap: 8, padding: 6, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', gap: 8, padding: 6, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 2 }}>首帧</div>
-                <img src={firstFrame} alt="首帧" style={{ width: 80, height: 48, objectFit: 'cover', borderRadius: 4 }} />
+                <img src={firstFrame} alt="首帧" style={{ width: 80, height: 48, objectFit: 'cover', borderRadius: 'var(--radius-sm)' }} />
               </div>
               {lastFrame && (
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 2 }}>尾帧</div>
-                  <img src={lastFrame} alt="尾帧" style={{ width: 80, height: 48, objectFit: 'cover', borderRadius: 4 }} />
+                  <img src={lastFrame} alt="尾帧" style={{ width: 80, height: 48, objectFit: 'cover', borderRadius: 'var(--radius-sm)' }} />
                 </div>
               )}
               <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flex: 1, display: 'flex', alignItems: 'center' }}>
@@ -793,8 +793,8 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {refImages.map((img, i) => (
                 <div key={i} style={{ position: 'relative' }}>
-                  <img src={img} alt={`ref${i}`} style={{ width: 56, height: 40, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }} />
-                  <span onClick={() => setRefImages(prev => prev.filter((_, j) => j !== i))} style={{ position: 'absolute', top: -4, right: -4, width: 14, height: 14, borderRadius: '50%', background: 'var(--danger)', color: '#fff', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>×</span>
+                  <img src={img} alt={`ref${i}`} style={{ width: 56, height: 40, objectFit: 'cover', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }} />
+                  <span onClick={() => setRefImages(prev => prev.filter((_, j) => j !== i))} style={{ position: 'absolute', top: -4, right: -4, width: 14, height: 14, borderRadius: '50%', background: 'var(--danger)', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>×</span>
                 </div>
               ))}
             </div>
@@ -804,7 +804,7 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
           <div>
             <Space>
               <Button type="primary" size="large" icon={<PlayCircleOutlined />} loading={busy} onClick={() => submit()} disabled={!prompt.trim() || busy}
-                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: 10, padding: '0 28px', boxShadow: '0 4px 16px rgba(99,102,241,0.3)' }}>
+                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: 'var(--radius-md)', padding: '0 28px', boxShadow: '0 4px 16px rgba(99,102,241,0.3)' }}>
                 {busy ? '提交中...' : '生成视频'}
               </Button>
               <Button size="large" icon={<RedoOutlined />} onClick={resetAll} disabled={busy}>重置</Button>
@@ -812,7 +812,7 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
           </div>
 
           {/* 填充: 模型信息 */}
-          <div style={{ padding: '8px 10px', borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+          <div style={{ padding: '8px 10px', borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg-2)', marginBottom: 4 }}>当前引擎</div>
             <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
               {model === 'agnes-video-2.5' && `Agnes Video 2.5 正式版 | ${videoSize} | ${aspectRatio} | ${duration} | 文生/图生/首尾帧/参考`}
@@ -862,13 +862,13 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
           }
         >
           {current.videoUrl ? (
-            <div style={{ textAlign: 'center', background: 'var(--panel)', padding: 12, borderRadius: 8, animation: 'videoResultIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
+            <div style={{ textAlign: 'center', background: 'var(--panel)', padding: 12, borderRadius: 'var(--radius-md)', animation: 'videoResultIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
               <video
                 src={current.videoUrl}
                 controls
                 autoPlay
                 loop
-                style={{ maxWidth: '100%', maxHeight: 480, borderRadius: 4 }}
+                style={{ maxWidth: '100%', maxHeight: 480, borderRadius: 'var(--radius-sm)' }}
               />
             </div>
           ) : (
@@ -913,7 +913,7 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
                 style={{
                   position: 'relative',
                   border: current?.id === item.id ? '2px solid var(--accent)' : '1px solid var(--border)',
-                  borderRadius: 4,
+                  borderRadius: 'var(--radius-sm)',
                   overflow: 'hidden',
                   background: 'var(--bg)',
                 }}
@@ -1071,7 +1071,7 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8, maxWidth: 500, margin: '0 auto' }}>
             {PRESETS.slice(0, 6).map(p => (
               <button key={p.label} onClick={() => setPrompt(p.prompt)}
-                style={{ padding: '14px 8px', borderRadius: 10, cursor: 'pointer', background: 'var(--panel)', border: '1px solid var(--border)', transition: 'all 0.2s', textAlign: 'center' }}
+                style={{ padding: '14px 8px', borderRadius: 'var(--radius-md)', cursor: 'pointer', background: 'var(--panel)', border: '1px solid var(--border)', transition: 'all 0.2s', textAlign: 'center' }}
                 onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; }}>
                 <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, display: 'block' }}>{p.label}</span>

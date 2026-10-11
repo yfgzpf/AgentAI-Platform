@@ -120,7 +120,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
             className: `ai-change-${dec.type}`,
             linesDecorationsClassName: `ai-gutter-${dec.type}`,
             overviewRuler: {
-              color: dec.type === 'created' ? '#4ade80' : dec.type === 'deleted' ? '#ef4444' : '#e8a838',
+              color: dec.type === 'created' ? 'var(--success)' : dec.type === 'deleted' ? 'var(--danger)' : '#e8a838',
               position: monaco.editor.OverviewRulerLane.Full,
             },
           },
@@ -174,9 +174,9 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         .ai-gutter-deleted::after { content: '🗑️'; font-size: var(--fs-micro); margin-left: 2px; }
 
         /* AI 修改行尾注释 */
-        .ai-annotation-created::after { content: ' ← AI 新建'; color: #4ade80; font-size: var(--fs-micro); opacity: 0.7; margin-left: 12px; }
+        .ai-annotation-created::after { content: ' ← AI 新建'; color: var(--success); font-size: var(--fs-micro); opacity: 0.7; margin-left: 12px; }
         .ai-annotation-modified::after { content: ' ← AI 修改'; color: #e8a838; font-size: var(--fs-micro); opacity: 0.7; margin-left: 12px; }
-        .ai-annotation-deleted::after { content: ' ← AI 删除'; color: #ef4444; font-size: var(--fs-micro); opacity: 0.7; margin-left: 12px; }
+        .ai-annotation-deleted::after { content: ' ← AI 删除'; color: var(--danger); font-size: var(--fs-micro); opacity: 0.7; margin-left: 12px; }
       `;
       document.head.appendChild(style);
     }

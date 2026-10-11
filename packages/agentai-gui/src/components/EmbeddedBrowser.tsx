@@ -811,7 +811,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
           value: h.url,
           label: (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-micro)' }}>
-              <img src={getFaviconUrl(h.url)} style={{ width: 14, height: 14, borderRadius: 2 }} alt="" />
+              <img src={getFaviconUrl(h.url)} style={{ width: 14, height: 14, borderRadius: 'var(--radius-sm)' }} alt="" />
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.title || h.url}</span>
               <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>{getHostname(h.url)}</span>
             </div>
@@ -845,7 +845,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
 
   return (
     <div ref={containerRef} style={{
-      borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--card)',
+      borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--card)',
       display: 'flex', flexDirection: 'column', height: '100%',
       ...(fullscreen ? { position: 'fixed', inset: 0, zIndex: 'var(--z-dragging)', background: '#000' } : {}),
       ...style,
@@ -865,7 +865,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               }}>
               {tab.loading && <ReloadOutlined spin style={{ fontSize: 'var(--fs-micro)' }} />}
-              {tab.url && <img src={getFaviconUrl(tab.url)} style={{ width: 12, height: 12, borderRadius: 2 }} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
+              {tab.url && <img src={getFaviconUrl(tab.url)} style={{ width: 12, height: 12, borderRadius: 'var(--radius-sm)' }} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tab.title || tab.url || '新标签页'}</span>
               <CloseOutlined style={{ fontSize: 'var(--fs-micro)', opacity: 0.5 }} onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }} />
             </div>
@@ -899,7 +899,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
                       onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(99,102,241,0.08)'; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                     >
-                      <img src={getFaviconUrl(bm.url)} style={{ width: 14, height: 14, borderRadius: 2, flexShrink: 0 }} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      <img src={getFaviconUrl(bm.url)} style={{ width: 14, height: 14, borderRadius: 'var(--radius-sm)', flexShrink: 0 }} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{bm.title}</span>
                     </div>
                   ))}
@@ -929,14 +929,14 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
                 onClick={() => { if (activeTabId) navigate(bm.url); else createTab(bm.url); }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 3,
-                  padding: '1px 6px', borderRadius: 3, cursor: 'pointer',
+                  padding: '1px 6px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                   fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', whiteSpace: 'nowrap',
                   flexShrink: 0, maxWidth: 120, overflow: 'hidden',
                 }}
                 onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(99,102,241,0.1)'; (e.currentTarget as HTMLElement).style.color = 'var(--fg)'; }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)'; }}
               >
-                <img src={getFaviconUrl(bm.url)} style={{ width: 12, height: 12, borderRadius: 2, flexShrink: 0 }} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                <img src={getFaviconUrl(bm.url)} style={{ width: 12, height: 12, borderRadius: 'var(--radius-sm)', flexShrink: 0 }} alt="" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{bm.title}</span>
               </div>
             </Tooltip>
@@ -966,7 +966,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
           filterOption={false}
         >
           <Input size="small" onPressEnter={() => navigate(urlInput)} placeholder="输入 URL 或搜索..."
-            prefix={activeTab?.url ? <span style={{ width: 6, height: 6, borderRadius: '50%', background: activeTab.url.startsWith('https') ? '#22c55e' : '#f59e0b', display: 'inline-block' }} /> : null}
+            prefix={activeTab?.url ? <span style={{ width: 6, height: 6, borderRadius: '50%', background: activeTab.url.startsWith('https') ? 'var(--success)' : '#f59e0b', display: 'inline-block' }} /> : null}
             suffix={<SendOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer' }} onClick={() => navigate(urlInput)} />}
             style={{ fontSize: compact ? 10 : 11, height: compact ? 22 : 26, fontFamily: 'monospace' }}
           />
@@ -989,7 +989,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
           const connLabel = playwrightMode ? 'PW 引擎' : 'AI 桥接';
           return (
             <Tooltip title={connected ? `${connLabel}${aiExecuting ? ' (执行中)' : ''}` : `${connLabel}未连接`}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '1px 6px', borderRadius: 4, background: connected ? aiExecuting ? 'rgba(250,204,21,0.15)' : 'rgba(99,102,241,0.15)' : 'rgba(239,68,68,0.15)', fontSize: 'var(--fs-micro)', color: connected ? aiExecuting ? '#facc15' : '#818cf8' : '#ef4444' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '1px 6px', borderRadius: 'var(--radius-sm)', background: connected ? aiExecuting ? 'rgba(250,204,21,0.15)' : 'rgba(99,102,241,0.15)' : 'rgba(239,68,68,0.15)', fontSize: 'var(--fs-micro)', color: connected ? aiExecuting ? '#facc15' : '#818cf8' : 'var(--danger)' }}>
                 <RobotOutlined style={{ fontSize: 'var(--fs-micro)' }} />{aiExecuting ? '执行中' : connected ? '已连接' : '未连接'}
               </div>
             </Tooltip>
@@ -1013,7 +1013,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
         )}
         {/* RPA 录制指示器 */}
         {recording && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 4, background: 'var(--danger-soft)', fontSize: 'var(--fs-micro)', color: 'var(--danger)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 'var(--radius-sm)', background: 'var(--danger-soft)', fontSize: 'var(--fs-micro)', color: 'var(--danger)' }}>
             <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--danger)', animation: 'pulse 1.5s infinite' }} />
             录制中 ({recordStepCount})
           </div>
@@ -1039,12 +1039,12 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
                 width: widthClass, height: '100%', border: 'none',
                 display: pwEngineStatus === 'running' ? 'block' : 'none',
                 cursor: 'pointer', outline: 'none',
-                ...(screenMode === 'mobile' ? { borderRadius: 12, boxShadow: '0 0 20px rgba(0,0,0,0.2)' } : {}),
+                ...(screenMode === 'mobile' ? { borderRadius: 'var(--radius-lg)', boxShadow: '0 0 20px rgba(0,0,0,0.2)' } : {}),
               }}
             />
             {/* Playwright 空状态 */}
             {pwEngineStatus !== 'running' && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontSize: 'var(--fs-md)', flexDirection: 'column', gap: 8, position: 'absolute', inset: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted)', fontSize: 'var(--fs-md)', flexDirection: 'column', gap: 8, position: 'absolute', inset: 0 }}>
                 <ThunderboltOutlined style={{ fontSize: 40, color: playwrightMode ? '#818cf8' : '#ccc' }} />
                 <div style={{ fontWeight: 600 }}>Playwright 浏览器引擎</div>
                 <div style={{ fontSize: 'var(--fs-micro)', color: '#bbb' }}>
@@ -1055,7 +1055,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
             )}
             {/* Playwright AI 状态指示器 */}
             {aiControlled && pwEngineStatus === 'running' && (
-              <div style={{ position: 'absolute', top: 4, right: 4, padding: '1px 6px', borderRadius: 4, background: aiExecuting ? 'rgba(250,204,21,0.85)' : 'rgba(99,102,241,0.85)', color: '#fff', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', gap: 3 }}>
+              <div style={{ position: 'absolute', top: 4, right: 4, padding: '1px 6px', borderRadius: 'var(--radius-sm)', background: aiExecuting ? 'rgba(250,204,21,0.85)' : 'rgba(99,102,241,0.85)', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', gap: 3 }}>
                 <ThunderboltOutlined style={{ fontSize: 'var(--fs-micro)' }} />{aiExecuting ? 'AI 执行中' : 'PW 引擎'}
               </div>
             )}
@@ -1071,7 +1071,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
                 border: 'none',
                 transform: zoom < 1 ? `scale(${zoom})` : undefined,
                 transformOrigin: 'top left',
-                ...(screenMode === 'mobile' ? { borderRadius: 12, boxShadow: '0 0 20px rgba(0,0,0,0.2)' } : {})
+                ...(screenMode === 'mobile' ? { borderRadius: 'var(--radius-lg)', boxShadow: '0 0 20px rgba(0,0,0,0.2)' } : {})
               }}
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" />
           </div>
@@ -1080,21 +1080,21 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
             position:absolute / inset:0, 同时渲染会两层文字互相穿透叠字
             (2026-10-11 截图实测: "智能体浏览器" 与 "Playwright 浏览器引擎" 重合在一起) */}
         {!playwrightMode && (tabs.length === 0 || !activeTab?.url) ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontSize: 'var(--fs-md)', flexDirection: 'column', gap: 8, position: 'absolute', inset: 0 }}>
-            <GlobalOutlined style={{ fontSize: 40, color: '#ccc' }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted)', fontSize: 'var(--fs-md)', flexDirection: 'column', gap: 8, position: 'absolute', inset: 0 }}>
+            <GlobalOutlined style={{ fontSize: 40, color: 'var(--fg-2)' }} />
             <div style={{ fontWeight: 600 }}>智能体浏览器</div>
             <div style={{ fontSize: 'var(--fs-micro)', color: '#bbb' }}>输入 URL 开始浏览，AI 可实时控制页面</div>
-            {aiControlled && <div style={{ fontSize: 'var(--fs-micro)', color: '#999', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}><ThunderboltOutlined style={{ color: '#818cf8' }} />AI 桥接 {wsConnected ? '✅ 已连接' : '⏳ 等待连接'}</div>}
-            {bookmarks.length > 0 && <div style={{ fontSize: 'var(--fs-micro)', color: '#999', marginTop: 2 }}>📚 已加载 {bookmarks.length} 个本地书签</div>}
+            {aiControlled && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}><ThunderboltOutlined style={{ color: '#818cf8' }} />AI 桥接 {wsConnected ? '✅ 已连接' : '⏳ 等待连接'}</div>}
+            {bookmarks.length > 0 && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 2 }}>📚 已加载 {bookmarks.length} 个本地书签</div>}
           </div>
         ) : null}
         {aiControlled && activeTab?.url && (
-          <div style={{ position: 'absolute', top: 4, right: 4, padding: '1px 6px', borderRadius: 4, background: aiExecuting ? 'rgba(250,204,21,0.85)' : 'rgba(99,102,241,0.85)', color: '#fff', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', gap: 3, transition: 'background 0.3s' }}>
+          <div style={{ position: 'absolute', top: 4, right: 4, padding: '1px 6px', borderRadius: 'var(--radius-sm)', background: aiExecuting ? 'rgba(250,204,21,0.85)' : 'rgba(99,102,241,0.85)', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', gap: 3, transition: 'background 0.3s' }}>
             <RobotOutlined style={{ fontSize: 'var(--fs-micro)' }} />{aiExecuting ? 'AI 执行中' : 'AI 控制'}
           </div>
         )}
         {hasScanResult && !compact && (
-          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '2px 8px', background: 'rgba(74,222,128,0.12)', borderTop: '1px solid rgba(74,222,128,0.2)', fontSize: 'var(--fs-micro)', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '2px 8px', background: 'rgba(74,222,128,0.12)', borderTop: '1px solid rgba(74,222,128,0.2)', fontSize: 'var(--fs-micro)', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 4 }}>
             <CheckCircleOutlined style={{ fontSize: 'var(--fs-micro)' }} />已识别 {elements.length} 个可交互元素
           </div>
         )}
@@ -1104,10 +1104,10 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
       {!compact && aiControlled && hasScanResult && (
         <div style={{ maxHeight: 120, overflow: 'auto', borderTop: '1px solid var(--border)', background: 'var(--bg-2)', padding: '3px 6px' }}>
           <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2, display: 'flex', justifyContent: 'space-between' }}>
-            <span>页面元素 (已发 AI 上下文)</span><span style={{ color: '#4ade80' }}>{elements.length} 个</span>
+            <span>页面元素 (已发 AI 上下文)</span><span style={{ color: 'var(--success)' }}>{elements.length} 个</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-            {elements.slice(0, 20).map((el, i) => (<Tag key={i} style={{ fontSize: 'var(--fs-micro)', borderRadius: 2, lineHeight: '12px', height: 14, margin: 0, borderColor: el.interactivity > 80 ? '#4ade80' : 'var(--border)' }}>{el.tag}{el.text ? `: ${el.text.slice(0, 15)}` : ''}</Tag>))}
+            {elements.slice(0, 20).map((el, i) => (<Tag key={i} style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)', lineHeight: '12px', height: 14, margin: 0, borderColor: el.interactivity > 80 ? 'var(--success)' : 'var(--border)' }}>{el.tag}{el.text ? `: ${el.text.slice(0, 15)}` : ''}</Tag>))}
             {elements.length > 20 && <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>+{elements.length - 20}</span>}
           </div>
         </div>
@@ -1130,7 +1130,7 @@ if (autoScan && tabId === activeTabId) setTimeout(() => scanIframe(tabId), 800);
         width={450}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
-          <div style={{ padding: '8px 12px', background: 'rgba(99,102,241,0.08)', borderRadius: 6, fontSize: 'var(--fs-sm)', color: 'var(--muted)', lineHeight: 1.6 }}>
+          <div style={{ padding: '8px 12px', background: 'rgba(99,102,241,0.08)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-sm)', color: 'var(--muted)', lineHeight: 1.6 }}>
             📹 录制模式下, 你在浏览器中的每次点击、输入、提交都会被自动记录为可回放的脚本。<br />
             录制完成后, 可以让 AI 定时回放或批量执行。
           </div>

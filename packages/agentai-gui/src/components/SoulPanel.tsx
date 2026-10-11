@@ -151,7 +151,7 @@ export const SoulPanel: React.FC = () => {
         style={{ marginBottom: 12, background: 'var(--bg-2)', border: '1px solid var(--border)' }}
       >
         {status.dream.dreaming && (
-          <div style={{ marginBottom: 8, padding: 6, background: 'rgba(99,102,241,0.08)', borderRadius: 6 }}>
+          <div style={{ marginBottom: 8, padding: 6, background: 'rgba(99,102,241,0.08)', borderRadius: 'var(--radius-md)' }}>
             <Spin size="small" /> <span style={{ fontSize: 'var(--fs-micro)', color: '#6366f1' }}>正在梦境中...</span>
           </div>
         )}
@@ -162,7 +162,7 @@ export const SoulPanel: React.FC = () => {
             const ageMin = Math.round((Date.now() - dream.ts) / 60000);
             const moodCfg = MOOD_CONFIG[dream.mood] || MOOD_CONFIG.curious;
             return (
-              <div key={i} style={{ marginBottom: 8, padding: 8, borderRadius: 6, background: 'var(--bg-1)', border: '1px solid var(--border)' }}>
+              <div key={i} style={{ marginBottom: 8, padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--bg-1)', border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <span style={{ fontSize: 'var(--fs-md)' }}>{moodCfg.emoji}</span>
                   <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)' }}>
@@ -209,7 +209,7 @@ export const SoulPanel: React.FC = () => {
           <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', padding: 8 }}>暂无未解问题</div>
         ) : (
           status.curiosity.pending.map((q, i) => (
-            <div key={i} style={{ marginBottom: 6, padding: 6, borderRadius: 4, background: 'var(--bg-1)' }}>
+            <div key={i} style={{ marginBottom: 6, padding: 6, borderRadius: 'var(--radius-sm)', background: 'var(--bg-1)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <Tag color="purple" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{q.type}</Tag>
                 <Progress percent={Math.round(q.priority * 100)} size="small" style={{ width: 60 }} showInfo={false} strokeColor="#8b5cf6" />
@@ -242,7 +242,7 @@ export const SoulPanel: React.FC = () => {
           style={{ marginBottom: 12, background: 'var(--bg-2)', border: '1px solid var(--border)' }}
         >
           {status.innerVoice.map((t, i) => (
-            <div key={i} style={{ marginBottom: 4, padding: 4, borderRadius: 4, background: 'rgba(139,92,246,0.06)' }}>
+            <div key={i} style={{ marginBottom: 4, padding: 4, borderRadius: 'var(--radius-sm)', background: 'rgba(139,92,246,0.06)' }}>
               <Tag color="purple" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{t.mood}</Tag>
               <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginLeft: 4 }}>{t.context}</span>
               <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg)', marginTop: 2, fontStyle: 'italic' }}>
@@ -263,7 +263,7 @@ export const SoulPanel: React.FC = () => {
           {status.debate.map((d, i) => {
             const ageMin = Math.round((Date.now() - d.ts) / 60000);
             return (
-              <div key={i} style={{ marginBottom: 8, padding: 6, borderRadius: 4, background: 'var(--bg-1)' }}>
+              <div key={i} style={{ marginBottom: 8, padding: 6, borderRadius: 'var(--radius-sm)', background: 'var(--bg-1)' }}>
                 <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)' }}>
                   💭 {ageMin}分钟前: {d.topic.slice(0, 60)}
                 </div>

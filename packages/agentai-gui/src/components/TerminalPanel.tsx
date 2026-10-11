@@ -115,7 +115,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             <Terminal size={18} />
             <span style={styles.title}>终端任务</span>
             {runningCount > 0 && (
-              <Badge count={runningCount} style={{ backgroundColor: '#52c41a' }} />
+              <Badge count={runningCount} style={{ backgroundColor: 'var(--success)' }} />
             )}
           </Space>
           <Space>
@@ -151,8 +151,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                 key={task.id} 
                 style={{
                   ...styles.task,
-                  borderColor: task.status === 'running' ? '#52c41a' : 
-                               task.status === 'error' ? '#ff4d4f' : '#d9d9d9'
+                  borderColor: task.status === 'running' ? 'var(--success)' : 
+                               task.status === 'error' ? 'var(--danger)' : '#d9d9d9'
                 }}
               >
                 {/* Task Header */}
@@ -162,11 +162,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                 >
                   <Space>
                     {task.status === 'running' ? (
-                      <Play size={14} style={{ color: '#52c41a' }} />
+                      <Play size={14} style={{ color: 'var(--success)' }} />
                     ) : task.status === 'error' ? (
-                      <Square size={14} style={{ color: '#ff4d4f' }} />
+                      <Square size={14} style={{ color: 'var(--danger)' }} />
                     ) : (
-                      <div style={{ ...styles.statusDot, background: '#52c41a' }} />
+                      <div style={{ ...styles.statusDot, background: 'var(--success)' }} />
                     )}
                     <Text strong style={{ fontFamily: 'monospace' }}>
                       {task.command}
@@ -321,8 +321,8 @@ const styles: Record<string, React.CSSProperties> = {
   panel: {
     width: 720,
     maxHeight: '80vh',
-    background: 'var(--panel, #1e1e1e)',
-    borderRadius: 8,
+    background: 'var(--panel)',
+    borderRadius: 'var(--radius-md)',
     boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
     display: 'flex',
     flexDirection: 'column',
@@ -330,7 +330,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: {
     padding: '12px 16px',
-    borderBottom: '1px solid var(--border, #333)',
+    borderBottom: '1px solid var(--border)',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -354,7 +354,7 @@ const styles: Record<string, React.CSSProperties> = {
   task: {
     marginBottom: 8,
     border: '1px solid',
-    borderRadius: 6,
+    borderRadius: 'var(--radius-md)',
     overflow: 'hidden',
   },
   taskHeader: {
@@ -363,7 +363,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     alignItems: 'center',
     cursor: 'pointer',
-    background: 'var(--bg, #252525)',
+    background: 'var(--bg)',
   },
   statusDot: {
     width: 8,
@@ -371,7 +371,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
   },
   taskContent: {
-    borderTop: '1px solid var(--border, #333)',
+    borderTop: '1px solid var(--border)',
   },
   output: {
     maxHeight: 300,
@@ -402,8 +402,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    borderTop: '1px solid var(--border, #333)',
-    background: 'var(--bg, #252525)',
+    borderTop: '1px solid var(--border)',
+    background: 'var(--bg)',
   },
 };
 

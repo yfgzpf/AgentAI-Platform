@@ -235,8 +235,8 @@ create_tool    → .agentai/custom-tools/ + registry.json
 - **布局特点：绝大多数测试与源码同目录并置**，`__tests__/` 只有 2 个文件
 - 安全测试做得扎实：`b1-security.test.ts`(10.7KB)、sandbox 四件套、safety 三件套
 - **缺口：6416 行的 agentai-loop.ts 零覆盖，repairPipeline 六步无专项测试**
-- 前端(`packages/agentai-gui`)基线 **165 测试 / 9 文件**（2026-10-11：在 109/7 基础上新增
-  `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(35)，均为源码文本断言：
+- 前端(`packages/agentai-gui`)基线 **173 测试 / 9 文件**（2026-10-11：在 109/7 基础上新增
+  `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(43)，均为源码文本断言：
   前者锁布局机制 —— 中栏宽度必须自适应 `clamp()`、页面内面板必须两层结构、页面根高度必须 `100%`
   而非 `calc(100vh - N)`；后者锁右栏 信息/浏览器 双模式（`agentai.pane.browser.width` 分轨宽度、
   右栏内容判 `effectiveRailMode` 而非持久化的 `railMode`、恰好 2 个 `.pane-grip`）、
@@ -247,7 +247,9 @@ create_tool    → .agentai/custom-tools/ + registry.json
   token-layer 锁 **CSS token 层契约** —— 18 条语义别名必须真实存在、其依赖的 9 个底层 token
   必须在全部 5 个主题块里有定义（否则换主题即解析失败）、别名调用点不得残留硬编码死 fallback、
   `--radius-lg` 不得同层重复定义、通用文本尺度 `--fs-*` 必须存在、
-  **文本档（7–28px）禁止裸数字字号**（防再次分叉）、**`var(--fs-*)` 必须真被调用点消费**（防僵尸 token）。
+  **文本档（7–28px）禁止裸数字字号**（防再次分叉）、**`var(--fs-*)` 必须真被调用点消费**（防僵尸 token）、
+  **圆角恰 4 档且 `--radius-lg/pill` 必须被消费**（防僵尸 token）、**禁止裸数字 `borderRadius`**、
+  **绿/红/灰/白四类语义色不得再散落**、**底层 token 死 fallback 归零**。
   核验：`cd packages/agentai-gui && npx vitest run`）
 - ✅ **前端字号已收敛（2026-10-11）**：23 种 `fontSize` → 尺度 **六档 11/12/13/16/20/28**。
   ⚠️ 更正：先前文档写的「≤12px 874 处」用的是更严格的正则（要求数字后紧跟 `,`/`}`），属**低估**；
@@ -262,12 +264,26 @@ create_tool    → .agentai/custom-tools/ + registry.json
   踩坑记录：替换正则漏 `(?![\d.])` 会把 `fontSize: 9.5` 切成 `'var(--fs-micro)'.5`；
   值换成 CSS 变量必须补引号，否则 `fontSize: var(...)` 里 `var` 是关键字直接语法错；
   CSS 侧需 `(?<![\w-])font-size:` 否则会改坏 `--tool-font-size: 11px` 这类 token 定义。
-- ⚠️ **前端设计尺度（圆角/颜色/内联样式）仍未收敛（2026-10-11 实测）**：token 层与字号已就绪 ——
-  `borderRadius` **19 种**；tsx 里硬编码 hex **208 种**（1012 次），而 CSS 变量只用到 **57 个**；
-  内联 `style={{` **3417 处 / 111 个 tsx 文件**。
-  同语义多值是最直接的"看着乱"来源：成功绿 4 个（`#52c41a`/`#10b981`/`#4ade80`/`#22c55e`）、
-  错误红 3 个（`#ef4444`/`#ff4d4f`/`#f5222d`）、灰阶 5 个（`#666`/`#999`/`#888`/`#333`/`#ccc`）、
-  纯白 `#fff` 72 次（含"深色底上的文字"与"亮色底上的文字"两种语义，**不能盲替**）。
+- ✅ **前端设计尺度已收敛（2026-10-11，圆角 + 同语义色两项已改完，只剩内联样式）**：
+  - **圆角**：`borderRadius` **19 种 → 4 档** `--radius-sm 4 / --radius-md 8 / --radius-lg 12 / --radius-pill 999`；
+    共改 **437 处**（tsx 430 + CSS 7）。收敛后实际消费 `md 218 / sm 185 / lg 40 / pill 5`（+ 旧名 `--radius` 2）。
+    残留裸数字仅 2 处且均有理由：`App.tsx:1069`（Antd `theme.token.borderRadius` 只收 number）、
+    `ImageStudio.tsx:829`（`borderRadius: 0`，无圆角语义）。
+  - **语义色**：成功绿 4 值（`#52c41a`/`#10b981`/`#4ade80`/`#22c55e`）→ `var(--success)` **114 处**；
+    错误红 3 值（`#ef4444`/`#ff4d4f`/`#f5222d`）→ `var(--danger)` **71 处**；
+    灰阶文字 5 值 → `var(--muted|--muted-2|--fg-2)` **54 处**；`color:'#fff'` **52 处** → `var(--fg-on-accent)`
+    （含 CSS 共 55）。另顺带清掉 **35 处**直连底层 token 的死 fallback（`var(--panel, #141414)` 类，
+    Commit A 只清了别名层，漏了这些）。
+    ⚠️ **有意不动四类**（一刀切会改坏语义/视觉，是本轮最大的判断成本）：**分类色板**
+    （`EmotionIndicator` 情绪 8 色、`SoulPanel` 疼痛 severe/critical 双红、`TokenPressureBar` 三档、
+    `modeStore`/`modelStore` 身份色 —— 同色相多档是有意区分）、**自带表面主题的文件**
+    （`TerminalPanel` 终端 prompt 色 / `VoiceDictation` 自绘浮层 / `PreviewMode` 设备框 / `DecorAI` 子应用）、
+    **打印导出 HTML 模板**（`PrescriptionCard`/`WritePage` 的 `<style>` 按亮色纸张配色，与 App 主题无关）、
+    **渐变艺术**（9 处 `linear-gradient(...)`，只换一半色标会在换主题时半主题化，更难看）。
+  - ⚠️ **仍未做**：内联 `style={{` **3417 处 / 111 个 tsx 文件**（CSS-in-JS 散落，需逐组件抽 CSS class，
+    属结构性重构而非可批量替换）；信息架构项 —— 标题栏 11 控件、「免费内置模型」常驻 nag 条、
+    「发现 N 个可恢复的任务」恢复条、底部状态栏 **12 项**。
+  核验：`grep` 命令与实测数字见 `AGENTS.md` §五·补 第 10 条；残留值归零断言见 `token-layer.test.ts`。
 - ✅ **前端 CSS token 层已修（2026-10-11，这是"乱"的根因，非审美问题）**：
   **18 个变量被 tsx 消费但从未在任何 CSS 中定义** —— `--text-primary/secondary/tertiary`、`--bg-1`、
   `--muted-1`/`--muted-3`、`--muted-soft`、`--border-color`、`--color-text-muted`、`--bg-primary/secondary`、
@@ -284,7 +300,8 @@ create_tool    → .agentai/custom-tools/ + registry.json
   清掉 39 处已失效的硬编码死 fallback + 3 处 `var(--demo-color, #6366f1)` 的靛蓝残留。
   核验：残留死 fallback
   `grep -rEoh "var\(--(text-primary|text-secondary|text-tertiary|bg-1|hover|bg-active|accent-bg|fg-on-accent|muted-1|muted-3|muted-soft|color-text-muted|bg-primary|bg-secondary|border-color) ?, ?(#|rgba)" --include=*.tsx packages/agentai-gui/src | wc -l` → **0**（修复前 39）；
-  `grep -n "radius-lg" packages/agentai-gui/src/styles/agentai-theme.css` → 仅 2 处且均为 14px
+  `grep -n "radius-lg" packages/agentai-gui/src/styles/agentai-theme.css` → 仅 2 处定义
+  （dark/light 两块各一，**均为 12px**；同层重复定义已在 2026-10-11 的圆角收敛中一并去掉）
 
 ---
 

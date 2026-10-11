@@ -277,7 +277,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
                 fontSize: 'var(--fs-micro)', color: t.color,
                 background: `${t.color}15`,
                 border: `1px solid ${t.color}40`,
-                padding: '5px 12px', borderRadius: 100,
+                padding: '5px 12px', borderRadius: 'var(--radius-pill)',
                 fontWeight: 600, letterSpacing: 0.5,
                 animation: `splash-tag-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) ${1.2 + i * 0.07}s both`,
                 transition: 'all 0.2s ease',
@@ -325,7 +325,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
           <div style={{
             width: 220, height: 2.5,
             background: 'rgba(205, 122, 58, 0.12)',
-            borderRadius: 2, overflow: 'hidden',
+            borderRadius: 'var(--radius-sm)', overflow: 'hidden',
           }}>
             <div style={{
               width: '100%', height: '100%',

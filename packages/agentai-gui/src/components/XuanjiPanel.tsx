@@ -137,8 +137,8 @@ export const XuanjiPanel: React.FC = () => {
   // 获取状态图标
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'success': return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
-      case 'failure': return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />;
+      case 'success': return <CheckCircleOutlined style={{ color: 'var(--success)' }} />;
+      case 'failure': return <CloseCircleOutlined style={{ color: 'var(--danger)' }} />;
       case 'partial': return <ExclamationCircleOutlined style={{ color: '#faad14' }} />;
       default: return <ClockCircleOutlined style={{ color: '#8c8c8c' }} />;
     }

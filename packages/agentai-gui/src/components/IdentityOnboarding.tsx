@@ -99,7 +99,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
         position: 'relative', width: 480, maxWidth: '90vw',
         background: 'rgba(255,255,255,0.03)',
         backdropFilter: 'blur(20px)',
-        borderRadius: 24, border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: 'var(--radius-lg)', border: '1px solid rgba(255,255,255,0.1)',
         boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset',
         padding: '40px',
         animation: 'cardSlideIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)',
@@ -129,7 +129,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
           {step === 'name' && (
             <div style={{ textAlign: 'center', animation: 'fadeIn 0.4s ease' }}>
               <div style={{ fontSize: 48, marginBottom: 16 }}>{avatar}</div>
-              <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 'var(--fs-xl)', fontWeight: 700 }}>
+              <h2 style={{ color: 'var(--fg-on-accent)', margin: '0 0 8px', fontSize: 'var(--fs-xl)', fontWeight: 700 }}>
                 你好！给我起个名字吧
               </h2>
               <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 32px', fontSize: 'var(--fs-md)' }}>
@@ -144,7 +144,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
                 style={{
                   maxWidth: 280, margin: '0 auto 24px', display: 'block',
                   background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-                  color: '#fff', fontSize: 'var(--fs-lg)',
+                  color: 'var(--fg-on-accent)', fontSize: 'var(--fs-lg)',
                 }}
                 onPressEnter={() => name.trim() && setStep('industry')}
               />
@@ -154,7 +154,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
                 disabled={!name.trim()}
                 style={{
                   background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                  border: 'none', borderRadius: 12, padding: '0 40px', fontSize: 'var(--fs-lg)',
+                  border: 'none', borderRadius: 'var(--radius-lg)', padding: '0 40px', fontSize: 'var(--fs-lg)',
                 }}
               >
                 继续
@@ -195,7 +195,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
                 onClick={() => setStep('done')}
                 style={{
                   background: 'linear-gradient(135deg, #10b981, #06b6d4)',
-                  border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 'var(--fs-lg)',
+                  border: 'none', borderRadius: 'var(--radius-lg)', padding: '0 48px', fontSize: 'var(--fs-lg)',
                 }}
               >
                 开始对话 →
@@ -212,7 +212,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
               position: 'absolute', top: 16, right: 16,
               background: 'none', border: 'none',
               color: 'rgba(255,255,255,0.4)', cursor: 'pointer',
-              fontSize: 'var(--fs-sm)', padding: '4px 8px', borderRadius: 6,
+              fontSize: 'var(--fs-sm)', padding: '4px 8px', borderRadius: 'var(--radius-md)',
             }}
           >
             跳过设置

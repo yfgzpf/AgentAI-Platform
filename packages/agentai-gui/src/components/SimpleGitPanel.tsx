@@ -304,7 +304,7 @@ export const SimpleGitPanel: React.FC<SimpleGitPanelProps> = ({ visible, onClose
           <div style={styles.authSection}>
             <Space direction="vertical" style={{ width: '100%' }}>
               <Space>
-                <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                <CheckCircleOutlined style={{ color: 'var(--success)' }} />
                 <Text>已连接 GitHub</Text>
                 <Button 
                   icon={<LogoutOutlined />}
@@ -352,7 +352,7 @@ export const SimpleGitPanel: React.FC<SimpleGitPanelProps> = ({ visible, onClose
             <div style={styles.changesSection}>
               {status?.files.length === 0 ? (
                 <div style={styles.empty}>
-                  <CheckCircleOutlined style={{ fontSize: 32, color: '#52c41a' }} />
+                  <CheckCircleOutlined style={{ fontSize: 32, color: 'var(--success)' }} />
                   <Text type="secondary">没有未提交的变更</Text>
                 </div>
               ) : (
@@ -376,8 +376,8 @@ export const SimpleGitPanel: React.FC<SimpleGitPanelProps> = ({ visible, onClose
                       <Space>
                         <FileOutlined />
                         <Text style={{ 
-                          color: file.status === 'added' ? '#52c41a' :
-                                 file.status === 'deleted' ? '#ff4d4f' :
+                          color: file.status === 'added' ? 'var(--success)' :
+                                 file.status === 'deleted' ? 'var(--danger)' :
                                  file.status === 'modified' ? '#faad14' : undefined
                         }}>
                           {file.path}
@@ -445,8 +445,8 @@ const styles: Record<string, React.CSSProperties> = {
   panel: {
     width: 480,
     maxHeight: '80vh',
-    background: 'var(--panel, #1e1e1e)',
-    borderRadius: 8,
+    background: 'var(--panel)',
+    borderRadius: 'var(--radius-md)',
     boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
     display: 'flex',
     flexDirection: 'column',
@@ -454,14 +454,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: {
     padding: '12px 16px',
-    borderBottom: '1px solid var(--border, #333)',
+    borderBottom: '1px solid var(--border)',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   authSection: {
     padding: 16,
-    borderBottom: '1px solid var(--border, #333)',
+    borderBottom: '1px solid var(--border)',
     display: 'flex',
     flexDirection: 'column',
     gap: 12,
@@ -473,12 +473,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   fileItem: {
     padding: '8px 16px',
-    borderBottom: '1px solid var(--border, #333)',
+    borderBottom: '1px solid var(--border)',
   },
   commitSection: {
     padding: 16,
-    borderTop: '1px solid var(--border, #333)',
-    background: 'var(--bg, #252525)',
+    borderTop: '1px solid var(--border)',
+    background: 'var(--bg)',
   },
   empty: {
     padding: 40,

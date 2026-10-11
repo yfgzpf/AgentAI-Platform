@@ -201,9 +201,9 @@ export const NotificationPanel: React.FC = () => {
 
   const getIcon = (type: string) => {
     switch (type) {
-      case 'success': return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
+      case 'success': return <CheckCircleOutlined style={{ color: 'var(--success)' }} />;
       case 'warning': return <ThunderboltOutlined style={{ color: '#faad14' }} />;
-      case 'error': return <RobotOutlined style={{ color: '#f5222d' }} />;
+      case 'error': return <RobotOutlined style={{ color: 'var(--danger)' }} />;
       default: return <BellOutlined style={{ color: '#1890ff' }} />;
     }
   };
@@ -226,7 +226,7 @@ export const NotificationPanel: React.FC = () => {
             <BellOutlined />
             <span>通知中心</span>
             {unreadCount > 0 && (
-              <Badge count={unreadCount} style={{ backgroundColor: '#f5222d' }} />
+              <Badge count={unreadCount} style={{ backgroundColor: 'var(--danger)' }} />
             )}
           </Space>
         }

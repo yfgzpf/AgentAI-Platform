@@ -66,7 +66,7 @@ const EditorEmptyState: React.FC = () => {
             type="primary"
             icon={<FolderOpenOutlined />}
             onClick={handleOpenFolder}
-            style={{ borderRadius: 8 }}
+            style={{ borderRadius: 'var(--radius-md)' }}
           >
             打开文件夹
           </Button>
@@ -77,7 +77,7 @@ const EditorEmptyState: React.FC = () => {
             onClick={() => {
               window.dispatchEvent(new CustomEvent('agentai:editor-new-file'));
             }}
-            style={{ borderRadius: 8 }}
+            style={{ borderRadius: 'var(--radius-md)' }}
           >
             新建文件
           </Button>
@@ -88,7 +88,7 @@ const EditorEmptyState: React.FC = () => {
       <div style={{
         marginTop: 24,
         padding: '12px 20px',
-        borderRadius: 8,
+        borderRadius: 'var(--radius-md)',
         background: 'rgba(255,255,255,0.03)',
         border: '1px solid rgba(255,255,255,0.06)',
         fontSize: 'var(--fs-sm)',
@@ -265,7 +265,7 @@ export const EditorMode: React.FC = () => {
               fontSize: 'var(--fs-sm)',
               color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
               background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
-              borderBottom: isActive ? '2px solid var(--accent, #f97316)' : '2px solid transparent',
+              borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
               cursor: 'pointer',
               whiteSpace: 'nowrap',
               userSelect: 'none',

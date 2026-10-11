@@ -156,7 +156,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({ handleSend }) => {
             onClick={() => handleSend(action.prompt)}
             style={{
               display: 'flex', alignItems: 'center', gap: 10,
-              padding: '14px 16px', borderRadius: 12,
+              padding: '14px 16px', borderRadius: 'var(--radius-lg)',
               background: 'var(--panel)', border: '1px solid var(--border)',
               color: 'var(--fg-2)', cursor: 'pointer', textAlign: 'left',
               fontSize: 'var(--fs-md)', fontWeight: 500, fontFamily: 'inherit',

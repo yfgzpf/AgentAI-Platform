@@ -127,7 +127,7 @@ export const ApprovalCard: React.FC<Props> = ({ proposal, onApprove, onReject })
         {proposal.summary}
       </div>
       {proposal.details && (
-        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8, padding: '4px 8px', background: 'var(--bg)', borderRadius: 4 }}>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8, padding: '4px 8px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
           {proposal.details}
         </div>
       )}
@@ -139,7 +139,7 @@ export const ApprovalCard: React.FC<Props> = ({ proposal, onApprove, onReject })
       {proposal.diff && (
         <pre style={{
           fontSize: 'var(--fs-micro)', background: 'var(--bg)', color: 'var(--muted)',
-          padding: 6, borderRadius: 4, maxHeight: 120, overflow: 'auto',
+          padding: 6, borderRadius: 'var(--radius-sm)', maxHeight: 120, overflow: 'auto',
           margin: 0,
         }}>
           {proposal.diff}
@@ -148,7 +148,7 @@ export const ApprovalCard: React.FC<Props> = ({ proposal, onApprove, onReject })
       {/* 信任此命令选项 */}
       <div style={{
         marginTop: 8, padding: '6px 8px',
-        background: 'var(--accent-soft)', borderRadius: 4,
+        background: 'var(--accent-soft)', borderRadius: 'var(--radius-sm)',
         border: '1px solid var(--border)',
       }}>
         <Checkbox

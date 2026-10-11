@@ -216,7 +216,7 @@ export const TaskChainCard: React.FC<Props> = ({
               onClick={handleApprove}
               loading={loading === 'approve'}
               disabled={loading !== null && loading !== 'approve'}
-              style={{ background: '#238636', borderColor: '#238636' }}
+              style={{ background: 'var(--success)', borderColor: 'var(--success)' }}
             >
               确认执行
             </Button>

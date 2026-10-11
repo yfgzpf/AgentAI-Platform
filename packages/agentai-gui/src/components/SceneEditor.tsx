@@ -440,12 +440,12 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
               onClick={() => setSelectedLayerId(layer.id)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', marginBottom: 4,
-                borderRadius: 6, cursor: 'pointer',
+                borderRadius: 'var(--radius-md)', cursor: 'pointer',
                 background: selectedLayerId === layer.id ? 'var(--bg-active)' : 'var(--bg)',
                 border: `1px solid ${selectedLayerId === layer.id ? '#1890ff' : 'transparent'}`,
               }}>
               {/* 缩略图 */}
-              <div style={{ width: 32, height: 32, borderRadius: 4, overflow: 'hidden', flexShrink: 0, background: '#000' }}>
+              <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-sm)', overflow: 'hidden', flexShrink: 0, background: '#000' }}>
                 <img src={layer.cutoutUrl || layer.imageUrl} alt={layer.name}
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               </div>
@@ -511,7 +511,7 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
                     {selectedLayer.cutoutUrl ? '重新抠图' : '抠图 (去背景)'}
                   </Button>
                   {selectedLayer.cutoutUrl && (
-                    <div style={{ fontSize: 'var(--fs-micro)', color: '#52c41a', marginTop: 4 }}>✅ 已抠图, 背景透明</div>
+                    <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--success)', marginTop: 4 }}>✅ 已抠图, 背景透明</div>
                   )}
                 </div>
               )}
@@ -551,7 +551,7 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
 
               {/* 提示 */}
               {selectedLayer.type !== 'background' && (
-                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 16, padding: 8, background: 'var(--bg)', borderRadius: 6 }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 16, padding: 8, background: 'var(--bg)', borderRadius: 'var(--radius-md)' }}>
                   💡 提示: 在画布上拖拽角色可调整位置。抠图后角色背景变透明，可叠加在场景上。
                 </div>
               )}

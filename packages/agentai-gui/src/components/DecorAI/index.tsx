@@ -152,12 +152,12 @@ export const DecorAI: React.FC = () => {
           <div style={{
             width: 36,
             height: 36,
-            borderRadius: 8,
+            borderRadius: 'var(--radius-md)',
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#fff',
+            color: 'var(--fg-on-accent)',
             fontSize: 'var(--fs-lg)',
           }}>
             🏠

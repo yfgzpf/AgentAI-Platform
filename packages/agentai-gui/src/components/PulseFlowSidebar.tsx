@@ -138,7 +138,7 @@ const SessionListItem: React.FC<{
       onClick={() => !editing && onSelect(session.id)}
       onDoubleClick={(e) => { e.stopPropagation(); setDraft(session.title); setEditing(true); }}
       style={{
-        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 5,
+        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 'var(--radius-sm)',
         cursor: editing ? 'default' : 'pointer',
         color: active ? 'var(--accent)' : 'var(--fg-2)',
         background: active ? 'var(--card)' : 'transparent',
@@ -357,7 +357,7 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
             padding: '2px 4px', 
             fontSize: 'var(--fs-micro)', 
             cursor: 'pointer',
-            borderRadius: 3, 
+            borderRadius: 'var(--radius-sm)', 
             display: 'flex', 
             alignItems: 'center', 
             gap: 4,
@@ -502,7 +502,7 @@ const PresetWorkflowList: React.FC = () => {
             key={w.name}
             onClick={() => handleTrigger(w)}
             style={{
-              padding: '6px 8px', borderRadius: 5, cursor: 'pointer', marginBottom: 4,
+              padding: '6px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', marginBottom: 4,
               display: 'flex', alignItems: 'flex-start', gap: 6,
               border: '1px solid var(--border)',
               transition: 'background 0.12s, border-color 0.12s',
@@ -525,7 +525,7 @@ const PresetWorkflowList: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
                 <span style={{
                   fontSize: 'var(--fs-micro)', color: 'var(--accent)',
-                  background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 3,
+                  background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 'var(--radius-sm)',
                 }}>{w.category}</span>
                 <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>~{w.estimatedTime}分钟</span>
               </div>
@@ -607,7 +607,7 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
               <button
                 onClick={() => handleNewSession('chat')}
                 style={{
-                  width: '100%', padding: '6px 8px', borderRadius: 6, fontSize: 'var(--fs-micro)',
+                  width: '100%', padding: '6px 8px', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-micro)',
                   background: 'var(--accent-soft)', color: 'var(--accent)',
                   border: '1px solid var(--accent)', cursor: 'pointer', fontWeight: 500,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
@@ -627,7 +627,7 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                 prefix={<SearchOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }} />}
                 style={{
                   background: 'var(--card)',
-                  borderRadius: 6,
+                  borderRadius: 'var(--radius-md)',
                   padding: '4px 8px',
                   fontSize: 'var(--fs-micro)',
                 }}
@@ -730,7 +730,7 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
           width: 24, height: 24, borderRadius: '50%',
           background: 'linear-gradient(135deg,#6366F1,#EC4899)',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          color: '#fff', fontSize: 'var(--fs-micro)', fontWeight: 700, flexShrink: 0,
+          color: 'var(--fg-on-accent)', fontSize: 'var(--fs-micro)', fontWeight: 700, flexShrink: 0,
         }}>
           {(profile?.name?.charAt(0) || 'U').toUpperCase()}
         </span>

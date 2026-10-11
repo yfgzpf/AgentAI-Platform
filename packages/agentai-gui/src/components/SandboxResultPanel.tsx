@@ -69,7 +69,7 @@ export const SandboxResultPanel: React.FC = () => {
   return (
     <div style={{
       margin: '0 16px 4px',
-      borderRadius: 6,
+      borderRadius: 'var(--radius-md)',
       background: 'var(--panel)',
       border: '1px solid var(--border)',
       overflow: 'hidden',
@@ -86,13 +86,13 @@ export const SandboxResultPanel: React.FC = () => {
           cursor: 'pointer',
         }}
       >
-        <SafetyOutlined style={{ color: config?.enabled ? '#4ade80' : '#666', fontSize: 'var(--fs-sm)' }} />
+        <SafetyOutlined style={{ color: config?.enabled ? 'var(--success)' : '#666', fontSize: 'var(--fs-sm)' }} />
         <span style={{ fontWeight: 600, color: 'var(--fg-2)', fontSize: 'var(--fs-micro)' }}>沙箱</span>
 
         {config && (
           <Badge
             status={config.enabled ? 'success' : 'default'}
-            text={<span style={{ fontSize: 'var(--fs-micro)', color: config.enabled ? '#4ade80' : 'var(--muted-2)' }}>
+            text={<span style={{ fontSize: 'var(--fs-micro)', color: config.enabled ? 'var(--success)' : 'var(--muted-2)' }}>
               {config.enabled ? '已启用' : '未启用'}
             </span>}
           />
@@ -116,13 +116,13 @@ export const SandboxResultPanel: React.FC = () => {
           {/* 执行状态 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
             {latestRun.status === 'success' ? (
-              <CheckCircleOutlined style={{ color: '#4ade80', fontSize: 'var(--fs-sm)' }} />
+              <CheckCircleOutlined style={{ color: 'var(--success)', fontSize: 'var(--fs-sm)' }} />
             ) : latestRun.status === 'failed' ? (
-              <CloseCircleOutlined style={{ color: '#ef4444', fontSize: 'var(--fs-sm)' }} />
+              <CloseCircleOutlined style={{ color: 'var(--danger)', fontSize: 'var(--fs-sm)' }} />
             ) : (
               <LoadingOutlined style={{ color: '#58a6ff', fontSize: 'var(--fs-sm)' }} />
             )}
-            <span style={{ color: latestRun.status === 'success' ? '#4ade80' : latestRun.status === 'failed' ? '#ef4444' : '#58a6ff', fontWeight: 600 }}>
+            <span style={{ color: latestRun.status === 'success' ? 'var(--success)' : latestRun.status === 'failed' ? 'var(--danger)' : '#58a6ff', fontWeight: 600 }}>
               {latestRun.status === 'success' ? '执行成功' : latestRun.status === 'failed' ? '执行失败' : '执行中...'}
             </span>
             <Tag style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{latestRun.language}</Tag>
@@ -142,7 +142,7 @@ export const SandboxResultPanel: React.FC = () => {
             <pre style={{
               margin: 0, fontSize: 'var(--fs-micro)', fontFamily: 'Consolas, monospace',
               color: '#c9d1d9', background: '#0a0a0a',
-              padding: '3px 6px', borderRadius: 3,
+              padding: '3px 6px', borderRadius: 'var(--radius-sm)',
               overflow: 'auto', maxHeight: 60,
               border: '1px solid var(--border)',
             }}>
@@ -154,11 +154,11 @@ export const SandboxResultPanel: React.FC = () => {
           {/* 输出 */}
           {latestRun.output && (
             <div style={{ marginBottom: 4 }}>
-              <div style={{ color: '#4ade80', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>✓ 输出:</div>
+              <div style={{ color: 'var(--success)', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>✓ 输出:</div>
               <pre style={{
                 margin: 0, fontSize: 'var(--fs-micro)', fontFamily: 'Consolas, monospace',
                 color: '#7ee787', background: '#0a0a0a',
-                padding: '3px 6px', borderRadius: 3,
+                padding: '3px 6px', borderRadius: 'var(--radius-sm)',
                 overflow: 'auto', maxHeight: 60,
                 border: '1px solid rgba(78,233,135,0.15)',
               }}>
@@ -175,7 +175,7 @@ export const SandboxResultPanel: React.FC = () => {
               <pre style={{
                 margin: 0, fontSize: 'var(--fs-micro)', fontFamily: 'Consolas, monospace',
                 color: '#f97583', background: 'rgba(249,117,131,0.04)',
-                padding: '3px 6px', borderRadius: 3,
+                padding: '3px 6px', borderRadius: 'var(--radius-sm)',
                 overflow: 'auto', maxHeight: 40,
                 border: '1px solid rgba(249,117,131,0.15)',
               }}>

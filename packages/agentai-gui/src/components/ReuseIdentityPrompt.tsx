@@ -157,7 +157,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
         content: {
           background: 'linear-gradient(135deg, #1a1a22 0%, #23232c 100%)',
           border: '1px solid #2a2a38',
-          borderRadius: 16,
+          borderRadius: 'var(--radius-lg)',
           overflow: 'hidden',
         },
       }}
@@ -199,7 +199,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
           <Space direction="vertical" size={10} style={{ width: '100%' }}>
             {allProfiles.map((p) => {
               const industryMeta = INDUSTRY_META[p.industry || 'general']
-                || { label: p.industry || '通用', color: '#888', icon: <AppstoreOutlined /> };
+                || { label: p.industry || '通用', color: 'var(--muted)', icon: <AppstoreOutlined /> };
               const usecaseMeta = USECASE_META[p.useCase || 'chat']
                 || { label: p.useCase, icon: <MessageOutlined /> };
               const isSelected = selectedName === p.name;
@@ -210,7 +210,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                   onClick={() => setSelectedName(p.name)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 14,
-                    padding: '12px 16px', borderRadius: 10,
+                    padding: '12px 16px', borderRadius: 'var(--radius-md)',
                     background: isSelected ? 'rgba(205,122,58,0.10)' : '#16161c',
                     border: isSelected ? '1.5px solid #CD7A3A' : '1px solid #2a2a38',
                     cursor: 'pointer', transition: 'all 0.18s',
@@ -222,7 +222,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                     size={44}
                     style={{
                       background: `linear-gradient(135deg, ${industryMeta.color} 0%, ${industryMeta.color}88 100%)`,
-                      color: '#fff', fontSize: 'var(--fs-lg)', fontWeight: 700,
+                      color: 'var(--fg-on-accent)', fontSize: 'var(--fs-lg)', fontWeight: 700,
                       flexShrink: 0,
                     }}
                   >
@@ -254,12 +254,12 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                       </Tag>
                       <Tag
                         icon={usecaseMeta.icon}
-                        style={{ margin: 0, fontSize: 'var(--fs-micro)', background: 'transparent', borderColor: '#444', color: '#aaa' }}
+                        style={{ margin: 0, fontSize: 'var(--fs-micro)', background: 'transparent', borderColor: '#444', color: 'var(--muted)' }}
                       >
                         {usecaseMeta.label}
                       </Tag>
                       <Tooltip title={p.onboardedAt ? new Date(p.onboardedAt).toLocaleString('zh-CN') : ''}>
-                        <span style={{ color: '#666', fontSize: 'var(--fs-micro)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                           <ClockCircleOutlined /> {formatTimestamp(p.onboardedAt)}
                         </span>
                       </Tooltip>
@@ -278,7 +278,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
               onClick={() => { setShowNewInput(true); setSelectedName(null); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 14,
-                padding: '12px 16px', borderRadius: 10,
+                padding: '12px 16px', borderRadius: 'var(--radius-md)',
                 background: 'transparent',
                 border: '1px dashed #444',
                 cursor: 'pointer', transition: 'all 0.18s',
@@ -287,19 +287,19 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
             >
               <Avatar
                 size={44}
-                style={{ background: 'transparent', border: '1.5px dashed #666', color: '#888' }}
+                style={{ background: 'transparent', border: '1.5px dashed #666', color: 'var(--muted)' }}
                 icon={<PlusOutlined />}
               />
               <div style={{ flex: 1 }}>
-                <div style={{ color: '#ccc', fontSize: 'var(--fs-md)', fontWeight: 500 }}>新建身份</div>
-                <div style={{ color: '#666', fontSize: 'var(--fs-micro)' }}>为其他人或场景配置</div>
+                <div style={{ color: 'var(--fg-2)', fontSize: 'var(--fs-md)', fontWeight: 500 }}>新建身份</div>
+                <div style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>为其他人或场景配置</div>
               </div>
             </div>
           </Space>
         ) : (
           // 新建身份: 输入名称预览
           <div style={{ padding: '8px 0' }}>
-            <div style={{ marginBottom: 12, color: '#ccc', fontSize: 'var(--fs-md)' }}>
+            <div style={{ marginBottom: 12, color: 'var(--fg-2)', fontSize: 'var(--fs-md)' }}>
               为新身份起个名字
             </div>
             <Input
@@ -312,7 +312,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
               autoFocus
               style={{ marginBottom: 16 }}
             />
-            <div style={{ color: '#888', fontSize: 'var(--fs-sm)', lineHeight: 1.6 }}>
+            <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.6 }}>
               接下来会引导你选择: <strong style={{ color: '#CD7A3A' }}>行业 / 用例 / 技能</strong> 等
               <br />
               完成的所有选择都会被记忆, 下次可一键沿用
@@ -338,7 +338,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
               onReuse(undefined);
             }
           }}
-          style={{ background: 'transparent', borderColor: '#444', color: '#aaa' }}
+          style={{ background: 'transparent', borderColor: '#444', color: 'var(--muted)' }}
         >
           {showNewInput ? '取消' : '刷新当前身份'}
         </Button>

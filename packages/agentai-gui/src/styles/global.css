@@ -53,5 +53,5 @@ html {
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border, #353550); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border-strong, #454565); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-sm); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }

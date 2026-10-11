@@ -119,7 +119,7 @@ export const MsgActions: React.FC<MsgActionsProps> = ({
       onClick={e => e.stopPropagation()}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 2,
-        padding: '2px 4px', borderRadius: 6,
+        padding: '2px 4px', borderRadius: 'var(--radius-md)',
         background: 'var(--panel)',
         border: '1px solid var(--border)',
         boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
@@ -241,7 +241,7 @@ const btnStyle: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   width: 22, height: 22, padding: 0, border: 'none',
   background: 'transparent', color: 'var(--muted-2)',
-  borderRadius: 4, cursor: 'pointer', transition: 'all 0.12s',
+  borderRadius: 'var(--radius-sm)', cursor: 'pointer', transition: 'all 0.12s',
 };
 
 const Icon: React.FC<{ name: string }> = ({ name }) => {

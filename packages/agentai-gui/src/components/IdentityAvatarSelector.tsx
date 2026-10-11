@@ -44,7 +44,7 @@ export const IdentityAvatarSelector: React.FC<Props> = ({ selected, onSelect, on
                   ? 'rgba(99,102,241,0.15)'
                   : 'rgba(255,255,255,0.05)',
               border: `2px solid ${selected === a ? '#6366f1' : hovered === a ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.1)'}`,
-              borderRadius: 16, cursor: 'pointer',
+              borderRadius: 'var(--radius-lg)', cursor: 'pointer',
               transition: 'all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
               transform: selected === a ? 'scale(1.08)' : hovered === a ? 'scale(1.04)' : 'scale(1)',
               boxShadow: selected === a
@@ -60,7 +60,7 @@ export const IdentityAvatarSelector: React.FC<Props> = ({ selected, onSelect, on
             {selected === a && (
               <div style={{
                 position: 'absolute', inset: -2,
-                borderRadius: 17,
+                borderRadius: 'var(--radius-lg)',
                 border: '2px solid transparent',
                 background: 'linear-gradient(135deg, #6366f1, #8b5cf6, #a78bfa) border-box',
                 WebkitMask: 'linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0)',
@@ -78,7 +78,7 @@ export const IdentityAvatarSelector: React.FC<Props> = ({ selected, onSelect, on
       {selected && (
         <div style={{
           fontSize: 'var(--fs-md)', color: 'rgba(255,255,255,0.7)', marginBottom: 20,
-          padding: '8px 16px', borderRadius: 20,
+          padding: '8px 16px', borderRadius: 'var(--radius-pill)',
           background: 'rgba(99,102,241,0.12)',
           border: '1px solid rgba(99,102,241,0.25)',
           display: 'inline-block',
@@ -93,7 +93,7 @@ export const IdentityAvatarSelector: React.FC<Props> = ({ selected, onSelect, on
         onClick={onNext}
         style={{
           background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-          border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 'var(--fs-lg)',
+          border: 'none', borderRadius: 'var(--radius-lg)', padding: '0 48px', fontSize: 'var(--fs-lg)',
           boxShadow: '0 4px 16px rgba(99,102,241,0.4)',
           transition: 'all 0.25s ease',
         }}

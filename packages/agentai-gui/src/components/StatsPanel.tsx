@@ -203,7 +203,7 @@ export const StatsPanel: React.FC = () => {
               value={stats.successRate}
               suffix="%"
               prefix={<CheckCircleOutlined />}
-              valueStyle={{ color: stats.successRate > 90 ? '#52c41a' : '#faad14' }}
+              valueStyle={{ color: stats.successRate > 90 ? 'var(--success)' : '#faad14' }}
             />
           </Card>
         </Col>
@@ -214,7 +214,7 @@ export const StatsPanel: React.FC = () => {
               value={stats.timeSaved}
               suffix="小时"
               prefix={<ClockCircleOutlined />}
-              valueStyle={{ color: '#52c41a' }}
+              valueStyle={{ color: 'var(--success)' }}
             />
           </Card>
         </Col>

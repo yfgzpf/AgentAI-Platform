@@ -61,7 +61,7 @@ const WorkspaceErrorFallback: React.FC<{ onRetry: () => void }> = ({ onRetry }) 
       onClick={onRetry}
       style={{
         padding: '8px 24px',
-        borderRadius: 8,
+        borderRadius: 'var(--radius-md)',
         border: '1px solid var(--border-color)',
         background: 'var(--bg-secondary)',
         color: 'var(--text-primary)',
@@ -177,7 +177,7 @@ export const UnifiedWorkspace: React.FC = () => {
 /** 小型模式指示器 badge */
 const ModeIndicator: React.FC<{ mode: string }> = ({ mode }) => {
   const modeConfig: Record<string, { label: string; color: string }> = {
-    editor: { label: '编辑器', color: '#4ade80' },
+    editor: { label: '编辑器', color: 'var(--success)' },
     browser: { label: '浏览器', color: '#60a5fa' },
     preview: { label: '预览', color: '#f472b6' },
     auto: { label: '自动', color: '#a78bfa' },
@@ -197,7 +197,7 @@ const ModeIndicator: React.FC<{ mode: string }> = ({ mode }) => {
         alignItems: 'center',
         gap: 6,
         padding: '2px 10px',
-        borderRadius: 10,
+        borderRadius: 'var(--radius-md)',
         background: 'rgba(255,255,255,0.06)',
         border: '1px solid rgba(255,255,255,0.08)',
         fontSize: 'var(--fs-micro)',

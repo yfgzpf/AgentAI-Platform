@@ -730,7 +730,7 @@ export const AutomationPanel: React.FC = () => {
                         <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 6 }}>{p.description}</div>
                         <Tag style={{ fontSize: 'var(--fs-micro)' }}>{p.defaultExpression}</Tag>
                         <Tag color="blue" style={{ fontSize: 'var(--fs-micro)' }}>{p.defaultAction}</Tag>
-                        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4, padding: 4, background: 'var(--bg-2)', borderRadius: 4 }}>
+                        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4, padding: 4, background: 'var(--bg-2)', borderRadius: 'var(--radius-sm)' }}>
                           💡 {p.guide}
                         </div>
                       </div>

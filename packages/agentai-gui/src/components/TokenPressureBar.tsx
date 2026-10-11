@@ -104,7 +104,7 @@ export const TokenPressureBar: React.FC<Props> = ({
           alignItems: 'center',
           gap: 6,
           padding: '2px 8px',
-          borderRadius: 4,
+          borderRadius: 'var(--radius-sm)',
           background: isWarning ? `${color}15` : 'transparent',
           border: isWarning ? `1px solid ${color}40` : '1px solid transparent',
           transition: 'all 0.3s',
@@ -122,7 +122,7 @@ export const TokenPressureBar: React.FC<Props> = ({
           width: 60,
           height: 4,
           background: 'var(--border)',
-          borderRadius: 2,
+          borderRadius: 'var(--radius-sm)',
           overflow: 'hidden',
         }}>
           <div style={{

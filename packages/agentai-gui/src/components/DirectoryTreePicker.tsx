@@ -176,7 +176,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6,
         padding: '6px 8px', marginBottom: 6,
-        background: 'var(--panel)', borderRadius: 6,
+        background: 'var(--panel)', borderRadius: 'var(--radius-md)',
         border: '1px solid var(--border)',
         minHeight: 34,
       }}>
@@ -195,7 +195,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
             </Text>
             <span style={{
               fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flexShrink: 0,
-              padding: '0 6px', background: 'var(--success-soft)', borderRadius: 4,
+              padding: '0 6px', background: 'var(--success-soft)', borderRadius: 'var(--radius-sm)',
             }}>
               {entries.length} 个子目录
             </span>
@@ -234,7 +234,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                   onClick={() => onDirClick(entry)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
+                    padding: '5px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                     fontSize: 'var(--fs-micro)',
                     color: selected ? 'var(--accent)' : 'var(--fg-2)',
                     background: selected ? 'var(--accent-soft)' : 'transparent',
@@ -257,7 +257,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
           {currentDir && (
             <div style={{
               marginTop: 8, padding: '4px 8px',
-              background: 'var(--success-soft)', borderRadius: 4,
+              background: 'var(--success-soft)', borderRadius: 'var(--radius-sm)',
               border: '1px dashed var(--success)',
               fontSize: 'var(--fs-micro)', color: 'var(--muted)',
             }}>
@@ -284,7 +284,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                     onClick={() => onDriveClick(dir)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
+                      padding: '5px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                       fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
                     }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--panel)'; }}
@@ -311,7 +311,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                   onClick={() => onDriveClick(drive)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
+                    padding: '5px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                     fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
                   }}
                   onMouseEnter={e => { e.currentTarget.style.background = 'var(--panel)'; }}

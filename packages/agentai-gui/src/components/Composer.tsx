@@ -442,7 +442,7 @@ setActiveModel(modelId);
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'rgba(74,222,128,0.08)',
           border: '2px dashed var(--success)',
-          borderRadius: 8, margin: 4,
+          borderRadius: 'var(--radius-md)', margin: 4,
           pointerEvents: 'none',
           fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--success)',
           letterSpacing: 1,
@@ -457,7 +457,7 @@ setActiveModel(modelId);
           {queuedSends.map((t, i) => (
             <span key={i} style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '1px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
+              padding: '1px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
               background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--muted)',
             }}>
               <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t}</span>
@@ -473,7 +473,7 @@ setActiveModel(modelId);
         <div style={{
           margin: '0 12px 4px',
           padding: '6px 12px',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           background: MODE_CONFIG[suggestedMode].color + '18',
           border: `1px solid ${MODE_CONFIG[suggestedMode].color}44`,
           fontSize: 'var(--fs-sm)',
@@ -499,7 +499,7 @@ setActiveModel(modelId);
         className="composer-focus-container"
         style={{
         margin: '6px 12px 8px',
-        borderRadius: 12,
+        borderRadius: 'var(--radius-lg)',
         border: mode !== 'auto' ? `1px solid ${activeModeConfig.color}44` : '1px solid var(--border)',
         background: 'var(--panel)',
         overflow: 'hidden',
@@ -517,7 +517,7 @@ setActiveModel(modelId);
             <button
               className="icon-btn-sm"
               onClick={() => imageInputRef.current?.click()}
-              style={{ marginLeft: 'auto', background: 'var(--accent)', color: 'var(--fg)', borderRadius: 4, padding: '2px 10px', fontSize: 'var(--fs-micro)', border: 'none', cursor: 'pointer' }}
+              style={{ marginLeft: 'auto', background: 'var(--accent)', color: 'var(--fg)', borderRadius: 'var(--radius-sm)', padding: '2px 10px', fontSize: 'var(--fs-micro)', border: 'none', cursor: 'pointer' }}
             >
               上传图片
             </button>
@@ -529,7 +529,7 @@ setActiveModel(modelId);
             {detectedUrls.map((u, i) => (
               <span key={i} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '2px 8px', borderRadius: 12, fontSize: 'var(--fs-micro)',
+                padding: '2px 8px', borderRadius: 'var(--radius-lg)', fontSize: 'var(--fs-micro)',
                 background: 'rgba(99,102,241,0.1)', color: 'var(--accent)',
                 border: '1px solid rgba(99,102,241,0.2)',
                 maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -577,7 +577,7 @@ setActiveModel(modelId);
             {attachments.map((att, i) => (
               <div key={i} style={{
                 position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '2px 6px', borderRadius: 6,
+                padding: '2px 6px', borderRadius: 'var(--radius-md)',
                 background: att.kind === 'image' ? 'rgba(99,102,241,0.08)' : 'var(--panel)',
                 border: '1px solid var(--border)',
                 fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
@@ -589,7 +589,7 @@ setActiveModel(modelId);
                     alt={att.name}
                     width={32}
                     height={32}
-                    style={{ borderRadius: 3, objectFit: 'cover', cursor: 'pointer' }}
+                    style={{ borderRadius: 'var(--radius-sm)', objectFit: 'cover', cursor: 'pointer' }}
                     preview={{ mask: null }}
                   />
                 )}
@@ -676,16 +676,16 @@ setActiveModel(modelId);
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }} onClick={(e) => { if (e.target === e.currentTarget) closeTongueCamera(); }}>
               <div style={{
-                width: 480, borderRadius: 12, overflow: 'hidden',
+                width: 480, borderRadius: 'var(--radius-lg)', overflow: 'hidden',
                 background: '#000', boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
               }}>
                 <div style={{
                   padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   background: 'linear-gradient(135deg, #1abc9c, #16a085)',
-                  color: '#fff',
+                  color: 'var(--fg-on-accent)',
                 }}>
                   <span style={{ fontWeight: 600 }}>👅 中医舌诊 — 拍摄舌象</span>
-                  <button onClick={closeTongueCamera} style={{ color: '#fff', cursor: 'pointer', fontSize: 'var(--fs-lg)', background: 'none', border: 'none' }}>✕</button>
+                  <button onClick={closeTongueCamera} style={{ color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-lg)', background: 'none', border: 'none' }}>✕</button>
                 </div>
                 {/* 摄像头预览 */}
                 <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', display: 'block' }} />
@@ -693,15 +693,15 @@ setActiveModel(modelId);
                 <canvas ref={canvasRef} style={{ display: 'none' }} />
                 {/* 提示 + 按钮 */}
                 <div style={{ padding: 12, textAlign: 'center', background: '#111' }}>
-                  <p style={{ color: '#aaa', fontSize: 'var(--fs-sm)', margin: '0 0 10px' }}>
+                  <p style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)', margin: '0 0 10px' }}>
                     请将舌头伸出对准镜头，保持自然光线，点击下方按钮拍摄
                   </p>
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                     <button
                       onClick={captureTongueImage}
                       style={{
-                        padding: '8px 24px', borderRadius: 20, fontSize: 'var(--fs-md)', fontWeight: 600,
-                        background: '#1abc9c', color: '#fff', border: 'none', cursor: 'pointer',
+                        padding: '8px 24px', borderRadius: 'var(--radius-pill)', fontSize: 'var(--fs-md)', fontWeight: 600,
+                        background: '#1abc9c', color: 'var(--fg-on-accent)', border: 'none', cursor: 'pointer',
                         transition: 'transform 0.15s',
                       }}
                       onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.05)'}
@@ -712,8 +712,8 @@ setActiveModel(modelId);
                     <button
                       onClick={closeTongueCamera}
                       style={{
-                        padding: '8px 16px', borderRadius: 20, fontSize: 'var(--fs-md)',
-                        background: 'transparent', color: '#999', border: '1px solid #444', cursor: 'pointer',
+                        padding: '8px 16px', borderRadius: 'var(--radius-pill)', fontSize: 'var(--fs-md)',
+                        background: 'transparent', color: 'var(--muted)', border: '1px solid #444', cursor: 'pointer',
                       }}
                     >
                       取消
@@ -854,7 +854,7 @@ setActiveModel(modelId);
               onClick={() => setMode(k)}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 2,
-                padding: '1px 5px', borderRadius: 3, fontSize: 'var(--fs-micro)', fontWeight: mode === k ? 600 : 400,
+                padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)', fontWeight: mode === k ? 600 : 400,
                 color: mode === k ? '#fff' : 'var(--muted-2)',
                 background: mode === k ? dot : 'transparent',
                 border: 'none', cursor: 'pointer',
@@ -971,7 +971,7 @@ setActiveModel(modelId);
         <div style={{
           position: 'absolute', bottom: '100%', left: 12, right: 12,
           background: 'var(--card)', border: '1px solid var(--border)',
-          borderRadius: 8, boxShadow: 'var(--shadow-lg)', padding: 4,
+          borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', padding: 4,
           maxHeight: 200, overflowY: 'auto', zIndex: 'var(--z-dropdown)',
         }}>
           <div style={{ padding: '4px 8px', fontSize: 'var(--fs-micro)', color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: 2 }}>
@@ -989,13 +989,13 @@ setActiveModel(modelId);
                 onMouseEnter={() => setActiveIdx(i)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 10px', borderRadius: 4, cursor: 'pointer',
+                  padding: '6px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                   fontSize: 'var(--fs-sm)', color: 'var(--fg-2)',
                   background: i === activeIdx ? 'var(--panel-2)' : 'transparent',
                 }}
               >
                 <span style={{
-                  width: 20, height: 20, borderRadius: 4,
+                  width: 20, height: 20, borderRadius: 'var(--radius-sm)',
                   background: 'var(--accent-soft)', color: 'var(--accent)',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 'var(--fs-micro)', fontWeight: 700, flexShrink: 0,
@@ -1014,14 +1014,14 @@ setActiveModel(modelId);
 export const Composer = React.forwardRef(ComposerBase);
 
 const iconBtn: React.CSSProperties = {
-  width: 24, height: 24, borderRadius: 4,
+  width: 24, height: 24, borderRadius: 'var(--radius-sm)',
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   cursor: 'pointer', border: 'none', background: 'transparent',
   color: 'var(--muted-2)', transition: 'all 0.15s',
 };
 
 const sendBtnStyle: React.CSSProperties = {
-  width: 28, height: 28, borderRadius: 6,
+  width: 28, height: 28, borderRadius: 'var(--radius-md)',
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   border: 'none', cursor: 'pointer', flexShrink: 0,
   transition: 'all 0.15s',
@@ -1163,9 +1163,9 @@ const ConnectorsDropdown: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'online': return '#52c41a';
+      case 'online': return 'var(--success)';
       case 'offline': return 'var(--muted-2)';
-      case 'error': return '#ff4d4f';
+      case 'error': return 'var(--danger)';
       default: return 'var(--muted-2)';
     }
   };

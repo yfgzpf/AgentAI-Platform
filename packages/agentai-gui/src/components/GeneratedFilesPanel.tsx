@@ -109,7 +109,7 @@ export const GeneratedFilesPanel: React.FC = () => {
     <Card
       size="small"
       title={<span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)' }}><FileAddOutlined style={{ marginRight: 4 }} />生成的文件</span>}
-      style={{ borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)' }}
+      style={{ borderRadius: 'var(--radius-md)', background: 'var(--card)', border: '1px solid var(--border)' }}
       styles={{ body: { padding: '8px 12px', maxHeight: preview.path ? 440 : 200, overflowY: 'auto' } }}
     >
       {files.length === 0 ? (
@@ -128,7 +128,7 @@ export const GeneratedFilesPanel: React.FC = () => {
                   onClick={() => handlePreview(f.path)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '4px 8px', borderRadius: 4,
+                    padding: '4px 8px', borderRadius: 'var(--radius-sm)',
                     cursor: 'pointer', fontSize: 'var(--fs-micro)',
                     color: 'var(--fg-2)',
                     transition: 'background 0.12s',
@@ -158,7 +158,7 @@ export const GeneratedFilesPanel: React.FC = () => {
                       style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer' }}
                     />
                   </Tooltip>
-                  <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 2, margin: 0, border: 'none', lineHeight: '16px', padding: '0 4px' }}>
+                  <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)', margin: 0, border: 'none', lineHeight: '16px', padding: '0 4px' }}>
                     {f.action.replace(/_/g, ' ')}
                   </Tag>
                 </div>
@@ -174,7 +174,7 @@ export const GeneratedFilesPanel: React.FC = () => {
                     fontSize: 'var(--fs-micro)', lineHeight: 1.4,
                     fontFamily: "'Consolas', monospace",
                     color: 'var(--fg-2)', background: 'var(--bg-2)',
-                    border: '1px solid var(--border)', borderRadius: 4,
+                    border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
                     whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                   }}>{preview.content}</pre>
                 ) : (

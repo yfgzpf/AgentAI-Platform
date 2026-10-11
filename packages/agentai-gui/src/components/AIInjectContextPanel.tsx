@@ -136,7 +136,7 @@ export const AIInjectContextPanel: React.FC = () => {
       onClick={() => setCollapsed(!collapsed)}
       style={{
         display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-        padding: '6px 8px', borderRadius: 6,
+        padding: '6px 8px', borderRadius: 'var(--radius-md)',
         fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
         background: 'transparent', userSelect: 'none',
       }}

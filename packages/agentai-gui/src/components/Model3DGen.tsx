@@ -150,7 +150,7 @@ export const Model3DGen: React.FC = () => {
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
           {/* 密钥配置 */}
           {showKeys && (
-<div style={{ padding: 12, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+<div style={{ padding: 12, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
 <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8 }}>密钥保存在浏览器本地, 不上传服务器</div>
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
                 <Input.Password size="small" placeholder="豆包 ARK API Key" value={arkKey} onChange={e => setArkKey(e.target.value)}
@@ -190,8 +190,8 @@ export const Model3DGen: React.FC = () => {
 
           {/* 图片预览 */}
           {imageBase64 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
-              <img src={imageBase64} alt="参考图" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
+              <img src={imageBase64} alt="参考图" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
               <div style={{ flex: 1, fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
                 已上传参考图<br />
                 <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{provider === 'doubao' ? '豆包将基于此图生成 3D 模型' : '混元将基于此图生成 3D 模型'}</span>

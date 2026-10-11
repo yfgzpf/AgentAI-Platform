@@ -91,7 +91,7 @@ export const UserMsg: React.FC<{
                   key={`user-img-${i}`}
                   src={img.base64 ? `data:image/png;base64,${img.base64}` : img.url}
                   alt={img.alt || ''}
-                  style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', border: '2px solid rgba(255,255,255,0.3)', cursor: 'zoom-in' }}
+                  style={{ width: 80, height: 80, borderRadius: 'var(--radius-md)', objectFit: 'cover', border: '2px solid rgba(255,255,255,0.3)', cursor: 'zoom-in' }}
                   onClick={() => { const src = img.base64 ? `data:image/png;base64,${img.base64}` : img.url; if (src) window.open(src, '_blank'); }}
                 />
               ))}
@@ -179,7 +179,7 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = Re
   return (
     <div className="bubble-enter" style={{
       padding: '12px 16px',
-      borderRadius: 12,
+      borderRadius: 'var(--radius-lg)',
       fontSize: 'var(--chat-font-size)', lineHeight: 'var(--chat-line-height)',
       color: 'var(--fg)',
       wordBreak: 'break-word', overflowX: 'auto',
@@ -196,7 +196,7 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = Re
           display: 'inline-block', width: 2, height: 16,
           background: 'var(--accent)', marginLeft: 2,
           animation: 'blink 1s infinite, glowPulse 1.5s ease-in-out infinite',
-          verticalAlign: 'text-bottom', borderRadius: 1,
+          verticalAlign: 'text-bottom', borderRadius: 'var(--radius-sm)',
         }} />
       )}
       {/* Copy button */}
@@ -204,7 +204,7 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = Re
         onClick={handleCopy}
         style={{
           position: 'absolute', top: 4, right: 4,
-          padding: '2px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
+          padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
           color: 'var(--muted-2)', background: 'var(--panel)',
           border: '1px solid var(--border)', cursor: 'pointer',
           opacity: 0, transition: 'opacity 0.15s',
@@ -259,7 +259,7 @@ export const ToolCollapseSummary: React.FC<{
     <div
       onClick={() => setExpanded(true)}
       style={{
-        margin: '4px 0', padding: '6px 10px', borderRadius: 6,
+        margin: '4px 0', padding: '6px 10px', borderRadius: 'var(--radius-md)',
         background: 'var(--panel)', border: '1px dashed var(--border)',
         cursor: 'pointer', userSelect: 'none',
         display: 'flex', alignItems: 'center', gap: 6,
@@ -293,7 +293,7 @@ export const ReasoningCard: React.FC<{ text: string; streaming?: boolean }> = ({
 
   return (
     <div className="bubble-enter" style={{
-      margin: '6px 0', borderRadius: 8,
+      margin: '6px 0', borderRadius: 'var(--radius-md)',
       border: '1px solid var(--border)', overflow: 'hidden',
       background: 'var(--panel)',
     }}>
@@ -366,7 +366,7 @@ const WriteInProgressCard: React.FC<{
   return (
     <div style={{
       margin: '4px 0 8px 16px',
-      borderRadius: 6,
+      borderRadius: 'var(--radius-md)',
       border: '1px solid var(--border)',
       background: 'var(--panel)',
       overflow: 'hidden',
@@ -428,7 +428,7 @@ export const ThinkingCard: React.FC<{ text: string; streaming?: boolean }> = ({ 
 
   return (
     <div className="bubble-enter" style={{
-      margin: '6px 0', borderRadius: 8,
+      margin: '6px 0', borderRadius: 'var(--radius-md)',
       border: '1px solid var(--border)', overflow: 'hidden',
       background: 'var(--panel)',
     }}>
@@ -504,7 +504,7 @@ export const ShellCard: React.FC<{
 
   return (
     <div className="bubble-enter" style={{
-      margin: '8px 0', borderRadius: 10,
+      margin: '8px 0', borderRadius: 'var(--radius-md)',
       border: `1px solid ${borderColor}`,
       overflow: 'hidden',
       background: 'var(--bg-2)',
@@ -563,7 +563,7 @@ export const ShellCard: React.FC<{
           <button
             onClick={onApprove}
             style={{
-              padding: '3px 12px', borderRadius: 4, fontSize: 'var(--fs-micro)', fontWeight: 600,
+              padding: '3px 12px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)', fontWeight: 600,
               background: 'var(--success)', color: 'var(--fg)', border: 'none', cursor: 'pointer',
               boxShadow: '0 1px 4px rgba(34,197,94,0.3)',
             }}
@@ -574,7 +574,7 @@ export const ShellCard: React.FC<{
             <button
               onClick={onReject}
               style={{
-                padding: '3px 12px', borderRadius: 4, fontSize: 'var(--fs-micro)',
+                padding: '3px 12px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)',
                 background: 'transparent', color: 'var(--muted)',
                 border: '1px solid var(--border)', cursor: 'pointer',
               }}
@@ -633,7 +633,7 @@ export const ToolCard: React.FC<{
 
   return (
     <div className="bubble-enter" style={{
-      margin: '6px 0', borderRadius: 8,
+      margin: '6px 0', borderRadius: 'var(--radius-md)',
       border: '1px solid var(--border)', overflow: 'hidden',
       background: 'var(--panel)',
       boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
@@ -741,7 +741,7 @@ const WidgetCard: React.FC<{
   return (
     <div className="bubble-enter" style={{
       margin: '8px 0',
-      borderRadius: 10,
+      borderRadius: 'var(--radius-md)',
       border: '1px solid var(--border)',
       background: 'var(--card)',
       overflow: 'hidden',
@@ -757,7 +757,7 @@ const WidgetCard: React.FC<{
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 'var(--fs-md)' }}>🖼️</span>
           <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg-2)' }}>{widget.title}</span>
-          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 4 }}>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 'var(--radius-sm)' }}>
             {widget.contentType === 'svg' ? 'SVG' : 'HTML'}
           </span>
         </div>
@@ -931,7 +931,7 @@ export const ActivityTimeline: React.FC<{
 
   return (
     <div className="bubble-enter" style={{
-      margin: '6px 0', borderRadius: 8,
+      margin: '6px 0', borderRadius: 'var(--radius-md)',
       border: '1px solid var(--border)', overflow: 'hidden',
       background: 'var(--panel)',
     }}>
@@ -976,7 +976,7 @@ export const ActivityTimeline: React.FC<{
         {/* 内联进度条 (流式时) */}
         {pending && progress && (
           <div style={{
-            flex: 1, height: 3, borderRadius: 2,
+            flex: 1, height: 3, borderRadius: 'var(--radius-sm)',
             background: 'rgba(128,128,128,0.1)',
             overflow: 'hidden', maxWidth: 120, marginLeft: 'auto',
           }}>
@@ -984,7 +984,7 @@ export const ActivityTimeline: React.FC<{
               height: '100%',
               width: `${Math.min(100, progress.percent)}%`,
               background: 'var(--accent)',
-              borderRadius: 2,
+              borderRadius: 'var(--radius-sm)',
               transition: 'width 0.3s ease',
             }} />
           </div>
@@ -1047,7 +1047,7 @@ export const ActivityTimeline: React.FC<{
                       padding: isSubagent ? '4px 8px' : '3px 6px',
                       cursor: 'pointer', fontSize: 'var(--tool-font-size, 11px)',
                       color: 'var(--fg-2)', userSelect: 'none',
-                      borderRadius: 4, transition: 'background 0.1s',
+                      borderRadius: 'var(--radius-sm)', transition: 'background 0.1s',
                       background: isSubagent ? 'var(--accent-soft)' : undefined,
                       border: isSubagent ? '1px solid var(--border)' : undefined,
                     }}
@@ -1120,7 +1120,7 @@ export const ActivityTimeline: React.FC<{
                         <div style={{
                           padding: '8px 12px',
                           background: 'var(--bg-2)',
-                          borderRadius: 6,
+                          borderRadius: 'var(--radius-md)',
                           border: '1px solid var(--border)',
                           fontSize: 'var(--fs-micro)',
                         }}>
@@ -1138,7 +1138,7 @@ export const ActivityTimeline: React.FC<{
                               <div style={{
                                 padding: '6px 8px',
                                 background: 'var(--card)',
-                                borderRadius: 4,
+                                borderRadius: 'var(--radius-sm)',
                                 border: '1px solid var(--border)',
                                 maxHeight: 100,
                                 overflowY: 'auto',
@@ -1157,7 +1157,7 @@ export const ActivityTimeline: React.FC<{
                               <div style={{
                                 padding: '6px 8px',
                                 background: 'var(--card)',
-                                borderRadius: 4,
+                                borderRadius: 'var(--radius-sm)',
                                 border: '1px solid var(--border)',
                                 maxHeight: 150,
                                 overflowY: 'auto',
@@ -1177,7 +1177,7 @@ export const ActivityTimeline: React.FC<{
                               <div style={{
                                 padding: '6px 8px',
                                 background: 'var(--card)',
-                                borderRadius: 4,
+                                borderRadius: 'var(--radius-sm)',
                                 border: '1px solid var(--border)',
                                 maxHeight: 200,
                                 overflowY: 'auto',
@@ -1304,7 +1304,7 @@ export const AssistantMsg: React.FC<{
           {model && (
             <span style={{
               fontSize: 'var(--fs-micro)', color: 'var(--accent)',
-              padding: '0 5px', borderRadius: 6,
+              padding: '0 5px', borderRadius: 'var(--radius-md)',
               background: 'var(--accent-soft)',
               opacity: 0.75,
             }}>
@@ -1489,7 +1489,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
   // 多张图片: 可折叠画廊
   return (
     <div className="bubble-enter" style={{
-      margin: '6px 0', borderRadius: 8, overflow: 'hidden',
+      margin: '6px 0', borderRadius: 'var(--radius-md)', overflow: 'hidden',
       border: '1px solid var(--border)', background: 'var(--panel)',
     }}>
       {/* 头部: 标题 + 展开/折叠按钮 */}
@@ -1517,7 +1517,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
                 key={i}
                 src={img.base64 ? `data:image/png;base64,${img.base64}` : img.url}
                 alt=""
-                style={{ width: 24, height: 24, borderRadius: 4, objectFit: 'cover', opacity: 0.7 }}
+                style={{ width: 24, height: 24, borderRadius: 'var(--radius-sm)', objectFit: 'cover', opacity: 0.7 }}
               />
             ))}
             {segments.length > 3 && (
@@ -1540,7 +1540,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
                 key={img.id || i}
                 onClick={() => setSelectedIndex(i)}
                 style={{
-                  position: 'relative', aspectRatio: '16/10', borderRadius: 6,
+                  position: 'relative', aspectRatio: '16/10', borderRadius: 'var(--radius-md)',
                   overflow: 'hidden', cursor: 'pointer', border: '1px solid var(--border)',
                   background: 'var(--bg)',
                 }}
@@ -1553,7 +1553,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
                 />
                 <div style={{
                   position: 'absolute', bottom: 0, left: 0, right: 0,
-                  padding: '2px 4px', fontSize: 'var(--fs-micro)', color: '#fff',
+                  padding: '2px 4px', fontSize: 'var(--fs-micro)', color: 'var(--fg-on-accent)',
                   background: 'rgba(0,0,0,0.6)', textAlign: 'center',
                 }}>
                   #{i + 1}
@@ -1579,7 +1579,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
               ? `data:image/png;base64,${segments[selectedIndex].base64}`
               : segments[selectedIndex].url}
             alt={segments[selectedIndex].alt || `截图 ${selectedIndex + 1}`}
-            style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 8, objectFit: 'contain' }}
+            style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 'var(--radius-md)', objectFit: 'contain' }}
             onClick={e => e.stopPropagation()}
           />
           <div style={{
@@ -1588,16 +1588,16 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
           }}>
             <button
               onClick={(e) => { e.stopPropagation(); setSelectedIndex(i => i !== null && i > 0 ? i - 1 : segments.length - 1); }}
-              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}
+              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
             >
               ← 上一张
             </button>
-            <span style={{ color: '#fff', fontSize: 'var(--fs-md)' }}>
+            <span style={{ color: 'var(--fg-on-accent)', fontSize: 'var(--fs-md)' }}>
               {selectedIndex + 1} / {segments.length}
             </span>
             <button
               onClick={(e) => { e.stopPropagation(); setSelectedIndex(i => i !== null && i < segments.length - 1 ? i + 1 : 0); }}
-              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}
+              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
             >
               下一张 →
             </button>
@@ -1620,7 +1620,7 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
         onClick={() => setShowLarge(true)}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+          padding: '6px 10px', borderRadius: 'var(--radius-md)', cursor: 'pointer',
           background: 'var(--panel)', border: '1px solid var(--border)',
           maxWidth: '100%',
         }}
@@ -1628,7 +1628,7 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
         <img
           src={src}
           alt={alt || '截图'}
-          style={{ width: 60, height: 40, borderRadius: 4, objectFit: 'cover' }}
+          style={{ width: 60, height: 40, borderRadius: 'var(--radius-sm)', objectFit: 'cover' }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1653,7 +1653,7 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
           <img
             src={src}
             alt={alt || '图片'}
-            style={{ maxWidth: '90%', maxHeight: '85%', borderRadius: 8, objectFit: 'contain' }}
+            style={{ maxWidth: '90%', maxHeight: '85%', borderRadius: 'var(--radius-md)', objectFit: 'contain' }}
             onClick={e => e.stopPropagation()}
           />
           {/* 下载按钮 */}
@@ -1681,13 +1681,13 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
                   window.open(src, '_blank');
                 }
               }}
-              style={{ padding: '8px 20px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 'var(--fs-md)', fontWeight: 500 }}
+              style={{ padding: '8px 20px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--accent)', color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-md)', fontWeight: 500 }}
             >
               ⬇ 保存图片
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setShowLarge(false); }}
-              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer', fontSize: 'var(--fs-md)' }}
+              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-md)' }}
             >
               关闭
             </button>
@@ -1713,7 +1713,7 @@ export const ImageCard: React.FC<{
 
   return (
     <div className="bubble-enter" style={{
-      margin: '6px 0', borderRadius: 8, overflow: 'hidden',
+      margin: '6px 0', borderRadius: 'var(--radius-md)', overflow: 'hidden',
       border: '1px solid var(--border)',
       background: 'var(--panel)',
     }}>
@@ -1740,7 +1740,7 @@ export const ImageCard: React.FC<{
           <div style={{ width: '100%', minHeight: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {/* 骨架屏占位: 固定高度防止 layout shift */}
             <div style={{
-              width: '100%', height: 120, borderRadius: 6,
+              width: '100%', height: 120, borderRadius: 'var(--radius-md)',
               background: 'linear-gradient(90deg, var(--panel) 25%, var(--border) 50%, var(--panel) 75%)',
               backgroundSize: '200% 100%',
               animation: 'shimmer 1.5s infinite',
@@ -1754,7 +1754,7 @@ export const ImageCard: React.FC<{
             onLoad={() => setLoaded(true)}
             onError={() => setError(true)}
             style={{
-              maxWidth: '100%', maxHeight: 240, borderRadius: 4, cursor: 'zoom-in',
+              maxWidth: '100%', maxHeight: 240, borderRadius: 'var(--radius-sm)', cursor: 'zoom-in',
               display: loaded ? 'block' : 'none',
               objectFit: 'contain',
               transition: 'opacity 0.15s ease',
@@ -1775,7 +1775,7 @@ const ErrorCard: React.FC<{ error: string; details?: string; fix?: string }> = (
   const [expanded, setExpanded] = useState(false);
   return (
     <div style={{
-      margin: '6px 0', borderRadius: 8, overflow: 'hidden',
+      margin: '6px 0', borderRadius: 'var(--radius-md)', overflow: 'hidden',
       border: '1px solid rgba(239,68,68,0.3)',
       background: 'rgba(239,68,68,0.06)',
     }}>
@@ -1809,7 +1809,7 @@ const ErrorCard: React.FC<{ error: string; details?: string; fix?: string }> = (
           {details && <div style={{ marginBottom: fix ? 6 : 0 }}>📋 {details}</div>}
           {fix && (
             <div style={{
-              padding: '5px 8px', borderRadius: 4,
+              padding: '5px 8px', borderRadius: 'var(--radius-sm)',
               background: 'rgba(34,197,94,0.08)',
               border: '1px solid rgba(34,197,94,0.2)',
               color: 'var(--success)', marginTop: 4,
@@ -1830,7 +1830,7 @@ const VideoPlayer: React.FC<{ url: string; poster?: string; alt?: string }> = ({
   if (error) {
     return (
       <div style={{
-        margin: '6px 0', borderRadius: 8, padding: '12px 16px',
+        margin: '6px 0', borderRadius: 'var(--radius-md)', padding: '12px 16px',
         background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
         fontSize: 'var(--fs-sm)', color: 'var(--fg-2)',
       }}>
@@ -1843,7 +1843,7 @@ const VideoPlayer: React.FC<{ url: string; poster?: string; alt?: string }> = ({
   }
   return (
     <div style={{
-      margin: '6px 0', borderRadius: 8, overflow: 'hidden',
+      margin: '6px 0', borderRadius: 'var(--radius-md)', overflow: 'hidden',
       border: '1px solid var(--border)', background: 'var(--bg)',
     }}>
       {alt && (
@@ -1898,7 +1898,7 @@ export const UserReviewCard: React.FC<{
   <div className="msg-enter" style={{
     display: 'flex', flexDirection: 'column', gap: 8,
     margin: 'var(--chat-card-margin-y) var(--chat-card-margin-x)', padding: '12px 14px',
-    borderRadius: 10,
+    borderRadius: 'var(--radius-md)',
     border: '1px solid var(--border)',
     boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
   }}>
@@ -1912,11 +1912,11 @@ export const UserReviewCard: React.FC<{
           onClick={a.onClick}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
-            padding: '4px 12px', borderRadius: 6,
+            padding: '4px 12px', borderRadius: 'var(--radius-md)',
             fontSize: 'var(--fs-sm)', fontWeight: a.primary ? 600 : 400,
             cursor: 'pointer', border: '1px solid var(--border)',
             background: a.primary
-              ? (a.danger ? '#ef4444' : 'var(--accent)')
+              ? (a.danger ? 'var(--danger)' : 'var(--accent)')
               : 'var(--panel)',
             color: a.primary ? '#fff' : 'var(--fg-2)',
             transition: 'all 0.15s',
@@ -1937,7 +1937,7 @@ export const FollowUpCard: React.FC<{
 }> = ({ questions, onSelect }) => (
   <div className="msg-enter" style={{
     margin: 'var(--chat-card-margin-y) var(--chat-card-margin-x)', padding: '8px 12px',
-    borderRadius: 10,
+    borderRadius: 'var(--radius-md)',
     background: 'var(--bg-2)',
     border: '1px dashed var(--border)',
   }}>
@@ -1950,7 +1950,7 @@ export const FollowUpCard: React.FC<{
           key={i}
           onClick={() => onSelect(q)}
           style={{
-            padding: '3px 10px', borderRadius: 12, fontSize: 'var(--fs-micro)',
+            padding: '3px 10px', borderRadius: 'var(--radius-lg)', fontSize: 'var(--fs-micro)',
             cursor: 'pointer', border: '1px solid var(--border)',
             background: 'var(--card)', color: 'var(--fg-2)',
             transition: 'all 0.15s',

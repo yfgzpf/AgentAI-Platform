@@ -86,15 +86,15 @@ export const EvolutionPanel: React.FC = () => {
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8,
         }}>
-          <div style={{ padding: 8, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
+          <div style={{ padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700, color: 'var(--accent)' }}>{summary.totalEntries}</div>
             <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>总记忆条数</div>
           </div>
-          <div style={{ padding: 8, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
+          <div style={{ padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700, color: 'var(--success)' }}>{(summary.successRate * 100).toFixed(0)}%</div>
             <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>成功率</div>
           </div>
-          <div style={{ padding: 8, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
+          <div style={{ padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700, color: 'var(--warning)' }}>{summary.failureCount}</div>
             <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>失败次数</div>
           </div>
@@ -123,7 +123,7 @@ export const EvolutionPanel: React.FC = () => {
             {rules.map((rule, i) => (
               <div key={i} style={{
                 display: 'flex', alignItems: 'flex-start', gap: 6,
-                padding: '4px 8px', borderRadius: 4,
+                padding: '4px 8px', borderRadius: 'var(--radius-sm)',
                 background: 'var(--panel)', border: '1px solid var(--border)',
                 fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
               }}>
@@ -154,7 +154,7 @@ export const EvolutionPanel: React.FC = () => {
               return (
                 <div key={i} style={{
                   display: 'flex', alignItems: 'flex-start', gap: 6,
-                  padding: '4px 8px', borderRadius: 4,
+                  padding: '4px 8px', borderRadius: 'var(--radius-sm)',
                   background: 'var(--panel)', border: '1px solid var(--border)',
                   fontSize: 'var(--fs-micro)',
                 }}>

@@ -250,11 +250,11 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
         <Button
           size="small"
           type={listening ? 'primary' : 'default'}
-          icon={listening ? <AudioOutlined style={{ color: '#ff4d4f' }} /> : <AudioMutedOutlined />}
+          icon={listening ? <AudioOutlined style={{ color: 'var(--danger)' }} /> : <AudioMutedOutlined />}
           onClick={() => setExpanded(true)}
           style={{
             animation: listening ? 'pulse 1.2s ease-out infinite' : undefined,
-            borderColor: listening ? '#ff4d4f' : undefined,
+            borderColor: listening ? 'var(--danger)' : undefined,
           }}
         >
           {listening ? '听写中' : '听写'}

@@ -105,7 +105,7 @@ export const WechatSetup: React.FC = () => {
   if (status === 'idle') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 40 }}>
-        <Card style={{ width: 380, textAlign: 'center', borderRadius: 16 }}>
+        <Card style={{ width: 380, textAlign: 'center', borderRadius: 'var(--radius-lg)' }}>
           <QrcodeOutlined style={{ fontSize: 48, color: '#CD7A3A', marginBottom: 16, display: 'block' }} />
           <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 8 }}>绑定微信账号</div>
           <div style={{ color: 'var(--muted)', marginBottom: 24, fontSize: 'var(--fs-md)' }}>
@@ -119,7 +119,7 @@ export const WechatSetup: React.FC = () => {
             style={{
               width: '100%',
               height: 44,
-              borderRadius: 10,
+              borderRadius: 'var(--radius-md)',
               background: '#CD7A3A',
               border: 'none',
             }}
@@ -138,8 +138,8 @@ export const WechatSetup: React.FC = () => {
   if (status === 'confirmed') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 40 }}>
-        <Card style={{ width: 380, textAlign: 'center', borderRadius: 16 }}>
-          <CheckCircleOutlined style={{ fontSize: 48, color: '#52c41a', marginBottom: 16, display: 'block' }} />
+        <Card style={{ width: 380, textAlign: 'center', borderRadius: 'var(--radius-lg)' }}>
+          <CheckCircleOutlined style={{ fontSize: 48, color: 'var(--success)', marginBottom: 16, display: 'block' }} />
           <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 8 }}>微信绑定成功</div>
           <div style={{ color: 'var(--muted)', marginBottom: 24 }}>通过微信接收 AI 消息</div>
 
@@ -159,14 +159,14 @@ export const WechatSetup: React.FC = () => {
             <Button
               icon={<ReloadOutlined />}
               onClick={handleRefresh}
-              style={{ flex: 1, height: 38, borderRadius: 8 }}
+              style={{ flex: 1, height: 38, borderRadius: 'var(--radius-md)' }}
             >
               更换账号
             </Button>
             <Button
               icon={<LogoutOutlined />}
               danger
-              style={{ flex: 1, height: 38, borderRadius: 8 }}
+              style={{ flex: 1, height: 38, borderRadius: 'var(--radius-md)' }}
               onClick={async () => {
                 try {
                   const res = await fetch(`${GATEWAY_HTTP}/api/wechat/account/${account?.accountId}`, { method: 'DELETE' });
@@ -194,7 +194,7 @@ export const WechatSetup: React.FC = () => {
   // --- 二维码展示状态 ---
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 40 }}>
-      <Card style={{ width: 380, textAlign: 'center', borderRadius: 16 }}>
+      <Card style={{ width: 380, textAlign: 'center', borderRadius: 'var(--radius-lg)' }}>
         <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 8 }}>
           微信扫码绑定
         </div>
@@ -211,21 +211,21 @@ export const WechatSetup: React.FC = () => {
               <img
                 src={`data:image/png;base64,${qrcodeImage}`}
                 alt="微信绑定二维码"
-                style={{ width: 220, height: 220, borderRadius: 12, border: '2px solid var(--border)' }}
+                style={{ width: 220, height: 220, borderRadius: 'var(--radius-lg)', border: '2px solid var(--border)' }}
               />
             ) : qrImageUrl ? (
               /* 方案 2: 浏览器直接从 qrserver API 加载 QR 图片 */
               <img
                 src={qrImageUrl}
                 alt="微信绑定二维码"
-                style={{ width: 220, height: 220, borderRadius: 12, border: '2px solid var(--border)' }}
+                style={{ width: 220, height: 220, borderRadius: 'var(--radius-lg)', border: '2px solid var(--border)' }}
                 onError={() => {
                   const el = document.getElementById('wechat-qr-fallback');
                   if (el) el.style.display = 'block';
                 }}
               />
             ) : (
-              <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--panel)', borderRadius: 12 }}>
+              <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--panel)', borderRadius: 'var(--radius-lg)' }}>
                 <span style={{ color: 'var(--muted)' }}>二维码加载中...</span>
               </div>
             )}
@@ -245,7 +245,7 @@ export const WechatSetup: React.FC = () => {
         )}
 
         {error && (
-          <div style={{ color: '#ff4d4f', marginBottom: 16, fontSize: 'var(--fs-md)' }}>
+          <div style={{ color: 'var(--danger)', marginBottom: 16, fontSize: 'var(--fs-md)' }}>
             {error}
           </div>
         )}
@@ -254,13 +254,13 @@ export const WechatSetup: React.FC = () => {
           <Button
             icon={<ReloadOutlined />}
             onClick={handleRefresh}
-            style={{ flex: 1, height: 38, borderRadius: 8 }}
+            style={{ flex: 1, height: 38, borderRadius: 'var(--radius-md)' }}
           >
             刷新二维码
           </Button>
           <Button
             onClick={() => setStatus('idle')}
-            style={{ flex: 1, height: 38, borderRadius: 8 }}
+            style={{ flex: 1, height: 38, borderRadius: 'var(--radius-md)' }}
           >
             取消
           </Button>

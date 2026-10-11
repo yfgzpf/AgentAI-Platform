@@ -185,9 +185,9 @@ export const RemoteEnvironmentButton: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'connected': return '#52c41a';
+      case 'connected': return 'var(--success)';
       case 'connecting': return '#faad14';
-      case 'error': return '#f5222d';
+      case 'error': return 'var(--danger)';
       default: return '#8c8c8c';
     }
   };
@@ -208,12 +208,12 @@ export const RemoteEnvironmentButton: React.FC = () => {
             />
             {isConnected ? (
               <DisconnectOutlined
-                style={{ color: '#f5222d', cursor: 'pointer' }}
+                style={{ color: 'var(--danger)', cursor: 'pointer' }}
                 onClick={(e) => { e.stopPropagation(); disconnect(env.id); }}
               />
             ) : (
               <CheckCircleOutlined
-                style={{ color: '#52c41a', cursor: 'pointer' }}
+                style={{ color: 'var(--success)', cursor: 'pointer' }}
                 onClick={(e) => { e.stopPropagation(); connect(env.id); }}
               />
             )}
@@ -245,7 +245,7 @@ export const RemoteEnvironmentButton: React.FC = () => {
           <button
             className="icon-btn-sm"
             style={{
-              color: connectedEnv ? '#52c41a' : 'var(--muted-2)',
+              color: connectedEnv ? 'var(--success)' : 'var(--muted-2)',
               position: 'relative',
             }}
           >
@@ -259,7 +259,7 @@ export const RemoteEnvironmentButton: React.FC = () => {
                   width: 6,
                   height: 6,
                   borderRadius: '50%',
-                  background: '#52c41a',
+                  background: 'var(--success)',
                 }}
               />
             )}

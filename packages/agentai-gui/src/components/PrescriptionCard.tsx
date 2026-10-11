@@ -248,7 +248,7 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
 
   return (
     <div style={{
-      marginTop: 12, borderRadius: 8, overflow: 'hidden',
+      marginTop: 12, borderRadius: 'var(--radius-md)', overflow: 'hidden',
       border: '1px solid var(--border)',
       background: 'var(--panel)',
       boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
@@ -265,7 +265,7 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
             {rx.formulaName || '中医处方单'}
           </span>
           {rx.source && (
-            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', background: 'var(--bg)', padding: '1px 6px', borderRadius: 8 }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', background: 'var(--bg)', padding: '1px 6px', borderRadius: 'var(--radius-md)' }}>
               《{rx.source}》
             </span>
           )}
@@ -276,7 +276,7 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
             className="icon-btn-sm"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '4px 10px', borderRadius: 6, fontSize: 'var(--fs-micro)',
+              padding: '4px 10px', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-micro)',
               background: copied ? '#27ae60' : 'var(--bg)', color: copied ? '#fff' : 'var(--fg-2)',
               border: `1px solid ${copied ? '#27ae60' : 'var(--border)'}`, cursor: 'pointer',
               transition: 'all 0.2s',
@@ -291,7 +291,7 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
             className="icon-btn-sm"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '4px 10px', borderRadius: 6, fontSize: 'var(--fs-micro)',
+              padding: '4px 10px', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-micro)',
               background: 'var(--bg)', color: 'var(--fg-2)',
               border: '1px solid var(--border)', cursor: 'pointer',
             }}
@@ -334,13 +334,13 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
               {rx.ingredients.map((ing, i) => (
                 <div key={i} style={{
                   display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '4px 8px', borderRadius: 4,
+                  padding: '4px 8px', borderRadius: 'var(--radius-sm)',
                   background: `${ROLE_COLORS[ing.role] || ROLE_COLORS['成分']}08`,
                   borderLeft: `3px solid ${ROLE_COLORS[ing.role] || ROLE_COLORS['成分']}`,
                 }}>
                   <span style={{
-                    fontSize: 'var(--fs-micro)', padding: '1px 5px', borderRadius: 8,
-                    color: '#fff', background: ROLE_COLORS[ing.role] || ROLE_COLORS['成分'],
+                    fontSize: 'var(--fs-micro)', padding: '1px 5px', borderRadius: 'var(--radius-md)',
+                    color: 'var(--fg-on-accent)', background: ROLE_COLORS[ing.role] || ROLE_COLORS['成分'],
                     fontWeight: 600, whiteSpace: 'nowrap',
                   }}>{ing.role}</span>
                   <span style={{ fontWeight: 600, minWidth: 50 }}>{ing.name}</span>
@@ -375,7 +375,7 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
         {/* 免责声明 */}
         <div style={{
           padding: '8px 10px', background: '#fef9e7', border: '1px solid #f0c36d',
-          borderRadius: 4, fontSize: 'var(--fs-micro)', color: '#856404', lineHeight: 1.5,
+          borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)', color: '#856404', lineHeight: 1.5,
         }}>
           ⚠️ {rx.disclaimer || '此辨证开方仅供参考和学习交流，不替代线下医师面诊。如症状严重或持续不缓解，请及时就医。'}
         </div>

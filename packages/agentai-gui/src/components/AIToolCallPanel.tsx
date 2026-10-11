@@ -61,7 +61,7 @@ export const AIToolCallPanel: React.FC = () => {
             <Tooltip key={`${t.name}-${i}`} title={`${t.name} · ${t.status === 'running' ? '进行中' : t.status === 'success' ? '成功' : '失败'}`}>
               <Tag
                 style={{
-                  fontSize: 'var(--fs-micro)', borderRadius: 2, margin: 0, border: 'none',
+                  fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)', margin: 0, border: 'none',
                   lineHeight: '18px', padding: '0 5px', cursor: 'default',
                   background: t.status === 'success' ? 'var(--bg-2)' : t.status === 'failed' ? 'var(--danger-soft)' : 'var(--violet-soft)',
                   color: t.status === 'success' ? 'var(--fg-2)' : t.status === 'failed' ? 'var(--danger)' : 'var(--violet)',

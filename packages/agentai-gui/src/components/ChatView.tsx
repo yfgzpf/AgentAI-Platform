@@ -2063,7 +2063,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '4px 12px', margin: '4px 0',
-            background: 'var(--panel)', borderRadius: 6,
+            background: 'var(--panel)', borderRadius: 'var(--radius-md)',
             border: '1px solid var(--border)',
             fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
             overflowX: 'auto', whiteSpace: 'nowrap',
@@ -2075,7 +2075,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
               return (
                 <span key={idx} style={{
                   flexShrink: 0, padding: '1px 6px',
-                  background: 'var(--bg-2)', borderRadius: 3,
+                  background: 'var(--bg-2)', borderRadius: 'var(--radius-sm)',
                   cursor: 'pointer',
                 }} onClick={() => {
                   const el = msgRefs.current[m.id];
@@ -2179,8 +2179,8 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           style={{
             position: 'absolute', bottom: 120, right: 24,
             display: 'flex', alignItems: 'center', gap: 4,
-            padding: '6px 14px', borderRadius: 20,
-            background: 'var(--accent)', color: '#fff',
+            padding: '6px 14px', borderRadius: 'var(--radius-pill)',
+            background: 'var(--accent)', color: 'var(--fg-on-accent)',
             border: 'none', cursor: 'pointer', fontSize: 'var(--ui-font-size)', fontWeight: 600,
             boxShadow: 'var(--shadow-md)', zIndex: 'var(--z-sticky)',
             animation: 'fadeIn 0.2s ease-out',
@@ -2206,7 +2206,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           {queuedSends.map((t, i) => (
             <span key={i} style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '2px 10px', borderRadius: 4, fontSize: 'var(--tool-font-size)',
+              padding: '2px 10px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--tool-font-size)',
               background: 'var(--accent-soft)', border: '1px solid var(--accent)',
               color: 'var(--fg)',
             }}>
@@ -2317,15 +2317,15 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
       {/* Context Monitor — 上下文长度提醒 (单行紧凑版) */}
       {messages.length > 3 && tokenInfo.nearing && (
         <div style={{
-          margin: '4px 16px 0', padding: '4px 10px', borderRadius: 6,
+          margin: '4px 16px 0', padding: '4px 10px', borderRadius: 'var(--radius-md)',
           background: tokenInfo.critical ? 'rgba(239,68,68,0.1)' : 'rgba(250,204,21,0.08)',
           border: `1px solid ${tokenInfo.critical ? 'rgba(239,68,68,0.25)' : 'rgba(250,204,21,0.2)'}`,
           display: 'flex', alignItems: 'center', gap: 8,
         }}>
           {/* Progress bar */}
-          <div style={{ flex: 1, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)', minWidth: 40 }}>
+          <div style={{ flex: 1, height: 4, borderRadius: 'var(--radius-sm)', background: 'rgba(255,255,255,0.06)', minWidth: 40 }}>
             <div style={{
-              width: `${tokenInfo.pct}%`, height: '100%', borderRadius: 2,
+              width: `${tokenInfo.pct}%`, height: '100%', borderRadius: 'var(--radius-sm)',
               background: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)',
               transition: 'width 0.4s ease',
             }} />
@@ -2353,8 +2353,8 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                 }, 300);
               }}
               style={{
-                fontSize: 'var(--tool-font-size)', padding: '2px 8px', borderRadius: 4,
-                background: 'var(--accent)', color: '#fff', border: 'none',
+                fontSize: 'var(--tool-font-size)', padding: '2px 8px', borderRadius: 'var(--radius-sm)',
+                background: 'var(--accent)', color: 'var(--fg-on-accent)', border: 'none',
                 cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600,
               }}
             >
@@ -2371,12 +2371,12 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
       {progress && !messages.some(m => m.streaming) && (
         <div style={{
           margin: '0 12px 6px', padding: '6px 12px',
-          borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)',
           display: 'flex', alignItems: 'center', gap: 12, fontSize: 'var(--ui-font-size)', color: 'var(--fg)',
         }}>
           {/* 进度条 */}
           <div style={{
-            flex: 1, height: 6, borderRadius: 3,
+            flex: 1, height: 6, borderRadius: 'var(--radius-sm)',
             background: 'rgba(255,255,255,0.06)',
             overflow: 'hidden'
           }}>
@@ -2384,7 +2384,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
               height: '100%',
               width: `${progress.percent}%`,
               background: progress.percent >= 100 ? 'var(--success)' : 'var(--accent)',
-              borderRadius: 3,
+              borderRadius: 'var(--radius-sm)',
               transition: 'width 0.3s ease'
             }} />
           </div>
@@ -2406,7 +2406,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
       {loading && !chainId && !progress && (
         <div style={{
           margin: '0 12px 6px', padding: '4px 10px',
-          borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)',
           display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted)',
         }}>
           <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⏳</span>

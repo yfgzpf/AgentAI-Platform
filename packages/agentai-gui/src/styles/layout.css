@@ -109,7 +109,7 @@
 
 /* 无障碍：把手是键盘可达的焦点元素 */
 .pane-grip:focus-visible {
-  outline: 2px solid var(--accent, #4a9eff);
+  outline: 2px solid var(--accent);
   outline-offset: -1px;
   background: var(--accent-soft, rgba(74, 158, 255, 0.15));
 }
@@ -117,7 +117,7 @@
 /* 悬停/拖拽时高亮 */
 .pane-grip:hover,
 .pane-grip.is-dragging {
-  background: var(--accent, #4a9eff);
+  background: var(--accent);
 }
 
 /* 把手中央的视觉指示线（hover 时显现） */

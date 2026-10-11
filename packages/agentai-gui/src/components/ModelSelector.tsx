@@ -255,7 +255,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
           <div>
             模型 <b>{model?.label}</b> 需要密钥才能使用。
           </div>
-          <div style={{ marginTop: 12, padding: '12px', background: 'var(--accent-soft)', borderRadius: 8, border: '1px dashed var(--accent)' }}>
+          <div style={{ marginTop: 12, padding: '12px', background: 'var(--accent-soft)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--accent)' }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>🔑 如何获取密钥？</div>
             <div>添加作者微信 <b style={{ color: 'var(--accent)' }}>agentai-platform</b></div>
             <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted-2)', marginTop: 4 }}>获取密钥后在设置页填入即可解锁全部模型</div>
@@ -280,7 +280,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
         <span
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
-            padding: triggerSize.padding, borderRadius: mode === 'minimal' ? 6 : 4, cursor: 'pointer',
+            padding: triggerSize.padding, borderRadius: mode === 'minimal' ? 'var(--radius-md)' : 'var(--radius-sm)', cursor: 'pointer',
             background: mode === 'minimal' ? 'var(--card)' : 'var(--panel)',
             border: '1px solid var(--border)',
             fontSize: triggerSize.fontSize, color: 'var(--muted-2)',
@@ -334,7 +334,7 @@ const GroupTags: React.FC<{
                   <span
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 2,
-                      padding: '2px 4px', borderRadius: 4,
+                      padding: '2px 4px', borderRadius: 'var(--radius-sm)',
                       background: isActive ? 'var(--accent-bg)' : 'transparent',
                       cursor: 'pointer', fontSize: 'var(--fs-micro)', whiteSpace: 'nowrap',
                     }}
@@ -386,7 +386,7 @@ onChange={(e) => {
               <span
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 2,
-                  padding: '2px 4px', borderRadius: 4,
+                  padding: '2px 4px', borderRadius: 'var(--radius-sm)',
                   background: isActive ? 'var(--accent-bg)' : 'transparent',
                   cursor: 'pointer', fontSize: 'var(--fs-micro)', whiteSpace: 'nowrap',
                 }}

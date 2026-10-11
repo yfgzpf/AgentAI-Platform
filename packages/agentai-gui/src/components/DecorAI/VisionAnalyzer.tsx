@@ -243,7 +243,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
       style={{ height: '100%', background: 'var(--card)', overflow: 'auto' }}
       title={
         <Space>
-          <CheckCircleOutlined style={{ color: '#52c41a' }} />
+          <CheckCircleOutlined style={{ color: 'var(--success)' }} />
           <span>分析完成</span>
         </Space>
       }
@@ -265,7 +265,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
         <div style={{ 
           padding: 12, 
           background: 'var(--bg)', 
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           marginBottom: 12 
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -275,7 +275,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
               <Progress 
                 percent={result.space.layoutScore} 
                 size="small"
-                strokeColor={result.space.layoutScore >= 80 ? '#52c41a' : result.space.layoutScore >= 60 ? '#faad14' : '#ff4d4f'}
+                strokeColor={result.space.layoutScore >= 80 ? 'var(--success)' : result.space.layoutScore >= 60 ? '#faad14' : 'var(--danger)'}
               />
             </div>
           </div>
@@ -299,7 +299,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
                 <div style={{
                   width: 20,
                   height: 20,
-                  borderRadius: 4,
+                  borderRadius: 'var(--radius-sm)',
                   background: color.startsWith('#') ? color : '#ccc',
                   border: '1px solid var(--border)'
                 }} />
@@ -340,7 +340,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
       {/* 空间痛点 */}
       {result.space.painPoints.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <Title level={5} style={{ marginBottom: 12, color: '#ff4d4f' }}>
+          <Title level={5} style={{ marginBottom: 12, color: 'var(--danger)' }}>
             空间痛点
           </Title>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
@@ -354,7 +354,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
       {/* 改进建议 */}
       {result.space.suggestions.length > 0 && (
         <div>
-          <Title level={5} style={{ marginBottom: 12, color: '#52c41a' }}>
+          <Title level={5} style={{ marginBottom: 12, color: 'var(--success)' }}>
             AI 建议
           </Title>
           <ul style={{ paddingLeft: 20, margin: 0 }}>

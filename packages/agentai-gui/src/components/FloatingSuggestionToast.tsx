@@ -58,28 +58,28 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
   // 优先级配色
   const theme = {
     critical: {
-      border: 'var(--danger, #ff4d4f)',
+      border: 'var(--danger)',
       bg: 'linear-gradient(135deg, rgba(255,77,79,0.12), var(--card))',
       iconBg: 'linear-gradient(135deg, #ff4d4f, #ff7875)',
       label: '紧急',
       pulse: 'pulse-red',
     },
     high: {
-      border: 'var(--warning, #faad14)',
+      border: 'var(--warning)',
       bg: 'linear-gradient(135deg, rgba(250,173,20,0.12), var(--card))',
       iconBg: 'linear-gradient(135deg, #faad14, #ffc53d)',
       label: '重要',
       pulse: 'pulse-orange',
     },
     medium: {
-      border: 'var(--accent, #1890ff)',
+      border: 'var(--accent)',
       bg: 'linear-gradient(135deg, rgba(24,144,255,0.10), var(--card))',
       iconBg: 'linear-gradient(135deg, #1890ff, #36cfc9)',
       label: '推荐',
       pulse: '',
     },
     low: {
-      border: 'var(--success, #52c41a)',
+      border: 'var(--success)',
       bg: 'linear-gradient(135deg, rgba(82,196,26,0.08), var(--card))',
       iconBg: 'linear-gradient(135deg, #52c41a, #73d13d)',
       label: '建议',
@@ -117,7 +117,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
         width: 380,
         maxWidth: 'calc(100vw - 48px)',
         zIndex: 'var(--z-dragging)',
-        borderRadius: 14,
+        borderRadius: 'var(--radius-lg)',
         border: `2px solid ${theme.border}`,
         background: theme.bg,
         backdropFilter: 'blur(12px)',
@@ -150,14 +150,14 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
           <div style={{
             width: 36,
             height: 36,
-            borderRadius: 10,
+            borderRadius: 'var(--radius-md)',
             background: theme.iconBg,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: 'var(--fs-lg)',
             flexShrink: 0,
-            color: '#fff',
+            color: 'var(--fg-on-accent)',
           }}>
             {s.icon || '💡'}
           </div>
@@ -173,9 +173,9 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
                 fontSize: 'var(--fs-micro)',
                 fontWeight: 700,
                 padding: '1px 6px',
-                borderRadius: 4,
+                borderRadius: 'var(--radius-sm)',
                 background: theme.border,
-                color: '#fff',
+                color: 'var(--fg-on-accent)',
                 textTransform: 'uppercase',
                 letterSpacing: 0.5,
               }}>
@@ -236,12 +236,12 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
             style={{
               flex: 1,
               padding: '8px 0',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-md)',
               border: 'none',
               cursor: 'pointer',
               fontSize: 'var(--fs-md)',
               fontWeight: 600,
-              color: '#fff',
+              color: 'var(--fg-on-accent)',
               background: theme.iconBg,
             }}
           >
@@ -252,7 +252,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
             style={{
               flex: 1,
               padding: '8px 0',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-md)',
               border: '1px solid var(--border)',
               cursor: 'pointer',
               fontSize: 'var(--fs-md)',

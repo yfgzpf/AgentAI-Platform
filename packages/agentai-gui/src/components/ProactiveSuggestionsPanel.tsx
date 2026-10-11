@@ -143,7 +143,7 @@ export const ProactiveSuggestionsPanel: React.FC = () => {
 
   const getIcon = (type: string) => {
     switch (type) {
-      case 'optimization': return <RiseOutlined style={{ color: '#52c41a' }} />;
+      case 'optimization': return <RiseOutlined style={{ color: 'var(--success)' }} />;
       case 'warning': return <WarningOutlined style={{ color: '#faad14' }} />;
       case 'opportunity': return <ThunderboltOutlined style={{ color: '#1890ff' }} />;
       case 'automation': return <RobotOutlined style={{ color: '#722ed1' }} />;
@@ -186,7 +186,7 @@ export const ProactiveSuggestionsPanel: React.FC = () => {
                 value={insight.value}
                 prefix={insight.trend === 'up' ? <RiseOutlined /> : insight.trend === 'down' ? <RiseOutlined style={{ transform: 'rotate(180deg)' }} /> : null}
                 valueStyle={{ 
-                  color: insight.trend === 'up' ? '#52c41a' : insight.trend === 'down' ? '#f5222d' : '#666'
+                  color: insight.trend === 'up' ? 'var(--success)' : insight.trend === 'down' ? 'var(--danger)' : '#666'
                 }}
               />
               <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>{insight.description}</Text>

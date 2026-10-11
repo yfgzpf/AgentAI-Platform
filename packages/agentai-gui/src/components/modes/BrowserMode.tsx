@@ -171,19 +171,19 @@ export const BrowserMode: React.FC = () => {
           display: 'flex',
           alignItems: 'center',
           background: 'rgba(0,0,0,0.4)',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           border: '1px solid rgba(255,255,255,0.08)',
           padding: '0 10px',
           height: 32,
           transition: 'border-color 0.2s',
         }}
-        onFocus={(e) => { (e.target as HTMLElement).style.borderColor = 'var(--accent,#f97316)'; }}
+        onFocus={(e) => { (e.target as HTMLElement).style.borderColor = 'var(--accent)'; }}
         onBlur={(e) => { (e.target as HTMLElement).style.borderColor = 'rgba(255,255,255,0.08)'; }}
         >
           {/* 安全图标 */}
           {currentUrl && currentUrl !== DEFAULT_URL && (
             <span style={{ marginRight: 6, fontSize: 'var(--fs-md)', flexShrink: 0 }}>
-              {isSecure ? <SafetyCertificateOutlined style={{ color: '#4ade80' }} /> : <LockOutlined style={{ color: '#fbbf24' }} />}
+              {isSecure ? <SafetyCertificateOutlined style={{ color: 'var(--success)' }} /> : <LockOutlined style={{ color: '#fbbf24' }} />}
             </span>
           )}
 
@@ -208,7 +208,7 @@ export const BrowserMode: React.FC = () => {
               size="small"
               icon={<SendOutlined />}
               onClick={handleAddressSubmit}
-              style={{ color: 'var(--accent,#f97316)', flexShrink: 0, marginLeft: 4 }}
+              style={{ color: 'var(--accent)', flexShrink: 0, marginLeft: 4 }}
             />
           </Tooltip>
         </div>
@@ -224,7 +224,7 @@ export const BrowserMode: React.FC = () => {
               onClick={() => setAiControlled(!aiControlled)}
               style={{
                 color: aiControlled ? '#fff' : 'var(--text-tertiary)',
-                background: aiControlled ? 'var(--accent,#f97316)' : 'transparent',
+                background: aiControlled ? 'var(--accent)' : 'transparent',
                 fontSize: 'var(--fs-micro)',
               }}
             />
@@ -293,7 +293,7 @@ export const BrowserMode: React.FC = () => {
             <div style={{
               width: 36, height: 36,
               borderRadius: '50%',
-              borderTop: '3px solid var(--accent,#f97316)',
+              borderTop: '3px solid var(--accent)',
               animation: 'browser-spin 0.8s linear infinite',
             }} />
           </div>

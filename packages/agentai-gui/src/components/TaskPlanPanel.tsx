@@ -87,7 +87,7 @@ const TaskRow: React.FC<{
     <div
       style={{
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: '6px 10px', borderRadius: 6,
+        padding: '6px 10px', borderRadius: 'var(--radius-md)',
         background: isRunning ? 'var(--accent-soft)' : 'transparent',
         borderLeft: isRunning ? '3px solid var(--accent)' : '3px solid transparent',
         transition: 'all 0.2s ease',
@@ -238,7 +238,7 @@ export const TaskPlanPanel: React.FC = () => {
           <div style={{
             padding: '4px 8px',
             background: 'var(--accent-soft)',
-            borderRadius: 4,
+            borderRadius: 'var(--radius-sm)',
             fontSize: 'var(--fs-micro)',
             color: 'var(--accent)',
             display: 'flex',
@@ -296,7 +296,7 @@ export const TaskPlanPanel: React.FC = () => {
         {/* 完成总结 */}
         {isCompleted && (
           <div style={{
-            marginTop: 8, padding: '8px 12px', borderRadius: 6,
+            marginTop: 8, padding: '8px 12px', borderRadius: 'var(--radius-md)',
             background: 'rgba(34,197,94,0.08)',
             border: '1px solid rgba(34,197,94,0.2)',
           }}>
@@ -311,7 +311,7 @@ export const TaskPlanPanel: React.FC = () => {
         {/* 失败总结 */}
         {isFailed && !isCompleted && (
           <div style={{
-            marginTop: 8, padding: '8px 12px', borderRadius: 6,
+            marginTop: 8, padding: '8px 12px', borderRadius: 'var(--radius-md)',
             background: 'rgba(255,77,79,0.08)',
             border: '1px solid rgba(255,77,79,0.2)',
           }}>

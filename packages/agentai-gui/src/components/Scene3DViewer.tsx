@@ -58,7 +58,7 @@ export const Scene3DViewer: React.FC<Props> = ({ scene }) => {
         width: '100%',
         height: fullscreen ? '100%' : 360,
         border: '1px solid var(--border)',
-        borderRadius: 8,
+        borderRadius: 'var(--radius-md)',
         background: '#000',
       }}
       allowFullScreen

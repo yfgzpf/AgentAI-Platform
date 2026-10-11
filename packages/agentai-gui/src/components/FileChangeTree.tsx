@@ -30,10 +30,10 @@ interface FileChangeTreeProps {
 /* ========== 元数据 ========== */
 
 const OP_META: Record<string, { label: string; color: string; bg: string }> = {
-  create: { label: '新建', color: '#10B981', bg: 'rgba(16,185,129,0.12)' },
+  create: { label: '新建', color: 'var(--success)', bg: 'rgba(16,185,129,0.12)' },
   edit:   { label: '修改', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
   read:   { label: '读取', color: '#6366F1', bg: 'rgba(99,102,241,0.12)' },
-  delete: { label: '删除', color: '#EF4444', bg: 'rgba(239,68,68,0.12)' },
+  delete: { label: '删除', color: 'var(--danger)', bg: 'rgba(239,68,68,0.12)' },
 };
 
 /* ========== 工具函数 ========== */
@@ -164,7 +164,7 @@ const FileChangeTree: React.FC<FileChangeTreeProps> = ({ segments, onOpen }) => 
   return (
     <div style={{
       margin: '0 0 6px',
-      borderRadius: 6,
+      borderRadius: 'var(--radius-md)',
       border: '1px solid var(--border)',
       overflow: 'hidden',
     }}>
@@ -196,12 +196,12 @@ const FileChangeTree: React.FC<FileChangeTreeProps> = ({ segments, onOpen }) => 
 
         {/* 行级统计 */}
         {totalAdded > 0 && (
-          <span style={{ color: '#10B981', fontWeight: 600, fontFamily: 'monospace' }}>
+          <span style={{ color: 'var(--success)', fontWeight: 600, fontFamily: 'monospace' }}>
             +{totalAdded}
           </span>
         )}
         {totalRemoved > 0 && (
-          <span style={{ color: '#EF4444', fontWeight: 600, fontFamily: 'monospace' }}>
+          <span style={{ color: 'var(--danger)', fontWeight: 600, fontFamily: 'monospace' }}>
             -{totalRemoved}
           </span>
         )}
@@ -244,7 +244,7 @@ const FileChangeTree: React.FC<FileChangeTreeProps> = ({ segments, onOpen }) => 
                 <span style={{
                   display: 'inline-block',
                   padding: '0 4px',
-                  borderRadius: 3,
+                  borderRadius: 'var(--radius-sm)',
                   fontSize: 'var(--fs-micro)',
                   fontWeight: 600,
                   lineHeight: '16px',
@@ -272,12 +272,12 @@ const FileChangeTree: React.FC<FileChangeTreeProps> = ({ segments, onOpen }) => 
 
                 {/* diff 统计 */}
                 {f.added > 0 && (
-                  <span style={{ color: '#10B981', fontFamily: 'monospace', flexShrink: 0 }}>
+                  <span style={{ color: 'var(--success)', fontFamily: 'monospace', flexShrink: 0 }}>
                     +{f.added}
                   </span>
                 )}
                 {f.removed > 0 && (
-                  <span style={{ color: '#EF4444', fontFamily: 'monospace', flexShrink: 0 }}>
+                  <span style={{ color: 'var(--danger)', fontFamily: 'monospace', flexShrink: 0 }}>
                     -{f.removed}
                   </span>
                 )}

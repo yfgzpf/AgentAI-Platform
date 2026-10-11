@@ -37,7 +37,7 @@ export const EmotionIndicator: React.FC<Props> = ({
       style={{
         display: 'inline-flex', alignItems: 'center', gap: compact ? 2 : 4,
         padding: compact ? '0 2px' : '1px 6px',
-        borderRadius: 10,
+        borderRadius: 'var(--radius-md)',
         background: compact ? 'transparent' : `${color}15`,
         fontSize: compact ? 10 : 11,
         cursor: 'default',
@@ -51,14 +51,14 @@ export const EmotionIndicator: React.FC<Props> = ({
           <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>{label}</span>
           {/* Intensity bar */}
           <span style={{
-            width: 24, height: 3, borderRadius: 2,
+            width: 24, height: 3, borderRadius: 'var(--radius-sm)',
             background: 'var(--border)',
             display: 'inline-block', overflow: 'hidden',
           }}>
             <span style={{
               width: barWidth, height: '100%',
               background: color,
-              borderRadius: 2,
+              borderRadius: 'var(--radius-sm)',
               transition: 'width 0.4s ease',
               display: 'block',
             }} />

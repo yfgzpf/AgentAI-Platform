@@ -822,9 +822,9 @@ return (
 >
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
               {storyboard.characters.map((char, i) => (
-                <div key={i} style={{ padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+                <div key={i} style={{ padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
                   {/* 定妆图 — 点击查看大图 */}
-                  <div style={{ width: '100%', height: 140, borderRadius: 6, overflow: 'hidden', marginBottom: 6, background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: char.portraitUrl ? 'zoom-in' : 'default', position: 'relative' }}
+                  <div style={{ width: '100%', height: 140, borderRadius: 'var(--radius-md)', overflow: 'hidden', marginBottom: 6, background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: char.portraitUrl ? 'zoom-in' : 'default', position: 'relative' }}
                     onClick={() => char.portraitUrl && setZoomPortrait({ url: char.portraitUrl, name: char.name })}>
                     {char.portraitUrl ? (
                       <img src={char.portraitUrl} alt={char.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -837,7 +837,7 @@ return (
                       </div>
                     )}
                     {char.portraitUrl && (
-                      <div style={{ position: 'absolute', bottom: 2, right: 2, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 'var(--fs-micro)', padding: '1px 4px', borderRadius: 3 }}>🔍 点击放大</div>
+                      <div style={{ position: 'absolute', bottom: 2, right: 2, background: 'rgba(0,0,0,0.6)', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-micro)', padding: '1px 4px', borderRadius: 'var(--radius-sm)' }}>🔍 点击放大</div>
                     )}
                   </div>
                   {/* 角色信息 */}
@@ -850,7 +850,7 @@ return (
                   {char.sheetUrl && (
                     <div style={{ marginBottom: 6, cursor: 'zoom-in' }}
                       onClick={() => setZoomPortrait({ url: char.sheetUrl!, name: `${char.name} — 九宫格参考` })}>
-                      <img src={char.sheetUrl} alt={`${char.name} 九宫格`} style={{ width: '100%', borderRadius: 4, border: '1px solid var(--border)' }} />
+                      <img src={char.sheetUrl} alt={`${char.name} 九宫格`} style={{ width: '100%', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }} />
                       <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', textAlign: 'center', marginTop: 2 }}>📋 九宫格参考 (点击放大)</div>
                     </div>
                   )}
@@ -876,7 +876,7 @@ return (
         {/* 批量生成按钮 — 仅商业模型显示, Flash 免费模型由用户逐镜生成 */}
         {storyboard && selectedShots > 0 && !batchGenerating && !isFlashModel && (
           <Button type="primary" size="large" icon={<VideoCameraOutlined />} onClick={batchGenerate}
-            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: 10 }}>
+            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: 'var(--radius-md)' }}>
             批量生成 ({selectedShots} 镜)
           </Button>
         )}
@@ -910,8 +910,8 @@ return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {/* 场景卡 — 每集固定场景, 保证跨集一致 */}
                   {ep.scene && (
-                    <div style={{ display: 'flex', gap: 8, padding: 8, borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)', marginBottom: 4 }}>
-                      <div style={{ width: 160, height: 90, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: 'var(--panel)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: ep.scene.imageUrl ? 'zoom-in' : 'default', position: 'relative' }}
+                    <div style={{ display: 'flex', gap: 8, padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--bg)', border: '1px solid var(--border)', marginBottom: 4 }}>
+                      <div style={{ width: 160, height: 90, borderRadius: 'var(--radius-md)', overflow: 'hidden', flexShrink: 0, background: 'var(--panel)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: ep.scene.imageUrl ? 'zoom-in' : 'default', position: 'relative' }}
                         onClick={() => ep.scene?.imageUrl && setZoomScene({ url: ep.scene.imageUrl, name: `第${ep.index}集 场景: ${ep.scene.name}` })}>
                         {ep.scene.imageUrl ? (
                           <img src={ep.scene.imageUrl} alt={ep.scene.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -939,8 +939,8 @@ return (
                   )}
                   {ep.shots.map((shot) => (
                     <div key={shot.id} style={{
-                      padding: 8, borderRadius: 8, background: 'var(--panel)',
-                      border: `1px solid ${shot.status === 'completed' ? '#52c41a' : shot.status === 'failed' ? '#ff4d4f' : shot.status === 'generating' ? '#faad14' : 'var(--border)'}`,
+                      padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)',
+                      border: `1px solid ${shot.status === 'completed' ? 'var(--success)' : shot.status === 'failed' ? 'var(--danger)' : shot.status === 'generating' ? '#faad14' : 'var(--border)'}`,
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                           <Checkbox checked={shot.selected} onChange={() => toggleShot(epIdx, shot.id)} />
@@ -1011,8 +1011,8 @@ return (
                             draggable
                             onDragStart={() => setDragShot({ epIdx: ep.index - 1, shotId: shot.id })}
                             onDragEnd={() => setDragShot(null)}>
-                            <video src={shot.videoUrl} controls style={{ width: '100%', borderRadius: 6, background: '#000' }} />
-                            <div style={{ position: 'absolute', top: 4, left: 4, background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 'var(--fs-micro)', padding: '2px 6px', borderRadius: 4 }}>
+                            <video src={shot.videoUrl} controls style={{ width: '100%', borderRadius: 'var(--radius-md)', background: '#000' }} />
+                            <div style={{ position: 'absolute', top: 4, left: 4, background: 'rgba(0,0,0,0.7)', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-micro)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
                               {ep.index}-{shot.id} · {shot.type}
                             </div>
                           </div>
@@ -1044,8 +1044,8 @@ return (
                   const totalShots = ep.shots.length;
                   const isComplete = completedShots.length === totalShots && totalShots > 0;
                   return (
-                    <div key={ep.index} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', marginBottom: 4 }}>
-                      <div style={{ flexShrink: 0, width: 28, height: 28, borderRadius: '50%', background: isComplete ? '#52c41a' : 'var(--bg)', color: isComplete ? '#fff' : 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--fs-sm)', fontWeight: 700 }}>
+                    <div key={ep.index} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)', marginBottom: 4 }}>
+                      <div style={{ flexShrink: 0, width: 28, height: 28, borderRadius: '50%', background: isComplete ? 'var(--success)' : 'var(--bg)', color: isComplete ? '#fff' : 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--fs-sm)', fontWeight: 700 }}>
                         {ep.index}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1107,7 +1107,7 @@ return (
         footer={null} width="90%" style={{ top: 20 }}
         onCancel={() => setZoomPortrait(null)}>
         {zoomPortrait && (
-          <img src={zoomPortrait.url} alt={zoomPortrait.name} style={{ width: '100%', borderRadius: 8 }} />
+          <img src={zoomPortrait.url} alt={zoomPortrait.name} style={{ width: '100%', borderRadius: 'var(--radius-md)' }} />
         )}
       </Modal>
 
@@ -1116,7 +1116,7 @@ return (
         footer={null} width="90%" style={{ top: 20 }}
         onCancel={() => setZoomScene(null)}>
         {zoomScene && (
-          <img src={zoomScene.url} alt={zoomScene.name} style={{ width: '100%', borderRadius: 8 }} />
+          <img src={zoomScene.url} alt={zoomScene.name} style={{ width: '100%', borderRadius: 'var(--radius-md)' }} />
         )}
       </Modal>
 

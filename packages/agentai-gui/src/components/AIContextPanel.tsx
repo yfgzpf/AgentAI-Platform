@@ -32,7 +32,7 @@ export const AIContextPanel: React.FC<Props> = ({
       onClick={() => setCollapsed(!collapsed)}
       style={{
         display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-        padding: '6px 8px', borderRadius: 6,
+        padding: '6px 8px', borderRadius: 'var(--radius-md)',
         fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
         background: 'transparent', userSelect: 'none',
       }}
@@ -48,7 +48,7 @@ export const AIContextPanel: React.FC<Props> = ({
         </span>
       )}
       {activeModel && (
-        <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 2, margin: 0, border: 'none', lineHeight: '16px', padding: '0 4px', marginLeft: 'auto' }}>
+        <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)', margin: 0, border: 'none', lineHeight: '16px', padding: '0 4px', marginLeft: 'auto' }}>
           {activeModel}
         </Tag>
       )}
@@ -68,17 +68,17 @@ export const AIContextPanel: React.FC<Props> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '0 8px 4px' }}>
         <div>
           <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2 }}>当前任务</div>
-          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '4px 8px', background: 'var(--bg-2)', borderRadius: 4, minHeight: 20 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '4px 8px', background: 'var(--bg-2)', borderRadius: 'var(--radius-sm)', minHeight: 20 }}>
             {currentTask || <span style={{ color: 'var(--muted-2)', fontStyle: 'italic' }}>等待任务...</span>}
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-          <div style={{ padding: '4px 6px', background: 'var(--bg-2)', borderRadius: 4 }}>
+          <div style={{ padding: '4px 6px', background: 'var(--bg-2)', borderRadius: 'var(--radius-sm)' }}>
             <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>消息数</div>
             <div style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--fg-2)' }}>{msgCount}</div>
           </div>
-          <div style={{ padding: '4px 6px', background: 'var(--bg-2)', borderRadius: 4 }}>
+          <div style={{ padding: '4px 6px', background: 'var(--bg-2)', borderRadius: 'var(--radius-sm)' }}>
             <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>推理步数</div>
             <div style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--fg-2)' }}>{reasoningSteps}</div>
           </div>
@@ -97,7 +97,7 @@ export const AIContextPanel: React.FC<Props> = ({
         {activeModel && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
             <ThunderboltOutlined style={{ fontSize: 'var(--fs-micro)' }} />
-            <span>模型: <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 2, margin: 0 }}>{activeModel}</Tag></span>
+            <span>模型: <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 'var(--radius-sm)', margin: 0 }}>{activeModel}</Tag></span>
           </div>
         )}
 

@@ -81,7 +81,7 @@ const gatewayUrl = () => gatewayFallback.url || 'http://127.0.0.1:18789';
 const INDUSTRY_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   decoration: { label: '装修行业', icon: <HomeOutlined />, color: '#f97316' },
   ecommerce: { label: '电商行业', icon: <ShoppingOutlined />, color: '#3b82f6' },
-  monitoring: { label: '监控运维', icon: <DashboardOutlined />, color: '#10b981' },
+  monitoring: { label: '监控运维', icon: <DashboardOutlined />, color: 'var(--success)' },
   custom: { label: '自定义', icon: <ToolOutlined />, color: '#8b5cf6' },
 };
 
@@ -99,7 +99,7 @@ const STEP_ICONS: Record<string, React.ReactNode> = {
 const STEP_COLORS: Record<string, string> = {
   rpa: '#3b82f6',
   ai_task: '#f97316',
-  notification: '#10b981',
+  notification: 'var(--success)',
   condition: '#f59e0b',
   extract: '#8b5cf6',
   transform: '#ec4899',
@@ -251,8 +251,8 @@ export const WorkflowPanel: React.FC = () => {
 
   const statusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return <CheckCircleOutlined style={{ color: '#10b981' }} />;
-      case 'failed': return <CloseCircleOutlined style={{ color: '#ef4444' }} />;
+      case 'completed': return <CheckCircleOutlined style={{ color: 'var(--success)' }} />;
+      case 'failed': return <CloseCircleOutlined style={{ color: 'var(--danger)' }} />;
       case 'partial': return <MinusCircleOutlined style={{ color: '#f59e0b' }} />;
       default: return <ClockCircleOutlined style={{ color: '#6b7280' }} />;
     }
@@ -301,8 +301,8 @@ export const WorkflowPanel: React.FC = () => {
             {Object.values(liveSteps).map(s => (
               <Tag key={s.stepId} style={{
                 fontSize: 'var(--fs-micro)', margin: 0, lineHeight: '18px', padding: '0 4px',
-                color: s.status === 'success' ? '#10b981' : s.status === 'failed' ? '#ef4444' : s.status === 'skipped' ? '#6b7280' : '#f59e0b',
-                borderColor: s.status === 'success' ? '#10b981' : s.status === 'failed' ? '#ef4444' : s.status === 'skipped' ? '#6b7280' : '#f59e0b',
+                color: s.status === 'success' ? 'var(--success)' : s.status === 'failed' ? 'var(--danger)' : s.status === 'skipped' ? '#6b7280' : '#f59e0b',
+                borderColor: s.status === 'success' ? 'var(--success)' : s.status === 'failed' ? 'var(--danger)' : s.status === 'skipped' ? '#6b7280' : '#f59e0b',
                 background: 'transparent',
               }}>
                 {s.status === 'success' ? '✅' : s.status === 'failed' ? '❌' : s.status === 'skipped' ? '⏭️' : '⚡'} {s.stepName}
@@ -335,7 +335,7 @@ export const WorkflowPanel: React.FC = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {tmps.map(t => (
                       <div key={t.id} style={{
-                        border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px',
+                        border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '8px 10px',
                         background: 'var(--bg-2)', transition: 'border-color 0.2s',
                       }}>
                         {/* 模板头部 */}
@@ -406,7 +406,7 @@ export const WorkflowPanel: React.FC = () => {
             {executions.slice(0, 15).map(e => (
               <div key={e.id} style={{
                 display: 'flex', alignItems: 'center', gap: 6,
-                padding: '4px 8px', marginBottom: 2, borderRadius: 4,
+                padding: '4px 8px', marginBottom: 2, borderRadius: 'var(--radius-sm)',
                 background: 'var(--bg-2)', cursor: 'pointer', fontSize: 'var(--fs-micro)',
                 border: '1px solid transparent',
               }}
@@ -443,14 +443,14 @@ export const WorkflowPanel: React.FC = () => {
       >
         {runModal && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-            <div style={{ padding: '8px 10px', background: 'rgba(99,102,241,0.08)', borderRadius: 6, fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.6 }}>
+            <div style={{ padding: '8px 10px', background: 'rgba(99,102,241,0.08)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.6 }}>
               {runModal.description}
             </div>
             {runModal.variables.length > 0 ? (
               runModal.variables.map(v => (
                 <div key={v.name}>
                   <label style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {v.name}{v.required && <span style={{ color: '#ef4444' }}>*</span>}
+                    {v.name}{v.required && <span style={{ color: 'var(--danger)' }}>*</span>}
                     <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>({v.type})</span>
                   </label>
                   {v.description && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2 }}>{v.description}</div>}
@@ -466,7 +466,7 @@ export const WorkflowPanel: React.FC = () => {
               <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', textAlign: 'center', padding: 8 }}>此模板无需输入变量</div>
             )}
             {/* DAG 预览 */}
-            <div style={{ marginTop: 4, padding: '6px 8px', background: 'var(--bg-2)', borderRadius: 4 }}>
+            <div style={{ marginTop: 4, padding: '6px 8px', background: 'var(--bg-2)', borderRadius: 'var(--radius-sm)' }}>
               <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4 }}>执行流程:</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
                 {runModal.steps.map((step, i) => (
@@ -503,7 +503,7 @@ export const WorkflowPanel: React.FC = () => {
               <Tag>开始: {new Date(detailExec.startedAt).toLocaleString()}</Tag>
             </div>
             {detailExec.error && (
-              <div style={{ padding: '6px 10px', background: 'rgba(239,68,68,0.1)', borderRadius: 4, fontSize: 'var(--fs-micro)', color: '#ef4444', marginBottom: 8 }}>
+              <div style={{ padding: '6px 10px', background: 'rgba(239,68,68,0.1)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)', color: 'var(--danger)', marginBottom: 8 }}>
                 {detailExec.error}
               </div>
             )}
@@ -516,11 +516,11 @@ export const WorkflowPanel: React.FC = () => {
                 title: id,
                 description: (
                   <div style={{ fontSize: 'var(--fs-micro)' }}>
-                    <span style={{ color: r.status === 'success' ? '#10b981' : r.status === 'failed' ? '#ef4444' : r.status === 'skipped' ? '#6b7280' : '#f59e0b' }}>
+                    <span style={{ color: r.status === 'success' ? 'var(--success)' : r.status === 'failed' ? 'var(--danger)' : r.status === 'skipped' ? '#6b7280' : '#f59e0b' }}>
                       {r.status}
                     </span>
                     {r.retryAttempts ? ` · 重试${r.retryAttempts}次` : ''}
-                    {r.error && <div style={{ color: '#ef4444', marginTop: 2 }}>{r.error}</div>}
+                    {r.error && <div style={{ color: 'var(--danger)', marginTop: 2 }}>{r.error}</div>}
                     {r.output && <div style={{ color: 'var(--muted)', marginTop: 2, maxHeight: 60, overflow: 'auto' }}>{typeof r.output === 'string' ? r.output.slice(0, 200) : JSON.stringify(r.output).slice(0, 200)}</div>}
                   </div>
                 ),

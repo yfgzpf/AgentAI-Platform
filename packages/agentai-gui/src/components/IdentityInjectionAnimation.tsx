@@ -69,7 +69,7 @@ export const IdentityInjectionAnimation: React.FC<Props> = ({ avatar, name, indu
       <div style={{
         maxWidth: 280, margin: '0 auto 32px',
         background: 'rgba(255,255,255,0.05)',
-        borderRadius: 12, padding: '16px 20px',
+        borderRadius: 'var(--radius-lg)', padding: '16px 20px',
         border: '1px solid rgba(255,255,255,0.1)',
         textAlign: 'left',
       }}>
@@ -80,7 +80,7 @@ export const IdentityInjectionAnimation: React.FC<Props> = ({ avatar, name, indu
               display: 'flex', alignItems: 'center', gap: 12,
               padding: '8px 0',
               borderBottom: i < CHECK_ITEMS.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
-              color: i <= checked ? '#10b981' : 'rgba(255,255,255,0.3)',
+              color: i <= checked ? 'var(--success)' : 'rgba(255,255,255,0.3)',
               transition: 'all 0.3s ease',
               animation: i <= checked ? 'checkPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' : 'none',
             }}
