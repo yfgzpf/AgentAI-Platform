@@ -79,7 +79,8 @@ interface ModelState {
 // ===== Agnes AI 模型 (首选) =====
 // agnes-3.0-flash: 最新 3.0 Flash, 更可靠的端到端任务交付, 支持 thinking + tools
 // agnes-2.5-flash: 512K 长上下文, 免费但非最弱, 可作为首选/商用
-// agnes-2.0: 256K 上下文, 备用模型
+// agnes-2.0: 256K 上下文, 备用 — 已收敛, 不再出现在选择器 (见 utils/modelPicker.ts HIDDEN_MODEL_IDS)
+// agentai: Agnes 旧版兼容 id — 同上, 保留仅为旧会话 activeModelId 可解析
 const AGNES_MODELS: ModelConfig[] = [
   { id: 'agnes-3.0-flash', label: 'Agnes 3.0 Flash (最新 · 推荐)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#4F46E5', enabled: true, isDefault: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-3.0-flash'], contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
   { id: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (512K)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#6366F1', enabled: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-2.5-flash'], contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
@@ -376,8 +377,16 @@ export const useModelStore = create<ModelState>()(
     }),
     {
       name: 'agentai-models',
-      version: 14,
+      version: 15,
       migrate: (persisted: any, version: number) => {
+        // v15: Agnes 档位收敛 —— agnes-2.0 与旧兼容 id 'agentai' 不再出现在选择器。
+        //      这两个 id 仍保留在 models 里 (旧会话解析用), 但若用户当前正选中它们, 迁到 agnes-3.0-flash。
+        if (version < 15 && persisted) {
+          if (persisted.activeModelId === 'agnes-2.0' || persisted.activeModelId === 'agentai') {
+            persisted.activeModelId = 'agnes-3.0-flash';
+          }
+          if (persisted.autoModelCurrent === 'agentai') persisted.autoModelCurrent = 'agnes-3.0-flash';
+        }
         // v14: DeepSeek V4.1-Flash 起 flash 档模型名改为 deepseek-flash。
         //      原地重命名已持久化的旧 id (旧名官方仅"暂时"兼容路由, 不迁移会随官方下线而失效)。
         //      注意: 只改 id/label, 不重建 models 数组, 避免覆盖用户自定义的 baseURL/apiKey。

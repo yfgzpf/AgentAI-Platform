@@ -6,15 +6,15 @@
  *   2. "compact" — Composer 工具栏 (Dropdown 子菜单展开)
  *   3. "minimal" — TitleBar 极简 (Dropdown 子菜单展开)
  *
- * 过滤逻辑:
- *   - 免费模型 (agentai/zhipu): 始终显示
- *   - 工厂模型组 (SuperAPI/NVIDIA/SenseNova/LongCat): 密钥已配置则显示组, 展开看子模型
- *   - 独立商用模型: 密钥已配置则显示
- *   - 自定义模型: enabled 则显示
+ * 过滤逻辑 (统一实现见 utils/modelPicker.ts, 与 Composer 内联选择器共用):
+ *   - 免费模型 (Agnes 全系/zhipu): 始终显示
+ *   - 中转站模型 (ALRO/SuperAPI/SenseNova/LongCat): 配好密钥才显示, 按分组密钥二级展开
+ *   - 官方直连模型: 密钥已配置 或 已启用 则显示
+ *   - 隐藏条目 (agnes-2.0 / agnes 兼容 id): 不进入选择器, 但仍保留在 store 里
+ *   - 每个模型标注来源: 官方直连 = 灰色「官方」, 中转站 = 站点彩色徽章
  *
  * 二级展开:
- *   工厂组 (SuperAPI/NVIDIA/SenseNova) 显示为可展开的子菜单, 不铺平
- *   NVIDIA 组首项为 "NVIDIA Auto (智能择优)" — 系统自动选择最佳模型
+ *   中转站分组显示为可展开的子菜单, 不铺平; 单模型不再套同名分组头 (曾造成"名字出现两次")
  */
 import React, { useState } from 'react';
 import { Select, Space, Tag, Tooltip, Badge, Dropdown, Checkbox, Modal, Button } from 'antd';
@@ -26,50 +26,12 @@ import {
 import { useModelStore, type ModelConfig } from '../store/modelStore';
 import { useSimpleSubscriptionStore, SUBSCRIPTION_PLANS } from '../store/subscriptionStore';
 import { useModelMetrics } from '../hooks/useModelMetrics'; // Phase 3: 模型性能指标
-
-/* ===== 密钥检查 ===== */
-function hasApiKey(m: ModelConfig, commercialKeys: Record<string, string>): boolean {
-  const envVar = m.apiKeyEnv || `${m.id.toUpperCase()}_API_KEY`;
-  // 检查商业密钥、localStorage、sessionStorage（安全存储）
-  return !!commercialKeys[envVar] ||
-    !!localStorage.getItem(envVar) ||
-    !!localStorage.getItem(`__agentai_key_${m.provider || m.id}`) ||
-    !!sessionStorage.getItem('agentai.' + envVar) ||  // 🔧 修复: 也检查 sessionStorage
-    !!sessionStorage.getItem(`agentai.__agentai_key_${m.provider || m.id}`);  // 🔧 兼容旧格式
-}
-
-function isFreeModel(m: ModelConfig): boolean {
-  // Agnes AI 全系免费 + 智谱免费
-  return m.id === 'agnes-3.0-flash' || m.id === 'agnes-2.5-flash' || m.id === 'agnes-2.0' || m.id === 'agentai' || m.id === 'zhipu';
-}
-
-/** 从 baseURL 提取渠道简称 */
-function channelName(baseURL: string): string {
-  const host = baseURL.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-  const map: Record<string, string> = {
-    'api.agnes-ai.cn': 'Agnes',
-    'api.deepseek.com': 'DeepSeek',
-    'api.openai.com': 'OpenAI',
-    'open.bigmodel.cn': '智谱',
-    'dashscope.aliyuncs.com': '通义',
-    'api.moonshot.cn': 'Moonshot',
-    'api.lingyiwanwu.com': '零一',
-    'api.baichuan-ai.com': '百川',
-    'api.minimax.chat': 'MiniMax',
-    'api.anthropic.com': 'Claude',
-    'superapi.vanguard.dpdns.org': 'SuperAPI',
-    'alro.huazhiweilai.com': '模型工厂',  // ALRC 包装为模型工厂
-    'token.sensenova.cn': 'SenseNova',
-    'api.longcat.chat': 'LongCat',
-    // nvidia 已移除
-  };
-  return map[host] || host.split('.')[0];
-}
-
-/** 判断是否为工厂组 (单一密钥共享多模型) */
-function isFactoryGroup(m: ModelConfig): boolean {
-  return ['factory', 'alrc', 'sensenova', 'longcat'].includes(m.provider || '');
-}
+import { ModelSourceTag } from './ModelSourceTag';
+// 来源判定 / 免费判定 / 可见性 / 分组 —— 与 Composer 内联选择器共用单一实现
+import {
+  channelName, isFreeModel, isModelVisible, groupModels,
+  hasFrontendKey, type ModelGroup,
+} from '../utils/modelPicker';
 
 /* ===== Props ===== */
 type DisplayMode = 'full' | 'compact' | 'minimal';
@@ -82,7 +44,7 @@ interface Props {
 
 /* ===== 组件 ===== */
 export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
-  const { models, activeModelId, setActive, commercialKeys, chatMode } = useModelStore();
+  const { models, activeModelId, setActive, commercialKeys, chatMode, backendProviders } = useModelStore();
   const { planId, expiresAt, isPaid } = useSimpleSubscriptionStore();
   const activeModel = models.find(m => m.id === activeModelId) || models[0];
 
@@ -105,13 +67,10 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
     };
   };
 
-  // ===== 过滤: 有密钥或免费或已启用 =====
-  const visibleModels = models.filter(m => {
-    if (isFreeModel(m)) return true;
-    if (hasApiKey(m, commercialKeys)) return true;
-    if (m.enabled) return true;
-    return false;
-  });
+  // ===== 过滤: 免费 / 有密钥 / 已启用; 中转模型必须先配密钥 =====
+  const hasBackendKey = (provider?: string) =>
+    !!provider && backendProviders.some(p => p.name === provider && p.hasKey);
+  const visibleModels = models.filter(m => isModelVisible(m, { commercialKeys, hasBackendKey }));
 
   // 对话改图模式: 仅显示 chat(多模态) + image 类型模型
   const imageCapableModels = visibleModels.filter(m =>
@@ -122,31 +81,13 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
   // chatMode 感知: 图片模式用 imageCapableModels, 否则用 visibleModels
   const activeModels = chatMode === 'image_edit' ? imageCapableModels : visibleModels;
 
-  // ===== 分组: 工厂组按 provider 聚合, 独立模型各自一组 =====
-  interface Group {
-    key: string;
-    label: string;
-    color: string;
-    models: ModelConfig[];
-    isFactory: boolean;
-  }
-
-  const groupMap = new Map<string, Group>();
-  for (const m of activeModels) {
-    const isFactory = isFactoryGroup(m);
-    const gKey = isFactory ? (m.provider || m.groupLabel || '其他') : m.id;
-    const gLabel = isFactory ? (m.groupLabel || channelName(m.baseURL)) : m.label;
-    if (!groupMap.has(gKey)) {
-      groupMap.set(gKey, { key: gKey, label: gLabel, color: m.color, models: [], isFactory });
-    }
-    groupMap.get(gKey)!.models.push(m);
-  }
-  const groups = Array.from(groupMap.values());
+  // ===== 分组: 中转站按分组密钥聚合, 独立模型各自一组 =====
+  const groups: ModelGroup[] = groupModels(activeModels);
 
   const handleSelect = (id: string) => {
     // 检查模型是否锁定（需要密钥解锁）
     const model = models.find(m => m.id === id);
-    if (model?.locked || (!isFreeModel(model!) && !hasApiKey(model!, commercialKeys))) {
+    if (model?.locked || (!isFreeModel(model!) && !hasFrontendKey(model!, commercialKeys))) {
       setPendingModelId(id);
       setShowUnlockModal(true);
       return;
@@ -157,35 +98,40 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
 
   /* ---------- Full: RightPanel 完整面板 ---------- */
   if (mode === 'full') {
-    const groupedOptions = groups.map(g => ({
-      label: (
-        <span style={{ fontSize: 10, color: 'var(--muted-2)', fontWeight: 600 }}>
-          {g.label} ({g.models.length})
-        </span>
-      ),
-      title: g.label,
-      options: g.models.map(m => {
-        const metrics = formatMetrics(m.id);
-        return {
-          value: m.id,
-          label: (
-            <Space size={4}>
-              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: m.color }} />
-              <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
-              {isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="green">免费</Tag>}
-              {m.freeQuotaNote && !isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="blue">{m.freeQuotaNote}</Tag>}
-              {m.isDefault && <Badge count="默认" size="small" style={{ backgroundColor: '#4F46E5', fontSize: 9 }} />}
-              {/* Phase 3: 显示平均性能指标 */}
-              {metrics && (
-                <span style={{ fontSize: 9, color: 'var(--muted-2)', marginLeft: 4 }}>
-                  ⏱️ {metrics.avgLatency} · 💰 {metrics.avgCost} · ✅ {metrics.successRate}
-                </span>
-              )}
-            </Space>
-          ),
-        };
-      }),
-    }));
+    const renderFullLabel = (m: ModelConfig) => {
+      const metrics = formatMetrics(m.id);
+      return (
+        <Space size={4}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: m.color }} />
+          <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
+          <ModelSourceTag model={m} />
+          {isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="green">免费</Tag>}
+          {m.freeQuotaNote && !isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="blue">{m.freeQuotaNote}</Tag>}
+          {m.isDefault && <Badge count="默认" size="small" style={{ backgroundColor: '#4F46E5', fontSize: 9 }} />}
+          {/* Phase 3: 显示平均性能指标 */}
+          {metrics && (
+            <span style={{ fontSize: 9, color: 'var(--muted-2)', marginLeft: 4 }}>
+              ⏱️ {metrics.avgLatency} · 💰 {metrics.avgCost} · ✅ {metrics.successRate}
+            </span>
+          )}
+        </Space>
+      );
+    };
+    // 单模型不套分组头 —— 否则组名与唯一一项的标签完全重复 (历史上 deepseek/agnes 看起来"出现两次")
+    // 混用分组项与独立项, antd Select 支持 options 里两者并存
+    const groupedOptions: any[] = groups.flatMap((g): any[] =>
+      g.models.length > 1
+        ? [{
+            label: (
+              <span style={{ fontSize: 10, color: 'var(--muted-2)', fontWeight: 600 }}>
+                {g.label} ({g.models.length})
+              </span>
+            ),
+            title: g.label,
+            options: g.models.map(m => ({ value: m.id, label: renderFullLabel(m) })),
+          }]
+        : g.models.map(m => ({ value: m.id, label: renderFullLabel(m) }))
+    );
 
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={6}>
@@ -224,24 +170,29 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
   }
 
   /* ---------- Compact & Minimal: 二级展开 Dropdown ---------- */
-  const menuItems: MenuProps['items'] = groups.map(g => {
-    if (g.isFactory && g.models.length > 1) {
-      // 工厂组: 子菜单展开
-      const children: NonNullable<MenuProps['items']>[number][] = [];
-      // NVIDIA Auto 选项已移除
-      g.models.forEach(m => {
-        children.push({
-          key: m.id,
-          label: (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 180 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
-              <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
-              {activeModelId === m.id && <CheckCircleFilled style={{ color: m.color, fontSize: 10, marginLeft: 'auto' }} />}
-            </div>
-          ),
-        });
-      });
-      return {
+  const renderMenuModel = (m: ModelConfig) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 180 }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
+      <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
+      <ModelSourceTag model={m} dense />
+      <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 'auto' }}
+        color={isFreeModel(m) ? 'green' : 'gold'}>
+        {isFreeModel(m) ? '免费' : '付费'}
+      </Tag>
+      {activeModelId === m.id && <CheckCircleFilled style={{ color: m.color, fontSize: 10 }} />}
+    </div>
+  );
+
+  const menuItems: MenuProps['items'] = [];
+  for (const g of groups) {
+    if (g.models.length === 1) {
+      // 单模型: 直接成项 —— 不再套一层同名分组头
+      menuItems.push({ key: g.models[0]!.id, label: renderMenuModel(g.models[0]!) });
+      continue;
+    }
+    if (g.isRelayGroup) {
+      // 中转站分组: 按密钥分组二级展开
+      menuItems.push({
         key: `group-${g.key}`,
         label: (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 160 }}>
@@ -251,11 +202,11 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
           </div>
         ),
         type: 'submenu' as const,
-        children,
-      };
+        children: g.models.map(m => ({ key: m.id, label: renderMenuModel(m) })),
+      });
+      continue;
     }
-    // 独立模型: 直接显示
-    return {
+    menuItems.push({
       key: `group-${g.key}`,
       label: (
         <span style={{ fontSize: 10, color: 'var(--muted-2)', fontWeight: 600 }}>
@@ -263,22 +214,9 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
         </span>
       ),
       type: 'group' as const,
-      children: g.models.map(m => ({
-        key: m.id,
-        label: (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 180 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
-            <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
-            <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 'auto' }}
-              color={isFreeModel(m) ? 'green' : 'gold'}>
-              {isFreeModel(m) ? '免费' : '付费'}
-            </Tag>
-            {activeModelId === m.id && <CheckCircleFilled style={{ color: m.color, fontSize: 10 }} />}
-          </div>
-        ),
-      })),
-    };
-  });
+      children: g.models.map(m => ({ key: m.id, label: renderMenuModel(m) })),
+    });
+  }
 
   const triggerSize = mode === 'minimal' ? { fontSize: 11, padding: '3px 8px', maxWidth: 120 } : { fontSize: 10, padding: '2px 6px', maxWidth: 100 };
 
@@ -369,14 +307,14 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
 
 /* ===== 分组标签 (full 模式用) ===== */
 const GroupTags: React.FC<{
-  group: { key: string; label: string; color: string; models: ModelConfig[]; isFactory: boolean };
+  group: ModelGroup;
   activeModelId: string;
   onSelect: (id: string) => void;
 }> = ({ group, activeModelId, onSelect }) => {
   const { toggleModel } = useModelStore();
   const [expanded, setExpanded] = useState(group.models.some(m => m.id === activeModelId));
 
-  if (group.isFactory && group.models.length > 1) {
+  if (group.isRelayGroup && group.models.length > 1) {
     return (
       <div key={group.key}>
         <div
@@ -402,7 +340,7 @@ const GroupTags: React.FC<{
                     }}
                     onClick={() => onSelect(m.id)}
                   >
-                    {/* 独立勾选框: 工厂组中每个模型可独立启用/禁用 */}
+                    {/* 独立勾选框: 中转组中每个模型可独立启用/禁用 */}
 <Checkbox
 checked={checked}
 style={{ fontSize: 9 }}
@@ -429,12 +367,15 @@ onChange={(e) => {
     );
   }
 
-  // 非工厂组: 直接显示标签
+  // 独立模型: 单模型时不渲染组名 —— 组名会与标签逐字重复
+  const showHeader = group.models.length > 1;
   return (
     <div key={group.key}>
-      <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 2, fontWeight: 600 }}>
-        {group.label}
-      </div>
+      {showHeader && (
+        <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 2, fontWeight: 600 }}>
+          {group.label}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
         {group.models.map(m => {
           const isActive = m.id === activeModelId;
@@ -467,6 +408,7 @@ onChange={(e) => {
                 <span style={{ fontWeight: isActive ? 600 : 400, opacity: checked ? 1 : 0.5 }}>
                   {m.label}
                 </span>
+                <ModelSourceTag model={m} />
                 {isActive && <CheckCircleFilled style={{ color: m.color, fontSize: 10, marginLeft: 2 }} />}
                 {free && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 2 }} color="green">免费</Tag>}
                 {!free && m.freeQuotaNote && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 2 }} color="blue">{m.freeQuotaNote}</Tag>}

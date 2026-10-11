@@ -234,6 +234,7 @@ const UpdaterPanel: React.FC = () => {
 
 // ===== 商用模型预配置模板 =====
 interface ModelTemplate {
+  /** provider 名 (同时用于密钥 env: `${id.toUpperCase()}_API_KEY`) */
   id: string;
   label: string;
   baseURL: string;
@@ -241,12 +242,14 @@ interface ModelTemplate {
   docsUrl: string;
   color: string;
   contextWindow: number;
-  /** 在 modelStore 中与该模板共用同一密钥的其他 model id (例: deepseek → deepseek-pro) */
+  /** 在 modelStore 中与该模板共用同一密钥的其他 model id (例: deepseek-flash → deepseek-v4-pro) */
   extraModelIds?: string[];
 }
 
 const MODEL_TEMPLATES: ModelTemplate[] = [
-  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-flash', 'deepseek-v4-pro'], docsUrl: 'https://platform.deepseek.com/api-keys', color: '#10B981', contextWindow: 1000000, extraModelIds: ['deepseek-pro'] },
+  // id 是 provider 名 ('deepseek' → DEEPSEEK_API_KEY), 而 store 里的模型 id 是 'deepseek-flash'/'deepseek-v4-pro',
+  // 两者不再同名, 因此必须靠 extraModelIds 才能把模型置为 enabled —— 只写 id 会静默失效。
+  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-flash', 'deepseek-v4-pro'], docsUrl: 'https://platform.deepseek.com/api-keys', color: '#10B981', contextWindow: 1000000, extraModelIds: ['deepseek-flash', 'deepseek-v4-pro'] },
   { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'], docsUrl: 'https://platform.openai.com/api-keys', color: '#F59E0B', contextWindow: 128000 },
   { id: 'qwen', label: '通义千问 (阿里云)', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-turbo', 'qwen-plus', 'qwen-max'], docsUrl: 'https://help.aliyun.com/zh/dashscope', color: '#FF6A00', contextWindow: 128000 },
   { id: 'moonshot', label: '月之暗面 Moonshot', baseURL: 'https://api.moonshot.cn/v1', models: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k3'], docsUrl: 'https://platform.moonshot.cn/console/api-keys', color: '#6466F1', contextWindow: 128000 },
@@ -469,17 +472,12 @@ export const Settings: React.FC = () => {
     }
   };
 
-  /** 启用模板关联的所有模型 (主模型 + extraModelIds) */
+  /** 启用模板关联的所有模型 (主模型 + extraModelIds); 不存在的 id 静默跳过 */
   const toggleTemplateModels = (template: ModelTemplate, enabled: boolean) => {
     const store = useModelStore.getState();
-    store.toggleModel(template.id, enabled);
-    if (template.extraModelIds) {
-      template.extraModelIds.forEach(extraId => {
-        const extra = models.find(m => m.id === extraId);
-        if (extra && extra.enabled !== enabled) {
-          store.toggleModel(extraId, enabled);
-        }
-      });
+    for (const id of [template.id, ...(template.extraModelIds || [])]) {
+      const m = models.find(x => x.id === id);
+      if (m && m.enabled !== enabled) store.toggleModel(id, enabled);
     }
   };
 

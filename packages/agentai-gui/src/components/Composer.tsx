@@ -22,6 +22,8 @@ import type { VoiceSettingsState } from './VoiceSettings';
 import { parseFile, type ParsedAttachment } from '../services/file-parser';
 import { PromptOptimizer } from './PromptOptimizer';
 import { RemoteEnvironmentButton } from './RemoteEnvironmentButton';
+import { ModelSourceTag } from './ModelSourceTag';
+import { isModelVisible, groupModels } from '../utils/modelPicker';
 
 export type SlashCmd = { cmd: string; desc: string; run: () => void };
 
@@ -74,7 +76,7 @@ const ComposerBase = ({
 }: Props, ref: React.Ref<ComposerHandle>) => {
   const { mode, setMode, suggestedMode, suggestionReason, acceptSuggestion, clearSuggestion } = useModeStore();
   const activeModeConfig = MODE_CONFIG[mode];
-  const { activeModelId, setActive: setActiveModel, models, commercialKeys, chatMode } = useModelStore();
+  const { activeModelId, setActive: setActiveModel, models, commercialKeys, chatMode, backendProviders } = useModelStore();
   const [draft, setDraft] = useState('');
   const [popup, setPopup] = useState<PopupKind>(null);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -799,28 +801,15 @@ setActiveModel(modelId);
 
           <span className="ui-divider" />
 
-          {/* ── 模型选择器 (有密钥即显示, 工厂组折叠) ── */}
+          {/* ── 模型选择器 (有密钥即显示, 中转站按密钥分组折叠) ── */}
           {(() => {
-            // 过滤: 免费或有密钥或已启用的自定义模型
-            const isFree = (m: typeof models[0]) => m.id === 'agentai' || m.id === 'zhipu';
-            const hasKey = (m: typeof models[0]) => {
-              const envVar = m.apiKeyEnv || `${m.id.toUpperCase()}_API_KEY`;
-              return !!commercialKeys[envVar] || !!localStorage.getItem(envVar) || !!localStorage.getItem(`__agentai_key_${m.provider || m.id}`);
-            };
-            const visibleModels = models.filter(m => isFree(m) || hasKey(m) || m.enabled);
+            // 过滤/分组规则与 ModelSelector 共用 utils/modelPicker.ts
+            const hasBackendKey = (provider?: string) =>
+              !!provider && backendProviders.some(p => p.name === provider && p.hasKey);
+            const visibleModels = models.filter(m => isModelVisible(m, { commercialKeys, hasBackendKey }));
             if (visibleModels.length === 0) return null;
 
-            // 工厂组按 provider 聚合, 独立模型各自一组
-            const isFactory = (m: typeof models[0]) => ['superapi', 'sensenova', 'longcat'].includes(m.provider || '');
-            const groupMap = new Map<string, { label: string; color: string; models: typeof models; isFactory: boolean }>();
-            for (const m of visibleModels) {
-              const factory = isFactory(m);
-              const gKey = factory ? (m.provider || 'other') : m.id;
-              const gLabel = factory ? (m.groupLabel || m.label) : m.label;
-              if (!groupMap.has(gKey)) groupMap.set(gKey, { label: gLabel, color: m.color, models: [], isFactory: factory });
-              groupMap.get(gKey)!.models.push(m);
-            }
-            const groupedArr = Array.from(groupMap.entries());
+            const groupedArr = groupModels(visibleModels);
 
             return (
               <Select
@@ -831,7 +820,7 @@ setActiveModel(modelId);
                 variant="borderless"
                 popupMatchSelectWidth={false}
                 getPopupContainer={() => document.body}
-                options={groupedArr.map(([gKey, g]) => ({
+                options={groupedArr.map(g => ({
                   label: <span style={{ fontSize: 9, color: 'var(--muted-2)', fontWeight: 600 }}>{g.label} ({g.models.length})</span>,
                   title: g.label,
                   options: [
@@ -842,6 +831,7 @@ setActiveModel(modelId);
                         <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                           <span style={{ width: 5, height: 5, borderRadius: '50%', background: m.color || '#888', display: 'inline-block' }} />
                           {m.label}
+                          <ModelSourceTag model={m} dense />
                         </span>
                       ),
                     })),
