@@ -1,0 +1,144 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   页面壳层 — PageShell / PageHeader / PageBody (2026-10-12)
+   ═══════════════════════════════════════════════════════════════════════
+   建这一层的动机: 24 个页面的根节点原先**各写各的** —— 12 个内联 `height:'100%'`,
+   其余完全不设高度; 内边距 12/16/20 三种写法; 悬浮控件给状态栏让位的 bottom 偏移
+   有 40/44/60 三种; 其中 3 个页面直接画了不透明底 (var(--bg-1) / var(--panel) /
+   var(--editor-bg)) 把氛围层盖死。加上 `.page-body` 缺 `min-height:0` (溢出根因),
+   同一个"页面"在不同文件里有五六种实现。
+
+   这一层把「高度 / 滚动 / 透明底 / 内边距」四条契约收成唯一实现:
+
+   - .page-shell   页面根。等价于原先各页的 inline `display:flex;
+                   flexDirection:column; height:100%`, 额外拿到 min-height:0。
+                   **不带背景** —— 让 .app-content 的氛围层透出来; 页面若要底色,
+                   请画在自己的子元素上, 不要画在根。
+   - .page-header  页头条。高度走 --page-head-h, 内边距走 --page-pad-x。
+   - .page-body    可滚动主体。`min-height:0` 是让 overflow 真正生效的那一行 ——
+                   flex 子项默认 min-height:auto, 内容高于容器时**撑破父级而不滚动**。
+   - .page-empty   页面级空态容器 (配合 EmptyState.tsx)。
+
+   ⚠️ 本文件必须在 layout.css **之后**导入 (main.tsx 第 5 层) —— 同级选择器要能
+   覆盖骨架层的默认值。
+   核验: grep -c "page-shell\|page-header\|page-body" packages/agentai-gui/src/styles/shell.css
+*/
+
+/* ── 页面根 ──────────────────────────────────────────────────────────── */
+.page-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;      /* ★ 允许子项收缩, 否则页面内容撑破 .app-content */
+  min-width: 0;
+}
+
+/* ── 页头条 ──────────────────────────────────────────────────────────── */
+.page-header {
+  height: var(--page-head-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 var(--page-pad-x);
+  border-bottom: 1px solid var(--border);
+  background: transparent;   /* 页头不画底色, 保持氛围层连续 */
+}
+
+.page-header-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.page-header-title {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page-header-sub {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page-header-actions {
+  margin-left: auto;      /* 右侧操作区自动靠右 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── 可滚动主体 ─────────────────────────────────────────────────────── */
+.page-body {
+  flex: 1;
+  min-height: 0;      /* ★ 溢出根因: 缺这行时内容撑破父级而非滚动 */
+  min-width: 0;
+  overflow: auto;
+  padding: var(--page-pad-y) var(--page-pad-x);
+}
+
+/* 需要贴边滚动的页面 (表格 / 画布 / iframe) 用这个修饰符去掉内边距 */
+.page-body.is-flush { padding: 0; }
+
+/* ── 页面通用排版 (2026-10-12) ────────────────────────────────────────
+   这一块同时是「排版 token 的消费者」: 上面 --lh-* / --fw-* / --font-mono
+   若只定义不消费就是僵尸 token (本项目 --radius-lg 当年正是零消费)。
+   把默认值钉在壳层, 新增页面就不必再各自猜 1.5 / 1.6 / 1.7。 */
+.page-body {
+  line-height: var(--lh-snug);
+  font-weight: var(--fw-normal);
+  color: var(--fg);
+}
+.page-body p,
+.page-body li { line-height: var(--lh-normal); }
+.page-body h1,
+.page-body h2,
+.page-body h3 { line-height: var(--lh-tight); font-weight: var(--fw-bold); }
+.page-body h4,
+.page-body h5,
+.page-body h6 { line-height: var(--lh-tight); font-weight: var(--fw-semibold); }
+.page-body strong,
+.page-body b { font-weight: var(--fw-semibold); }
+.page-body code,
+.page-body pre,
+.page-body kbd,
+.page-body samp {
+  font-family: var(--font-mono);
+  /* 5 种不同 monospace 书写顺序原先散在约 70 处, 这里收成一个 token */
+}
+
+/* ── 页面级空态 / 加载态容器 ────────────────────────────────────────── */
+.page-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  padding: 32px var(--page-pad-x);
+  text-align: center;
+}
+
+/* 作为页面根的子项时撑满剩余高度并居中 (整页为空/整页加载的场景) */
+.page-shell > .page-empty,
+.page-shell > .page-loading {
+  flex: 1;
+  min-height: 0;
+}
+
+.page-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  padding: 32px var(--page-pad-x);
+  text-align: center;
+}

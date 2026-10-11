@@ -195,8 +195,11 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
   };
 
   return (
+    /* 原 `background: '#121212'` 是硬编码暗色 (违反 AGENTS.md「前端颜色必须用 CSS 变量」),
+       结果是切到亮色/瓷白主题时这块侧聊仍是纯黑 —— 典型的"控件与主题不一致"。
+       改用编辑器表面 token, 与 Editor 页代码区同一表面。 (2026-10-12 页面统一) */
     <div style={{
-      width: '100%', height: '100%', background: '#121212',
+      width: '100%', height: '100%', background: 'var(--editor-bg)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
       {/* v3.2 浏览器实时状态栏 — 让用户知道 AI 看到的浏览器状态 */}

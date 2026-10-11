@@ -14,8 +14,9 @@ import { Card, Button, Upload, List, Tag, Typography, Input, Empty, Popconfirm, 
 import { KnowledgeGraphPanelChunk } from '../lazyChunks';
 import { UploadOutlined, DeleteOutlined, SearchOutlined, FileTextOutlined, InboxOutlined, BookOutlined, ReloadOutlined, FileExcelOutlined, FileWordOutlined, FilePdfOutlined } from '@ant-design/icons';
 import { gatewayFallback } from '../services/GatewayFallback';
+import { PageHeader } from './shell';
 
-const { Text, Title, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
 const { Dragger } = Upload;
 
@@ -182,29 +183,22 @@ export const KnowledgeBasePanel: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
-      {/* 头部统计 */}
-      <Card style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <Title level={4} style={{ margin: 0 }}>
-              <BookOutlined /> 行业知识库
-            </Title>
-            <Text type="secondary">
-              上传行业文档（txt/md），AI 在回答时自动检索相关知识
-            </Text>
-          </div>
-          <Space>
+    <>
+      <PageHeader
+        title="行业知识库"
+        icon={<BookOutlined />}
+        subtitle={
+          <>
+            上传行业文档（txt/md），AI 在回答时自动检索相关知识
             {stats && (
-              <Text type="secondary">
-                {stats.docCount} 个文档 · {stats.chunkCount} 个片段
-                {stats.industries.length > 0 && ` · ${stats.industries.join(', ')}`}
-              </Text>
+              <> · {stats.docCount} 个文档 · {stats.chunkCount} 个片段{stats.industries.length > 0 && ` · ${stats.industries.join(', ')}`}</>
             )}
-            <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>刷新</Button>
-          </Space>
-        </div>
-      </Card>
+          </>
+        }
+        actions={<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>刷新</Button>}
+      />
+      <div className="page-body">
+      <div style={{ maxWidth: 960, margin: '0 auto' }}>
 
       {/* 搜索栏 */}
       <Card style={{ marginBottom: 16 }} size="small">
@@ -361,6 +355,8 @@ export const KnowledgeBasePanel: React.FC = () => {
           <KnowledgeGraphPanelChunk />
         </Suspense>
       </Card>
-    </div>
+      </div>
+      </div>
+    </>
   );
 };

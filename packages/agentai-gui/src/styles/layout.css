@@ -33,16 +33,22 @@
 
 /* ═══════════════════════════════════════════════════════════════════════
    应用外壳：纵向 flex 链（替代 calc(100vh - N)）
-   ═══════════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════
+   ⚠️ 这里曾有一个 `.app-shell { height: 100vh; 100dvh }` 规则 —— 实测**零引用**
+   (`grep -rn "app-shell" src/` → 只有本文件自己)。真正的外壳是 App.tsx 根 div，
+   它当时写的是 **inline** `height:'100vh'`，**没有 dvh 兜底**（移动端 / Tauri 无边框
+   窗口下 100vh 含被动态视口遮掉的部分 → 底部状态栏被顶出可视区）。
+   所以这里把 `.app-shell` 换成真正被消费的 `.app-root`，并把 inline 收进来，
+   让 100vh→100dvh 的双声明兜底有个落脚处。
+   外壳高度的两个真相点：`#root`(agentai-theme.css) 与 `.app-root`(本处)，
+   两处都必须带 100dvh 兜底 —— 由 shell.test.ts 断言。 */
 
-.app-shell {
+.app-root {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  /* 100dvh 在移动端/部分 Tauri 环境下更准确（避开地址栏高度），
-     用 100vh 作为兜底 */
-  height: 100dvh;
-  overflow: hidden;
+  height: 100dvh;   /* 兜底: 动态视口更准, 避免底栏被顶出可视区 */
+  background: var(--bg);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -57,25 +63,23 @@
   overflow: hidden;
 }
 
-/* 中间内容区 —— 氛围场「星野·深空」的载体 (2026-10-12)
-   光晕 + 细网格 与底色写在**同一条 background 声明**里, 不是叠层 div:
+/* 中间内容区 —— 氛围场「星野·深空」的载体, 也是 `.app-content` 的**唯一定义**
+   (2026-10-12 立, 同日二次修订)
+   光晕与底色写在**同一条 background 声明**里, 不是叠层 div:
    var(--bg) 的不透明底散在 25 个文件约 50 处, 任何独立浮层都会被这些面盖死。
-   background-attachment 默认 scroll → 网格钉在容器上, 内容滚动时它不动 (大气氛感)。
+   ⚠️ 网格已移除 (用户判定「网格太花」): 单层光晕不可重复、无周期, 才是"深空"要的安静纵深。
+   background-attachment 默认 scroll → 光晕钉在容器上, 内容滚动时它不动。
    页面根若自己画了不透明 var(--bg) 就会盖掉本场 —— ChatView / WritePage / ImageStudio
-   的根已改为不画底色 (透明), 让这里透出来。 */
+   的根已改为不画底色 (透明), 让这里透出来; 新增页面请用 .page-shell (shell.css)。 */
 .app-content {
   flex: 1;
   min-width: 0;       /* ★ 让 flex 子项可收缩，否则内容撑破三栏 */
   overflow: auto;
   position: relative;
   background-color: var(--bg);
-  background-image:
-    var(--aurora),
-    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
-  background-size: auto, var(--grid-size) var(--grid-size), var(--grid-size) var(--grid-size);
-  background-repeat: no-repeat, repeat, repeat;
-  background-position: center top, left top, left top;
+  background-image: var(--aurora);
+  background-repeat: no-repeat;
+  background-position: center top;
 }
 
 /* ── 侧栏通用 ──────────────────────────────────────────────────────── */
@@ -106,6 +110,10 @@
 /* 侧栏内容区可滚动 */
 .app-pane-body {
   flex: 1;
+  /* ★ 关键: 纵向 flex 子项默认 min-height:auto, 内容高于容器时**不滚动而是撑破父级**
+     → 表现为整页溢出 / 状态栏被顶出可视区。加 min-height:0 才真正启用 overflow。
+     (同类缺陷还有 12+ 处 `flex:1 + overflow` 缺此行; 新增布局一律用 .page-body) */
+  min-height: 0;
   overflow: auto;
   overflow-x: hidden;
 }

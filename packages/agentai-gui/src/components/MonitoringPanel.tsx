@@ -21,9 +21,11 @@ import {
   MedicineBoxOutlined,
   WarningOutlined,
   ThunderboltOutlined,
-  TeamOutlined
+  TeamOutlined,
+  DashboardOutlined
 } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
+import { PageHeader } from './shell';
 
 // 仪表盘数据接口
 interface DashboardData {
@@ -1038,14 +1040,18 @@ const MonitoringPanel: React.FC = () => {
   );
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>系统监控面板</h2>
-        <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
-          刷新
-        </Button>
-      </div>
-
+    <>
+      <PageHeader
+        title="系统监控面板"
+        subtitle="进化系统 · 审批策略 · 反馈闭环 · 成本追踪 实时状态"
+        icon={<DashboardOutlined />}
+        actions={
+          <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
+            刷新
+          </Button>
+        }
+      />
+      <div className="page-body">
       <div style={{ marginBottom: 24 }}>
         <Button 
           type={activeTab === 'overview' ? 'primary' : 'default'}
@@ -1096,7 +1102,8 @@ const MonitoringPanel: React.FC = () => {
       {activeTab === 'feedback' && renderFeedback()}
       {activeTab === 'cost' && renderCost()}
       {activeTab === 'system' && renderSystem()}
-    </div>
+      </div>
+    </>
   );
 };
 

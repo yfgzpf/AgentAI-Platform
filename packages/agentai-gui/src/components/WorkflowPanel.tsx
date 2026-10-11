@@ -259,7 +259,9 @@ export const WorkflowPanel: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--panel)' }}>
+    /* 原 `background: 'var(--panel)'` 把氛围层盖死 → 去底色。头部/卡片自带 --bg-2/--panel
+       表面, 层次不变。 (2026-10-12 页面统一) */
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 头部 */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',

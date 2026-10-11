@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, Input, Button, Tag, Space, Steps, Typography, message, Alert } from 'antd';
 import { io, type Socket } from 'socket.io-client';
+import { MessageOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
+import { PageHeader } from './shell';
 
 const { Text } = Typography;
 
@@ -76,8 +78,14 @@ export const QQBotPanel: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 600, margin: '0 auto' }}>
-      <Typography.Title level={3}>QQ Bot 配置</Typography.Title>
+    <>
+      <PageHeader
+        title="QQ Bot 配置"
+        subtitle="反向 WS · 自动回复 · AppID / AppSecret 绑定"
+        icon={<MessageOutlined />}
+      />
+      <div className="page-body">
+      <div style={{ maxWidth: 600, margin: '0 auto' }}>
 
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
@@ -125,6 +133,8 @@ export const QQBotPanel: React.FC = () => {
           { title: '点击连接', description: '配置完成后点击连接按钮 — 或让 AI 帮你连接' },
         ]}
       />
-    </div>
+      </div>
+      </div>
+    </>
   );
 };

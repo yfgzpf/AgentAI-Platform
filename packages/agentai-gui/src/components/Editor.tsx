@@ -620,7 +620,10 @@ const filteredTree = filterTree(tree, searchQ);
 
   // ===== 渲染 =====
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--editor-bg)' }}>
+    /* 根节点不再画不透明底 —— 原先 `background: 'var(--editor-bg)'` 把 .app-content 的
+       氛围层整页盖死 (与 ChatView / WritePage / ImageStudio 不一致)。代码区自己的
+       --editor-bg 表面保留在下方子元素上。 (2026-10-12 页面统一) */
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* ===== 顶栏 ===== */}
       <div style={{ padding: '6px 10px', background: 'var(--editor-header)',
         borderBottom: '1px solid var(--editor-divider)', display: 'flex', gap: 8, alignItems: 'center' }}>

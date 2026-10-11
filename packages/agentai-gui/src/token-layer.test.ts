@@ -264,28 +264,41 @@ describe('token 层: 语义色不得再散落 (2026-10-11)', () => {
 
 describe('token 层: 氛围层「星野·深空」必须真被消费', () => {
   const layoutCss = readFileSync(join(ROOT, GUI, 'src', 'styles', 'layout.css'), 'utf-8');
-  const ATMOS = ['aurora', 'grid-line', 'grid-size', 'panel-hi'];
+  const stylesDir = join(ROOT, GUI, 'src', 'styles');
+  const allCss = readdirSync(stylesDir)
+    .filter(f => f.endsWith('.css'))
+    .map(f => readFileSync(join(stylesDir, f), 'utf-8'))
+    .join('\n')
+    // CSS 只有 /* */ 注释 (没有 //, 故不能复用 stripComments —— 会把 url(https://…) 砍断)。
+    // 修复合一的注释本身会写「原先 --grid-line 铺出的…」, 不剥就是假阳性。
+    .replace(/\/\*[\s\S]*?\*\//g, '');
 
-  for (const t of ATMOS) {
+  for (const t of ['aurora', 'panel-hi']) {
     it(`--${t} 在主题里有定义`, () => {
       expect(themeNoComments).toMatch(new RegExp(`^\\s*--${t}\\s*:`, 'm'));
     });
   }
 
-  it('4 个氛围 token 全部有真实消费点 (防僵尸 token —— --radius-lg 当年就零消费)', () => {
-    for (const t of ['aurora', 'grid-line', 'grid-size']) {
-      expect(layoutCss).toContain(`var(--${t})`);
-    }
-    // --panel-hi 是内高光, 消费在侧栏 (layout.css) 与标题栏/状态栏 (agentai-theme.css)
+  it('--aurora / --panel-hi 都有真实消费点 (防僵尸 token —— --radius-lg 当年就零消费)', () => {
+    expect(layoutCss).toContain('var(--aurora)');
+    // --panel-hi 是内高光: 侧栏 (layout.css) + 标题栏/状态栏 (agentai-theme.css)
     expect(layoutCss).toContain('box-shadow: var(--panel-hi)');
     expect(themeNoComments).toContain('box-shadow: var(--panel-hi)');
   });
 
-  it('亮色档 (light + porcelain) 必须自己覆写光晕与网格, 不能只靠 :root 继承', () => {
-    // 暗色档的 --grid-line 是"白线 3%", 直接继承到亮底上等于没有; --panel-hi 同理
+  it('★ 网格 token 必须不存在 (用户判定「网格太花」, 再回来就是回归)', () => {
+    // 1px 周期纹理在 32px 间距下是**注意力噪音**, 与"深空"要的安静纵深恰好相反。
+    // 氛围只由单层 --aurora 承担 —— 不可重复、无周期、无摩尔纹/织布感。
+    expect(allCss).not.toContain('--grid-line');
+    expect(allCss).not.toContain('--grid-size');
+  });
+
+  it('亮色档 (light + porcelain) 必须自己覆写光晕, 不能只靠 :root 继承', () => {
+    // 暗色档 --aurora 是 accent 13%/5% 双色标, 直接继承到亮底上会偏重;
+    // 两个亮色档各压到 9% 单色标 —— 每个都要自带 (fallback + color-mix) 两行覆写。
     const fromLight = themeNoComments.slice(themeNoComments.indexOf('[data-theme="light"]'));
-    const n = (fromLight.match(/^\s*--grid-line\s*:/gm) || []).length;
-    expect(n).toBeGreaterThanOrEqual(2);
+    const n = (fromLight.match(/^\s*--aurora\s*:/gm) || []).length;
+    expect(n).toBeGreaterThanOrEqual(4);
   });
 
   it('氛围场画在 .app-content 自己的 background 上, 不是叠层 div / backdrop-filter', () => {
@@ -294,5 +307,20 @@ describe('token 层: 氛围层「星野·深空」必须真被消费', () => {
     // 也没有内容可模糊。所以氛围是"面自己的背景", 不是覆盖层。
     expect(layoutCss).toMatch(/\.app-content\s*\{[\s\S]{0,900}?background-image:/);
     expect(layoutCss).not.toMatch(/\.app-content\s*\{[\s\S]{0,900}?backdrop-filter/);
+  });
+
+  it('★ .app-content 在所有 CSS 里恰好 1 处定义 (重复定义 = 靠 import 顺序决定谁赢)', () => {
+    // 原状: agentai-theme.css 有一份 `background: var(--bg)` 的重复定义,
+    // 仅因为 main.tsx 的 import 顺序 (theme → global → layout) 被压住才没生效。
+    // cssCodeSplit 下 CSS 合并顺序属实现细节, 一旦翻转, 不透明 --bg 就会盖掉氛围层。
+    const defs = (allCss.match(/^\.app-content\s*\{/gm) || []).length;
+    expect(defs).toBe(1);
+  });
+
+  it('★ .app-content 的 background-image 只有 1 层 (网格时代是 3 层, 靠逗号分层)', () => {
+    const block = layoutCss.match(/\.app-content\s*\{[\s\S]*?\}/)?.[0] || '';
+    const img = block.match(/background-image:\s*([^;]+);/)?.[1] || '';
+    expect(img).toContain('var(--aurora)');
+    expect(img).not.toContain(',');   // 变多是又把 repeating 纹理加回来了
   });
 });

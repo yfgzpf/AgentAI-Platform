@@ -115,7 +115,9 @@ export const Scene3DViewer: React.FC<Props> = ({ scene }) => {
         }
         closeIcon={<CloseOutlined />}
       >
-        <div style={{ height: 'calc(100vh - 140px)' }}>
+        {/* 原 `calc(100vh - 140px)`: 其中 60 是外壳 (--chrome-h), 余下 80 是本组件自己的
+            工具条 + 提示条高度。魔法数字 140 拆开后两段各有出处。 */}
+        <div style={{ height: 'calc(100dvh - var(--chrome-h) - 80px)' }}>
           {iframeEl}
         </div>
       </Modal>

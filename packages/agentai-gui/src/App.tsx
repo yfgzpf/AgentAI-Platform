@@ -84,6 +84,7 @@ import { BrowserHost, useBrowserHost } from './services/browser-host';
 import { BrowserStateBus } from './services/BrowserStateBus';
 import { useIdeState } from './hooks/useIdeState';
 import { useResizable } from './hooks/useResizable';
+import { PageShell } from './components/shell';
 import { useUpdaterStore, mountUpdaterEventBus } from './store/updaterStore';
 import { useSubscriptionStore } from './store/subscriptionStore';
 
@@ -470,27 +471,12 @@ const NavGroupDropdown: React.FC<{
   );
 };
 
-/**
- * 读取并验证持久化的 page key。
- * 仅接受已知 PageKey 列表, 任何异常值 (含旧版本残留) 都视为 'chat' 默认。
- */
-function resolveStoredPage(): PageKey {
-  try {
-    const VALID: PageKey[] = ['chat', 'write', 'image', 'video', '3d', 'pascal', 'decorai',
-      'editor', 'skills', 'qq', 'wechat', 'knowledge', 'settings', 'notification',
-      'workflow', 'suggestions', 'xuanji', 'automation', 'tasks', 'stats',
-      'evolution', 'monitoring', 'knowledge-explore', 'soul'];
-    const raw = localStorage.getItem('agentai.lastPage');
-    if (raw && VALID.includes(raw as PageKey)) return raw as PageKey;
-  } catch { /* localStorage 不可用 */ }
-  return 'chat';
-}
-
 export const App: React.FC = () => {
-  // ✅ 修复: 桌面端启动默认页错误 (Tauri transparent 模式下 webview 状态残留导致进入编辑器页)
-  // 防御性初始化: 始终从 'chat' 开始, 忽略 localStorage 中可能残留的 page 状态
+  /** 启动页 = localStorage 里上次的页面 (仅接受已知 PageKey, 异常值退回 'chat')。
+   *  ⚠️ 这里曾有一份**逻辑完全相同的死函数** `resolveStoredPage` (定义了但从未调用,
+   *  注释自己写着"定义了但从未调用"), 同时又内联了同一份白名单 —— 同一规则两处真相。
+   *  死函数已删, 白名单只保留这一处。 */
   const [page, setPageState] = useState<PageKey>(() => {
-    // P0 修复: 恢复上次页面持久化 — resolveStoredPage 定义了但从未调用
     try {
       const saved = localStorage.getItem('agentai.lastPage');
       if (saved) {
@@ -1116,7 +1102,9 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
         }}
       >
         <AntApp>
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)' }}>
+        {/* 外壳高度收进 .app-root (layout.css) —— 原 inline `height:'100vh'` **无 dvh 兜底**,
+            Tauri 无边框窗口 / 移动端下 100vh 会含被动态视口遮掉的部分, 底栏被顶出可视区。 */}
+        <div className="app-root">
         {/* ═══ 1. TitleBar (ZCode 风格: 紧凑 36px) ═══ */}
         <div className="app-titlebar">
           {/* 品牌 (精简: 小图标 + 文字) */}
@@ -1471,8 +1459,14 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             </div>
           )}
 
-          {/* Center: 当前页 (P0-3: ErrorBoundary + P0-4: Suspense 骨架屏) */}
+          {/* Center: 当前页 (P0-3: ErrorBoundary + P0-4: Suspense 骨架屏)
+              ★ 页面壳层 (2026-10-12): **24 个页面在这里统一拿到 same 契约** ——
+              `.page-shell` = height:100% + 纵向 flex + min-height:0 (溢出根因)。
+              放在此处而不是逐个改 24 个页面的根节点: 渲染点只有这一个,
+              改一处即全覆盖, 且新页面自动继承, 不会再分叉。
+              Suspense 不产生 DOM 节点, 故骨架屏与页面同享这一层。 */}
           <div className="app-content">
+            <PageShell>
             <ErrorBoundary key={page} onRetry={() => setPage(page)}>
               <Suspense fallback={<PageSkeleton />}>
           {/* 功能引导提示（非强制锁定） */}
@@ -1487,6 +1481,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                 )}
               </Suspense>
             </ErrorBoundary>
+            </PageShell>
           </div>
 
           {/* Right: 右栏 (信息 / 浏览器 双模式) */}

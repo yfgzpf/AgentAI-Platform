@@ -18,6 +18,10 @@ import './styles/global.css';
 // 2026-10-06 新增。必须在 global.css 之后 —— 骨架要能覆盖前两层的默认值。
 import './styles/layout.css';
 
+// ═══ 第5 层: 页面壳层（PageShell / PageHeader / PageBody）═══
+// 2026-10-12 新增。必须在 layout.css 之后 —— 同级选择器要能覆盖骨架层的默认值。
+import './styles/shell.css';
+
 // ═══ P0 修复: 全局 Fetch 拦截器 ═══
 // 必须在所有组件之前导入, 自动将 /v1/, /api/ 等相对路径重定向到 GATEWAY_HTTP
 // 解决 Tauri 打包后 fetch('/v1/...') 404 的问题

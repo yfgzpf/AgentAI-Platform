@@ -20,9 +20,10 @@ import {
   BarChartOutlined, PieChartOutlined
 } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
+import { PageHeader } from './shell';
 import type { Dayjs } from 'dayjs';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { RangePicker } = DatePicker;
 const { Option } = Select;
 
@@ -172,18 +173,20 @@ export const StatsPanel: React.FC = () => {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
-      <Space style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          <BarChartOutlined /> 用量统计
-        </Title>
-        <Select value={timeRange} onChange={setTimeRange} style={{ width: 120 }}>
-          <Option value="today">今天</Option>
-          <Option value="week">近7天</Option>
-          <Option value="month">近30天</Option>
-        </Select>
-      </Space>
-
+    <>
+      <PageHeader
+        title="用量统计"
+        subtitle="工具调用次数 · 成功率 · 省时报告"
+        icon={<BarChartOutlined />}
+        actions={
+          <Select value={timeRange} onChange={setTimeRange} style={{ width: 120 }}>
+            <Option value="today">今天</Option>
+            <Option value="week">近7天</Option>
+            <Option value="month">近30天</Option>
+          </Select>
+        }
+      />
+      <div className="page-body">
       {/* 核心指标 */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={6}>
@@ -278,9 +281,10 @@ export const StatsPanel: React.FC = () => {
               </div>
             </Space>
           </Card>
-        </Col>
+         </Col>
       </Row>
-    </div>
+      </div>
+    </>
   );
 };
 

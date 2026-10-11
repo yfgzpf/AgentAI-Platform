@@ -246,7 +246,8 @@ export function GovernorPanel() {
   ];
 
   return (
-    <div style={{ padding: 16, maxHeight: 'calc(100vh - 48px)', overflow: 'auto' }}>
+    /* 原 `calc(100vh - 48px)`: 48 是魔法猜测 (真实外壳 60px), 且无 dvh 兜底 */
+    <div style={{ padding: 16, maxHeight: 'calc(100dvh - var(--chrome-h))', overflow: 'auto' }}>
       <Title level={4} style={{ marginBottom: 16 }}>
         <DashboardOutlined style={{ marginRight: 8 }} />
         系统管控员 AI

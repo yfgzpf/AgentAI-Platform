@@ -20,6 +20,7 @@ import {
   RobotOutlined, ArrowRightOutlined, CloseOutlined
 } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
+import { PageHeader } from './shell';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -171,11 +172,13 @@ export const ProactiveSuggestionsPanel: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: 24 }}>
-      <Title level={4}>
-        <BulbOutlined /> 智能建议中心
-      </Title>
-
+    <>
+      <PageHeader
+        title="智能建议中心"
+        subtitle="需求预判 · 行业知识链 · 资源瓶颈预判 · 决策支持"
+        icon={<BulbOutlined />}
+      />
+      <div className="page-body">
       {/* 核心洞察 */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         {insights.map((insight, index) => (
@@ -273,7 +276,8 @@ export const ProactiveSuggestionsPanel: React.FC = () => {
           </div>
         </Space>
       </Card>
-    </div>
+      </div>
+    </>
   );
 };
 

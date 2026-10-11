@@ -156,8 +156,10 @@ export const GlobalBrowserDrawer: React.FC = () => {
           </Space>
         </div>
 
-        {/* EmbeddedBrowser 主体 — reloadSeq 变化即重建实例 = 真重载 */}
-        <div style={{ height: 'calc(100vh - 44px)' }}>
+        {/* EmbeddedBrowser 主体 — reloadSeq 变化即重建实例 = 真重载
+            高度原写死 `calc(100vh - 44px)` —— 44 是凭空猜的让位值 (真实标题栏 36px),
+            且无 dvh 兜底。改走 --titlebar-h 唯一常量源。 */}
+        <div style={{ height: 'calc(100dvh - var(--titlebar-h))' }}>
           {open && (
             <EmbeddedBrowser
               key={reloadSeq}

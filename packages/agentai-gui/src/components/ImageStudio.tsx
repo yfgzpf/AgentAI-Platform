@@ -1107,7 +1107,7 @@ const sendToVideo = (imageUrl: string) => {
                         </Space>}>
                         <div style={{ textAlign: 'center', background: 'var(--panel)', padding: 12, borderRadius: 'var(--radius-md)' }}>
                             <Dropdown menu={imgContextMenu(current.url)} trigger={['contextMenu']}>
-                                <img src={current.url} alt={current.prompt} style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 300px)', borderRadius: 'var(--radius-sm)', cursor: 'pointer' }} onClick={() => setZoomUrl(current.url)} />
+                                <img src={current.url} alt={current.prompt} style={{ maxWidth: '100%', maxHeight: 'calc(100dvh - var(--chrome-h) - 240px)', borderRadius: 'var(--radius-sm)', cursor: 'pointer' }} onClick={() => setZoomUrl(current.url)} />
                             </Dropdown>
                         </div>
                         <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between' }}>

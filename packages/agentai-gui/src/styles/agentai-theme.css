@@ -55,21 +55,21 @@
   --shadow-bubble: 0 4px 16px var(--accent-soft), 0 1px 4px rgba(0,0,0,0.1);
   --shadow-hover: 0 8px 24px -8px rgba(0, 0, 0, 0.25);
 
-  /* ── 氛围层「星野·深空」(2026-10-12) ────────────────────────────────
+  /* ── 氛围层「星野·深空」(2026-10-12 立, 同日二次修订) ────────────────
      原来全站背景是**平涂** --bg, 面板之间只有 1px 边框区分 → 观感"一片平灰, 没特色"。
-     这里加两个纯装饰原语 (顶部光晕 + 1px 细网格) 和一层面板内高光。
+     这里给一层**顶部光晕**和一层面板内高光。
      为什么不做叠层 / backdrop-filter: var(--bg) 的不透明底散在 25 个文件约 50 处
      (外壳 / ChatView / WritePage / ImageStudio …), 任何独立浮层都会被这些面盖死;
      而且侧栏与标题栏背后没有内容, 模糊也无从谈起。所以氛围直接做成
      **面自己的 background** —— 见 layout.css 里 .app-content 那条声明。
-     色标走 var(--accent)/var(--fg), 换主题自动跟随, 无需每个主题重定义。
+     色标走 var(--accent), 换主题自动跟随, 无需每个主题重定义。
      强度实测过一次: 初版按 --accent-soft(15%) 单色标铺开, 在 640px 视口下**几乎看不见**,
-     等于白做 —— 所以内核改用 accent 本色 + 双色标衰减, 网格提到 5%。 */
+     等于白做 —— 所以改用 accent 本色 + 双色标衰减。
+     ⚠️ **网格已移除** (用户实测判定「网格太花」): 原先 --grid-line/--grid-size 铺出的
+     1px 周期纹理在 32px 间距下是**注意力噪音**, 与"深空"要的安静纵深恰好相反;
+     移除后氛围只由**单层**顶部光晕承担 —— 不可重复、无周期、不会产生摩尔纹/织布感。*/
   --aurora: radial-gradient(130% 62% at 50% -12%, rgba(232, 144, 85, 0.13) 0%, rgba(232, 144, 85, 0.05) 40%, transparent 68%);
   --aurora: radial-gradient(130% 62% at 50% -12%, color-mix(in srgb, var(--accent) 13%, transparent) 0%, color-mix(in srgb, var(--accent) 5%, transparent) 40%, transparent 68%);
-  --grid-line: rgba(255, 255, 255, 0.035);              /* color-mix 不支持时的回退 */
-  --grid-line: color-mix(in srgb, var(--fg) 5%, transparent);
-  --grid-size: 32px;
   --panel-hi: inset 0 1px 0 rgba(255, 255, 255, 0.05);  /* 面板顶部内高光 (替代"只有边框"的单薄层次) */
 
   /* ── 通用文本尺度 (2026-10-11) ────────────────────────────────────
@@ -87,6 +87,35 @@
   --fs-lg: 16px;
   --fs-xl: 20px;
   --fs-hero: 28px;
+
+  /* ── 排版尺度 (2026-10-12) ────────────────────────────────────────
+     字号收敛之后剩下的分叉在**行高/字重/字体族**: 实测全库 119 处裸 lineHeight
+     (1.2/1.3/1.4/1.5/1.6/1.7/1.8 七种)、272 处裸 fontWeight、~70 处裸 fontFamily
+     (5 种不同的 monospace 排序)。三者原先**一个 token 都没有** → 语义相同的行高
+     在不同文件落到不同值, 是"看着不齐"的隐性来源。
+     这三组只在 `:root` 声明一次即可 —— :root 恒匹配, 其余主题块无需重定义。 */
+     ⚠️ 反僵尸: 本档只列**当前真有消费点**的档位 (见 styles/shell.css 的页面排版块)。
+     `--radius-lg` 当年"定义了却零消费"就是这个项目付过的学费 —— 不预留"以后可能用得上"的档。
+     `--fw-medium(500)` 因为暂无诚实消费点, **有意不定义**; 需要时连同消费点一起加。 */
+  --lh-tight: 1.25;   /* 标题 / 单行表头 / 按钮 */
+  --lh-snug: 1.45;    /* 面板正文 / 卡片 */
+  --lh-normal: 1.6;   /* 段落正文 / 说明 */
+  --fw-normal: 400;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* ── 页面壳尺度 (2026-10-12) ──────────────────────────────────────
+     外壳恒为 标题栏 36 + 状态栏 24 = 60px。原先它只以**魔法数字**形式散落在
+     `calc(100vh - 44/48/140px)` 里 (三个不同的猜测值), 且正确值 60 只写在注释里。
+     这里立唯一常量源, 并由 .app-titlebar / .app-statusbar / --chrome-h 真实消费
+     (反僵尸: 定义即必须被消费, 由 shell.test.ts 断言)。 */
+  --titlebar-h: 36px;
+  --statusbar-h: 24px;
+  --chrome-h: 60px;   /* = --titlebar-h + --statusbar-h */
+  --page-pad-x: 20px;
+  --page-pad-y: 16px;
+  --page-head-h: 44px;
 
   /* ── 语义别名层 (2026-10-11) ──────────────────────────────────────
      tsx 大量消费 --text-primary/--text-secondary/--text-tertiary/--bg-1/--muted-1/...
@@ -514,12 +543,11 @@
   --muted: #6b665c;
   --muted-2: #8a8478;
 
-  /* 氛围层「星野·深空」亮色档: 光晕压到几乎看不见, 网格用深色细线且更淡 ——
-     亮底上堆纹理很容易变成一层"脏灰", 亮色主题的层次感靠阴影而不是纹理。 */
+  /* 氛围层「星野·深空」亮色档: 光晕压到几乎看不见 ——
+     亮底上堆纹理很容易变成一层"脏灰", 亮色主题的层次感靠阴影而不是纹理。
+     ⚠️ 与暗色档同步移除网格 (用户判定「网格太花」)。 */
   --aurora: radial-gradient(130% 62% at 50% -12%, rgba(184, 101, 26, 0.09) 0%, transparent 60%);
   --aurora: radial-gradient(130% 62% at 50% -12%, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 60%);
-  --grid-line: rgba(0, 0, 0, 0.05);
-  --grid-line: color-mix(in srgb, var(--fg) 5%, transparent);
   --panel-hi: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.04);
 
   --accent: #b8651a;
@@ -609,11 +637,9 @@
   --accent: oklch(58% 0.18 36);
   --accent-soft: oklch(58% 0.18 36 / 0.1);
 
-  /* 氛围层「星野·深空」瓷白档 —— 与亮色档同策略 (光晕极弱 + 深色细网格) */
+  /* 氛围层「星野·深空」瓷白档 —— 与亮色档同策略 (仅极弱光晕, 无纹理) */
   --aurora: radial-gradient(130% 62% at 50% -12%, oklch(58% 0.18 36 / 0.09) 0%, transparent 60%);
   --aurora: radial-gradient(130% 62% at 50% -12%, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 60%);
-  --grid-line: rgba(0, 0, 0, 0.045);
-  --grid-line: color-mix(in srgb, var(--fg) 4.5%, transparent);
   --panel-hi: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.04);
   --accent-strong: oklch(52% 0.2 34);
 
@@ -672,7 +698,9 @@ html, body {
   transition: background 0.2s ease, color 0.2s ease;
 }
 
-#root { height: 100vh; }
+/* 根高度: 100dvh 兜底 —— 移动端 / Tauri 无边框窗口下 100vh 会包含被动态视口
+   遮掉的部分, 导致底部状态栏被顶出可视区 (溢出)。100vh 保留给不认 dvh 的旧内核。*/
+#root { height: 100vh; height: 100dvh; }
 
 /* ====================== Ant Design dark override ======================
  * P0 修复: 移除所有 !important — hashPriority="high" 让 antd 用 :where() 选择器 (优先级 0)
@@ -798,7 +826,7 @@ html, body {
 .app-titlebar {
   display: flex;
   align-items: center;
-  height: 36px;  /* 从 44px 减到 36px，更紧凑 */
+  height: var(--titlebar-h);  /* 唯一常量源: 从 44px 减到 36px 更紧凑 */
   padding: 0 12px; /* 从 16px 减到 12px */
   background: var(--titlebar-bg);
   border-bottom: 1px solid var(--titlebar-border);
@@ -922,13 +950,10 @@ html, body {
   min-height: 0;
   overflow: hidden;
 }
-.app-content {
-  flex: 1;
-  overflow: auto;
-  background: var(--bg);
-  min-width: 0;
-  position: relative;
-}
+/* ⚠️ `.app-content` 的**唯一定义**在 layout.css (含氛围层 background-image)。
+   这里曾有一份重复定义 `background: var(--bg)` —— 它靠 main.tsx 的 import 顺序
+   (theme → global → layout) 被压住才没生效。cssCodeSplit 下 CSS 合并顺序属实现细节,
+   一旦翻转, 不透明 --bg 会盖掉氛围层。重复定义已删除, 不要在主题文件里再定义它。*/
 
 /* 面包屑 */
 .app-breadcrumb {
@@ -997,7 +1022,7 @@ html, body {
 .app-statusbar {
   display: flex;
   align-items: center;
-  height: 24px;
+  height: var(--statusbar-h);  /* 唯一常量源 (与 --chrome-h 同源) */
   padding: 0 12px;
   background: var(--bg-2);
   border-top: 1px solid var(--border);

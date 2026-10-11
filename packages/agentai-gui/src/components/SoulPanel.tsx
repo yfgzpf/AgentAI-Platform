@@ -11,11 +11,12 @@
  * 数据源: GET /v1/soul/status
  */
 import React, { useEffect, useState, useCallback } from 'react';
-import { Card, Tag, Tooltip, Button, Collapse, Spin, Empty, Badge, Progress } from 'antd';
+import { Card, Tag, Tooltip, Button, Collapse, Spin, Badge, Progress } from 'antd';
 import {
   MoonOutlined, BulbOutlined, ThunderboltOutlined, MessageOutlined,
   ReloadOutlined, PlayCircleOutlined,
 } from '@ant-design/icons';
+import { EmptyState } from './shell';
 
 interface SoulStatus {
   dream: {
@@ -94,18 +95,26 @@ export const SoulPanel: React.FC = () => {
   };
 
   if (loading && !status) {
-    return <div style={{ padding: 20, textAlign: 'center' }}><Spin tip="加载灵魂状态..." /></div>;
+    return <div className="page-loading"><Spin tip="加载灵魂状态..." /></div>;
   }
 
   if (!status) {
-    return <Empty description="灵魂层未启用" />;
+    /* 整页为空 → 页面级空态。卡片内的小空态不套这一层 (见 EmptyState.tsx 头注释) */
+    return (
+      <EmptyState
+        description="灵魂层未启用"
+        hint="开启后这里会显示情绪 / 梦境 / 内心独白 / 好奇心 / 辩论"
+      />
+    );
   }
 
   const mood = MOOD_CONFIG[status.emotion.mood] || MOOD_CONFIG.calm;
   const painColor = PAIN_COLORS[status.emotion.pain] || '#9ca3af';
 
   return (
-    <div style={{ padding: 12, overflow: 'auto', height: '100%', background: 'var(--bg-1)' }}>
+    /* 原 `background: 'var(--bg-1)'` 把氛围层盖死 → 去底色, 让 .app-content 透出。
+       卡片各自的 --bg-2 表面不受影响。 (2026-10-12 页面统一) */
+    <div style={{ padding: 12, overflow: 'auto', height: '100%' }}>
       {/* ===== 情绪状态卡片 ===== */}
       <Card size="small" style={{ marginBottom: 12, background: 'var(--bg-2)', border: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
