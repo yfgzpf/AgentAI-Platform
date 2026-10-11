@@ -95,8 +95,8 @@ const FREE_CHAT_MODELS: ModelConfig[] = [];
 
 // ===== 官方文本模型 (独立 API) =====
 const OFFICIAL_CHAT_MODELS: ModelConfig[] = [
-  // DeepSeek V4 (2026年最新)
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (284B)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'deepseek', contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
+  // DeepSeek (2026-10-11: V4.1-Flash 起模型名改为 deepseek-flash)
+  { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 1M)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'deepseek', contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
   { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (1.6T)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#059669', enabled: false, isBuiltIn: true, provider: 'deepseek', contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
   // OpenAI
   { id: 'openai-gpt4o', label: 'OpenAI GPT-4o / o1/o3-mini', baseURL: 'https://api.openai.com/v1', apiKeyEnv: 'OPENAI_API_KEY', color: '#F59E0B', enabled: false, isBuiltIn: true, provider: 'openai', contextWindow: 128000, isCommercial: true, groupLabel: 'OpenAI', modelType: 'chat' },
@@ -227,7 +227,7 @@ function isFreeModelById(id: string): boolean {
 // ===== [P1-2] 合并自 autoModelStore: 自动模型选择 Tier 定义 =====
 export const MODEL_TIERS = [
   { label: 'Free (Agnes 3.0)', apiProvider: 'agentai', model: 'agnes-3.0-flash', strength: 3, keywords: [] },
-  { label: 'DeepSeek Flash', apiProvider: 'deepseek', model: 'deepseek-v4-flash', strength: 4, keywords: ['review', 'analyze', 'refactor', 'implement'] },
+  { label: 'DeepSeek Flash', apiProvider: 'deepseek', model: 'deepseek-flash', strength: 4, keywords: ['review', 'analyze', 'refactor', 'implement'] },
   { label: 'DeepSeek Pro', apiProvider: 'deepseek', model: 'deepseek-v4-pro', strength: 8, keywords: ['architecture', 'security', 'optimization'] },
 ];
 
@@ -376,8 +376,20 @@ export const useModelStore = create<ModelState>()(
     }),
     {
       name: 'agentai-models',
-      version: 13,
+      version: 14,
       migrate: (persisted: any, version: number) => {
+        // v14: DeepSeek V4.1-Flash 起 flash 档模型名改为 deepseek-flash。
+        //      原地重命名已持久化的旧 id (旧名官方仅"暂时"兼容路由, 不迁移会随官方下线而失效)。
+        //      注意: 只改 id/label, 不重建 models 数组, 避免覆盖用户自定义的 baseURL/apiKey。
+        if (version < 14 && Array.isArray(persisted?.models)) {
+          for (const m of persisted.models) {
+            if (m?.id === 'deepseek-v4-flash' && m?.isBuiltIn) {
+              m.id = 'deepseek-flash';
+              m.label = 'DeepSeek Flash (V4.1, 1M)';
+            }
+          }
+          if (persisted.activeModelId === 'deepseek-v4-flash') persisted.activeModelId = 'deepseek-flash';
+        }
         // v13: 新增 agnes-3.0-flash, 强制用最新 DEFAULT_MODELS 覆盖内置模型
         if (version < 13 && persisted?.models) {
           const oldEnabled: string[] = (persisted.models || [])

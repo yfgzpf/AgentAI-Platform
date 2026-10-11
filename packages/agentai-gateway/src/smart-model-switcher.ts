@@ -285,7 +285,7 @@ export class SmartModelSwitcher {
       provider: 'deepseek',
       apiKeyEnvKey: 'DEEPSEEK_API_KEY',
       endpoint: 'https://api.deepseek.com/v1',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       costPerRequest: 0.001, // ¥0.001每次请求
       rateLimit: 60, // 每分钟60次
     });

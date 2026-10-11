@@ -280,7 +280,7 @@ export function createSettingsRouter(deps?: SettingsRouterDeps): Router {
 
     try {
       // 某些 provider 可能需要不同的测试模型名
-      const testModel = modelName || 'deepseek-v4-flash';
+      const testModel = modelName || 'deepseek-flash';
 
       const r = await fetch(url, {
         method: 'POST',

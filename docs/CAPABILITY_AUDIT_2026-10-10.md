@@ -144,7 +144,8 @@ appendOnlyLog    → 历史对话，只追加
 - successRate/latency 无数据时默认 **0.5 冷启动**，而不是 0（否则新模型永不被选中）。
 
 **熔断**（`llm-router.ts`）：`CB_COOLDOWN_MS=2min`、`CONSECUTIVE_FAIL_THRESHOLD=3`、限流 429 指数退避 10s→120s、`FLAKY_PROVIDERS={sensenova,longcat}` 设 15s 短超时。
-**重要修正**（:692 注释）：移除了 force-untrip——原逻辑对熔断中的 provider 每请求强试一次，**完全绕过 2 分钟冷却**。降级链：用户指定则锁定 → 同模型重试 3 次（指数退避 1s→30s）→ 备用 → 免费池 6 个轮换 → deepseek-v4-flash（关 thinking）→ 兜底文案。
+**重要修正**（:692 注释）：移除了 force-untrip——原逻辑对熔断中的 provider 每请求强试一次，**完全绕过 2 分钟冷却**。降级链：用户指定则锁定 → 同模型重试 3 次（指数退避 1s→30s）→ 备用 → 免费池 6 个轮换 → deepseek-flash（关 thinking）→ 兜底文案。
+（2026-10-11：DeepSeek 发布 V4.1-Flash，flash 档模型名由 `deepseek-v4-flash` 改为 `deepseek-flash`；代码统一收敛到 `llm-router.ts` 的 `DEEPSEEK_FLASH_MODEL` 常量，旧名保留为兼容别名。）
 
 ---
 

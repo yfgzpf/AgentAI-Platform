@@ -518,9 +518,10 @@ const sendEvent = (event: string, data: any) => {
           'agentai': { provider: 'agentai', label: '岐枢 Free (Flash)', contextWindow: 512000 },
           'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash', contextWindow: 200000 },
           // ===== DeepSeek (前端 id + 旧兼容 id) =====
-          'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', contextWindow: 1000000 },
+          'deepseek': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)', contextWindow: 1000000 },
           'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', contextWindow: 1000000 },
-          'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', contextWindow: 1000000 },
+          'deepseek-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)', contextWindow: 1000000 },
+          'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)', contextWindow: 1000000 },
           'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', contextWindow: 1000000 },
           // ===== OpenAI =====
           'openai': { provider: 'openai', label: 'OpenAI GPT-4o', contextWindow: 128000 },
@@ -1376,9 +1377,10 @@ req.on('close', () => {
         'agentai': { provider: 'agentai', label: '岐枢 Free (Flash)' },
         'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
         // ===== DeepSeek =====
-        'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+        'deepseek': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
         'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
-        'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+        'deepseek-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
+        'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
         'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
         // ===== OpenAI =====
         'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },

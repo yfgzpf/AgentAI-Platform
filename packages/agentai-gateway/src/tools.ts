@@ -4930,7 +4930,7 @@ Write-Output 'OK'`;
         const visionBaseUrl = visionModel === 'agentai'
           ? (process.env.AGENTAI_BASE_URL || 'https://api.agnes-ai.cn/v1')
           : (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
-        const visionSubModel = visionModel === 'agentai' ? 'agnes-2.0-flash' : 'deepseek-v4-flash';
+        const visionSubModel = visionModel === 'agentai' ? 'agnes-2.0-flash' : 'deepseek-flash';
 
         let visionAnalysis = '';
         try {

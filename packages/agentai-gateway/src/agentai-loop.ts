@@ -17,7 +17,7 @@
 import { EventEmitter } from 'events';
 import fsSync from 'fs';
 import pathSync from 'path';
-import { AgentAIRouter, ChatRequest, ChatResponse, ChatMessage, MessageContent, ProviderId, isFreeProvider } from './llm-router.js';
+import { AgentAIRouter, ChatRequest, ChatResponse, ChatMessage, MessageContent, ProviderId, isFreeProvider, DEEPSEEK_FLASH_MODEL } from './llm-router.js';
 import { ToolRegistry, ToolContext, ToolResult } from './tool-registry.js';
 import { hookCapture } from './hook-capture.js';
 import { AGENT_SYSTEM_IDENTITY } from './system-prompt.js';
@@ -3678,11 +3678,11 @@ if (isComplexTask) {
             this.opts.model = decision.targetProvider;
             const switchModelMap: Record<string, string> = {
               alrc: 'gpt-5.4',
-              deepseek: 'deepseek-v4-flash',
+              deepseek: DEEPSEEK_FLASH_MODEL,
               openai: 'gpt-4o-mini',
               zhipu: 'glm-4.7-flash',
             };
-            this.opts.modelName = switchModelMap[decision.targetProvider] || 'deepseek-v4-flash';
+            this.opts.modelName = switchModelMap[decision.targetProvider] || DEEPSEEK_FLASH_MODEL;
             this.emit('model:auto-switched', { from: req.model, to: decision.targetProvider, reason: '当前模型全部不可用，自动切换' });
             this.trippedCount = 0;
             // 立即重试, 不要等到下一轮迭代

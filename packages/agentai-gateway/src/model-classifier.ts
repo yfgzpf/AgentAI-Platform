@@ -96,14 +96,16 @@ export const MODELS: ModelMeta[] = [
     id: 'deepseek:v4-flash',
     label: 'DS Flash',
     provider: 'deepseek',
-    subModel: 'deepseek-v4-flash',
+    subModel: 'deepseek-flash',   // 2026-10-11: 官方 V4.1-Flash 起模型名改为 deepseek-flash
     complexityRange: ['ultraSimple', 'complex'],
     maxContext: 1_000_000,
     costPer1kInput: 0.00022,
     costPer1kOutput: 0.00066,
     isFree: false,
     supportsTools: true,
-    supportsImages: false,  // 实测: HTTP 400, 不支持多模态 (2026-07-13 run-vision-test.ts)
+    // 2026-10-11 实测更正: V4.1-Flash 原生多模态, 传 data:image/png;base64 视觉请求 → 200 且正确描述图像。
+    // 旧值 false 基于 V4(非 4.1) 时代的 HTTP 400 实测, 已过时。
+    supportsImages: true,
     priority: 5,
     reasoningLevel: 'enhanced',
     speedTier: 'fast',
@@ -123,7 +125,9 @@ export const MODELS: ModelMeta[] = [
     costPer1kOutput: 0.00198,
     isFree: false,
     supportsTools: true,
-    supportsImages: true,
+    // 2026-10-11 实测更正: 同一 vision 探针下 pro 返回 200 但自述"image unsupported / cannot see image",
+    // 即只接受结构不真正读图。原值 true 会让 needsVision 路由把图片请求错误地派给 pro。
+    supportsImages: false,
     priority: 4,
     reasoningLevel: 'advanced',
     speedTier: 'thorough',

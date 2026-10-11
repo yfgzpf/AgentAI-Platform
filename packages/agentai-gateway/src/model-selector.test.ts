@@ -35,7 +35,7 @@ describe('model-selector', () => {
     it('应返回 deepseek 配置', () => {
       const config = modelSelector.getModelConfig('deepseek');
       expect(config?.provider).toBe('deepseek');
-      expect(config?.subModel).toBe('deepseek-v4-flash');
+      expect(config?.subModel).toBe('deepseek-flash');
     });
 
     it('无效模型应返回 undefined', () => {
@@ -102,7 +102,7 @@ describe('一致性验证 (与 chat.ts 原有逻辑)', () => {
   describe('模型映射一致性', () => {
     const expectedModels = [
       { id: 'agentai', provider: 'agnes', subModel: 'agnes-2.5-flash' }, // agentai 映射到 agnes，有 subModel
-      { id: 'deepseek', provider: 'deepseek', subModel: 'deepseek-v4-flash' },
+      { id: 'deepseek', provider: 'deepseek', subModel: 'deepseek-flash' },
       { id: 'deepseek-pro', provider: 'deepseek', subModel: 'deepseek-v4-pro' },
       { id: 'openai', provider: 'openai', hasSubModel: false },
       { id: 'zhipu', provider: 'zhipu', subModel: 'glm-4.7-flash' },

@@ -85,11 +85,14 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
   },
 
   // ─── DeepSeek (成本校准 2026-09-05: off-peak cache-miss USD/1K) ───
+  // ⚠️ 2026-10-11: 官方已发布 DeepSeek-V4.1-Flash, 模型名改为 `deepseek-flash`;
+  //    旧名 `deepseek-v4-flash` 官方声明仅「暂时」兼容路由, 故此处改用新名,
+  //    并在 getModelContextWindow 保留旧名别名 (见文件底部)。
   {
     id: 'deepseek',
-    label: 'DeepSeek V4 Flash (1M)',
+    label: 'DeepSeek Flash (V4.1, 1M)',
     provider: 'deepseek',
-    subModel: 'deepseek-v4-flash',
+    subModel: 'deepseek-flash',
     contextWindow: 1_048_576,  // 1M
     isFree: false,
     rateLimitRPM: 100,
@@ -234,6 +237,12 @@ export function getDefaultContextWindow(provider: string): number {
   return models.length > 0 ? Math.max(...models.map(m => m.contextWindow)) : 131_072;
 }
 
+/** 已下线模型名 → 当前有效模型名 (官方兼容路由的本地镜像) */
+const LEGACY_MODEL_ALIASES: Record<string, string> = {
+  'deepseek-v4-flash': 'deepseek-flash',
+  'deepseek-v4-flash-vision-exp': 'deepseek-flash',
+};
+
 /** model 名 → contextWindow (与 llm-router.ts PROVIDER_CONTEXT_WINDOW 等价，但按 model 粒度) */
 export function getModelContextWindow(modelId: string): number | undefined {
   const m = getCapability(modelId);
@@ -242,5 +251,9 @@ export function getModelContextWindow(modelId: string): number | undefined {
   // 而本表 id 多为 provider 级 (如 'deepseek') → 此前 ② 分支永不命中, 恒落 provider max。
   // 增加 subModel 二次匹配, 使 glm-4.7-flash / kimi-k2.5 / qwen-max 等精确命中。
   const bySub = MODEL_CAPABILITIES.find(c => c.subModel === modelId);
-  return bySub?.contextWindow;
+  if (bySub) return bySub.contextWindow;
+  // 2026-10-11: 旧模型名兜底 (deepseek-v4-flash → deepseek-flash)
+  const aliased = LEGACY_MODEL_ALIASES[modelId];
+  if (aliased) return MODEL_CAPABILITIES.find(c => c.subModel === aliased)?.contextWindow;
+  return undefined;
 }

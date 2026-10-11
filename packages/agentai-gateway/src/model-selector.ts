@@ -25,9 +25,12 @@ export const BUILTIN_MODELS: Record<string, ModelConfig> = {
   'agentai': { provider: 'agnes', subModel: 'agnes-2.5-flash', label: 'Agnes AI' },
   'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
   // DeepSeek (前端 id + 旧兼容 id)
-  'deepseek': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+  // 2026-10-11: 官方 V4.1-Flash 起, flash 档模型名改为 `deepseek-flash`
+  // (旧名 deepseek-v4-flash 官方仅"暂时"兼容路由 → 保留为别名, 指向同一 subModel)
+  'deepseek': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
   'deepseek-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
-  'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+  'deepseek-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
+  'deepseek-v4-flash': { provider: 'deepseek', subModel: 'deepseek-flash', label: 'DeepSeek Flash (V4.1)' },
   'deepseek-v4-pro': { provider: 'deepseek', subModel: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
   // OpenAI
   'openai': { provider: 'openai', label: 'OpenAI GPT-4o' },

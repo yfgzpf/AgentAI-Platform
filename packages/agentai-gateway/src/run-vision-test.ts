@@ -35,7 +35,7 @@ const TEST_MODELS: { provider: string; model: string; label: string }[] = [
   // 免费优先
   { provider: 'agentai', model: 'agnes-2.0-flash', label: 'Agnes AI Flash (主)' },
   // 备选
-  { provider: 'deepseek', model: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+  { provider: 'deepseek', model: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 原生多模态)' },
   { provider: 'zhipu', model: 'glm-4v-flash', label: 'Zhipu GLM-4V Flash (4.0)' },
   { provider: 'zhipu', model: 'glm-4.6v-flash', label: 'Zhipu GLM-4.6V Flash (4.6)' },
   { provider: 'zhipu', model: 'glm-4.7-flash', label: 'Zhipu GLM-4.7 Flash' },

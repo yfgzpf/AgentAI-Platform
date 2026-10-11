@@ -246,7 +246,7 @@ interface ModelTemplate {
 }
 
 const MODEL_TEMPLATES: ModelTemplate[] = [
-  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], docsUrl: 'https://platform.deepseek.com/api-keys', color: '#10B981', contextWindow: 1000000, extraModelIds: ['deepseek-pro'] },
+  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', models: ['deepseek-flash', 'deepseek-v4-pro'], docsUrl: 'https://platform.deepseek.com/api-keys', color: '#10B981', contextWindow: 1000000, extraModelIds: ['deepseek-pro'] },
   { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'], docsUrl: 'https://platform.openai.com/api-keys', color: '#F59E0B', contextWindow: 128000 },
   { id: 'qwen', label: '通义千问 (阿里云)', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-turbo', 'qwen-plus', 'qwen-max'], docsUrl: 'https://help.aliyun.com/zh/dashscope', color: '#FF6A00', contextWindow: 128000 },
   { id: 'moonshot', label: '月之暗面 Moonshot', baseURL: 'https://api.moonshot.cn/v1', models: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k3'], docsUrl: 'https://platform.moonshot.cn/console/api-keys', color: '#6466F1', contextWindow: 128000 },
@@ -273,7 +273,7 @@ interface ALRCModel {
 // 与 ALRO 平台 (https://alro.huazhiweilai.com) 实际可用模型保持同步
 const FACTORY_MODEL_LIST: ALRCModel[] = [
   // DeepSeek
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash ⭐', color: '#10B981', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
+  { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1) ⭐', color: '#10B981', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
   { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', color: '#059669', priceIn: '$1.035', priceOut: '$3.11', level: '专业版' },
   // 智谱 GLM
   { id: 'glm-4.7', label: 'GLM 4.7', color: '#3B82F6', priceIn: '$0.103', priceOut: '$0.31', level: '智谱' },

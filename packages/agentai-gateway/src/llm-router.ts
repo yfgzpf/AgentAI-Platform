@@ -37,8 +37,16 @@ import { sanitizeToolMessages } from './message-utils.js';
 //   现在: 所有地方统一用 isFreeProvider()。
 export const FREE_PROVIDERS = new Set([
     'agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat',
-    'agnes-2.5-flash', 'agnes-2.0', 'deepseek-v4-flash',
+    'agnes-2.5-flash', 'agnes-2.0', 'deepseek-flash', 'deepseek-v4-flash',
 ]);
+
+/**
+ * 官方 DeepSeek flash 档当前模型名。
+ * 2026-10-11: DeepSeek 发布 V4.1-Flash, 模型名由 `deepseek-v4-flash` 改为 `deepseek-flash`;
+ * 旧名官方声明仅「暂时」兼容路由 → 统一收敛到此处, 避免散落硬编码再次漂移。
+ * (代理厂商 alrc/superapi/factory/sensenova 的上游目录仍用旧名, 不共用此常量)
+ */
+export const DEEPSEEK_FLASH_MODEL = 'deepseek-flash';
 
 /**
  * 判定 provider/model id 是否属于免费档 (含 agnes 各免费别名)。
@@ -601,6 +609,7 @@ factory: 'FACTORY_CHAT_KEY',
       'agnes_2_5':       'agnes',
       'agnes_2_0':       'agnes',
       'glm-4.7-flash':   'zhipu',
+      'deepseek-flash':    'deepseek',
       'deepseek-v4-flash': 'deepseek',
       'deepseek-v4-pro':   'deepseek',
     };
@@ -764,11 +773,11 @@ factory: 'FACTORY_CHAT_KEY',
         if (wait > 0) await new Promise(r => setTimeout(r, wait));
       }
       if (!this.isRateLimited(deepseekProvider) && !this.isCircuitOpen(deepseekProvider)) {
-        console.info('[router] lightning swap: all free failed, trying deepseek-v4-flash');
+        console.info('[router] lightning swap: all free failed, trying deepseek-flash');
         try {
           // 降级时关闭 thinking 模式 (避免 reasoning_content 兼容性问题)
           const fallbackReq = { ...req, thinking: false };
-          return await this.tryOne(deepseekProvider, fallbackReq, 'deepseek-v4-flash');
+          return await this.tryOne(deepseekProvider, fallbackReq, DEEPSEEK_FLASH_MODEL);
         } catch (err) {
           this.recordFailure(deepseekProvider, err as Error);
           console.warn(`[router] deepseek fallback also failed: ${(err as Error).message?.slice(0, 80)}`);
@@ -1395,7 +1404,7 @@ factory: 'FACTORY_CHAT_KEY',
       agnes: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://api.agnes-ai.cn/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-3.0-flash' },
       // 兼容旧版 agentai provider
       agentai: { keyEnv: 'AGENTAI_API_KEY', baseEnv: 'AGENTAI_BASE_URL', defaultBase: 'https://api.agnes-ai.cn/v1', modelEnv: 'AGENTAI_MODEL', defaultModel: 'agnes-3.0-flash' },
-      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-v4-flash' },
+      deepseek: { keyEnv: 'DEEPSEEK_API_KEY', baseEnv: 'DEEPSEEK_BASE_URL', defaultBase: 'https://api.deepseek.com/v1', modelEnv: 'DEEPSEEK_MODEL', defaultModel: DEEPSEEK_FLASH_MODEL },
       openai:   { keyEnv: 'OPENAI_API_KEY',   baseEnv: 'OPENAI_BASE_URL',   defaultBase: 'https://api.openai.com/v1',  modelEnv: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
       zhipu:   { keyEnv: 'ZHIPU_API_KEY',   baseEnv: 'ZHIPU_BASE_URL',   defaultBase: 'https://open.bigmodel.cn/api/paas/v4', modelEnv: 'ZHIPU_MODEL', defaultModel: 'glm-4.7-flash' },
       superapi: { keyEnv: 'SUPERAPI_API_KEY', baseEnv: 'SUPERAPI_BASE_URL', defaultBase: 'https://superapi.vanguard.dpdns.org/v1', modelEnv: 'SUPERAPI_MODEL', defaultModel: 'deepseek-v4-flash' },
