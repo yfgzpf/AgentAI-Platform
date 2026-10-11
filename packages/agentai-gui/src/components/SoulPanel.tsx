@@ -111,12 +111,12 @@ export const SoulPanel: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ fontSize: 32 }}>{mood.emoji}</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)' }}>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--fg)' }}>
               当前心境: <span style={{ color: mood.color }}>{mood.label}</span>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 2 }}>
-              痛感: <Tag color={painColor} style={{ fontSize: 10, margin: 0 }}>{status.emotion.pain}</Tag>
-              {' '}愉悦: <Tag color={status.emotion.joy !== 'none' ? '#10b981' : '#9ca3af'} style={{ fontSize: 10, margin: 0 }}>{status.emotion.joy}</Tag>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 2 }}>
+              痛感: <Tag color={painColor} style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{status.emotion.pain}</Tag>
+              {' '}愉悦: <Tag color={status.emotion.joy !== 'none' ? '#10b981' : '#9ca3af'} style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{status.emotion.joy}</Tag>
             </div>
             {status.emotion.intensity > 0 && (
               <Progress
@@ -129,10 +129,10 @@ export const SoulPanel: React.FC = () => {
             )}
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, color: status.emotion.consecutiveFailures > 0 ? '#ef4444' : 'var(--muted-2)' }}>
+            <div style={{ fontSize: 'var(--fs-micro)', color: status.emotion.consecutiveFailures > 0 ? '#ef4444' : 'var(--muted-2)' }}>
               连续失败 {status.emotion.consecutiveFailures}
             </div>
-            <div style={{ fontSize: 11, color: status.emotion.consecutiveSuccesses > 0 ? '#10b981' : 'var(--muted-2)' }}>
+            <div style={{ fontSize: 'var(--fs-micro)', color: status.emotion.consecutiveSuccesses > 0 ? '#10b981' : 'var(--muted-2)' }}>
               连续成功 {status.emotion.consecutiveSuccesses}
             </div>
           </div>
@@ -142,7 +142,7 @@ export const SoulPanel: React.FC = () => {
       {/* ===== 梦境卡片 ===== */}
       <Card
         size="small"
-        title={<span style={{ fontSize: 12 }}><MoonOutlined /> 梦境</span>}
+        title={<span style={{ fontSize: 'var(--fs-sm)' }}><MoonOutlined /> 梦境</span>}
         extra={
           <Button size="small" type="text" icon={<PlayCircleOutlined />} onClick={triggerDream} loading={dreaming}>
             做个梦
@@ -152,11 +152,11 @@ export const SoulPanel: React.FC = () => {
       >
         {status.dream.dreaming && (
           <div style={{ marginBottom: 8, padding: 6, background: 'rgba(99,102,241,0.08)', borderRadius: 6 }}>
-            <Spin size="small" /> <span style={{ fontSize: 11, color: '#6366f1' }}>正在梦境中...</span>
+            <Spin size="small" /> <span style={{ fontSize: 'var(--fs-micro)', color: '#6366f1' }}>正在梦境中...</span>
           </div>
         )}
         {status.dream.recentDreams.length === 0 && !status.dream.dreaming ? (
-          <div style={{ fontSize: 11, color: 'var(--muted-2)', padding: 8 }}>暂无梦境记录</div>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', padding: 8 }}>暂无梦境记录</div>
         ) : (
           status.dream.recentDreams.map((dream, i) => {
             const ageMin = Math.round((Date.now() - dream.ts) / 60000);
@@ -164,22 +164,22 @@ export const SoulPanel: React.FC = () => {
             return (
               <div key={i} style={{ marginBottom: 8, padding: 8, borderRadius: 6, background: 'var(--bg-1)', border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <span style={{ fontSize: 14 }}>{moodCfg.emoji}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)' }}>
+                  <span style={{ fontSize: 'var(--fs-md)' }}>{moodCfg.emoji}</span>
+                  <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)' }}>
                     {ageMin}分钟前 · {dream.type}
                   </span>
-                  <Tag style={{ fontSize: 9, margin: 0, color: moodCfg.color, borderColor: moodCfg.color }}>{moodCfg.label}</Tag>
+                  <Tag style={{ fontSize: 'var(--fs-micro)', margin: 0, color: moodCfg.color, borderColor: moodCfg.color }}>{moodCfg.label}</Tag>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--muted-1)', lineHeight: 1.5 }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-1)', lineHeight: 1.5 }}>
                   {dream.summary?.slice(0, 120)}
                 </div>
                 {dream.insights?.length > 0 && (
-                  <div style={{ marginTop: 4, fontSize: 10, color: '#06b6d4' }}>
+                  <div style={{ marginTop: 4, fontSize: 'var(--fs-micro)', color: '#06b6d4' }}>
                     💡 {dream.insights[0].slice(0, 80)}
                   </div>
                 )}
                 {dream.openQuestions?.length > 0 && (
-                  <div style={{ marginTop: 2, fontSize: 10, color: '#8b5cf6' }}>
+                  <div style={{ marginTop: 2, fontSize: 'var(--fs-micro)', color: '#8b5cf6' }}>
                     ❓ {dream.openQuestions[0].slice(0, 80)}
                   </div>
                 )}
@@ -193,29 +193,29 @@ export const SoulPanel: React.FC = () => {
       <Card
         size="small"
         title={
-          <span style={{ fontSize: 12 }}>
+          <span style={{ fontSize: 'var(--fs-sm)' }}>
             <BulbOutlined /> 好奇心
             <Badge count={status.curiosity.stats.pending} style={{ marginLeft: 6, backgroundColor: '#8b5cf6' }} />
           </span>
         }
         style={{ marginBottom: 12, background: 'var(--bg-2)', border: '1px solid var(--border)' }}
       >
-        <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 10, color: 'var(--muted-2)' }}>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
           <span>总问题: {status.curiosity.stats.totalQuestions}</span>
           <span style={{ color: '#10b981' }}>已解决: {status.curiosity.stats.resolved}</span>
           <span style={{ color: '#06b6d4' }}>洞察: {status.curiosity.stats.insights}</span>
         </div>
         {status.curiosity.pending.length === 0 ? (
-          <div style={{ fontSize: 11, color: 'var(--muted-2)', padding: 8 }}>暂无未解问题</div>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', padding: 8 }}>暂无未解问题</div>
         ) : (
           status.curiosity.pending.map((q, i) => (
             <div key={i} style={{ marginBottom: 6, padding: 6, borderRadius: 4, background: 'var(--bg-1)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Tag color="purple" style={{ fontSize: 9, margin: 0 }}>{q.type}</Tag>
+                <Tag color="purple" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{q.type}</Tag>
                 <Progress percent={Math.round(q.priority * 100)} size="small" style={{ width: 60 }} showInfo={false} strokeColor="#8b5cf6" />
-                <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>探索 {q.exploreCount}次</span>
+                <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>探索 {q.exploreCount}次</span>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--fg)', marginTop: 2 }}>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg)', marginTop: 2 }}>
                 {q.question.slice(0, 100)}
               </div>
             </div>
@@ -223,9 +223,9 @@ export const SoulPanel: React.FC = () => {
         )}
         {status.curiosity.insights.length > 0 && (
           <Collapse ghost size="small" style={{ marginTop: 4 }}>
-            <Collapse.Panel header={<span style={{ fontSize: 11, color: '#06b6d4' }}>💡 近期洞察 ({status.curiosity.insights.length})</span>} key="insights">
+            <Collapse.Panel header={<span style={{ fontSize: 'var(--fs-micro)', color: '#06b6d4' }}>💡 近期洞察 ({status.curiosity.insights.length})</span>} key="insights">
               {status.curiosity.insights.map((ins, i) => (
-                <div key={i} style={{ fontSize: 10, color: 'var(--muted-1)', padding: 4, borderBottom: '1px solid var(--border)' }}>
+                <div key={i} style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-1)', padding: 4, borderBottom: '1px solid var(--border)' }}>
                   [{ins.type}] {ins.text.slice(0, 100)}
                 </div>
               ))}
@@ -238,14 +238,14 @@ export const SoulPanel: React.FC = () => {
       {status.innerVoice.length > 0 && (
         <Card
           size="small"
-          title={<span style={{ fontSize: 12 }}><MessageOutlined /> 内心独白</span>}
+          title={<span style={{ fontSize: 'var(--fs-sm)' }}><MessageOutlined /> 内心独白</span>}
           style={{ marginBottom: 12, background: 'var(--bg-2)', border: '1px solid var(--border)' }}
         >
           {status.innerVoice.map((t, i) => (
             <div key={i} style={{ marginBottom: 4, padding: 4, borderRadius: 4, background: 'rgba(139,92,246,0.06)' }}>
-              <Tag color="purple" style={{ fontSize: 9, margin: 0 }}>{t.mood}</Tag>
-              <span style={{ fontSize: 10, color: 'var(--muted-2)', marginLeft: 4 }}>{t.context}</span>
-              <div style={{ fontSize: 11, color: 'var(--fg)', marginTop: 2, fontStyle: 'italic' }}>
+              <Tag color="purple" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{t.mood}</Tag>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginLeft: 4 }}>{t.context}</span>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg)', marginTop: 2, fontStyle: 'italic' }}>
                 "{t.text.slice(0, 120)}"
               </div>
             </div>
@@ -257,25 +257,25 @@ export const SoulPanel: React.FC = () => {
       {status.debate.length > 0 && (
         <Card
           size="small"
-          title={<span style={{ fontSize: 12 }}><ThunderboltOutlined /> 内部辩论</span>}
+          title={<span style={{ fontSize: 'var(--fs-sm)' }}><ThunderboltOutlined /> 内部辩论</span>}
           style={{ marginBottom: 12, background: 'var(--bg-2)', border: '1px solid var(--border)' }}
         >
           {status.debate.map((d, i) => {
             const ageMin = Math.round((Date.now() - d.ts) / 60000);
             return (
               <div key={i} style={{ marginBottom: 8, padding: 6, borderRadius: 4, background: 'var(--bg-1)' }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)' }}>
+                <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)' }}>
                   💭 {ageMin}分钟前: {d.topic.slice(0, 60)}
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--muted-1)', marginTop: 2 }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-1)', marginTop: 2 }}>
                   {d.recommendation?.slice(0, 100)}
                 </div>
                 {d.contradictions?.length > 0 && (
-                  <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>
+                  <div style={{ fontSize: 'var(--fs-micro)', color: '#f59e0b', marginTop: 2 }}>
                     ⚡ 矛盾: {d.contradictions[0].slice(0, 80)}
                   </div>
                 )}
-                <Tag color={d.confidence > 0.7 ? 'green' : d.confidence > 0.4 ? 'orange' : 'red'} style={{ fontSize: 9, margin: 0, marginTop: 2 }}>
+                <Tag color={d.confidence > 0.7 ? 'green' : d.confidence > 0.4 ? 'orange' : 'red'} style={{ fontSize: 'var(--fs-micro)', margin: 0, marginTop: 2 }}>
                   置信度 {Math.round(d.confidence * 100)}%
                 </Tag>
               </div>

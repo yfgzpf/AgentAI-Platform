@@ -180,17 +180,17 @@ const KnowledgeGraphPanel: React.FC = () => {
                 <div style={{ flex: 1 }}>
                   <Space style={{ marginBottom: 4 }}>
                     <TagOutlined style={{ color: 'var(--accent)' }} />
-                    <Text strong style={{ fontSize: 13 }}>{f.key}</Text>
+                    <Text strong style={{ fontSize: 'var(--fs-md)' }}>{f.key}</Text>
                     <Tag color={scopeColors[f.scope] || 'default'}>{f.scope}</Tag>
                   </Space>
                   <Paragraph
-                    style={{ color: 'var(--fg)', fontSize: 13, marginBottom: 4 }}
+                    style={{ color: 'var(--fg)', fontSize: 'var(--fs-md)', marginBottom: 4 }}
                     ellipsis={{ rows: 2 }}
                   >
                     {f.value}
                   </Paragraph>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap', marginLeft: 16 }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', whiteSpace: 'nowrap', marginLeft: 16 }}>
                   <ClockCircleOutlined /> {new Date(f.updatedAt).toLocaleDateString()}
                 </div>
               </div>
@@ -280,7 +280,7 @@ const KnowledgeGraphPanel: React.FC = () => {
               <Text style={{ color: 'var(--muted)' }}>{Math.round((v || 0) * 100)}%</Text>
             )},
             { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 140, render: (v: number) => (
-              <Text style={{ color: 'var(--muted)', fontSize: 12 }}>
+              <Text style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)' }}>
                 {v ? new Date(v).toLocaleString() : '-'}
               </Text>
             )},

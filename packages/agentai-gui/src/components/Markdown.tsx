@@ -56,7 +56,7 @@ const CollapsibleCodeBlock: React.FC<{
         padding: '4px 10px',
         background: 'rgba(0,0,0,0.3)',
         borderBottom: isCollapsed ? 'none' : '1px solid var(--border)',
-        fontSize: 10,
+        fontSize: 'var(--fs-micro)',
       }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--muted-2)' }}>
           <span style={{
@@ -64,27 +64,27 @@ const CollapsibleCodeBlock: React.FC<{
             color: '#fff',
             padding: '1px 6px',
             borderRadius: 3,
-            fontSize: 9,
+            fontSize: 'var(--fs-micro)',
             fontWeight: 600,
           }}>{langLabel}</span>
           {shouldCollapse && (
-            <span style={{ fontSize: 9, opacity: 0.6 }}>{lineCount} 行 · 点击{isCollapsed ? '展开' : '折叠'}</span>
+            <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.6 }}>{lineCount} 行 · 点击{isCollapsed ? '展开' : '折叠'}</span>
           )}
           {!shouldCollapse && lineCount > 3 && (
-            <span style={{ fontSize: 9, opacity: 0.4 }}>{lineCount} 行</span>
+            <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.4 }}>{lineCount} 行</span>
           )}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span
             onClick={handleCopy}
-            style={{ cursor: 'pointer', color: copied ? 'var(--success)' : 'var(--muted-2)', fontSize: 9 }}
+            style={{ cursor: 'pointer', color: copied ? 'var(--success)' : 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}
           >
             {copied ? '✓ 已复制' : <><CopyOutlined style={{ marginRight: 3 }} />复制</>}
           </span>
           {shouldCollapse && (
             <span
               onClick={() => setExpanded(!expanded)}
-              style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 9 }}
+              style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 'var(--fs-micro)' }}
             >
               {isCollapsed ? <><DownOutlined /> 展开</> : <><UpOutlined /> 折叠</>}
             </span>
@@ -100,7 +100,7 @@ const CollapsibleCodeBlock: React.FC<{
         maxHeight: isCollapsed ? 120 : 600,
         background: '#1a1a2e',
         color: '#d4d4d4',
-        fontSize: 11.5,
+        fontSize: 'var(--fs-sm)',
         lineHeight: 1.5,
         fontFamily: 'Consolas, "Courier New", monospace',
       }}>
@@ -150,7 +150,7 @@ const REACT_MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]['components
             display: 'inline-flex', alignItems: 'center', gap: 3,
           }}
         >
-          {isBinary && <span style={{ fontSize: 10 }}>⬇</span>}
+          {isBinary && <span style={{ fontSize: 'var(--fs-micro)' }}>⬇</span>}
           {props.children}
         </a>
       );
@@ -280,7 +280,7 @@ const SvgDiagram: React.FC<{ svg: string }> = ({ svg }) => {
           : cleanSvg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
         const doc2 = parser.parseFromString(retry, 'image/svg+xml');
         if (doc2.querySelector('parsererror')) {
-          container.innerHTML = '<p style="color:var(--muted);font-size:12px;padding:16px;">SVG 解析失败 — 点击下方复制源码查看</p>';
+          container.innerHTML = '<p style="color:var(--muted);font-size:var(--fs-sm);padding:16px;">SVG 解析失败 — 点击下方复制源码查看</p>';
           setSvgSource(cleanSvg);
           return;
         }
@@ -309,7 +309,7 @@ const SvgDiagram: React.FC<{ svg: string }> = ({ svg }) => {
         svgEl.style.height = 'auto';
       }
     } catch {
-      container.innerHTML = '<p style="color:var(--muted);font-size:12px;padding:16px;">SVG 渲染失败</p>';
+      container.innerHTML = '<p style="color:var(--muted);font-size:var(--fs-sm);padding:16px;">SVG 渲染失败</p>';
       setSvgSource(cleanSvg);
     }
   }, [svg]);
@@ -345,12 +345,12 @@ const SvgDiagram: React.FC<{ svg: string }> = ({ svg }) => {
       />
       <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
         <button onClick={handleCopy} style={{
-          fontSize: 10, padding: '2px 8px', borderRadius: 4,
+          fontSize: 'var(--fs-micro)', padding: '2px 8px', borderRadius: 4,
           background: 'transparent', border: '1px solid var(--border)',
           color: 'var(--muted)', cursor: 'pointer',
         }}>复制 SVG</button>
         <button onClick={handleDownload} style={{
-          fontSize: 10, padding: '2px 8px', borderRadius: 4,
+          fontSize: 'var(--fs-micro)', padding: '2px 8px', borderRadius: 4,
           background: 'transparent', border: '1px solid var(--border)',
           color: 'var(--muted)', cursor: 'pointer',
         }}>下载 SVG</button>

@@ -102,7 +102,7 @@ export const VoiceWakeIndicator: React.FC = () => {
         )}
       </span>
       {wakeState === 'triggered' && (
-        <span style={{ fontSize: 9, color: '#22c55e', fontWeight: 600, animation: 'blink 1s infinite' }}>
+        <span style={{ fontSize: 'var(--fs-micro)', color: '#22c55e', fontWeight: 600, animation: 'blink 1s infinite' }}>
           已唤醒
         </span>
       )}
@@ -113,12 +113,12 @@ export const VoiceWakeIndicator: React.FC = () => {
     <>
       {/* StatusBar indicator */}
       <Tooltip title={
-        <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 'var(--fs-micro)', lineHeight: 1.6 }}>
           <div><b>语音唤醒</b></div>
           <div>状态: {label}</div>
           <div>唤醒词: "{cfg.keyword}"</div>
           <div>灵敏度: {cfg.sensitivity}</div>
-          <div style={{ marginTop: 4, color: '#888', fontSize: 10 }}>
+          <div style={{ marginTop: 4, color: '#888', fontSize: 'var(--fs-micro)' }}>
             {cfg.enabled ? '点击设置调整参数' : '点击启用语音唤醒'}
           </div>
         </div>
@@ -136,26 +136,26 @@ export const VoiceWakeIndicator: React.FC = () => {
           zIndex: 'var(--z-modal)', width: 260,
           animation: 'msgSlideIn 0.2s ease',
         }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg-2)', marginBottom: 10 }}>
+          <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 700, color: 'var(--fg-2)', marginBottom: 10 }}>
             语音唤醒设置
           </div>
 
           {/* Enable toggle */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <span style={{ fontSize: 11, color: 'var(--muted)' }}>启用唤醒</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>启用唤醒</span>
             <Switch size="small" checked={cfg.enabled} onChange={handleToggle} />
           </div>
 
           {/* Keyword */}
           <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 4 }}>唤醒词</div>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4 }}>唤醒词</div>
             <input
               value={cfg.keyword}
               onChange={e => handleKeywordChange(e.target.value)}
               style={{
                 width: '100%', padding: '4px 8px', borderRadius: 4,
                 border: '1px solid var(--border)', background: 'var(--panel)',
-                color: 'var(--fg)', fontSize: 12, outline: 'none',
+                color: 'var(--fg)', fontSize: 'var(--fs-sm)', outline: 'none',
               }}
               placeholder="输入唤醒词..."
             />
@@ -163,7 +163,7 @@ export const VoiceWakeIndicator: React.FC = () => {
 
           {/* Sensitivity */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--muted-2)', marginBottom: 4 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4 }}>
               <span>灵敏度</span>
               <span>{cfg.sensitivity.toFixed(2)}</span>
             </div>
@@ -176,7 +176,7 @@ export const VoiceWakeIndicator: React.FC = () => {
               onChange={e => handleSensitivityChange(parseFloat(e.target.value))}
               style={{ width: '100%', height: 4 }}
             />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--muted-2)', marginTop: 2 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 2 }}>
               <span>严格</span>
               <span>宽松</span>
             </div>
@@ -186,7 +186,7 @@ export const VoiceWakeIndicator: React.FC = () => {
           <div style={{
             marginTop: 10, padding: '4px 8px', borderRadius: 4,
             background: cfg.enabled ? 'var(--accent-soft)' : 'var(--panel)',
-            fontSize: 10, color: 'var(--muted)',
+            fontSize: 'var(--fs-micro)', color: 'var(--muted)',
           }}>
             {cfg.enabled ? `🎤 监听中，说 "${cfg.keyword}" 唤醒` : '唤醒未启用'}
           </div>

@@ -334,8 +334,8 @@ export const MusicPlayer: React.FC<{
         display: 'flex', alignItems: 'center', gap: 6,
         padding: '8px 10px', borderBottom: '1px solid var(--border)',
       }}>
-        <SoundOutlined style={{ color: 'var(--accent)', fontSize: 14 }} />
-        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg-2)', flex: 1 }}>
+        <SoundOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-md)' }} />
+        <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 700, color: 'var(--fg-2)', flex: 1 }}>
           音乐播放器
         </span>
         <button
@@ -347,7 +347,7 @@ export const MusicPlayer: React.FC<{
             cursor: 'pointer', color: 'var(--muted-2)',
           }}
         >
-          <MenuOutlined style={{ fontSize: 11 }} />
+          <MenuOutlined style={{ fontSize: 'var(--fs-micro)' }} />
         </button>
         <button
           onClick={onClose}
@@ -358,7 +358,7 @@ export const MusicPlayer: React.FC<{
             color: 'var(--muted-2)',
           }}
         >
-          <CloseOutlined style={{ fontSize: 11 }} />
+          <CloseOutlined style={{ fontSize: 'var(--fs-micro)' }} />
         </button>
       </div>
 
@@ -383,11 +383,11 @@ export const MusicPlayer: React.FC<{
             ))}
           </div>
         )}
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>
+        <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--fg)' }}>
           {currentTrack?.name || '未选择曲目'}
         </div>
         {currentTrack?.artist && (
-          <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 2 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 2 }}>
             {currentTrack.artist}
           </div>
         )}
@@ -404,7 +404,7 @@ export const MusicPlayer: React.FC<{
             onChange={handleSeek}
             style={{ width: '100%', height: 3 }}
           />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--muted-2)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
             <span>{fmtTime(currentTime)}</span>
             <span>{fmtTime(duration)}</span>
           </div>
@@ -417,7 +417,7 @@ export const MusicPlayer: React.FC<{
         gap: 12, padding: '6px 12px',
       }}>
         <button onClick={handlePrev} style={ctrlBtnStyle} disabled={playlist.length === 0}>
-          <StepBackwardOutlined style={{ fontSize: 14 }} />
+          <StepBackwardOutlined style={{ fontSize: 'var(--fs-md)' }} />
         </button>
         <button
           onClick={handlePlayPause}
@@ -427,10 +427,10 @@ export const MusicPlayer: React.FC<{
           }}
           disabled={!currentTrack}
         >
-          {playing ? <PauseCircleOutlined style={{ fontSize: 16 }} /> : <PlayCircleOutlined style={{ fontSize: 16 }} />}
+          {playing ? <PauseCircleOutlined style={{ fontSize: 'var(--fs-lg)' }} /> : <PlayCircleOutlined style={{ fontSize: 'var(--fs-lg)' }} />}
         </button>
         <button onClick={handleNext} style={ctrlBtnStyle} disabled={playlist.length === 0}>
-          <StepForwardOutlined style={{ fontSize: 14 }} />
+          <StepForwardOutlined style={{ fontSize: 'var(--fs-md)' }} />
         </button>
         {/* 循环模式按钮 */}
         <button
@@ -448,7 +448,7 @@ export const MusicPlayer: React.FC<{
 
       {/* Volume */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px 8px' }}>
-        <SoundOutlined style={{ fontSize: 10, color: 'var(--muted-2)' }} />
+        <SoundOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }} />
         <input
           type="range"
           min="0"
@@ -475,18 +475,18 @@ export const MusicPlayer: React.FC<{
               onClick={() => fileInputRef.current?.click()}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '2px 8px', borderRadius: 4, fontSize: 10,
+                padding: '2px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
                 background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer',
               }}
             >
-              <UploadOutlined style={{ fontSize: 10 }} /> 导入音乐
+              <UploadOutlined style={{ fontSize: 'var(--fs-micro)' }} /> 导入音乐
             </button>
             {playlist.length === 0 && (
               <button
                 onClick={loadDemoTrack}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '2px 8px', borderRadius: 4, fontSize: 10,
+                  padding: '2px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
                   background: 'var(--panel)', border: '1px solid var(--border)',
                   color: 'var(--muted)', cursor: 'pointer',
                 }}
@@ -498,7 +498,7 @@ export const MusicPlayer: React.FC<{
               onClick={loadFreeMusic}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '2px 8px', borderRadius: 4, fontSize: 10,
+                padding: '2px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
                 background: 'var(--accent-soft)', border: '1px solid var(--accent)',
                 color: 'var(--accent)', cursor: 'pointer',
               }}
@@ -514,7 +514,7 @@ export const MusicPlayer: React.FC<{
               style={{ display: 'none' }}
             />
             <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>{playlist.length} 首</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{playlist.length} 首</span>
           </div>
           {playlist.map((track, i) => (
             <div
@@ -523,7 +523,7 @@ export const MusicPlayer: React.FC<{
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '5px 10px', cursor: 'pointer',
-                fontSize: 11, color: 'var(--fg-2)',
+                fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
                 background: i === currentIdx ? 'var(--accent-soft)' : 'transparent',
               }}
             >
@@ -545,7 +545,7 @@ export const MusicPlayer: React.FC<{
                   color: 'var(--muted-2)', opacity: 0.5,
                 }}
               >
-                <DeleteOutlined style={{ fontSize: 9 }} />
+                <DeleteOutlined style={{ fontSize: 'var(--fs-micro)' }} />
               </button>
             </div>
           ))}

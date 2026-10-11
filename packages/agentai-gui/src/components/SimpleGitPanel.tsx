@@ -263,7 +263,7 @@ export const SimpleGitPanel: React.FC<SimpleGitPanelProps> = ({ visible, onClose
         {/* Header */}
         <div style={styles.header}>
           <Space>
-            <GithubOutlined style={{ fontSize: 20 }} />
+            <GithubOutlined style={{ fontSize: 'var(--fs-xl)' }} />
             <Title level={5} style={{ margin: 0 }}>
               Git {status?.branch && `· ${status.branch}`}
             </Title>
@@ -324,7 +324,7 @@ export const SimpleGitPanel: React.FC<SimpleGitPanelProps> = ({ visible, onClose
               >
                 {repos.map(repo => (
                   <Option key={repo.full_name} value={repo.full_name}>
-                    {repo.full_name} {repo.private && <Tag style={{ fontSize: 12 }}>私有</Tag>}
+                    {repo.full_name} {repo.private && <Tag style={{ fontSize: 'var(--fs-sm)' }}>私有</Tag>}
                   </Option>
                 ))}
               </Select>
@@ -382,7 +382,7 @@ export const SimpleGitPanel: React.FC<SimpleGitPanelProps> = ({ visible, onClose
                         }}>
                           {file.path}
                         </Text>
-                        {file.staged && <Tag style={{ fontSize: 12 }} color="success">已暂存</Tag>}
+                        {file.staged && <Tag style={{ fontSize: 'var(--fs-sm)' }} color="success">已暂存</Tag>}
                       </Space>
                     </List.Item>
                   )}

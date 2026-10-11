@@ -73,7 +73,7 @@ export const SandboxResultPanel: React.FC = () => {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
       overflow: 'hidden',
-      fontSize: 11,
+      fontSize: 'var(--fs-micro)',
     }}>
       {/* 标题栏 */}
       <div
@@ -86,13 +86,13 @@ export const SandboxResultPanel: React.FC = () => {
           cursor: 'pointer',
         }}
       >
-        <SafetyOutlined style={{ color: config?.enabled ? '#4ade80' : '#666', fontSize: 12 }} />
-        <span style={{ fontWeight: 600, color: 'var(--fg-2)', fontSize: 11 }}>沙箱</span>
+        <SafetyOutlined style={{ color: config?.enabled ? '#4ade80' : '#666', fontSize: 'var(--fs-sm)' }} />
+        <span style={{ fontWeight: 600, color: 'var(--fg-2)', fontSize: 'var(--fs-micro)' }}>沙箱</span>
 
         {config && (
           <Badge
             status={config.enabled ? 'success' : 'default'}
-            text={<span style={{ fontSize: 10, color: config.enabled ? '#4ade80' : 'var(--muted-2)' }}>
+            text={<span style={{ fontSize: 'var(--fs-micro)', color: config.enabled ? '#4ade80' : 'var(--muted-2)' }}>
               {config.enabled ? '已启用' : '未启用'}
             </span>}
           />
@@ -100,12 +100,12 @@ export const SandboxResultPanel: React.FC = () => {
 
         {sandboxRuns.length > 0 && (
           <Tag color={latestRun?.status === 'success' ? 'success' : latestRun?.status === 'failed' ? 'error' : 'processing'}
-            style={{ fontSize: 9, margin: 0, marginLeft: 4 }}>
+            style={{ fontSize: 'var(--fs-micro)', margin: 0, marginLeft: 4 }}>
             {sandboxRuns.length} 次执行
           </Tag>
         )}
 
-        <span style={{ marginLeft: 'auto', color: 'var(--muted-2)', fontSize: 9 }}>
+        <span style={{ marginLeft: 'auto', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
           {expanded ? '▲' : '▼'}
         </span>
       </div>
@@ -116,31 +116,31 @@ export const SandboxResultPanel: React.FC = () => {
           {/* 执行状态 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
             {latestRun.status === 'success' ? (
-              <CheckCircleOutlined style={{ color: '#4ade80', fontSize: 12 }} />
+              <CheckCircleOutlined style={{ color: '#4ade80', fontSize: 'var(--fs-sm)' }} />
             ) : latestRun.status === 'failed' ? (
-              <CloseCircleOutlined style={{ color: '#ef4444', fontSize: 12 }} />
+              <CloseCircleOutlined style={{ color: '#ef4444', fontSize: 'var(--fs-sm)' }} />
             ) : (
-              <LoadingOutlined style={{ color: '#58a6ff', fontSize: 12 }} />
+              <LoadingOutlined style={{ color: '#58a6ff', fontSize: 'var(--fs-sm)' }} />
             )}
             <span style={{ color: latestRun.status === 'success' ? '#4ade80' : latestRun.status === 'failed' ? '#ef4444' : '#58a6ff', fontWeight: 600 }}>
               {latestRun.status === 'success' ? '执行成功' : latestRun.status === 'failed' ? '执行失败' : '执行中...'}
             </span>
-            <Tag style={{ fontSize: 9, margin: 0 }}>{latestRun.language}</Tag>
+            <Tag style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{latestRun.language}</Tag>
             {latestRun.exitCode !== undefined && (
-              <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>exit: {latestRun.exitCode}</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>exit: {latestRun.exitCode}</span>
             )}
             {latestRun.durationMs !== undefined && (
-              <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>{latestRun.durationMs}ms</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{latestRun.durationMs}ms</span>
             )}
           </div>
 
           {/* 代码 */}
           <div style={{ marginBottom: 4 }}>
-            <div style={{ color: 'var(--muted-2)', fontSize: 9, marginBottom: 2 }}>
+            <div style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>
               <CodeOutlined style={{ marginRight: 4 }} />代码:
             </div>
             <pre style={{
-              margin: 0, fontSize: 10, fontFamily: 'Consolas, monospace',
+              margin: 0, fontSize: 'var(--fs-micro)', fontFamily: 'Consolas, monospace',
               color: '#c9d1d9', background: '#0a0a0a',
               padding: '3px 6px', borderRadius: 3,
               overflow: 'auto', maxHeight: 60,
@@ -154,9 +154,9 @@ export const SandboxResultPanel: React.FC = () => {
           {/* 输出 */}
           {latestRun.output && (
             <div style={{ marginBottom: 4 }}>
-              <div style={{ color: '#4ade80', fontSize: 9, marginBottom: 2 }}>✓ 输出:</div>
+              <div style={{ color: '#4ade80', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>✓ 输出:</div>
               <pre style={{
-                margin: 0, fontSize: 10, fontFamily: 'Consolas, monospace',
+                margin: 0, fontSize: 'var(--fs-micro)', fontFamily: 'Consolas, monospace',
                 color: '#7ee787', background: '#0a0a0a',
                 padding: '3px 6px', borderRadius: 3,
                 overflow: 'auto', maxHeight: 60,
@@ -171,9 +171,9 @@ export const SandboxResultPanel: React.FC = () => {
           {/* 错误 */}
           {latestRun.error && (
             <div>
-              <div style={{ color: '#f97583', fontSize: 9, marginBottom: 2 }}>❌ 错误:</div>
+              <div style={{ color: '#f97583', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>❌ 错误:</div>
               <pre style={{
-                margin: 0, fontSize: 10, fontFamily: 'Consolas, monospace',
+                margin: 0, fontSize: 'var(--fs-micro)', fontFamily: 'Consolas, monospace',
                 color: '#f97583', background: 'rgba(249,117,131,0.04)',
                 padding: '3px 6px', borderRadius: 3,
                 overflow: 'auto', maxHeight: 40,
@@ -188,7 +188,7 @@ export const SandboxResultPanel: React.FC = () => {
 
       {/* 展开但无执行记录 */}
       {expanded && !latestRun && (
-        <div style={{ padding: '8px 10px', color: 'var(--muted-2)', fontSize: 10 }}>
+        <div style={{ padding: '8px 10px', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
           {config?.enabled ? '🛡️ 沙箱已就绪, AI 执行代码时将显示结果' : '⚠️ 沙箱未启用'}
         </div>
       )}

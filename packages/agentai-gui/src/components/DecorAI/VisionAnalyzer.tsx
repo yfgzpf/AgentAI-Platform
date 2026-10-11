@@ -176,16 +176,16 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
           <Progress percent={progress} status="active" style={{ maxWidth: 300, margin: '20px auto' }} />
           <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 16 }}>
             <div style={{ textAlign: 'center' }}>
-              <EyeOutlined style={{ fontSize: 24, color: 'var(--accent)' }} />
-              <div style={{ fontSize: 12, marginTop: 4 }}>视觉识别</div>
+              <EyeOutlined style={{ fontSize: 'var(--fs-xl)', color: 'var(--accent)' }} />
+              <div style={{ fontSize: 'var(--fs-sm)', marginTop: 4 }}>视觉识别</div>
             </div>
             <div style={{ textAlign: 'center' }}>
-              <LayoutOutlined style={{ fontSize: 24, color: 'var(--accent)' }} />
-              <div style={{ fontSize: 12, marginTop: 4 }}>布局分析</div>
+              <LayoutOutlined style={{ fontSize: 'var(--fs-xl)', color: 'var(--accent)' }} />
+              <div style={{ fontSize: 'var(--fs-sm)', marginTop: 4 }}>布局分析</div>
             </div>
             <div style={{ textAlign: 'center' }}>
-              <HomeOutlined style={{ fontSize: 24, color: 'var(--accent)' }} />
-              <div style={{ fontSize: 12, marginTop: 4 }}>风格判断</div>
+              <HomeOutlined style={{ fontSize: 'var(--fs-xl)', color: 'var(--accent)' }} />
+              <div style={{ fontSize: 'var(--fs-sm)', marginTop: 4 }}>风格判断</div>
             </div>
           </div>
         </div>
@@ -286,7 +286,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
             <Tag color={result.space.lighting.level === '充足' ? 'green' : result.space.lighting.level === '一般' ? 'orange' : 'red'}>
               {result.space.lighting.level}
             </Tag>
-            <Text type="secondary" style={{ fontSize: 12 }}>{result.space.lighting.direction}</Text>
+            <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>{result.space.lighting.direction}</Text>
           </div>
         </div>
 
@@ -303,7 +303,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
                   background: color.startsWith('#') ? color : '#ccc',
                   border: '1px solid var(--border)'
                 }} />
-                <Text style={{ fontSize: 12 }}>{color}</Text>
+                <Text style={{ fontSize: 'var(--fs-sm)' }}>{color}</Text>
               </div>
             );
           })}
@@ -325,7 +325,7 @@ export const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({
               style={{ 
                 cursor: element.editable ? 'pointer' : 'default',
                 padding: '4px 12px',
-                fontSize: 13,
+                fontSize: 'var(--fs-md)',
                 border: selectedElement === element.id ? '2px solid var(--accent)' : undefined,
               }}
               onClick={() => element.editable && handleElementClick(element)}

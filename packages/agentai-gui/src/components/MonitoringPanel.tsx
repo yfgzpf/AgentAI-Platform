@@ -445,7 +445,7 @@ const MonitoringPanel: React.FC = () => {
               }}
             />
             <Divider style={{ margin: '16px 0' }} />
-            <div style={{ fontSize: 12, color: '#888' }}>
+            <div style={{ fontSize: 'var(--fs-sm)', color: '#888' }}>
               模型使用分布:
               {costStats?.modelDistribution?.slice(0, 3).map(m => (
                 <div key={m.name} style={{ marginTop: 4 }}>
@@ -721,7 +721,7 @@ const MonitoringPanel: React.FC = () => {
                 </Col>
               </Row>
               <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>每日进化统计</div>
+                <div style={{ fontSize: 'var(--fs-sm)', color: '#888', marginBottom: 8 }}>每日进化统计</div>
                 <Table
                   dataSource={evolutionStats.dailyStats?.slice(-7) || []}
                   rowKey="date"

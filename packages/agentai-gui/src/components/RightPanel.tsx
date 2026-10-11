@@ -122,12 +122,12 @@ export const RightPanel: React.FC = () => {
           padding: '6px 10px',
           borderBottom: '1px solid var(--border)',
           background: 'rgba(0,0,0,0.12)',
-          fontSize: 11,
+          fontSize: 'var(--fs-micro)',
         }}>
           {/* 第一行: 计时器 (ZCode 风格: "已工作 2分46秒") */}
           {taskStats.running > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4, fontSize: 10, color: 'var(--muted-2)' }}>
-              <ClockCircleOutlined style={{ fontSize: 9 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
+              <ClockCircleOutlined style={{ fontSize: 'var(--fs-micro)' }} />
               <span>已工作</span>
               <TaskTimer />
             </div>
@@ -140,11 +140,11 @@ export const RightPanel: React.FC = () => {
               <Tooltip title={`${taskStats.success} 成功 / ${taskStats.total} 总计`}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                   {taskStats.running > 0 ? (
-                    <LoadingOutlined style={{ fontSize: 9, color: 'var(--accent)' }} />
+                    <LoadingOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)' }} />
                   ) : taskStats.failed > 0 ? (
-                    <span style={{ color: 'var(--danger)', fontSize: 9 }}>!</span>
+                    <span style={{ color: 'var(--danger)', fontSize: 'var(--fs-micro)' }}>!</span>
                   ) : (
-                    <CheckCircleOutlined style={{ fontSize: 9, color: 'var(--success)' }} />
+                    <CheckCircleOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--success)' }} />
                   )}
                   <span style={{ color: 'var(--fg-2)', fontWeight: 500 }}>
                     {taskStats.success}/{taskStats.total}
@@ -164,12 +164,12 @@ export const RightPanel: React.FC = () => {
                   border: '1px solid rgba(34,197,94,0.15)',
                   cursor: 'help',
                 }}>
-                  <span style={{ color: 'var(--muted-2)', fontSize: 9 }}>&gt;</span>
-                  <span style={{ color: 'var(--muted-2)', fontSize: 9 }}>{fileChangeStats.files} files</span>
-                  <span style={{ color: 'var(--success)', fontWeight: 600, fontFamily: 'monospace', fontSize: 10 }}>
+                  <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>&gt;</span>
+                  <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>{fileChangeStats.files} files</span>
+                  <span style={{ color: 'var(--success)', fontWeight: 600, fontFamily: 'monospace', fontSize: 'var(--fs-micro)' }}>
                     +{fileChangeStats.additions}
                   </span>
-                  <span style={{ color: 'var(--danger)', fontWeight: 600, fontFamily: 'monospace', fontSize: 10 }}>
+                  <span style={{ color: 'var(--danger)', fontWeight: 600, fontFamily: 'monospace', fontSize: 'var(--fs-micro)' }}>
                     -{fileChangeStats.deletions}
                   </span>
                 </span>
@@ -184,7 +184,7 @@ export const RightPanel: React.FC = () => {
                   marginLeft: 'auto',
                   cursor: 'pointer', 
                   color: 'var(--muted-2)', 
-                  fontSize: 9,
+                  fontSize: 'var(--fs-micro)',
                   padding: '1px 6px',
                   borderRadius: 3,
                   border: '1px solid var(--border)',
@@ -208,7 +208,7 @@ export const RightPanel: React.FC = () => {
             onClick={() => setActive(t.key)}
             style={{
               flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-              padding: '6px 8px', fontSize: 11, fontWeight: 500,
+              padding: '6px 8px', fontSize: 'var(--fs-micro)', fontWeight: 500,
               border: 'none', borderBottom: active === t.key ? '2px solid var(--accent)' : '2px solid transparent',
               background: 'transparent',
               color: active === t.key ? 'var(--accent)' : 'var(--muted-2)',
@@ -244,22 +244,22 @@ export const RightPanel: React.FC = () => {
                   padding: '4px 8px',
                   background: 'rgba(99,102,241,0.08)',
                   borderBottom: '1px solid var(--border)',
-                  fontSize: 9,
+                  fontSize: 'var(--fs-micro)',
                 }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--accent)', fontWeight: 500 }}>
-                    <CodeOutlined style={{ fontSize: 8 }} />
+                    <CodeOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                     <span style={{ maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {currentFile.name || currentFile.path.split(/[\\/]/).pop()}
                     </span>
                   </span>
-                  <span style={{ fontSize: 8, color: 'var(--muted-2)' }}>实时预览</span>
+                  <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>实时预览</span>
                 </div>
                 {/* 文件内容 - 紧凑版 (最多50行) */}
                 <div style={{
                   maxHeight: 140,
                   overflow: 'auto',
                   fontFamily: 'Consolas, "Courier New", monospace',
-                  fontSize: 9,
+                  fontSize: 'var(--fs-micro)',
                   lineHeight: 1.35,
                   padding: '0',
                 }}>
@@ -276,13 +276,13 @@ export const RightPanel: React.FC = () => {
                             textAlign: 'right', paddingRight: 5,
                             color: 'var(--muted-2)',
                             userSelect: 'none',
-                            fontSize: 8,
+                            fontSize: 'var(--fs-micro)',
                           }}>{i + 1}</span>
                           <span style={{ paddingLeft: 5 }}>{line || ' '}</span>
                         </div>
                       ))}
                       {fileContent.split('\n').length > 50 && (
-                        <div style={{ padding: '3px 8px', color: 'var(--muted-2)', fontSize: 8, textAlign: 'center', borderTop: '1px solid var(--border)' }}>
+                        <div style={{ padding: '3px 8px', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
                           ... +{fileContent.split('\n').length - 50} 行
                         </div>
                       )}
@@ -306,8 +306,8 @@ export const RightPanel: React.FC = () => {
                 )}
               </>
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 2px', fontSize: 10, color: 'var(--muted-2)' }}>
-                <MinusOutlined style={{ fontSize: 9, opacity: 0.6 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 2px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
+                <MinusOutlined style={{ fontSize: 'var(--fs-micro)', opacity: 0.6 }} />
                 暂无任务计划 / 生成文件
               </div>
             )}
@@ -365,7 +365,7 @@ const TaskTimer: React.FC = () => {
       color: 'var(--accent)', 
       fontWeight: 500,
       fontFamily: 'monospace',
-      fontSize: 10,
+      fontSize: 'var(--fs-micro)',
     }}>
       {formatTime(elapsed)}
     </span>

@@ -105,12 +105,12 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: m.color }} />
           <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
           <ModelSourceTag model={m} />
-          {isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="green">免费</Tag>}
-          {m.freeQuotaNote && !isFreeModel(m) && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="blue">{m.freeQuotaNote}</Tag>}
-          {m.isDefault && <Badge count="默认" size="small" style={{ backgroundColor: '#4F46E5', fontSize: 9 }} />}
+          {isFreeModel(m) && <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="green">免费</Tag>}
+          {m.freeQuotaNote && !isFreeModel(m) && <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color="blue">{m.freeQuotaNote}</Tag>}
+          {m.isDefault && <Badge count="默认" size="small" style={{ backgroundColor: '#4F46E5', fontSize: 'var(--fs-micro)' }} />}
           {/* Phase 3: 显示平均性能指标 */}
           {metrics && (
-            <span style={{ fontSize: 9, color: 'var(--muted-2)', marginLeft: 4 }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginLeft: 4 }}>
               ⏱️ {metrics.avgLatency} · 💰 {metrics.avgCost} · ✅ {metrics.successRate}
             </span>
           )}
@@ -123,7 +123,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
       g.models.length > 1
         ? [{
             label: (
-              <span style={{ fontSize: 10, color: 'var(--muted-2)', fontWeight: 600 }}>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', fontWeight: 600 }}>
                 {g.label} ({g.models.length})
               </span>
             ),
@@ -135,7 +135,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
 
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={6}>
-        <div style={{ color: 'var(--muted-2)', fontSize: 12 }}>
+        <div style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-sm)' }}>
           <ApiOutlined style={{ marginRight: 4 }} />
           模型选择
         </div>
@@ -156,7 +156,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
           ))}
         </div>
         {activeModel && (
-          <div style={{ fontSize: 10, color: 'var(--muted-2)', lineHeight: 1.4 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', lineHeight: 1.4 }}>
             <RobotOutlined style={{ marginRight: 4 }} />
             当前: <b style={{ color: activeModel.color }}>{activeModel.label}</b>
             <span style={{ margin: '0 4px' }}>·</span>
@@ -175,11 +175,11 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
       <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
       <span style={{ fontWeight: activeModelId === m.id ? 600 : 400 }}>{m.label}</span>
       <ModelSourceTag model={m} dense />
-      <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 'auto' }}
+      <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px', marginLeft: 'auto' }}
         color={isFreeModel(m) ? 'green' : 'gold'}>
         {isFreeModel(m) ? '免费' : '付费'}
       </Tag>
-      {activeModelId === m.id && <CheckCircleFilled style={{ color: m.color, fontSize: 10 }} />}
+      {activeModelId === m.id && <CheckCircleFilled style={{ color: m.color, fontSize: 'var(--fs-micro)' }} />}
     </div>
   );
 
@@ -198,7 +198,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 160 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: g.color, flexShrink: 0 }} />
             <span style={{ fontWeight: 500 }}>{g.label}</span>
-            <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 'auto' }} color="blue">{g.models.length}</Tag>
+            <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px', marginLeft: 'auto' }} color="blue">{g.models.length}</Tag>
           </div>
         ),
         type: 'submenu' as const,
@@ -209,7 +209,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
     menuItems.push({
       key: `group-${g.key}`,
       label: (
-        <span style={{ fontSize: 10, color: 'var(--muted-2)', fontWeight: 600 }}>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', fontWeight: 600 }}>
           {g.label}
         </span>
       ),
@@ -218,7 +218,7 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
     });
   }
 
-  const triggerSize = mode === 'minimal' ? { fontSize: 11, padding: '3px 8px', maxWidth: 120 } : { fontSize: 10, padding: '2px 6px', maxWidth: 100 };
+  const triggerSize = mode === 'minimal' ? { fontSize: 'var(--fs-micro)', padding: '3px 8px', maxWidth: 120 } : { fontSize: 'var(--fs-micro)', padding: '2px 6px', maxWidth: 100 };
 
   // 模型解锁弹窗 - 提示联系微信获取密钥
   const renderUnlockModal = () => {
@@ -251,14 +251,14 @@ export const ModelSelector: React.FC<Props> = ({ mode = 'full', onSelect }) => {
         ]}
         width={400}
       >
-        <div style={{ fontSize: 13, color: 'var(--fg)', lineHeight: 1.8 }}>
+        <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg)', lineHeight: 1.8 }}>
           <div>
             模型 <b>{model?.label}</b> 需要密钥才能使用。
           </div>
           <div style={{ marginTop: 12, padding: '12px', background: 'var(--accent-soft)', borderRadius: 8, border: '1px dashed var(--accent)' }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>🔑 如何获取密钥？</div>
             <div>添加作者微信 <b style={{ color: 'var(--accent)' }}>agentai-platform</b></div>
-            <div style={{ fontSize: 12, color: 'var(--muted-2)', marginTop: 4 }}>获取密钥后在设置页填入即可解锁全部模型</div>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted-2)', marginTop: 4 }}>获取密钥后在设置页填入即可解锁全部模型</div>
           </div>
         </div>
       </Modal>
@@ -318,7 +318,7 @@ const GroupTags: React.FC<{
     return (
       <div key={group.key}>
         <div
-          style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 2, fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+          style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2, fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? '▼' : '▶'} {group.label} ({group.models.length})
@@ -336,14 +336,14 @@ const GroupTags: React.FC<{
                       display: 'inline-flex', alignItems: 'center', gap: 2,
                       padding: '2px 4px', borderRadius: 4,
                       background: isActive ? 'var(--accent-bg)' : 'transparent',
-                      cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap',
+                      cursor: 'pointer', fontSize: 'var(--fs-micro)', whiteSpace: 'nowrap',
                     }}
                     onClick={() => onSelect(m.id)}
                   >
                     {/* 独立勾选框: 中转组中每个模型可独立启用/禁用 */}
 <Checkbox
 checked={checked}
-style={{ fontSize: 9 }}
+style={{ fontSize: 'var(--fs-micro)' }}
 onChange={(e) => {
                         e.stopPropagation();
                         toggleModel(m.id, e.target.checked);
@@ -356,7 +356,7 @@ onChange={(e) => {
                     <span style={{ fontWeight: isActive ? 600 : 400, opacity: checked ? 1 : 0.5 }}>
                       {m.label}
                     </span>
-                    {isActive && <CheckCircleFilled style={{ color: m.color, fontSize: 10, marginLeft: 2 }} />}
+                    {isActive && <CheckCircleFilled style={{ color: m.color, fontSize: 'var(--fs-micro)', marginLeft: 2 }} />}
                   </span>
                 </Tooltip>
               );
@@ -372,7 +372,7 @@ onChange={(e) => {
   return (
     <div key={group.key}>
       {showHeader && (
-        <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 2, fontWeight: 600 }}>
+        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2, fontWeight: 600 }}>
           {group.label}
         </div>
       )}
@@ -388,14 +388,14 @@ onChange={(e) => {
                   display: 'inline-flex', alignItems: 'center', gap: 2,
                   padding: '2px 4px', borderRadius: 4,
                   background: isActive ? 'var(--accent-bg)' : 'transparent',
-                  cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap',
+                  cursor: 'pointer', fontSize: 'var(--fs-micro)', whiteSpace: 'nowrap',
                 }}
                 onClick={() => onSelect(m.id)}
               >
                 {/* 独立勾选框 */}
 <Checkbox
 checked={checked}
-style={{ fontSize: 9 }}
+style={{ fontSize: 'var(--fs-micro)' }}
 onChange={(e) => {
                     e.stopPropagation();
                     toggleModel(m.id, e.target.checked);
@@ -409,9 +409,9 @@ onChange={(e) => {
                   {m.label}
                 </span>
                 <ModelSourceTag model={m} />
-                {isActive && <CheckCircleFilled style={{ color: m.color, fontSize: 10, marginLeft: 2 }} />}
-                {free && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 2 }} color="green">免费</Tag>}
-                {!free && m.freeQuotaNote && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginLeft: 2 }} color="blue">{m.freeQuotaNote}</Tag>}
+                {isActive && <CheckCircleFilled style={{ color: m.color, fontSize: 'var(--fs-micro)', marginLeft: 2 }} />}
+                {free && <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px', marginLeft: 2 }} color="green">免费</Tag>}
+                {!free && m.freeQuotaNote && <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px', marginLeft: 2 }} color="blue">{m.freeQuotaNote}</Tag>}
               </span>
             </Tooltip>
           );

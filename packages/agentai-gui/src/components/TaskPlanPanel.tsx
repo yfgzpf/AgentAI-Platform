@@ -34,10 +34,10 @@ const { Text } = Typography;
 
 /** 任务状态图标 */
 const STATUS_ICON: Record<string, React.ReactNode> = {
-  success: <CheckCircleOutlined style={{ color: 'var(--success)', fontSize: 12 }} />,
-  running: <LoadingOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />,
-  failed: <CloseCircleOutlined style={{ color: 'var(--danger)', fontSize: 12 }} />,
-  pending: <ClockCircleOutlined style={{ color: 'var(--muted)', fontSize: 12 }} />,
+  success: <CheckCircleOutlined style={{ color: 'var(--success)', fontSize: 'var(--fs-sm)' }} />,
+  running: <LoadingOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />,
+  failed: <CloseCircleOutlined style={{ color: 'var(--danger)', fontSize: 'var(--fs-sm)' }} />,
+  pending: <ClockCircleOutlined style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)' }} />,
 };
 
 /** 任务状态颜色 */
@@ -75,9 +75,9 @@ const TaskRow: React.FC<{
   // 根据阶段key推断图标
   const getStageIcon = () => {
     const key = stage.key.toLowerCase();
-    if (key.includes('plan') || key.includes('规划')) return <BulbOutlined style={{ fontSize: 10 }} />;
-    if (key.includes('code') || key.includes('implement') || key.includes('实现')) return <CodeOutlined style={{ fontSize: 10 }} />;
-    if (key.includes('file') || key.includes('edit') || key.includes('修改')) return <FileTextOutlined style={{ fontSize: 10 }} />;
+    if (key.includes('plan') || key.includes('规划')) return <BulbOutlined style={{ fontSize: 'var(--fs-micro)' }} />;
+    if (key.includes('code') || key.includes('implement') || key.includes('实现')) return <CodeOutlined style={{ fontSize: 'var(--fs-micro)' }} />;
+    if (key.includes('file') || key.includes('edit') || key.includes('修改')) return <FileTextOutlined style={{ fontSize: 'var(--fs-micro)' }} />;
     return null;
   };
 
@@ -101,7 +101,7 @@ const TaskRow: React.FC<{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: isRunning ? 'var(--accent)' : 'var(--bg-2)',
         color: isRunning ? '#fff' : 'var(--muted-2)',
-        fontSize: 10, fontWeight: 600, flexShrink: 0,
+        fontSize: 'var(--fs-micro)', fontWeight: 600, flexShrink: 0,
       }}>
         {index + 1}
         {stageIcon && <span style={{ marginLeft: -14, position: 'absolute' }}>{stageIcon}</span>}
@@ -110,7 +110,7 @@ const TaskRow: React.FC<{
       {/* 状态图标 */}
       <span style={{ flexShrink: 0 }}>
         {isRunning ? (
-          <LoadingOutlined style={{ color: 'var(--accent)', fontSize: 12, animation: 'spin 1s linear infinite' }} />
+          <LoadingOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)', animation: 'spin 1s linear infinite' }} />
         ) : (
           STATUS_ICON[stage.status] || STATUS_ICON.pending
         )}
@@ -130,7 +130,7 @@ const TaskRow: React.FC<{
       {isSubagent && (
         <Tag
           color="purple"
-          style={{ margin: 0, fontSize: 9, lineHeight: '16px', padding: '0 6px' }}
+          style={{ margin: 0, fontSize: 'var(--fs-micro)', lineHeight: '16px', padding: '0 6px' }}
         >
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 3 }}>
             <circle cx="12" cy="8" r="4" fill="#a78bfa" opacity="0.9"/>
@@ -144,7 +144,7 @@ const TaskRow: React.FC<{
 
       {/* 耗时 */}
       {stage.duration != null && stage.status !== 'pending' && (
-        <span style={{ color: 'var(--muted-2)', fontSize: 10, flexShrink: 0 }}>
+        <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', flexShrink: 0 }}>
           {(stage.duration / 1000).toFixed(1)}s
         </span>
       )}
@@ -152,7 +152,7 @@ const TaskRow: React.FC<{
       {/* 状态文字 */}
       <span style={{
         color: STATUS_COLOR[stage.status],
-        fontSize: 10, fontWeight: 500, flexShrink: 0,
+        fontSize: 'var(--fs-micro)', fontWeight: 500, flexShrink: 0,
       }}>
         {STATUS_LABEL[stage.status]}
       </span>
@@ -211,7 +211,7 @@ export const TaskPlanPanel: React.FC = () => {
           {isCompleted ? '任务完成' : isFailed ? '任务失败' : '任务执行计划'}
           {hasSubagents && (
             <Tooltip title="专家团队协作模式">
-              <Tag color="purple" style={{ marginLeft: 4, fontSize: 9, lineHeight: '16px', padding: '0 6px' }}>
+              <Tag color="purple" style={{ marginLeft: 4, fontSize: 'var(--fs-micro)', lineHeight: '16px', padding: '0 6px' }}>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 2 }}>
                   <circle cx="12" cy="8" r="4" fill="#a78bfa" opacity="0.9"/>
                   <path d="M12 14c-4 0-7 2-7 5v1h14v-1c0-3-3-5-7-5z" fill="#a78bfa" opacity="0.7"/>
@@ -239,13 +239,13 @@ export const TaskPlanPanel: React.FC = () => {
             padding: '4px 8px',
             background: 'var(--accent-soft)',
             borderRadius: 4,
-            fontSize: 11,
+            fontSize: 'var(--fs-micro)',
             color: 'var(--accent)',
             display: 'flex',
             alignItems: 'center',
             gap: 4,
           }}>
-            <LoadingOutlined style={{ fontSize: 10 }} />
+            <LoadingOutlined style={{ fontSize: 'var(--fs-micro)' }} />
             正在执行: {currentRunningStage.label}
           </div>
         )}
@@ -260,7 +260,7 @@ export const TaskPlanPanel: React.FC = () => {
         />
 
         {/* 统计信息 */}
-        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--muted-2)' }}>
+        <div style={{ display: 'flex', gap: 12, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
           <span>共 {stages.length} 个子任务</span>
           <span style={{ color: 'var(--success)' }}>{completedCount} 已完成</span>
           {runningCount > 0 && <span style={{ color: 'var(--accent)' }}>{runningCount} 进行中</span>}
@@ -300,10 +300,10 @@ export const TaskPlanPanel: React.FC = () => {
             background: 'rgba(34,197,94,0.08)',
             border: '1px solid rgba(34,197,94,0.2)',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontSize: 12, fontWeight: 600 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontSize: 'var(--fs-sm)', fontWeight: 600 }}>
               <CheckCircleFilled />
               任务完成 · {completedCount}/{stages.length} 子任务成功
-              {totalDuration > 0 && <span style={{ marginLeft: 8, fontSize: 10, opacity: 0.8 }}>· 总耗时 {(totalDuration / 1000).toFixed(1)}s</span>}
+              {totalDuration > 0 && <span style={{ marginLeft: 8, fontSize: 'var(--fs-micro)', opacity: 0.8 }}>· 总耗时 {(totalDuration / 1000).toFixed(1)}s</span>}
             </div>
           </div>
         )}
@@ -315,7 +315,7 @@ export const TaskPlanPanel: React.FC = () => {
             background: 'rgba(255,77,79,0.08)',
             border: '1px solid rgba(255,77,79,0.2)',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--danger)', fontSize: 12, fontWeight: 600 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--danger)', fontSize: 'var(--fs-sm)', fontWeight: 600 }}>
               <CloseCircleOutlined />
               任务失败 · {completedCount}/{stages.length} 子任务成功
             </div>

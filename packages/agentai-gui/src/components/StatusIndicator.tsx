@@ -34,7 +34,7 @@ export const StatusIndicator: React.FC<Props> = ({ status, messageId, onNavigate
       title={`${cfg.label}${messageId ? ' · 点击定位' : ''}`}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 2,
-        fontSize: 10, color: cfg.color,
+        fontSize: 'var(--fs-micro)', color: cfg.color,
         cursor: messageId && onNavigate ? 'pointer' : 'default',
         animation: cfg.spin ? 'spin 1.2s linear infinite' : undefined,
         userSelect: 'none',

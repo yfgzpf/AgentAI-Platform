@@ -285,17 +285,17 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
         borderBottom: '1px solid #2a2a2a',
         background: '#141414',
       }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#ddd' }}>
+        <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: '#ddd' }}>
           🎤 语音听写
         </span>
         <Tag
           color={listening ? 'red' : 'default'}
-          style={{ fontSize: 10, margin: 0 }}
+          style={{ fontSize: 'var(--fs-micro)', margin: 0 }}
         >
           {listening ? '● 录音中' : '已暂停'}
         </Tag>
         {organizing && (
-          <Tag color="processing" style={{ fontSize: 10, margin: 0 }}>
+          <Tag color="processing" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>
             <LoadingOutlined /> AI 整理中
           </Tag>
         )}
@@ -374,28 +374,28 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
         }}
       >
         {segments.length === 0 && !interimText && (
-          <div style={{ color: '#555', fontSize: 12, textAlign: 'center', padding: 16 }}>
+          <div style={{ color: '#555', fontSize: 'var(--fs-sm)', textAlign: 'center', padding: 16 }}>
             {listening ? '🎤 正在监听, 请说话...' : '点击"开始"按钮开始语音听写'}
           </div>
         )}
 
         {/* 最终结果 */}
         {segments.map(seg => (
-          <span key={seg.id} style={{ color: '#ddd', fontSize: 14, lineHeight: 1.6 }}>
+          <span key={seg.id} style={{ color: '#ddd', fontSize: 'var(--fs-md)', lineHeight: 1.6 }}>
             {seg.text}
           </span>
         ))}
 
         {/* 中间结果 */}
         {interimText && (
-          <span style={{ color: '#888', fontSize: 14, lineHeight: 1.6, fontStyle: 'italic' }}>
+          <span style={{ color: '#888', fontSize: 'var(--fs-md)', lineHeight: 1.6, fontStyle: 'italic' }}>
             {interimText}
           </span>
         )}
 
         {/* 整理动画 */}
         {organizing && (
-          <span style={{ color: '#4F46E5', fontSize: 12, marginLeft: 8 }}>
+          <span style={{ color: '#4F46E5', fontSize: 'var(--fs-sm)', marginLeft: 8 }}>
             <LoadingOutlined /> AI 整理中...
           </span>
         )}
@@ -420,7 +420,7 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
           message={error}
           closable
           onClose={() => setError(null)}
-          style={{ fontSize: 11, padding: '2px 12px', margin: 0 }}
+          style={{ fontSize: 'var(--fs-micro)', padding: '2px 12px', margin: 0 }}
           banner
         />
       )}
@@ -428,7 +428,7 @@ export const VoiceDictation: React.FC<VoiceDictationProps> = ({
       {/* 底部提示 */}
       <div style={{
         padding: '2px 12px 4px',
-        color: '#555', fontSize: 10,
+        color: '#555', fontSize: 'var(--fs-micro)',
         display: 'flex', justifyContent: 'space-between',
       }}>
         <span>说话后 1.5s 停顿自动送 AI 整理</span>

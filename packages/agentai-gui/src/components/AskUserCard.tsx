@@ -164,7 +164,7 @@ export const AskUserCard: React.FC<Props> = ({
     >
       {/* 问题内容 */}
       <div style={{
-        fontSize: 14,
+        fontSize: 'var(--fs-md)',
         color: 'var(--fg)',
         marginBottom: 12,
         padding: '8px 12px',
@@ -189,11 +189,11 @@ export const AskUserCard: React.FC<Props> = ({
                   <Checkbox
                     key={opt.id}
                     value={opt.id}
-                    style={{ fontSize: 13, color: 'var(--fg)' }}
+                    style={{ fontSize: 'var(--fs-md)', color: 'var(--fg)' }}
                   >
                     <span style={{ fontWeight: 500 }}>{opt.title}</span>
                     {opt.description && (
-                      <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 8 }}>
+                      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginLeft: 8 }}>
                         — {opt.description}
                       </span>
                     )}
@@ -212,11 +212,11 @@ export const AskUserCard: React.FC<Props> = ({
                   <Radio
                     key={opt.id}
                     value={opt.id}
-                    style={{ fontSize: 13, color: 'var(--fg)' }}
+                    style={{ fontSize: 'var(--fs-md)', color: 'var(--fg)' }}
                   >
                     <span style={{ fontWeight: 500 }}>{opt.title}</span>
                     {opt.description && (
-                      <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 8 }}>
+                      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginLeft: 8 }}>
                         — {opt.description}
                       </span>
                     )}
@@ -239,7 +239,7 @@ export const AskUserCard: React.FC<Props> = ({
         {/* 密钥输入框（如果是密钥问卷且选择了"提供密钥"） */}
         {isApiKeyQuestion && selected === 'provide_key' && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 6, fontWeight: 500 }}>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--accent)', marginBottom: 6, fontWeight: 500 }}>
               <KeyOutlined style={{ marginRight: 4 }} />
               输入API密钥:
             </div>
@@ -251,12 +251,12 @@ export const AskUserCard: React.FC<Props> = ({
                 background: 'var(--bg)',
                 border: '1px solid var(--border)',
                 color: 'var(--fg)',
-                fontSize: 12,
+                fontSize: 'var(--fs-sm)',
               }}
               visibilityToggle={{ visible: false }}
             />
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <SafetyOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
+              <SafetyOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />
               <Switch
                 checked={trustKey}
                 onChange={setTrustKey}
@@ -264,7 +264,7 @@ export const AskUserCard: React.FC<Props> = ({
                 checkedChildren="信任"
                 unCheckedChildren="不信任"
               />
-              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>
                 信任此密钥，后续不再询问
               </span>
             </div>
@@ -273,7 +273,7 @@ export const AskUserCard: React.FC<Props> = ({
 
         {/* 密钥获取地址链接 */}
         {isApiKeyQuestion && keyUrl && (
-          <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--accent)' }}>
+          <div style={{ marginBottom: 12, fontSize: 'var(--fs-sm)', color: 'var(--accent)' }}>
             <LinkOutlined style={{ marginRight: 4 }} />
             <a
               href={keyUrl}
@@ -283,7 +283,7 @@ export const AskUserCard: React.FC<Props> = ({
             >
               点击前往获取密钥
             </a>
-            <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 8 }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginLeft: 8 }}>
               (获取后返回此页面输入)
             </span>
           </div>
@@ -292,7 +292,7 @@ export const AskUserCard: React.FC<Props> = ({
         {/* 普通文本输入区域 */}
         {!isApiKeyQuestion && (
           <>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 6 }}>
               {options.length > 0 ? '补充说明 (可选, Enter 发送):' : '请输入您的回答 (Enter 发送):'}
             </div>
             <Input.TextArea
@@ -305,7 +305,7 @@ export const AskUserCard: React.FC<Props> = ({
                 background: 'var(--bg)',
                 border: '1px solid var(--border)',
                 color: 'var(--fg)',
-                fontSize: 12,
+                fontSize: 'var(--fs-sm)',
               }}
             />
           </>
@@ -313,7 +313,7 @@ export const AskUserCard: React.FC<Props> = ({
       </div>
 
       {/* 提示 */}
-      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 8 }}>
+      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 8 }}>
         <CheckOutlined style={{ marginRight: 4 }} />
         选择后按 Enter 或点击「回答」发送给 AI
       </div>

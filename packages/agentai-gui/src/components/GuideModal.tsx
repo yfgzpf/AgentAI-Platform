@@ -13,19 +13,19 @@ interface Props {
 
 const SECTION = {
   title: (text: string) => (
-    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--fg)', marginBottom: 8, marginTop: 12 }}>
+    <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: 'var(--fg)', marginBottom: 8, marginTop: 12 }}>
       {text}
     </div>
   ),
   desc: (text: string) => (
-    <div style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.7, marginBottom: 6 }}>{text}</div>
+    <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', lineHeight: 1.7, marginBottom: 6 }}>{text}</div>
   ),
   tag: (label: string, color = 'blue') => (
-    <Tag color={color} style={{ fontSize: 10, marginRight: 4, marginBottom: 4 }}>{label}</Tag>
+    <Tag color={color} style={{ fontSize: 'var(--fs-micro)', marginRight: 4, marginBottom: 4 }}>{label}</Tag>
   ),
   code: (text: string) => (
     <code style={{
-      fontSize: 11, padding: '1px 5px', borderRadius: 3,
+      fontSize: 'var(--fs-micro)', padding: '1px 5px', borderRadius: 3,
       background: 'var(--panel)', border: '1px solid var(--border)',
       fontFamily: 'monospace', color: 'var(--accent)',
     }}>{text}</code>
@@ -46,7 +46,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <BookOutlined style={{ color: 'var(--accent)' }} />
           <span>岐枢 PulseFlow 使用指南</span>
-          <Tag color="purple" style={{ fontSize: 9 }}>v0.5.0</Tag>
+          <Tag color="purple" style={{ fontSize: 'var(--fs-micro)' }}>v0.5.0</Tag>
         </div>
       }
       styles={{ body: { maxHeight: '70vh', overflowY: 'auto', padding: '12px 20px' } }}
@@ -67,7 +67,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {/* 架构图用文本流程图表示 */}
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8,
-                  padding: 16, fontFamily: 'monospace', fontSize: 11, lineHeight: 1.8,
+                  padding: 16, fontFamily: 'monospace', fontSize: 'var(--fs-micro)', lineHeight: 1.8,
                   color: 'var(--fg-2)', whiteSpace: 'pre', overflowX: 'auto',
                 }}>{`┌─────────────────────────────────────────────────────────┐
 │              岐枢 PulseFlow                       │
@@ -103,11 +103,11 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                       padding: '6px 8px', borderRadius: 6,
                       background: 'var(--card)', border: '1px solid var(--border)',
                     }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)', marginBottom: 2 }}>
+                      <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)', marginBottom: 2 }}>
                         {SECTION.tag(m.tag, 'geekblue')}
                         {m.name}
                       </div>
-                      <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>{m.desc}</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{m.desc}</div>
                     </div>
                   ))}
                 </div>
@@ -141,9 +141,9 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                       background: 'var(--card)', border: '1px solid var(--border)',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <span style={{ fontSize: 16 }}>{p.icon}</span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>{p.name}</span>
-                        <span style={{ fontSize: 11, color: 'var(--muted-2)', flex: 1 }}>{p.desc}</span>
+                        <span style={{ fontSize: 'var(--fs-lg)' }}>{p.icon}</span>
+                        <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg)' }}>{p.name}</span>
+                        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flex: 1 }}>{p.desc}</span>
                       </div>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {p.features.map(f => SECTION.tag(f, 'cyan'))}
@@ -169,9 +169,9 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                     { icon: '▶', name: '运行模式', desc: '自动/规划/审查/只读' },
                   ].map(b => (
                     <div key={b.name} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px' }}>
-                      <span style={{ fontSize: 14 }}>{b.icon}</span>
-                      <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--fg-2)' }}>{b.name}</span>
-                      <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>— {b.desc}</span>
+                      <span style={{ fontSize: 'var(--fs-md)' }}>{b.icon}</span>
+                      <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 500, color: 'var(--fg-2)' }}>{b.name}</span>
+                      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>— {b.desc}</span>
                     </div>
                   ))}
                 </div>
@@ -180,7 +180,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.title('右侧面板')}
                 {SECTION.desc('对话页右侧信息面板包含:')}
                 {['上下文注入 (模型/消息/工具/规则/记忆)', '工具调用 (AI工具调用详情)', '记忆 (持久记忆文件管理)', '浏览器 (AI自动化)', '识别 (界面元素识别)', '时间线 (文件变更记录)'].map(t => (
-                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={t} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     • {t}
                   </div>
                 ))}
@@ -189,7 +189,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.title('工作区摘要栏')}
                 {SECTION.desc('对话窗口上方的可折叠栏, 包含:')}
                 {['工作目录设置 (手动输入或浏览选择)', '行业身份切换 (通用/开发者/装修/电商/教育/漫画)', '对话摘要 (消息数/时长/Token用量)', 'Token用量警告 (>80%显示)'].map(t => (
-                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={t} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     • {t}
                   </div>
                 ))}
@@ -218,10 +218,10 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, display: 'inline-block' }} />
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>{m.name}</span>
+                        <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg)' }}>{m.name}</span>
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--fg-2)' }}>{m.desc}</div>
-                      <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 2 }}>{m.detail}</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)' }}>{m.desc}</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 2 }}>{m.detail}</div>
                     </div>
                   ))}
                 </div>
@@ -230,7 +230,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.title('行业身份')}
                 {SECTION.desc('在工作区摘要栏展开后可切换行业身份。切换后AI会自动:')}
                 {['加载行业专属技能和工具', '更新系统提示中的行业上下文', '切换行业知识库', '通用模式 = 不设定AI角色, 默认选项'].map(t => (
-                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={t} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     • {t}
                   </div>
                 ))}
@@ -261,13 +261,13 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                       background: 'var(--card)', border: '1px solid var(--border)',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <TeamOutlined style={{ fontSize: 12, color: 'var(--accent)' }} />
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>{t.name}</span>
+                        <TeamOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--accent)' }} />
+                        <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg)' }}>{t.name}</span>
                         {SECTION.tag(t.flow, t.flow === '并行' ? 'green' : 'blue')}
-                        <code style={{ fontSize: 10, padding: '1px 4px', background: 'var(--panel)', borderRadius: 3, color: 'var(--muted)' }}>{t.id}</code>
+                        <code style={{ fontSize: 'var(--fs-micro)', padding: '1px 4px', background: 'var(--panel)', borderRadius: 3, color: 'var(--muted)' }}>{t.id}</code>
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--fg-2)' }}>成员: {t.members}</div>
-                      <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 2 }}>适用: {t.cases}</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)' }}>成员: {t.members}</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 2 }}>适用: {t.cases}</div>
                     </div>
                   ))}
                 </div>
@@ -276,12 +276,12 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.desc('直接在对话中描述任务, AI 会自动判断是否需要启动团队。也可手动触发:')}
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
-                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)', marginBottom: 8,
+                  padding: 8, fontFamily: 'monospace', fontSize: 'var(--fs-micro)', color: 'var(--accent)', marginBottom: 8,
                 }}>用户: "帮我审查整个 packages 目录的代码质量"<br/>AI: → 自动调用 run_team({'{teamId:"code-review", task:"..."}'})</div>
                 {SECTION.desc('或显式指令:')}
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
-                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)',
+                  padding: 8, fontFamily: 'monospace', fontSize: 'var(--fs-micro)', color: 'var(--accent)',
                 }}>用户: "用代码审查团队审查 src/auth 目录"<br/>用户: "组建功能开发团队实现用户登录模块"</div>
 
                 {SECTION.divider()}
@@ -301,17 +301,17 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                       padding: '6px 8px', borderRadius: 6,
                       background: 'var(--card)', border: '1px solid var(--border)',
                     }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>
+                      <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg)' }}>
                         <span style={{ marginRight: 4 }}>{s.icon}</span>{s.name}
                       </div>
-                      <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>{s.desc}</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{s.desc}</div>
                     </div>
                   ))}
                 </div>
                 {SECTION.title('使用示例')}
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
-                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)',
+                  padding: 8, fontFamily: 'monospace', fontSize: 'var(--fs-micro)', color: 'var(--accent)',
                 }}>用户: "生成一个 3D 沙发, 可以旋转看"<br/>用户: "用 3D 场景展示一个装修客厅效果"<br/>用户: "画一个数据可视化 3D 柱状图"</div>
                 {SECTION.desc('生成后可在对话区交互预览, 支持刷新/下载 HTML/全屏查看。')}
 
@@ -321,23 +321,23 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.title('触发方式')}
                 {SECTION.desc('AI 会在以下场景主动询问是否需要公网分享:')}
                 {['启动了 vite dev / pnpm dev / npm start 等本地服务', '完成 Web 项目开发', '用户提到"演示/分享给/远程访问/外网访问"', '完成 Webhook/回调类功能'].map(t => (
-                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={t} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     • {t}
                   </div>
                 ))}
                 {SECTION.title('使用示例')}
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
-                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)', marginBottom: 8,
+                  padding: 8, fontFamily: 'monospace', fontSize: 'var(--fs-micro)', color: 'var(--accent)', marginBottom: 8,
                 }}>用户: "把 localhost:3000 分享出去"<br/>AI: → share_port({'{action:"create", port:3000}'}) → https://xxx.loca.lt</div>
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
-                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)',
+                  padding: 8, fontFamily: 'monospace', fontSize: 'var(--fs-micro)', color: 'var(--accent)',
                 }}>用户: "查看所有隧道" → share_port({'{action:"list"}'})<br/>用户: "关闭隧道" → share_port({'{action:"close", tunnel_id:"tun_xxx"}'})</div>
                 {SECTION.divider()}
                 {SECTION.title('安全规则')}
                 {['仅 1024-65535 端口 (拒绝系统端口)', '拒绝 22/3389 等敏感端口', '不主动为数据库端口 (3306/5432/6379) 创建隧道', '隧道 URL 仅返回给当前用户, 不写入日志'].map(t => (
-                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={t} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     • {t}
                   </div>
                 ))}
@@ -348,23 +348,23 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.title('触发方式')}
                 {SECTION.desc('AI 会在以下场景主动安装依赖:')}
                 {['运行项目前自动检查关键依赖', '调用工具前发现可能缺包', '遇到 "Cannot find module" 错误时自动修复', '新接手项目探索时检查 package.json 依赖'].map(t => (
-                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={t} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     • {t}
                   </div>
                 ))}
                 {SECTION.title('使用示例')}
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
-                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)', marginBottom: 8,
+                  padding: 8, fontFamily: 'monospace', fontSize: 'var(--fs-micro)', color: 'var(--accent)', marginBottom: 8,
                 }}>用户: "运行这个项目"<br/>AI: → 自动调用 ensure_dependency 检查并安装依赖 → 启动项目</div>
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6,
-                  padding: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)',
+                  padding: 8, fontFamily: 'monospace', fontSize: 'var(--fs-micro)', color: 'var(--accent)',
                 }}>用户: "帮我安装 axios"<br/>AI: → npm_install({'{package:"axios"}'})</div>
                 {SECTION.divider()}
                 {SECTION.title('智能特性')}
                 {['自动检测包管理器 (pnpm > yarn > npm)', '支持 monorepo workspace 安装', '幂等检查: 已安装则跳过', '国内镜像加速 (npmmirror/清华源)', 'Python venv 自动检测'].map(t => (
-                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={t} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     • {t}
                   </div>
                 ))}
@@ -394,7 +394,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                     <div key={q} style={{
                       padding: '4px 8px', borderRadius: 4,
                       background: 'var(--panel)', border: '1px solid var(--border)',
-                      fontSize: 11, color: 'var(--accent)', fontFamily: 'monospace',
+                      fontSize: 'var(--fs-micro)', color: 'var(--accent)', fontFamily: 'monospace',
                     }}>
                       {q}
                     </div>
@@ -414,10 +414,10 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                       padding: '6px 8px', borderRadius: 6,
                       background: 'var(--card)', border: '1px solid var(--border)',
                     }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)' }}>
+                      <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)' }}>
                         {SECTION.tag(d.type, 'purple')} {d.name}
                       </div>
-                      <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>{d.desc}</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{d.desc}</div>
                     </div>
                   ))}
                 </div>
@@ -426,7 +426,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.title('安全机制')}
                 {SECTION.desc('图表生成采用双重安全消毒:')}
                 {['后端: sanitizeSvg() 剥离危险标签和属性', '前端: DOMParser 解析后移除所有 on* 事件属性', 'SVG 在隔离环境中渲染, 不执行脚本'].map(t => (
-                  <div key={t} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={t} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     • {t}
                   </div>
                 ))}
@@ -436,7 +436,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.desc('AI 可以自动将复杂目标拆解为多阶段任务, 逐步验证执行:')}
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8,
-                  padding: 12, fontFamily: 'monospace', fontSize: 11,
+                  padding: 12, fontFamily: 'monospace', fontSize: 'var(--fs-micro)',
                   color: 'var(--fg-2)', whiteSpace: 'pre',
                 }}>{`目标 → 拆解阶段 → 逐阶段执行 → 验证结果
   ↑                              │
@@ -477,17 +477,17 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                       background: 'var(--card)', border: '1px solid var(--border)',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>{m.name}</span>
+                        <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg)' }}>{m.name}</span>
                         <a 
                           href={m.url} 
                           target="_blank" 
                           rel="noopener noreferrer"
-                          style={{ fontSize: 11, color: 'var(--accent)' }}
+                          style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)' }}
                         >
                           去获取 →
                         </a>
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--muted-2)' }}>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                         免费额度: {m.quota} · 环境变量: {SECTION.code(m.env)}
                       </div>
                     </div>
@@ -497,7 +497,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.divider()}
                 {SECTION.title('使用步骤')}
                 {['1. 点击上方链接访问官网', '2. 注册账号并创建 API Key', '3. 复制 Key 到 ATLAS 设置页', '4. 点击"测试连接"验证', '5. 启用模型即可使用'].map((t, i) => (
-                  <div key={i} style={{ fontSize: 11, color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
+                  <div key={i} style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '2px 0', paddingLeft: 8 }}>
                     {t}
                   </div>
                 ))}
@@ -524,11 +524,11 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                   ].map(c => (
                     <div key={c.cmd} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 6px' }}>
                       <code style={{
-                        fontSize: 11, padding: '1px 6px', borderRadius: 3,
+                        fontSize: 'var(--fs-micro)', padding: '1px 6px', borderRadius: 3,
                         background: 'var(--panel)', border: '1px solid var(--border)',
                         fontFamily: 'monospace', color: 'var(--accent)',
                       }}>{c.cmd}</code>
-                      <span style={{ fontSize: 11, color: 'var(--muted-2)' }}>{c.desc}</span>
+                      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{c.desc}</span>
                     </div>
                   ))}
                 </div>
@@ -537,7 +537,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.title('LLM 路由策略')}
                 <div style={{
                   background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8,
-                  padding: 12, fontFamily: 'monospace', fontSize: 11,
+                  padding: 12, fontFamily: 'monospace', fontSize: 'var(--fs-micro)',
                   color: 'var(--fg-2)', whiteSpace: 'pre',
                 }}>{`用户请求 → Cost Guard (费用检查)
     │
@@ -555,7 +555,7 @@ export const GuideModal: React.FC<Props> = ({ onClose }) => {
                 {SECTION.desc('AI 遇到错误时自动尝试 8 种修复模式:')}
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                   {['缺模块', '编码错', '路径错', '权限', '语法', '网络', '工具', '解析'].map(m => (
-                    <Tag key={m} style={{ fontSize: 10 }}>{m}</Tag>
+                    <Tag key={m} style={{ fontSize: 'var(--fs-micro)' }}>{m}</Tag>
                   ))}
                 </div>
               </div>

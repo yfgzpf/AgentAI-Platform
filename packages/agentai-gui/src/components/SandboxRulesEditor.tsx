@@ -252,7 +252,7 @@ export const SandboxRulesEditor: React.FC = () => {
               <div>
                 <label>
                   <PlusOutlined /> 路径预置 (点击加入 Allow 列表)
-                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 'var(--fs-sm)' }}>
                     系统自动识别, v3.2 默认全放行已无需手动配置allow
                   </Text>
                 </label>
@@ -262,7 +262,7 @@ export const SandboxRulesEditor: React.FC = () => {
                     if (items.length === 0) return null;
                     return (
                       <div key={cat} style={{ marginBottom: 4 }}>
-                        <Text type="secondary" style={{ fontSize: 11, marginRight: 8 }}>
+                        <Text type="secondary" style={{ fontSize: 'var(--fs-micro)', marginRight: 8 }}>
                           {cat === 'drive' ? '盘符' : cat === 'user' ? '用户目录' : cat === 'workspace' ? '项目' : '常用'}:
                         </Text>
                         {items.map(p => (

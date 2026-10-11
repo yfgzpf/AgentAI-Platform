@@ -107,8 +107,8 @@ export const WechatSetup: React.FC = () => {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 40 }}>
         <Card style={{ width: 380, textAlign: 'center', borderRadius: 16 }}>
           <QrcodeOutlined style={{ fontSize: 48, color: '#CD7A3A', marginBottom: 16, display: 'block' }} />
-          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>绑定微信账号</div>
-          <div style={{ color: 'var(--muted)', marginBottom: 24, fontSize: 13 }}>
+          <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 8 }}>绑定微信账号</div>
+          <div style={{ color: 'var(--muted)', marginBottom: 24, fontSize: 'var(--fs-md)' }}>
             点击下方按钮，用微信扫描二维码完成绑定
           </div>
           <Button
@@ -126,7 +126,7 @@ export const WechatSetup: React.FC = () => {
           >
             开始绑定
           </Button>
-          <div style={{ marginTop: 12, fontSize: 11, color: 'var(--muted-2)' }}>
+          <div style={{ marginTop: 12, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
             支持微信 ≥ 8.0.70 · 需要微信助手插件
           </div>
         </Card>
@@ -140,14 +140,14 @@ export const WechatSetup: React.FC = () => {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 40 }}>
         <Card style={{ width: 380, textAlign: 'center', borderRadius: 16 }}>
           <CheckCircleOutlined style={{ fontSize: 48, color: '#52c41a', marginBottom: 16, display: 'block' }} />
-          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>微信绑定成功</div>
+          <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 8 }}>微信绑定成功</div>
           <div style={{ color: 'var(--muted)', marginBottom: 24 }}>通过微信接收 AI 消息</div>
 
           <Descriptions
             bordered
             size="small"
             column={1}
-            style={{ fontSize: 12, marginBottom: 20 }}
+            style={{ fontSize: 'var(--fs-sm)', marginBottom: 20 }}
           >
             <Descriptions.Item label="账号 ID">{account?.accountId || '—'}</Descriptions.Item>
             <Descriptions.Item label="绑定时间">
@@ -195,10 +195,10 @@ export const WechatSetup: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 40 }}>
       <Card style={{ width: 380, textAlign: 'center', borderRadius: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>
+        <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 8 }}>
           微信扫码绑定
         </div>
-        <div style={{ color: 'var(--muted)', marginBottom: 20, fontSize: 13 }}>
+        <div style={{ color: 'var(--muted)', marginBottom: 20, fontSize: 'var(--fs-md)' }}>
           请使用微信扫描二维码
         </div>
 
@@ -229,7 +229,7 @@ export const WechatSetup: React.FC = () => {
                 <span style={{ color: 'var(--muted)' }}>二维码加载中...</span>
               </div>
             )}
-            <div id="wechat-qr-fallback" style={{ display: 'none', marginTop: 8, fontSize: 12, color: 'var(--muted-2)' }}>
+            <div id="wechat-qr-fallback" style={{ display: 'none', marginTop: 8, fontSize: 'var(--fs-sm)', color: 'var(--muted-2)' }}>
               图片加载失败。请确认 API 服务可用，或联系管理员。
             </div>
             <Tag color="orange" style={{ marginTop: 12, display: 'block' }}>
@@ -245,7 +245,7 @@ export const WechatSetup: React.FC = () => {
         )}
 
         {error && (
-          <div style={{ color: '#ff4d4f', marginBottom: 16, fontSize: 13 }}>
+          <div style={{ color: '#ff4d4f', marginBottom: 16, fontSize: 'var(--fs-md)' }}>
             {error}
           </div>
         )}

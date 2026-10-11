@@ -267,9 +267,9 @@ export const WorkflowPanel: React.FC = () => {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <PartitionOutlined style={{ color: 'var(--accent)' }} />
-          <span style={{ fontWeight: 600, color: 'var(--fg)', fontSize: 13 }}>行业工作流</span>
-          <Tag color="purple" style={{ fontSize: 10, margin: 0 }}>{templates.length} 模板</Tag>
-          <Tag color="cyan" style={{ fontSize: 10, margin: 0 }}>{executions.length} 执行记录</Tag>
+          <span style={{ fontWeight: 600, color: 'var(--fg)', fontSize: 'var(--fs-md)' }}>行业工作流</span>
+          <Tag color="purple" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{templates.length} 模板</Tag>
+          <Tag color="cyan" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{executions.length} 执行记录</Tag>
         </div>
         <Tooltip title="刷新">
           <Button size="small" type="text" icon={<ReloadOutlined />} onClick={load} loading={loading} />
@@ -284,10 +284,10 @@ export const WorkflowPanel: React.FC = () => {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
             {liveStatus === 'running' ? <Spin size="small" /> : statusIcon(liveStatus)}
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)' }}>
+            <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg)' }}>
               {liveStatus === 'running' ? '⚡ 执行中' : liveStatus === 'completed' ? '✅ 已完成' : '⚠️ 执行结束'}: {liveTemplateName}
             </span>
-            <Tag style={{ fontSize: 9, margin: 0 }}>
+            <Tag style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>
               {Object.values(liveSteps).filter(s => s.status === 'success' || s.status === 'failed').length}/{liveTotalSteps}
             </Tag>
           </div>
@@ -300,7 +300,7 @@ export const WorkflowPanel: React.FC = () => {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 6 }}>
             {Object.values(liveSteps).map(s => (
               <Tag key={s.stepId} style={{
-                fontSize: 9, margin: 0, lineHeight: '18px', padding: '0 4px',
+                fontSize: 'var(--fs-micro)', margin: 0, lineHeight: '18px', padding: '0 4px',
                 color: s.status === 'success' ? '#10b981' : s.status === 'failed' ? '#ef4444' : s.status === 'skipped' ? '#6b7280' : '#f59e0b',
                 borderColor: s.status === 'success' ? '#10b981' : s.status === 'failed' ? '#ef4444' : s.status === 'skipped' ? '#6b7280' : '#f59e0b',
                 background: 'transparent',
@@ -327,7 +327,7 @@ export const WorkflowPanel: React.FC = () => {
               return {
                 key: industry,
                 label: (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, color: meta.color }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--fs-sm)', fontWeight: 600, color: meta.color }}>
                     {meta.icon} {meta.label} ({tmps.length})
                   </span>
                 ),
@@ -341,8 +341,8 @@ export const WorkflowPanel: React.FC = () => {
                         {/* 模板头部 */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span style={{ fontWeight: 600, fontSize: 12, color: 'var(--fg)' }}>{t.name}</span>
-                            {t.builtin && <Tag color="blue" style={{ fontSize: 9, margin: 0, lineHeight: '16px' }}>内置</Tag>}
+                            <span style={{ fontWeight: 600, fontSize: 'var(--fs-sm)', color: 'var(--fg)' }}>{t.name}</span>
+                            {t.builtin && <Tag color="blue" style={{ fontSize: 'var(--fs-micro)', margin: 0, lineHeight: '16px' }}>内置</Tag>}
                           </div>
                           <div style={{ display: 'flex', gap: 2 }}>
                             <Tooltip title="执行">
@@ -363,15 +363,15 @@ export const WorkflowPanel: React.FC = () => {
                           </div>
                         </div>
                         {/* 描述 */}
-                        <div style={{ fontSize: 11, color: 'var(--muted-2)', marginBottom: 6, lineHeight: 1.5 }}>{t.description}</div>
+                        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 6, lineHeight: 1.5 }}>{t.description}</div>
                         {/* DAG 步骤可视化 */}
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
                           {t.steps.map((step, i) => (
                             <React.Fragment key={step.id}>
-                              {i > 0 && <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>→</span>}
+                              {i > 0 && <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>→</span>}
                               <Tooltip title={`${step.type}${step.dependsOn.length ? ` (依赖: ${step.dependsOn.join(',')})` : ''}`}>
                                 <Tag style={{
-                                  fontSize: 9, margin: 0, lineHeight: '18px', padding: '0 4px',
+                                  fontSize: 'var(--fs-micro)', margin: 0, lineHeight: '18px', padding: '0 4px',
                                   color: STEP_COLORS[step.type] || '#666',
                                   borderColor: STEP_COLORS[step.type] || '#666',
                                   background: 'transparent',
@@ -384,7 +384,7 @@ export const WorkflowPanel: React.FC = () => {
                         </div>
                         {/* 变量 */}
                         {t.variables.length > 0 && (
-                          <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted-2)' }}>
+                          <div style={{ marginTop: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                             变量: {t.variables.map(v => `${v.name}${v.required ? '*' : ''}`).join(', ')}
                           </div>
                         )}
@@ -400,14 +400,14 @@ export const WorkflowPanel: React.FC = () => {
         {/* 执行历史 */}
         {executions.length > 0 && (
           <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg)', marginBottom: 6, padding: '0 4px' }}>
+            <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg)', marginBottom: 6, padding: '0 4px' }}>
               📋 执行历史
             </div>
             {executions.slice(0, 15).map(e => (
               <div key={e.id} style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '4px 8px', marginBottom: 2, borderRadius: 4,
-                background: 'var(--bg-2)', cursor: 'pointer', fontSize: 11,
+                background: 'var(--bg-2)', cursor: 'pointer', fontSize: 'var(--fs-micro)',
                 border: '1px solid transparent',
               }}
               onMouseEnter={(ev) => { (ev.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; }}
@@ -418,10 +418,10 @@ export const WorkflowPanel: React.FC = () => {
                 <span style={{ color: 'var(--fg)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {e.templateName}
                 </span>
-                <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>
+                <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
                   {e.completedAt ? `${((e.completedAt - e.startedAt) / 1000).toFixed(1)}s` : '...'}
                 </span>
-                <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>
+                <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
                   {new Date(e.startedAt).toLocaleTimeString()}
                 </span>
               </div>
@@ -443,17 +443,17 @@ export const WorkflowPanel: React.FC = () => {
       >
         {runModal && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-            <div style={{ padding: '8px 10px', background: 'rgba(99,102,241,0.08)', borderRadius: 6, fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>
+            <div style={{ padding: '8px 10px', background: 'rgba(99,102,241,0.08)', borderRadius: 6, fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.6 }}>
               {runModal.description}
             </div>
             {runModal.variables.length > 0 ? (
               runModal.variables.map(v => (
                 <div key={v.name}>
-                  <label style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <label style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
                     {v.name}{v.required && <span style={{ color: '#ef4444' }}>*</span>}
-                    <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>({v.type})</span>
+                    <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>({v.type})</span>
                   </label>
-                  {v.description && <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 2 }}>{v.description}</div>}
+                  {v.description && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2 }}>{v.description}</div>}
                   <Input
                     value={runVars[v.name] ?? ''}
                     onChange={(e) => setRunVars(prev => ({ ...prev, [v.name]: e.target.value }))}
@@ -463,17 +463,17 @@ export const WorkflowPanel: React.FC = () => {
                 </div>
               ))
             ) : (
-              <div style={{ fontSize: 11, color: 'var(--muted-2)', textAlign: 'center', padding: 8 }}>此模板无需输入变量</div>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', textAlign: 'center', padding: 8 }}>此模板无需输入变量</div>
             )}
             {/* DAG 预览 */}
             <div style={{ marginTop: 4, padding: '6px 8px', background: 'var(--bg-2)', borderRadius: 4 }}>
-              <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 4 }}>执行流程:</div>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4 }}>执行流程:</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
                 {runModal.steps.map((step, i) => (
                   <React.Fragment key={step.id}>
-                    {i > 0 && <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>→</span>}
+                    {i > 0 && <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>→</span>}
                     <Tag style={{
-                      fontSize: 9, margin: 0, lineHeight: '18px', padding: '0 4px',
+                      fontSize: 'var(--fs-micro)', margin: 0, lineHeight: '18px', padding: '0 4px',
                       color: STEP_COLORS[step.type] || '#666',
                       borderColor: STEP_COLORS[step.type] || '#666',
                     }}>
@@ -503,7 +503,7 @@ export const WorkflowPanel: React.FC = () => {
               <Tag>开始: {new Date(detailExec.startedAt).toLocaleString()}</Tag>
             </div>
             {detailExec.error && (
-              <div style={{ padding: '6px 10px', background: 'rgba(239,68,68,0.1)', borderRadius: 4, fontSize: 11, color: '#ef4444', marginBottom: 8 }}>
+              <div style={{ padding: '6px 10px', background: 'rgba(239,68,68,0.1)', borderRadius: 4, fontSize: 'var(--fs-micro)', color: '#ef4444', marginBottom: 8 }}>
                 {detailExec.error}
               </div>
             )}
@@ -515,7 +515,7 @@ export const WorkflowPanel: React.FC = () => {
               items={Object.entries(detailExec.stepResults).map(([id, r]) => ({
                 title: id,
                 description: (
-                  <div style={{ fontSize: 11 }}>
+                  <div style={{ fontSize: 'var(--fs-micro)' }}>
                     <span style={{ color: r.status === 'success' ? '#10b981' : r.status === 'failed' ? '#ef4444' : r.status === 'skipped' ? '#6b7280' : '#f59e0b' }}>
                       {r.status}
                     </span>

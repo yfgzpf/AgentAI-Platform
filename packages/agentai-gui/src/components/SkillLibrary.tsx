@@ -109,7 +109,7 @@ export const SkillLibrary: React.FC = () => {
         />
       </div>
       {apiOffline && skills.length > 0 && (
-        <Alert type="info" message="网关离线, 显示内置技能列表" banner style={{ fontSize: 11 }} closable />
+        <Alert type="info" message="网关离线, 显示内置技能列表" banner style={{ fontSize: 'var(--fs-micro)' }} closable />
       )}
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
         {loading ? (
@@ -122,9 +122,9 @@ export const SkillLibrary: React.FC = () => {
             renderItem={(s) => (
               <List.Item style={{ padding: '8px 12px', cursor: 'pointer' }} className="skill-item">
                 <List.Item.Meta
-                  avatar={<span style={{ fontSize: 18, color: '#4F46E5' }}>{s.icon}</span>}
-                  title={<span style={{ fontSize: 13 }}>{s.name}</span>}
-                  description={<span style={{ fontSize: 11, color: '#888' }}>{s.description}</span>}
+                  avatar={<span style={{ fontSize: 'var(--fs-lg)', color: '#4F46E5' }}>{s.icon}</span>}
+                  title={<span style={{ fontSize: 'var(--fs-md)' }}>{s.name}</span>}
+                  description={<span style={{ fontSize: 'var(--fs-micro)', color: '#888' }}>{s.description}</span>}
                 />
                 <Tag color={CATEGORIES.find((c) => c.key === s.category)?.color || 'default'}>{s.category || 'unknown'}</Tag>
               </List.Item>

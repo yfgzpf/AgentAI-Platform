@@ -308,7 +308,7 @@ export const CleanerPanel: React.FC = () => {
                   <Descriptions.Item label="总大小">{formatBytes(totalSize)}</Descriptions.Item>
                   <Descriptions.Item label="文件列表">
                     {p.files.map((f, i) => (
-                      <div key={i} style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--muted-2)' }}>
+                      <div key={i} style={{ fontSize: 'var(--fs-micro)', fontFamily: 'monospace', color: 'var(--muted-2)' }}>
                         {f.path} ({formatBytes(f.size)})
                       </div>
                     ))}

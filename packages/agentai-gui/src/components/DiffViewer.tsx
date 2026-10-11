@@ -196,7 +196,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     <div key={hi}>
       {/* Hunk header */}
       <div style={{
-        padding: '2px 12px', fontSize: 11, fontFamily: 'monospace',
+        padding: '2px 12px', fontSize: 'var(--fs-micro)', fontFamily: 'monospace',
         color: '#6366f1', background: 'rgba(99,102,241,0.06)',
         borderTop: hi > 0 ? '1px solid var(--border)' : 'none',
         borderBottom: '1px solid var(--border)',
@@ -210,13 +210,13 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             display: 'flex', minHeight: 21,
             background: l.type === 'add' ? 'rgba(34,197,94,0.08)' : l.type === 'del' ? 'rgba(239,68,68,0.08)' : 'transparent',
             borderLeft: l.type === 'add' ? '3px solid #22c55e' : l.type === 'del' ? '3px solid #ef4444' : '3px solid transparent',
-            fontSize: 12, lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
+            fontSize: 'var(--fs-sm)', lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
           }}
         >
           {/* 行号 - old */}
           <span style={{
             width: 40, textAlign: 'right', paddingRight: 6,
-            fontSize: 10, color: '#999', userSelect: 'none',
+            fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none',
             background: l.type === 'del' ? 'rgba(239,68,68,0.12)' : 'transparent',
           }}>
             {l.oldNum}
@@ -224,7 +224,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           {/* 行号 - new */}
           <span style={{
             width: 40, textAlign: 'right', paddingRight: 8,
-            fontSize: 10, color: '#999', userSelect: 'none',
+            fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none',
             borderRight: '1px solid var(--border)',
             background: l.type === 'add' ? 'rgba(34,197,94,0.12)' : 'transparent',
           }}>
@@ -270,9 +270,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
               display: 'flex', minHeight: 21,
               background: l.type === 'del' ? 'rgba(239,68,68,0.08)' : 'transparent',
               borderLeft: l.type === 'del' ? '3px solid #ef4444' : '3px solid transparent',
-              fontSize: 12, lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
+              fontSize: 'var(--fs-sm)', lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
             }}>
-              <span style={{ width: 40, textAlign: 'right', paddingRight: 8, fontSize: 10, color: '#999', userSelect: 'none' }}>{l.num}</span>
+              <span style={{ width: 40, textAlign: 'right', paddingRight: 8, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}>{l.num}</span>
               <span style={{
                 flex: 1, paddingLeft: 4, whiteSpace: 'pre', overflow: 'hidden',
                 color: l.type === 'del' ? '#dc2626' : 'var(--fg-2)',
@@ -288,9 +288,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
               display: 'flex', minHeight: 21,
               background: l.type === 'add' ? 'rgba(34,197,94,0.08)' : 'transparent',
               borderLeft: l.type === 'add' ? '3px solid #22c55e' : '3px solid transparent',
-              fontSize: 12, lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
+              fontSize: 'var(--fs-sm)', lineHeight: '21px', fontFamily: "'Consolas', 'Cascadia Code', monospace",
             }}>
-              <span style={{ width: 40, textAlign: 'right', paddingRight: 8, fontSize: 10, color: '#999', userSelect: 'none' }}>{l.num}</span>
+              <span style={{ width: 40, textAlign: 'right', paddingRight: 8, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}>{l.num}</span>
               <span style={{
                 flex: 1, paddingLeft: 4, whiteSpace: 'pre', overflow: 'hidden',
                 color: l.type === 'add' ? '#16a34a' : 'var(--fg-2)',
@@ -325,7 +325,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
       >
         {/* 折叠图标 */}
-        <span style={{ fontSize: 9, color: 'var(--muted-2)', transition: 'transform 0.2s', flexShrink: 0 }}>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', transition: 'transform 0.2s', flexShrink: 0 }}>
           {collapsed ? <RightOutlined /> : <DownOutlined />}
         </span>
         {/* 语言彩色标记 */}
@@ -334,14 +334,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             width: 20, height: 20, borderRadius: 4,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: langColor, color: '#fff',
-            fontSize: 7, fontWeight: 700, flexShrink: 0,
+            fontSize: 'var(--fs-micro)', fontWeight: 700, flexShrink: 0,
           }}>{lang.toUpperCase()}</span>
         )}
         {/* 文件名 */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)' }}>{filename}</span>
+          <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)' }}>{filename}</span>
           {dir && (
-            <span style={{ fontSize: 9, color: 'var(--muted-2)', marginLeft: 4 }}>{dir}</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginLeft: 4 }}>{dir}</span>
           )}
         </div>
         {/* 修改统计 - 增强版 */}
@@ -350,7 +350,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             {totalAdded > 0 && (
               <Tooltip title={`新增 ${totalAdded} 行`}>
                 <span style={{ 
-                  fontSize: 10, 
+                  fontSize: 'var(--fs-micro)', 
                   fontFamily: 'monospace', 
                   color: '#16a34a', 
                   fontWeight: 600,
@@ -361,7 +361,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
                   background: 'rgba(34,197,94,0.1)',
                   borderRadius: 3,
                 }}>
-                  <PlusOutlined style={{ fontSize: 8 }} />
+                  <PlusOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                   {totalAdded}
                 </span>
               </Tooltip>
@@ -369,7 +369,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             {totalDeleted > 0 && (
               <Tooltip title={`删除 ${totalDeleted} 行`}>
                 <span style={{ 
-                  fontSize: 10, 
+                  fontSize: 'var(--fs-micro)', 
                   fontFamily: 'monospace', 
                   color: '#dc2626', 
                   fontWeight: 600,
@@ -380,7 +380,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
                   background: 'rgba(239,68,68,0.1)',
                   borderRadius: 3,
                 }}>
-                  <MinusOutlined style={{ fontSize: 8 }} />
+                  <MinusOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                   {totalDeleted}
                 </span>
               </Tooltip>
@@ -388,7 +388,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             {totalModified > 0 && (
               <Tooltip title={`共修改 ${totalModified} 行`}>
                 <span style={{ 
-                  fontSize: 9, 
+                  fontSize: 'var(--fs-micro)', 
                   color: 'var(--muted-2)',
                   marginLeft: 4,
                 }}>
@@ -400,7 +400,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
         )}
         {/* 状态标签 */}
         {applied && (
-          <span style={{ fontSize: 9, color: '#16a34a', background: 'rgba(34,197,94,0.1)', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>
+          <span style={{ fontSize: 'var(--fs-micro)', color: '#16a34a', background: 'rgba(34,197,94,0.1)', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>
             已应用
           </span>
         )}
@@ -414,7 +414,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             display: 'flex', alignItems: 'center', gap: 4,
             padding: '4px 10px', background: 'var(--panel)',
             borderBottom: '1px solid var(--border)',
-            fontSize: 10,
+            fontSize: 'var(--fs-micro)',
           }}>
             {/* 视图切换 */}
             <span
@@ -438,11 +438,11 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             <div style={{ flex: 1 }} />
             {/* 操作按钮 */}
             <Tooltip title="复制 diff">
-              <CopyOutlined onClick={handleCopyDiff} style={{ fontSize: 11, color: 'var(--muted-2)', cursor: 'pointer', padding: 2 }} />
+              <CopyOutlined onClick={handleCopyDiff} style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer', padding: 2 }} />
             </Tooltip>
             {displayPath && (
               <Tooltip title="在编辑器中打开">
-                <CodeOutlined onClick={handleOpenFile} style={{ fontSize: 11, color: 'var(--muted-2)', cursor: 'pointer', padding: 2 }} />
+                <CodeOutlined onClick={handleOpenFile} style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer', padding: 2 }} />
               </Tooltip>
             )}
             {/* 审批按钮 */}
@@ -450,7 +450,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
               <Tooltip title="拒绝">
                 <CloseOutlined
                   onClick={(e) => { e.stopPropagation(); onReject(previewId); }}
-                  style={{ fontSize: 11, color: '#ef4444', cursor: 'pointer', padding: 2 }}
+                  style={{ fontSize: 'var(--fs-micro)', color: '#ef4444', cursor: 'pointer', padding: 2 }}
                 />
               </Tooltip>
             )}
@@ -458,13 +458,13 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
               <Tooltip title="确认应用">
                 <CheckOutlined
                   onClick={(e) => { e.stopPropagation(); onApply(previewId); }}
-                  style={{ fontSize: 11, color: '#22c55e', cursor: 'pointer', padding: 2, fontWeight: 700 }}
+                  style={{ fontSize: 'var(--fs-micro)', color: '#22c55e', cursor: 'pointer', padding: 2, fontWeight: 700 }}
                 />
               </Tooltip>
             )}
             {onClose && (
               <Tooltip title="关闭">
-                <CloseOutlined onClick={onClose} style={{ fontSize: 10, color: 'var(--muted-2)', cursor: 'pointer', padding: 2 }} />
+                <CloseOutlined onClick={onClose} style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer', padding: 2 }} />
               </Tooltip>
             )}
           </div>
@@ -478,7 +478,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
       )}
       {/* 无 diff 内容 */}
       {!collapsed && !hasContent && (
-        <div style={{ padding: '12px', fontSize: 11, color: 'var(--muted-2)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
+        <div style={{ padding: '12px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
           无差异内容
         </div>
       )}

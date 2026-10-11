@@ -91,13 +91,13 @@ export const GlobalBrowserDrawer: React.FC = () => {
           borderBottom: '1px solid var(--border)',
         }}>
           <Space size={10}>
-            <GlobalOutlined style={{ color: 'var(--accent)', fontSize: 16 }} />
-            <span style={{ color: 'var(--fg)', fontSize: 14, fontWeight: 600 }}>
+            <GlobalOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-lg)' }} />
+            <span style={{ color: 'var(--fg)', fontSize: 'var(--fs-md)', fontWeight: 600 }}>
               智能体浏览器
             </span>
             <Tag
               color={gatewayOk ? 'success' : 'error'}
-              style={{ margin: 0, fontSize: 10, padding: '0 6px', lineHeight: '16px' }}
+              style={{ margin: 0, fontSize: 'var(--fs-micro)', padding: '0 6px', lineHeight: '16px' }}
             >
               Gateway {gatewayOk ? '在线' : '离线'}
             </Tag>
@@ -105,7 +105,7 @@ export const GlobalBrowserDrawer: React.FC = () => {
               <Tag
                 color="processing"
                 icon={<ThunderboltOutlined spin />}
-                style={{ margin: 0, fontSize: 10, padding: '0 6px' }}
+                style={{ margin: 0, fontSize: 'var(--fs-micro)', padding: '0 6px' }}
               >
                 AI 正在操作
               </Tag>
@@ -122,7 +122,7 @@ export const GlobalBrowserDrawer: React.FC = () => {
                     disabled={zoom <= 0.25}
                   />
                 </Tooltip>
-                <Tag style={{ margin: 0, fontSize: 10, padding: '0 6px', lineHeight: '16px' }}>
+                <Tag style={{ margin: 0, fontSize: 'var(--fs-micro)', padding: '0 6px', lineHeight: '16px' }}>
                   {Math.round(zoom * 100)}%
                 </Tag>
                 <Tooltip title="放大">

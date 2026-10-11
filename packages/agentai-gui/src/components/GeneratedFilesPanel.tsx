@@ -108,12 +108,12 @@ export const GeneratedFilesPanel: React.FC = () => {
   return (
     <Card
       size="small"
-      title={<span style={{ fontSize: 12, color: 'var(--fg-2)' }}><FileAddOutlined style={{ marginRight: 4 }} />生成的文件</span>}
+      title={<span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)' }}><FileAddOutlined style={{ marginRight: 4 }} />生成的文件</span>}
       style={{ borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)' }}
       styles={{ body: { padding: '8px 12px', maxHeight: preview.path ? 440 : 200, overflowY: 'auto' } }}
     >
       {files.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span style={{ fontSize: 11, color: 'var(--muted-2)' }}>暂无生成文件</span>} style={{ margin: '4px 0' }} />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>暂无生成文件</span>} style={{ margin: '4px 0' }} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {files.map((f, i) => {
@@ -129,36 +129,36 @@ export const GeneratedFilesPanel: React.FC = () => {
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
                     padding: '4px 8px', borderRadius: 4,
-                    cursor: 'pointer', fontSize: 11,
+                    cursor: 'pointer', fontSize: 'var(--fs-micro)',
                     color: 'var(--fg-2)',
                     transition: 'background 0.12s',
                   }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--panel)'; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = isOpen ? 'var(--panel)' : 'transparent'; }}
                 >
-                  <FileTextOutlined style={{ fontSize: 12, color: langColor, flexShrink: 0 }} />
+                  <FileTextOutlined style={{ fontSize: 'var(--fs-sm)', color: langColor, flexShrink: 0 }} />
                   <span style={{
                     flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>{fileName}</span>
                   <Tooltip title="在编辑器中打开">
                     <EditOutlined
                       onClick={(e) => { e.stopPropagation(); handleOpen(f.path); }}
-                      style={{ fontSize: 11, color: 'var(--muted-2)', cursor: 'pointer' }}
+                      style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer' }}
                     />
                   </Tooltip>
                   <Tooltip title="在文件夹中显示">
                     <FolderOpenOutlined
                       onClick={(e) => { e.stopPropagation(); handleReveal(f.path); }}
-                      style={{ fontSize: 11, color: 'var(--muted-2)', cursor: 'pointer' }}
+                      style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer' }}
                     />
                   </Tooltip>
                   <Tooltip title="下载">
                     <DownloadOutlined
                       onClick={(e) => { e.stopPropagation(); handleDownload(f.path); }}
-                      style={{ fontSize: 11, color: 'var(--muted-2)', cursor: 'pointer' }}
+                      style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer' }}
                     />
                   </Tooltip>
-                  <Tag style={{ fontSize: 9, borderRadius: 2, margin: 0, border: 'none', lineHeight: '16px', padding: '0 4px' }}>
+                  <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 2, margin: 0, border: 'none', lineHeight: '16px', padding: '0 4px' }}>
                     {f.action.replace(/_/g, ' ')}
                   </Tag>
                 </div>
@@ -166,19 +166,19 @@ export const GeneratedFilesPanel: React.FC = () => {
               {/* 就地内容预览 (点击行展开, 不跳页) */}
               {isOpen && (
                 preview.loading ? (
-                  <div style={{ padding: '4px 8px 6px 26px', fontSize: 10, color: 'var(--muted-2)' }}>加载中…</div>
+                  <div style={{ padding: '4px 8px 6px 26px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>加载中…</div>
                 ) : preview.content ? (
                   <pre style={{
                     margin: '0 0 2px 22px', padding: '6px 8px',
                     maxHeight: 200, overflowY: 'auto',
-                    fontSize: 10, lineHeight: 1.4,
+                    fontSize: 'var(--fs-micro)', lineHeight: 1.4,
                     fontFamily: "'Consolas', monospace",
                     color: 'var(--fg-2)', background: 'var(--bg-2)',
                     border: '1px solid var(--border)', borderRadius: 4,
                     whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                   }}>{preview.content}</pre>
                 ) : (
-                  <div style={{ padding: '4px 8px 6px 26px', fontSize: 10, color: 'var(--muted-2)' }}>（空文件或读取失败）</div>
+                  <div style={{ padding: '4px 8px 6px 26px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>（空文件或读取失败）</div>
                 )
               )}
               </div>

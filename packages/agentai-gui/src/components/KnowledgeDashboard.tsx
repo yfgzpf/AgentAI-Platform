@@ -175,7 +175,7 @@ export const KnowledgeDashboard: React.FC = () => {
                         </Tag>
                         <strong>{activity.concept}</strong>
                       </p>
-                      <p style={{ color: '#999', fontSize: 12 }}>
+                      <p style={{ color: '#999', fontSize: 'var(--fs-sm)' }}>
                         <ClockCircleOutlined /> {new Date(activity.timestamp).toLocaleString()}
                       </p>
                     </>
@@ -296,7 +296,7 @@ export const KnowledgeDashboard: React.FC = () => {
                     size="small" 
                     style={{ flex: 1 }}
                   />
-                  <span style={{ fontSize: 12, color: '#999' }}>知识密度</span>
+                  <span style={{ fontSize: 'var(--fs-sm)', color: '#999' }}>知识密度</span>
                 </div>
               </Card>
             </List.Item>

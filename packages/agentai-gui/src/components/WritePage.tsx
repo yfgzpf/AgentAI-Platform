@@ -202,7 +202,7 @@ export const WritePage: React.FC = () => {
       {/* 工具栏 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: '1px solid var(--panel-2)', background: 'var(--bg-2)', flexWrap: 'wrap' }}>
         <input value={title} onChange={e => { setTitle(e.target.value); }}
-          style={{ background: 'transparent', border: 'none', color: 'var(--border)', fontSize: 14, fontWeight: 600, outline: 'none', flex: 1, minWidth: 120 }} />
+          style={{ background: 'transparent', border: 'none', color: 'var(--border)', fontSize: 'var(--fs-md)', fontWeight: 600, outline: 'none', flex: 1, minWidth: 120 }} />
 
         {/* 模型选择器 */}
         <Select
@@ -232,7 +232,7 @@ export const WritePage: React.FC = () => {
           value={undefined}
         />
 
-        <Button size="small" type={preview ? 'primary' : 'default'} onClick={() => setPreview(!preview)} style={{ fontSize: 11 }}>
+        <Button size="small" type={preview ? 'primary' : 'default'} onClick={() => setPreview(!preview)} style={{ fontSize: 'var(--fs-micro)' }}>
           {preview ? '编辑' : '预览'}
         </Button>
 
@@ -250,7 +250,7 @@ export const WritePage: React.FC = () => {
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {!preview && (
           <textarea ref={textareaRef} value={content} onChange={e => setContent(e.target.value)}
-            style={{ flex: 1, padding: 20, background: 'var(--card)', color: 'var(--border)', border: 'none', outline: 'none', fontSize: 14, lineHeight: 1.8, fontFamily: 'monospace', resize: 'none' }} />
+            style={{ flex: 1, padding: 20, background: 'var(--card)', color: 'var(--border)', border: 'none', outline: 'none', fontSize: 'var(--fs-md)', lineHeight: 1.8, fontFamily: 'monospace', resize: 'none' }} />
         )}
         {preview && (
           <div style={{ flex: 1, padding: 20, overflow: 'auto', color: 'var(--border)', lineHeight: 1.8 }}>
@@ -262,7 +262,7 @@ export const WritePage: React.FC = () => {
       {/* 底栏: 字数统计 */}
       <div style={{ borderTop: '1px solid var(--panel-2)', background: 'var(--bg-2)' }}>
         {/* 字数 + 替换模式 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 12px', color: 'var(--muted)', fontSize: 11 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 12px', color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
           <span>{wordCount} 字</span>
           <span>{readTime} min 阅读</span>
           <div style={{ flex: 1 }} />
@@ -300,7 +300,7 @@ export const WritePage: React.FC = () => {
             placeholder={replaceMode ? '选中文字后点生成 → 替换选中' : `AI ${aiAction}: 输入指令或直接点生成...`}
             onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); aiComplete(); } }}
             autoSize={{ minRows: 1, maxRows: 3 }}
-            style={{ flex: 1, background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--border)', fontSize: 12 }}
+            style={{ flex: 1, background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--border)', fontSize: 'var(--fs-sm)' }}
           />
           <Button icon={<RobotOutlined />} onClick={aiComplete} loading={aiBusy} type="primary" ghost style={{ alignSelf: 'flex-end' }}>
             生成
@@ -308,7 +308,7 @@ export const WritePage: React.FC = () => {
         </div>
 
         {writeModel === 'zhipu' && (
-          <Alert type="info" message="GLM-4.7-Flash 免费模型, 同 ZHIPU_API_KEY。智谱文本/生图/视频共用同一 Key。" style={{ fontSize: 10, padding: '3px 12px', margin: 0 }} banner />
+          <Alert type="info" message="GLM-4.7-Flash 免费模型, 同 ZHIPU_API_KEY。智谱文本/生图/视频共用同一 Key。" style={{ fontSize: 'var(--fs-micro)', padding: '3px 12px', margin: 0 }} banner />
         )}
       </div>
     </div>

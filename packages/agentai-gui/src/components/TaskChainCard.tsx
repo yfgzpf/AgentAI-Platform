@@ -139,17 +139,17 @@ export const TaskChainCard: React.FC<Props> = ({
       title={
         <Space size={4}>
           {needsApproval ? <ExclamationCircleOutlined style={{ color: '#e8a838' }} /> : <ThunderboltOutlined style={{ color: '#58a6ff' }} />}
-          <span style={{ fontSize: 12, fontWeight: 600 }}>
+          <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600 }}>
             {needsApproval ? '任务规划 — 等待确认' : '任务编排'}
           </span>
-          {chainId && <Tag style={{ fontSize: 9 }}>#{chainId.slice(0, 8)}</Tag>}
-          {needsApproval && <Tag color="orange" style={{ fontSize: 9 }}>需审批</Tag>}
+          {chainId && <Tag style={{ fontSize: 'var(--fs-micro)' }}>#{chainId.slice(0, 8)}</Tag>}
+          {needsApproval && <Tag color="orange" style={{ fontSize: 'var(--fs-micro)' }}>需审批</Tag>}
         </Space>
       }
     >
       {/* Goal */}
       {goal && (
-        <div style={{ fontSize: 12, color: '#c9d1d9', marginBottom: 8, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 'var(--fs-sm)', color: '#c9d1d9', marginBottom: 8, lineHeight: 1.4 }}>
           {goal.length > 80 ? goal.slice(0, 80) + '...' : goal}
         </div>
       )}
@@ -176,12 +176,12 @@ export const TaskChainCard: React.FC<Props> = ({
                 opacity: stageStatuses[i] === 'pending' ? 0.5 : 1,
                 border: isActive ? `1px solid ${needsApproval ? '#e8a838' : '#58a6ff'}` : undefined,
                 margin: 0,
-                fontSize: 10,
+                fontSize: 'var(--fs-micro)',
               }}
             >
               {def.icon}
               <span style={{ marginLeft: 2 }}>{def.label}</span>
-              {stageStatuses[i] === 'running' && <LoadingOutlined style={{ marginLeft: 3, fontSize: 9 }} />}
+              {stageStatuses[i] === 'running' && <LoadingOutlined style={{ marginLeft: 3, fontSize: 'var(--fs-micro)' }} />}
             </Tag>
           );
         })}
@@ -197,7 +197,7 @@ export const TaskChainCard: React.FC<Props> = ({
           alignItems: 'center',
           justifyContent: 'space-between',
         }}>
-          <span style={{ fontSize: 12, color: '#e8a838' }}>
+          <span style={{ fontSize: 'var(--fs-sm)', color: '#e8a838' }}>
             📋 此任务规划需要确认后执行
           </span>
           <Space>

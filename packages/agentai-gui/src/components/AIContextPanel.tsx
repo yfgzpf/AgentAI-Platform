@@ -33,26 +33,26 @@ export const AIContextPanel: React.FC<Props> = ({
       style={{
         display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
         padding: '6px 8px', borderRadius: 6,
-        fontSize: 11, color: 'var(--fg-2)',
+        fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
         background: 'transparent', userSelect: 'none',
       }}
       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--panel)'; }}
       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
     >
-      <AimOutlined style={{ fontSize: 12, color: 'var(--accent)', flexShrink: 0 }} />
+      <AimOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--accent)', flexShrink: 0 }} />
       <span style={{ fontWeight: 500 }}>AI 运行上下文</span>
       <span style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? 'var(--success)' : 'var(--muted-2)', display: 'inline-block', flexShrink: 0 }} />
       {contextTokens > 0 && (
-        <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
           {(contextTokens / 1000).toFixed(0)}K
         </span>
       )}
       {activeModel && (
-        <Tag style={{ fontSize: 9, borderRadius: 2, margin: 0, border: 'none', lineHeight: '16px', padding: '0 4px', marginLeft: 'auto' }}>
+        <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 2, margin: 0, border: 'none', lineHeight: '16px', padding: '0 4px', marginLeft: 'auto' }}>
           {activeModel}
         </Tag>
       )}
-      <span style={{ fontSize: 10, color: 'var(--muted-2)', flexShrink: 0 }}>
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flexShrink: 0 }}>
         {collapsed ? <RightOutlined /> : <DownOutlined />}
       </span>
     </div>
@@ -67,26 +67,26 @@ export const AIContextPanel: React.FC<Props> = ({
       {summaryRow}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '0 8px 4px' }}>
         <div>
-          <div style={{ fontSize: 9, color: 'var(--muted-2)', marginBottom: 2 }}>当前任务</div>
-          <div style={{ fontSize: 11, color: 'var(--fg-2)', padding: '4px 8px', background: 'var(--bg-2)', borderRadius: 4, minHeight: 20 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2 }}>当前任务</div>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', padding: '4px 8px', background: 'var(--bg-2)', borderRadius: 4, minHeight: 20 }}>
             {currentTask || <span style={{ color: 'var(--muted-2)', fontStyle: 'italic' }}>等待任务...</span>}
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
           <div style={{ padding: '4px 6px', background: 'var(--bg-2)', borderRadius: 4 }}>
-            <div style={{ fontSize: 9, color: 'var(--muted-2)' }}>消息数</div>
-            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-2)' }}>{msgCount}</div>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>消息数</div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--fg-2)' }}>{msgCount}</div>
           </div>
           <div style={{ padding: '4px 6px', background: 'var(--bg-2)', borderRadius: 4 }}>
-            <div style={{ fontSize: 9, color: 'var(--muted-2)' }}>推理步数</div>
-            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-2)' }}>{reasoningSteps}</div>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>推理步数</div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--fg-2)' }}>{reasoningSteps}</div>
           </div>
         </div>
 
         {contextTokens > 0 && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--muted-2)', marginBottom: 2 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 2 }}>
               <span><CodeOutlined style={{ marginRight: 2 }} />上下文用量</span>
               <span>{(contextTokens / 1000).toFixed(0)}K / {(maxContextTokens / 1000).toFixed(0)}K</span>
             </div>
@@ -95,13 +95,13 @@ export const AIContextPanel: React.FC<Props> = ({
         )}
 
         {activeModel && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--muted-2)' }}>
-            <ThunderboltOutlined style={{ fontSize: 10 }} />
-            <span>模型: <Tag style={{ fontSize: 9, borderRadius: 2, margin: 0 }}>{activeModel}</Tag></span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
+            <ThunderboltOutlined style={{ fontSize: 'var(--fs-micro)' }} />
+            <span>模型: <Tag style={{ fontSize: 'var(--fs-micro)', borderRadius: 2, margin: 0 }}>{activeModel}</Tag></span>
           </div>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: 'var(--muted-2)', borderTop: '1px solid var(--border)', paddingTop: 4, marginTop: 2 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', borderTop: '1px solid var(--border)', paddingTop: 4, marginTop: 2 }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: isActive ? 'var(--success)' : 'var(--muted-2)', display: 'inline-block' }} />
           {currentTask ? '处理中' : '空闲'}
         </div>

@@ -164,7 +164,7 @@ export function GovernorPanel() {
             {TIER_LABELS[record.dynamicTier]}
           </Tag>
           {record.tierChanged && (
-            <Text type="secondary" style={{ fontSize: 11 }}>
+            <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>
               原: {TIER_LABELS[record.staticTier]}
             </Text>
           )}
@@ -314,7 +314,7 @@ export function GovernorPanel() {
             {circuitEvents.length === 0 ? (
               <Empty description="无熔断事件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : (
-              <div style={{ maxHeight: 120, overflow: 'auto', fontSize: 12 }}>
+              <div style={{ maxHeight: 120, overflow: 'auto', fontSize: 'var(--fs-sm)' }}>
                 {circuitEvents.slice(0, 8).map((e, i) => (
                   <div key={i} style={{ padding: '2px 0', borderBottom: '1px solid var(--border)' }}>
                     <Tag color="red">熔断</Tag>
@@ -364,7 +364,7 @@ export function GovernorPanel() {
       {/* 手动操作区 */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>手动控制:</span>
+          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>手动控制:</span>
           {report.models.slice(0, 4).map(m => (
             <Tooltip key={m.modelId} title={`${m.label}: 当前 ${TIER_LABELS[m.dynamicTier]}`}>
               <Button size="small" icon={<PauseCircleOutlined />}
@@ -420,7 +420,7 @@ export function GovernorPanel() {
 
       {/* 说明 */}
       <Card size="small" style={{ marginTop: 16 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>
           ◎ 系统管控员 AI 自动收集每次对话的运行时数据 (成功率/工具调用/质量分/延迟),
           通过 EMA 平滑算法维护「模型 × 任务类型」动态能力矩阵。
           运行时表现可动态升降模型能力等级 (自主/引导/监督), 并影响路由决策。

@@ -17,11 +17,11 @@ export const IdentityAvatarSelector: React.FC<Props> = ({ selected, onSelect, on
 
   return (
     <div style={{ textAlign: 'center', animation: 'fadeIn 0.4s ease' }}>
-      <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>
+      <div style={{ fontSize: 'var(--fs-md)', color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>
         选择你的形象
       </div>
       <div style={{
-        fontSize: 12, color: 'rgba(255,255,255,0.3)', marginBottom: 24,
+        fontSize: 'var(--fs-sm)', color: 'rgba(255,255,255,0.3)', marginBottom: 24,
       }}>
         这将作为你在 AI 世界中的身份标识
       </div>
@@ -77,7 +77,7 @@ export const IdentityAvatarSelector: React.FC<Props> = ({ selected, onSelect, on
       {/* 已选提示 */}
       {selected && (
         <div style={{
-          fontSize: 13, color: 'rgba(255,255,255,0.7)', marginBottom: 20,
+          fontSize: 'var(--fs-md)', color: 'rgba(255,255,255,0.7)', marginBottom: 20,
           padding: '8px 16px', borderRadius: 20,
           background: 'rgba(99,102,241,0.12)',
           border: '1px solid rgba(99,102,241,0.25)',
@@ -93,7 +93,7 @@ export const IdentityAvatarSelector: React.FC<Props> = ({ selected, onSelect, on
         onClick={onNext}
         style={{
           background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-          border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 16,
+          border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 'var(--fs-lg)',
           boxShadow: '0 4px 16px rgba(99,102,241,0.4)',
           transition: 'all 0.25s ease',
         }}

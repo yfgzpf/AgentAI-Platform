@@ -297,7 +297,7 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
       {checking ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <Spin size="large" />
-          <div style={{ marginTop: 14, color: 'var(--muted)', fontSize: 13 }}>
+          <div style={{ marginTop: 14, color: 'var(--muted)', fontSize: 'var(--fs-md)' }}>
             正在检测 7 项运行环境依赖...
           </div>
           <Steps
@@ -327,7 +327,7 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
             showIcon
             message={`检测到 ${pendingDeps.length} 项未就绪${autoInstallablePending.length > 0 ? `（${autoInstallablePending.length} 项可一键自动安装）` : ''}`}
             description={
-              <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+              <div style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.8 }}>
                 <div>✅ 可自动安装项：{deps.filter(d => d.autoInstall).length} 项（Gateway 依赖 / Playwright Chromium）</div>
                 <div>📦 系统安装包：{deps.filter(d => !d.autoInstall && d.downloadUrl).length} 项（Node.js / Python / Git / WebView2）</div>
                 <div>📁 目录校验：skills-check（确认打包时已包含 agentai-skills/）</div>
@@ -341,7 +341,7 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
               type="error"
               showIcon
               message="自动安装失败"
-              description={<span style={{ fontSize: 12 }}>{lastError}</span>}
+              description={<span style={{ fontSize: 'var(--fs-sm)' }}>{lastError}</span>}
               style={{ marginBottom: 12 }}
               closable
               onClose={() => setLastError('')}
@@ -368,22 +368,22 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
                   }}
                 >
                   <span style={{
-                    fontSize: 18,
+                    fontSize: 'var(--fs-lg)',
                     color: dep.installed ? 'var(--success)' : 'var(--danger)',
                     minWidth: 20,
                   }}>
                     {dep.installed ? <CheckCircleFilled /> : <CloseCircleFilled />}
                   </span>
-                  <span style={{ fontSize: 16, color: 'var(--accent)', minWidth: 22 }}>{dep.icon}</span>
+                  <span style={{ fontSize: 'var(--fs-lg)', color: 'var(--accent)', minWidth: 22 }}>{dep.icon}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>
+                    <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--fg)' }}>
                       {dep.label}
                       {dep.autoInstall && !dep.installed && (
                         <Tag color="processing" style={{ marginLeft: 8 }}>可自动安装</Tag>
                       )}
                     </div>
                     {dep.installed && dep.version && (
-                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>
                         已安装: {dep.version}
                       </div>
                     )}
@@ -409,10 +409,10 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
               border: '1px solid var(--border)',
             }}
           >
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: 'var(--fg)' }}>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, marginBottom: 8, color: 'var(--fg)' }}>
               <Space>{deps[current].icon}{deps[current].label}</Space>
             </div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.7 }}>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 12, lineHeight: 1.7 }}>
               {deps[current].installGuide}
               {deps[current].category === 'required-check' && deps[current].installed === false && (
                 <div style={{ marginTop: 6, color: 'var(--danger)' }}>
@@ -460,11 +460,11 @@ export const SetupWizard: React.FC<{ visible: boolean; onClose: () => void }> = 
 
           {/* 跳过 & 底部 */}
           <div style={{ textAlign: 'center' }}>
-            <Text type="secondary" style={{ fontSize: 11 }}>
+            <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>
               环境缺失时部分功能不可用；后续可在「设置」→「环境自检」随时重跑
             </Text>
             <br />
-            <Button type="link" onClick={onClose} style={{ fontSize: 11, color: 'var(--muted)' }}>
+            <Button type="link" onClick={onClose} style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>
               暂时跳过（仅体验 UI）
             </Button>
           </div>

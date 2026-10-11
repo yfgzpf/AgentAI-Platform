@@ -214,7 +214,7 @@ export const StatusBar: React.FC = () => {
   const qqTooltip = () => {
     if (!qqData) return 'QQ Bot: 未配置';
     return (
-      <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 'var(--fs-micro)', lineHeight: 1.6 }}>
         <div><b>QQ Bot 状态</b></div>
         <div>状态: {qqData.online ? '✅ 在线' : '❌ 离线'}</div>
         <div>客户端: {qqData.clientConnected ? '已连接' : '未连接'}</div>
@@ -222,7 +222,7 @@ export const StatusBar: React.FC = () => {
         {qqData.lastSeen > 0 && (
           <div>最后活跃: {new Date(qqData.lastSeen).toLocaleTimeString()}</div>
         )}
-        <div style={{ marginTop: 4, color: 'var(--muted-2)', fontSize: 10 }}>
+        <div style={{ marginTop: 4, color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
           每 30 秒自动检测 · 超时 45 秒判离线
         </div>
       </div>
@@ -232,14 +232,14 @@ export const StatusBar: React.FC = () => {
   const wxTooltip = () => {
     if (!wxData) return '微信: 未配置';
     return (
-      <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 'var(--fs-micro)', lineHeight: 1.6 }}>
         <div><b>微信状态</b></div>
         <div>绑定: {wxData.bound ? '✅ 已绑定' : '❌ 未绑定'}</div>
         {wxData.accountId && <div>账号: {wxData.accountId}</div>}
         {wxData.createdAt && (
           <div>绑定于: {new Date(wxData.createdAt).toLocaleDateString()}</div>
         )}
-        <div style={{ marginTop: 4, color: 'var(--muted-2)', fontSize: 10 }}>
+        <div style={{ marginTop: 4, color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
           每 30 秒自动检测
         </div>
       </div>
@@ -284,7 +284,7 @@ export const StatusBar: React.FC = () => {
       <Tooltip title={qqTooltip} mouseEnterDelay={0.3}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 8, cursor: 'pointer' }}>
           {statusDot(qq, 'var(--accent)')}
-          <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>QQ</span>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>QQ</span>
         </span>
       </Tooltip>
 
@@ -292,7 +292,7 @@ export const StatusBar: React.FC = () => {
       <Tooltip title={wxTooltip} mouseEnterDelay={0.3}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, cursor: 'pointer' }}>
           {statusDot(wx, 'var(--success)')}
-          <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>微信</span>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>微信</span>
         </span>
       </Tooltip>
 
@@ -311,8 +311,8 @@ export const StatusBar: React.FC = () => {
       {dash.confidence != null && (
         <Tooltip title={`AI 置信度: ${dash.confidence}%`} mouseEnterDelay={0.3}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>置信</span>
-            <span style={{ fontSize: 10, fontWeight: 700, color: confColor }}>{confLabel}</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>置信</span>
+            <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 700, color: confColor }}>{confLabel}</span>
           </span>
         </Tooltip>
       )}
@@ -321,8 +321,8 @@ export const StatusBar: React.FC = () => {
       {dash.intent && (
         <Tooltip title={`AI 理解的意图: ${dash.intent}`} mouseEnterDelay={0.3}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>意图</span>
-            <span style={{ fontSize: 10, color: 'var(--fg-2)', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>意图</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {dash.intent}
             </span>
           </span>
@@ -333,8 +333,8 @@ export const StatusBar: React.FC = () => {
       {dash.planProgress && (
         <Tooltip title={`任务计划进度: ${dash.planProgress}`} mouseEnterDelay={0.3}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>计划</span>
-            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--violet)' }}>{dash.planProgress}</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>计划</span>
+            <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--violet)' }}>{dash.planProgress}</span>
           </span>
         </Tooltip>
       )}
@@ -343,8 +343,8 @@ export const StatusBar: React.FC = () => {
       {mood && mood.intensity > 0.2 && (
         <Tooltip title={`AI 心境: ${mood.label} (${Math.round(mood.intensity * 100)}%)`} mouseEnterDelay={0.3}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help', marginLeft: 4 }}>
-            <span style={{ fontSize: 12 }}>{mood.emoji}</span>
-            <span style={{ fontSize: 10, color: mood.color }}>{mood.label}</span>
+            <span style={{ fontSize: 'var(--fs-sm)' }}>{mood.emoji}</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: mood.color }}>{mood.label}</span>
           </span>
         </Tooltip>
       )}
@@ -363,8 +363,8 @@ export const StatusBar: React.FC = () => {
       {dash.cost && (
         <Tooltip title={`本次对话费用: ${dash.cost}`} mouseEnterDelay={0.3}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}>
-            <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>费用</span>
-            <span style={{ fontSize: 10, color: 'var(--warning)' }}>{dash.cost}</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>费用</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--warning)' }}>{dash.cost}</span>
           </span>
         </Tooltip>
       )}
@@ -372,7 +372,7 @@ export const StatusBar: React.FC = () => {
       {/* 当前模型 */}
       {dash.model && (
         <Tooltip title={`当前模型: ${dash.model}`} mouseEnterDelay={0.3}>
-          <span style={{ fontSize: 10, color: 'var(--accent)', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {dash.model}
           </span>
         </Tooltip>
@@ -384,7 +384,7 @@ export const StatusBar: React.FC = () => {
       {/* 用量统计 */}
       <Tooltip 
         title={
-          <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', lineHeight: 1.6 }}>
             <div><b>今日用量</b></div>
             <div>Token: {formatTokens(stats.tokensToday)}</div>
             <div>费用: {formatCost(stats.costToday)}</div>
@@ -401,22 +401,22 @@ export const StatusBar: React.FC = () => {
         mouseEnterDelay={0.3}
       >
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'help' }}>
-          <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>今日</span>
-          <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>{formatTokens(stats.tokensToday)}</span>
-          <span style={{ fontSize: 10, color: 'var(--warning)' }}>{formatCost(stats.costToday)}</span>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>今日</span>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)' }}>{formatTokens(stats.tokensToday)}</span>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--warning)' }}>{formatCost(stats.costToday)}</span>
         </span>
       </Tooltip>
 
       {/* 账户状态 (密钥制) */}
       <Tooltip
         title={
-          <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', lineHeight: 1.6 }}>
             <div><b>账户状态</b></div>
             <div style={{ color: isActivated ? 'var(--success)' : 'var(--muted-2)', fontWeight: 600 }}>
               {isActivated ? '已激活' : '未激活'}
             </div>
             {!isActivated && (
-              <div style={{ marginTop: 4, borderTop: '1px solid var(--border)', paddingTop: 4, fontSize: 10 }}>
+              <div style={{ marginTop: 4, borderTop: '1px solid var(--border)', paddingTop: 4, fontSize: 'var(--fs-micro)' }}>
                 点击前往设置添加密钥
               </div>
             )}
@@ -428,11 +428,11 @@ export const StatusBar: React.FC = () => {
           onClick={() => window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'settings' as any } }))}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
         >
-          <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
             {isActivated ? '🔑' : '🔒'}
           </span>
           <span style={{ 
-            fontSize: 10, 
+            fontSize: 'var(--fs-micro)', 
             color: isActivated ? 'var(--success)' : 'var(--warning)', 
             fontWeight: 600 
           }}>
@@ -449,7 +449,7 @@ export const StatusBar: React.FC = () => {
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 4,
           cursor: 'pointer', color: musicOpen ? 'var(--accent)' : 'var(--muted-2)',
-          marginRight: 8, fontSize: 12,
+          marginRight: 8, fontSize: 'var(--fs-sm)',
           animation: musicPlaying ? 'musicPulse 1.5s ease-in-out infinite' : undefined,
         }}
         title="音乐播放器"
@@ -468,10 +468,10 @@ export const StatusBar: React.FC = () => {
           maxWidth: 280,
           zIndex: 'var(--z-modal)',
         }}>
-          <div style={{ fontSize: 12, color: 'var(--fg)', marginBottom: 4 }}>
+          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg)', marginBottom: 4 }}>
             🎵 背景音乐已自动播放
           </div>
-          <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
             点击右下角 ♪ 图标可控制播放器
           </div>
           <button
@@ -479,7 +479,7 @@ export const StatusBar: React.FC = () => {
             style={{
               marginTop: 8, padding: '2px 8px', borderRadius: 4,
               background: 'var(--accent)', color: 'var(--fg)',
-              border: 'none', fontSize: 10, cursor: 'pointer',
+              border: 'none', fontSize: 'var(--fs-micro)', cursor: 'pointer',
             }}
           >
             知道了

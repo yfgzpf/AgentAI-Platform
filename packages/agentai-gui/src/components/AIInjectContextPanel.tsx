@@ -137,19 +137,19 @@ export const AIInjectContextPanel: React.FC = () => {
       style={{
         display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
         padding: '6px 8px', borderRadius: 6,
-        fontSize: 11, color: 'var(--fg-2)',
+        fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
         background: 'transparent', userSelect: 'none',
       }}
       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--panel)'; }}
       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
     >
-      <CodeOutlined style={{ fontSize: 12, color: 'var(--accent)', flexShrink: 0 }} />
+      <CodeOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--accent)', flexShrink: 0 }} />
       <span style={{ fontWeight: 500 }}>AI 上下文注入</span>
-      <span style={{ fontSize: 10, color: 'var(--muted-2)', marginLeft: 'auto' }}>
-        {injectedFiles.length > 0 && <Tag style={{ fontSize: 9, marginRight: 4, padding: '0 4px', lineHeight: '14px' }}>{injectedFiles.length} 文件</Tag>}
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginLeft: 'auto' }}>
+        {injectedFiles.length > 0 && <Tag style={{ fontSize: 'var(--fs-micro)', marginRight: 4, padding: '0 4px', lineHeight: '14px' }}>{injectedFiles.length} 文件</Tag>}
         {rules.filter(r => r.enabled).length}/{rules.length} 启用
       </span>
-      <span style={{ fontSize: 10, color: 'var(--muted-2)', flexShrink: 0 }}>
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flexShrink: 0 }}>
         {collapsed ? <RightOutlined /> : <DownOutlined />}
       </span>
     </div>
@@ -170,7 +170,7 @@ export const AIInjectContextPanel: React.FC = () => {
           styles={{ body: { padding: 0, background: 'var(--bg)' } }}
         >
           {previewFile && (
-            <div style={{ padding: 16, fontSize: 13, lineHeight: 1.6 }}>
+            <div style={{ padding: 16, fontSize: 'var(--fs-md)', lineHeight: 1.6 }}>
               <ReactMarkdown>{previewFile.content}</ReactMarkdown>
             </div>
           )}
@@ -185,8 +185,8 @@ export const AIInjectContextPanel: React.FC = () => {
       
       {/* 项目文档文件状态 */}
       <div style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--fg)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <FileTextOutlined style={{ fontSize: 12 }} />
+        <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 500, color: 'var(--fg)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <FileTextOutlined style={{ fontSize: 'var(--fs-sm)' }} />
           项目说明文件
           <Space size="small" style={{ marginLeft: 'auto' }}>
             <Tooltip title="审查项目并生成文件">
@@ -195,7 +195,7 @@ export const AIInjectContextPanel: React.FC = () => {
                 icon={<FileAddOutlined />}
                 loading={loading}
                 onClick={() => callAutoProjectDoc('review')}
-                style={{ fontSize: 10 }}
+                style={{ fontSize: 'var(--fs-micro)' }}
               >
                 审查
               </Button>
@@ -205,7 +205,7 @@ export const AIInjectContextPanel: React.FC = () => {
                 size="small"
                 icon={<SyncOutlined />}
                 onClick={fetchDocStatus}
-                style={{ fontSize: 10 }}
+                style={{ fontSize: 'var(--fs-micro)' }}
               />
             </Tooltip>
           </Space>
@@ -224,28 +224,28 @@ export const AIInjectContextPanel: React.FC = () => {
                       <Button
                         type="text"
                         size="small"
-                        icon={<EyeOutlined style={{ fontSize: 12 }} />}
+                        icon={<EyeOutlined style={{ fontSize: 'var(--fs-sm)' }} />}
                         onClick={() => previewDocFile(item.id)}
                         style={{ padding: '0 4px', height: 20 }}
                       />
                     </Tooltip>
                   )
                 ].filter(Boolean)}
-                style={{ padding: '4px 0', fontSize: 11 }}
+                style={{ padding: '4px 0', fontSize: 'var(--fs-micro)' }}
               >
                 <List.Item.Meta
                   avatar={
                     exists 
-                      ? <CheckCircleOutlined style={{ color: 'var(--success)', fontSize: 12 }} />
-                      : <CloseCircleOutlined style={{ color: 'var(--danger)', fontSize: 12 }} />
+                      ? <CheckCircleOutlined style={{ color: 'var(--success)', fontSize: 'var(--fs-sm)' }} />
+                      : <CloseCircleOutlined style={{ color: 'var(--danger)', fontSize: 'var(--fs-sm)' }} />
                   }
                   title={
-                    <span style={{ fontSize: 11, color: exists ? 'var(--fg)' : 'var(--muted)' }}>
+                    <span style={{ fontSize: 'var(--fs-micro)', color: exists ? 'var(--fg)' : 'var(--muted)' }}>
                       {item.name}
                     </span>
                   }
                   description={
-                    <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+                    <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                       {item.desc} · {status ? formatTime(status.lastModified) : '未知'}
                     </div>
                   }
@@ -259,16 +259,16 @@ export const AIInjectContextPanel: React.FC = () => {
       {/* 已注入的文件列表 */}
       {injectedFiles.length > 0 && (
         <div style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--fg)', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 500, color: 'var(--fg)', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>
-              <LinkOutlined style={{ fontSize: 12, marginRight: 4 }} />
+              <LinkOutlined style={{ fontSize: 'var(--fs-sm)', marginRight: 4 }} />
               已注入文件 ({injectedFiles.length})
             </span>
             <Button
               type="text"
               size="small"
               danger
-              style={{ fontSize: 10, padding: '0 4px', height: 20 }}
+              style={{ fontSize: 'var(--fs-micro)', padding: '0 4px', height: 20 }}
               onClick={clearInjectedFiles}
             >
               清空
@@ -284,17 +284,17 @@ export const AIInjectContextPanel: React.FC = () => {
                     <Button
                       type="text"
                       size="small"
-                      icon={<DeleteOutlined style={{ fontSize: 12, color: 'var(--danger)' }} />}
+                      icon={<DeleteOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--danger)' }} />}
                       onClick={() => removeInjectedFile(item.path)}
                       style={{ padding: '0 4px', height: 20 }}
                     />
                   </Tooltip>
                 ]}
-                style={{ padding: '2px 0', fontSize: 10 }}
+                style={{ padding: '2px 0', fontSize: 'var(--fs-micro)' }}
               >
-                <FileOutlined style={{ fontSize: 10, color: 'var(--accent)', marginRight: 4 }} />
+                <FileOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)', marginRight: 4 }} />
                 <span style={{ 
-                  fontSize: 10, 
+                  fontSize: 'var(--fs-micro)', 
                   color: 'var(--fg-2)',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -311,8 +311,8 @@ export const AIInjectContextPanel: React.FC = () => {
 
       {/* 传统上下文注入规则 */}
       <div style={{ paddingTop: 8 }}>
-        <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--fg)', marginBottom: 8 }}>
-          <CodeOutlined style={{ fontSize: 12, marginRight: 4 }} />
+        <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 500, color: 'var(--fg)', marginBottom: 8 }}>
+          <CodeOutlined style={{ fontSize: 'var(--fs-sm)', marginRight: 4 }} />
           自动上下文注入
         </div>
         <List
@@ -327,12 +327,12 @@ export const AIInjectContextPanel: React.FC = () => {
                   onChange={(v) => setContextInject(item.id as any, v)}
                 />
               ]}
-              style={{ padding: '4px 0', fontSize: 11 }}
+              style={{ padding: '4px 0', fontSize: 'var(--fs-micro)' }}
             >
               <List.Item.Meta
-                avatar={<span style={{ fontSize: 12, color: 'var(--muted)' }}>{getIcon(item.type)}</span>}
-                title={<span style={{ fontSize: 11 }}>{item.name}</span>}
-                description={<Tag style={{ fontSize: 9, margin: 0 }}>{item.pattern}</Tag>}
+                avatar={<span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>{getIcon(item.type)}</span>}
+                title={<span style={{ fontSize: 'var(--fs-micro)' }}>{item.name}</span>}
+                description={<Tag style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>{item.pattern}</Tag>}
               />
             </List.Item>
           )}
@@ -349,7 +349,7 @@ export const AIInjectContextPanel: React.FC = () => {
         styles={{ body: { padding: 0, background: 'var(--bg)' } }}
       >
         {previewFile && (
-          <div style={{ padding: 16, fontSize: 13, lineHeight: 1.6 }}>
+          <div style={{ padding: 16, fontSize: 'var(--fs-md)', lineHeight: 1.6 }}>
             <ReactMarkdown>{previewFile.content}</ReactMarkdown>
           </div>
         )}

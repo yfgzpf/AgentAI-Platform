@@ -220,7 +220,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                 label: (
                   <Space>
                     <span>{m.label}</span>
-                    <Tag color={m.cost === '免费' ? 'green' : 'orange'} style={{ fontSize: 10 }}>
+                    <Tag color={m.cost === '免费' ? 'green' : 'orange'} style={{ fontSize: 'var(--fs-micro)' }}>
                       {m.cost}
                     </Tag>
                   </Space>
@@ -309,7 +309,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                           color: '#fff',
                           padding: '2px 8px',
                           borderRadius: 4,
-                          fontSize: 12,
+                          fontSize: 'var(--fs-sm)',
                           whiteSpace: 'nowrap',
                         }}>
                           {element.name}
@@ -393,7 +393,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                 borderRadius: 8,
                 marginBottom: 12,
               }}>
-                <div style={{ fontSize: 12, color: '#666' }}>{selectedElement.description}</div>
+                <div style={{ fontSize: 'var(--fs-sm)', color: '#666' }}>{selectedElement.description}</div>
               </div>
 
               <TextArea
@@ -405,7 +405,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
               />
 
               <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>快捷修改：</div>
+                <div style={{ fontSize: 'var(--fs-sm)', color: '#999', marginBottom: 8 }}>快捷修改：</div>
                 <Space wrap>
                   {QUICK_EDITS.map(({ label, template }) => (
                     <Tag 
@@ -459,8 +459,8 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                       }}
                     >
                       <div style={{ width: '100%' }}>
-                        <div style={{ fontSize: 12, marginBottom: 4 }}>{item.changeDesc}</div>
-                        <div style={{ fontSize: 10, color: '#999' }}>
+                        <div style={{ fontSize: 'var(--fs-sm)', marginBottom: 4 }}>{item.changeDesc}</div>
+                        <div style={{ fontSize: 'var(--fs-micro)', color: '#999' }}>
                           {new Date(item.timestamp).toLocaleTimeString()}
                           {item.cost && ` · ¥${item.cost}`}
                         </div>

@@ -117,7 +117,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
           borderLeft: '3px solid var(--accent)',
         }}
       >
-        <Text type="secondary" style={{ fontSize: 12 }}>您的输入：</Text>
+        <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>您的输入：</Text>
         <div style={{ marginTop: 4, color: 'var(--fg)' }}>{request.originalMessage}</div>
       </div>
 
@@ -125,11 +125,11 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
       <Space direction="vertical" style={{ width: '100%' }} size="large">
         {request.questions.map((q, idx) => (
           <div key={q.id} style={{ width: '100%' }}>
-            <Title level={5} style={{ margin: '0 0 8px 0', fontSize: 14 }}>
+            <Title level={5} style={{ margin: '0 0 8px 0', fontSize: 'var(--fs-md)' }}>
               {idx + 1}. {q.question}
             </Title>
             {q.context && (
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+              <Text type="secondary" style={{ fontSize: 'var(--fs-sm)', display: 'block', marginBottom: 8 }}>
                 {q.context}
               </Text>
             )}
@@ -176,7 +176,7 @@ export const ClarificationCard: React.FC<Props> = ({ request, onResolved }) => {
 
       {/* 提交按钮 */}
       <div style={{ marginTop: 20, textAlign: 'right' }}>
-        <span style={{ fontSize: 11, color: 'var(--muted)', marginRight: 12 }}>按 Enter 快速发送</span>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginRight: 12 }}>按 Enter 快速发送</span>
         <Button
           type="primary"
           icon={<CheckOutlined />}

@@ -48,7 +48,7 @@ export const EmotionIndicator: React.FC<Props> = ({
       <span style={{ fontSize: compact ? 10 : 12, lineHeight: 1 }}>{emoji}</span>
       {!compact && (
         <>
-          <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>{label}</span>
+          <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>{label}</span>
           {/* Intensity bar */}
           <span style={{
             width: 24, height: 3, borderRadius: 2,

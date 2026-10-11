@@ -143,7 +143,7 @@ export const ExternalConnectionsPanel: React.FC = () => {
             >
               <Space direction="vertical" size="small" style={{ width: '100%' }}>
                 <Text>{conn.description}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{conn.details}</Text>
+                <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>{conn.details}</Text>
               </Space>
             </Card>
           </Col>

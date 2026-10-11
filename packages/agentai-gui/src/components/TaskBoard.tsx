@@ -211,8 +211,8 @@ export const TaskBoard: React.FC = () => {
           { label: '失败', key: 'failed', color: '#ff4d4f' },
         ].map(({ label, key, color }) => (
           <div key={key} style={{ flex: 1, textAlign: 'center', padding: '4px 8px', background: `${color}20`, borderRadius: 4 }}>
-            <div style={{ fontSize: 16, fontWeight: 600, color }}>{counts[key as keyof TaskCounts]}</div>
-            <div style={{ fontSize: 12, color: '#888' }}>{label}</div>
+            <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, color }}>{counts[key as keyof TaskCounts]}</div>
+            <div style={{ fontSize: 'var(--fs-sm)', color: '#888' }}>{label}</div>
           </div>
         ))}
       </div>
@@ -231,7 +231,7 @@ export const TaskBoard: React.FC = () => {
           description={
             <List size="small" dataSource={nextSteps} renderItem={step => (
               <List.Item>
-                <Text style={{ fontSize: 12 }}>{step}</Text>
+                <Text style={{ fontSize: 'var(--fs-sm)' }}>{step}</Text>
                 <ArrowRightOutlined style={{ marginLeft: 8, color: '#1677ff' }} />
               </List.Item>
             )} />
@@ -243,7 +243,7 @@ export const TaskBoard: React.FC = () => {
       {/* 任务列表 */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: 20 }}>
-          <LoadingOutlined style={{ fontSize: 24 }} />
+          <LoadingOutlined style={{ fontSize: 'var(--fs-xl)' }} />
         </div>
       ) : tasks.length === 0 ? (
         <Empty description="暂无任务" />
@@ -292,19 +292,19 @@ export const TaskBoard: React.FC = () => {
                       <Text strong>{task.title}</Text>
                       <Tag color={cfg.color}>{cfg.label}</Tag>
                       {task.tags.map(tag => (
-                        <Tag key={tag} style={{ fontSize: 10 }}>{tag}</Tag>
+                        <Tag key={tag} style={{ fontSize: 'var(--fs-micro)' }}>{tag}</Tag>
                       ))}
                     </Space>
                   }
                   description={
                     <div>
-                      {task.description && <Text type="secondary" style={{ fontSize: 12 }}>{task.description}</Text>}
+                      {task.description && <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>{task.description}</Text>}
                       {task.result && (
-                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+                        <Text type="secondary" style={{ fontSize: 'var(--fs-micro)', display: 'block', marginTop: 2 }}>
                           结果: {(task.result as string).slice(0, 100)}...
                         </Text>
                       )}
-                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 2 }}>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)', display: 'block', marginTop: 2 }}>
                         {new Date(task.createdAt).toLocaleString()}
                       </Text>
                     </div>

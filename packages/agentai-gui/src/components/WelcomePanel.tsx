@@ -129,17 +129,17 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({ handleSend }) => {
 
       {/* 品牌名 — 小字, 弱化存在感 */}
       <div style={{
-        fontSize: 12, fontWeight: 600, letterSpacing: 3, textTransform: 'uppercase',
+        fontSize: 'var(--fs-sm)', fontWeight: 600, letterSpacing: 3, textTransform: 'uppercase',
         color: 'var(--muted-2)', marginTop: 16,
       }}>
         PulseFlow
       </div>
 
       {/* 标题 + 副标题 */}
-      <div style={{ fontSize: 24, fontWeight: 700, marginTop: 10, color: 'var(--fg)', letterSpacing: 0.3 }}>
+      <div style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, marginTop: 10, color: 'var(--fg)', letterSpacing: 0.3 }}>
         {title}
       </div>
-      <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 8, marginBottom: 32 }}>
+      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--muted)', marginTop: 8, marginBottom: 32 }}>
         {subtitle}
       </div>
 
@@ -159,7 +159,7 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({ handleSend }) => {
               padding: '14px 16px', borderRadius: 12,
               background: 'var(--panel)', border: '1px solid var(--border)',
               color: 'var(--fg-2)', cursor: 'pointer', textAlign: 'left',
-              fontSize: 13, fontWeight: 500, fontFamily: 'inherit',
+              fontSize: 'var(--fs-md)', fontWeight: 500, fontFamily: 'inherit',
               transition: 'border-color 0.2s ease, transform 0.2s ease',
             }}
             onMouseEnter={e => {
@@ -171,14 +171,14 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({ handleSend }) => {
               e.currentTarget.style.transform = 'none';
             }}
           >
-            <span style={{ fontSize: 18 }}>{action.icon}</span>
+            <span style={{ fontSize: 'var(--fs-lg)' }}>{action.icon}</span>
             <span>{action.label}</span>
           </button>
         ))}
       </div>
 
       {/* 脚注提示 */}
-      <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 28 }}>
+      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 28 }}>
         Enter 发送 · Shift + Enter 换行
       </div>
     </div>

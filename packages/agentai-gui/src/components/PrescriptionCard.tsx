@@ -176,12 +176,12 @@ export default function PrescriptionCard({ content }: { content: string }) {
     border-bottom: 2px solid #1abc9c; padding-bottom: 12px; margin-bottom: 16px;
     display: flex; align-items: center; gap: 8px;
   }
-  .rx-title { font-size: 20px; font-weight: bold; color: #1abc9c; }
+  .rx-title { font-size: var(--fs-xl); font-weight: bold; color: #1abc9c; }
   .rx-section { margin-bottom: 14px; }
   .rx-label { 
     font-weight: 600; color: #555; background: #f0f9f6; 
     padding: 2px 8px; border-radius: 4px; display: inline-block; margin-bottom: 4px;
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .rx-value { padding-left: 12px; line-height: 1.6; white-space: pre-wrap; }
   .ingredient-row { 
@@ -189,24 +189,24 @@ export default function PrescriptionCard({ content }: { content: string }) {
     border-bottom: 1px dashed #eee;
   }
   .role-badge { 
-    font-size: 11px; padding: 1px 6px; border-radius: 10px; color: #fff; font-weight: 600;
+    font-size: var(--fs-micro); padding: 1px 6px; border-radius: 10px; color: #fff; font-weight: 600;
   }
   .herb-name { font-weight: 600; min-width: 70px; }
   .herb-dose { color: #e74c3c; font-weight: 500; min-width: 45px; }
-  .herb-effect { color: #666; font-size: 13px; }
+  .herb-effect { color: #666; font-size: var(--fs-md); }
   .disclaimer { 
     margin-top: 16px; padding: 10px; background: #fef9e7; 
-    border: 1px solid #f0c36d; border-radius: 6px; font-size: 12px; color: #856404;
+    border: 1px solid #f0c36d; border-radius: 6px; font-size: var(--fs-sm); color: #856404;
   }
   .rx-footer { 
-    margin-top: 20px; text-align: center; font-size: 11px; color: #999;
+    margin-top: 20px; text-align: center; font-size: var(--fs-micro); color: #999;
     border-top: 1px solid #eee; padding-top: 10px;
   }
 </style>
 </head>
 <body>
 <div class="rx-header">
-  <span style="font-size: 24px;">🏥</span>
+  <span style="font-size: var(--fs-xl);">🏥</span>
   <span class="rx-title">${rx.formulaName || '中医处方单'}</span>
 </div>
 
@@ -260,12 +260,12 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
         borderBottom: '1px solid var(--border)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <MedicineBoxOutlined style={{ color: '#1abc9c', fontSize: 18 }} />
-          <span style={{ fontWeight: 700, fontSize: 14, color: '#1abc9c' }}>
+          <MedicineBoxOutlined style={{ color: '#1abc9c', fontSize: 'var(--fs-lg)' }} />
+          <span style={{ fontWeight: 700, fontSize: 'var(--fs-md)', color: '#1abc9c' }}>
             {rx.formulaName || '中医处方单'}
           </span>
           {rx.source && (
-            <span style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--bg)', padding: '1px 6px', borderRadius: 8 }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', background: 'var(--bg)', padding: '1px 6px', borderRadius: 8 }}>
               《{rx.source}》
             </span>
           )}
@@ -276,7 +276,7 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
             className="icon-btn-sm"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '4px 10px', borderRadius: 6, fontSize: 11,
+              padding: '4px 10px', borderRadius: 6, fontSize: 'var(--fs-micro)',
               background: copied ? '#27ae60' : 'var(--bg)', color: copied ? '#fff' : 'var(--fg-2)',
               border: `1px solid ${copied ? '#27ae60' : 'var(--border)'}`, cursor: 'pointer',
               transition: 'all 0.2s',
@@ -291,7 +291,7 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
             className="icon-btn-sm"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '4px 10px', borderRadius: 6, fontSize: 11,
+              padding: '4px 10px', borderRadius: 6, fontSize: 'var(--fs-micro)',
               background: 'var(--bg)', color: 'var(--fg-2)',
               border: '1px solid var(--border)', cursor: 'pointer',
             }}
@@ -303,20 +303,20 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
       </div>
 
       {/* 卡片内容 */}
-      <div style={{ padding: '12px 14px', fontSize: 13, lineHeight: 1.7 }}>
+      <div style={{ padding: '12px 14px', fontSize: 'var(--fs-md)', lineHeight: 1.7 }}>
 
         {/* 诊断 + 治则 */}
         {(rx.diagnosis || rx.treatment) && (
           <div style={{ display: 'grid', gridTemplateColumns: rx.diagnosis && rx.treatment ? '1fr 1fr' : '1fr', gap: 12, marginBottom: 12 }}>
             {rx.diagnosis && (
               <div>
-                <div style={{ fontWeight: 600, color: '#e74c3c', fontSize: 11, marginBottom: 2 }}>【诊断】</div>
+                <div style={{ fontWeight: 600, color: '#e74c3c', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>【诊断】</div>
                 <div style={{ color: 'var(--fg)' }}>{rx.diagnosis}</div>
               </div>
             )}
             {rx.treatment && (
               <div>
-                <div style={{ fontWeight: 600, color: '#f39c12', fontSize: 11, marginBottom: 2 }}>【治则】</div>
+                <div style={{ fontWeight: 600, color: '#f39c12', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>【治则】</div>
                 <div style={{ color: 'var(--fg)' }}>{rx.treatment}</div>
               </div>
             )}
@@ -326,7 +326,7 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
         {/* 药材组成 */}
         {rx.ingredients.length > 0 && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, color: '#1abc9c', fontSize: 11, marginBottom: 6 }}>【组成】</div>
+            <div style={{ fontWeight: 600, color: '#1abc9c', fontSize: 'var(--fs-micro)', marginBottom: 6 }}>【组成】</div>
             <div style={{
               display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
               gap: 4,
@@ -339,14 +339,14 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
                   borderLeft: `3px solid ${ROLE_COLORS[ing.role] || ROLE_COLORS['成分']}`,
                 }}>
                   <span style={{
-                    fontSize: 10, padding: '1px 5px', borderRadius: 8,
+                    fontSize: 'var(--fs-micro)', padding: '1px 5px', borderRadius: 8,
                     color: '#fff', background: ROLE_COLORS[ing.role] || ROLE_COLORS['成分'],
                     fontWeight: 600, whiteSpace: 'nowrap',
                   }}>{ing.role}</span>
                   <span style={{ fontWeight: 600, minWidth: 50 }}>{ing.name}</span>
                   <span style={{ color: '#e74c3c', fontWeight: 500, fontFamily: 'monospace' }}>{ing.dose}</span>
                   {ing.effect && (
-                    <span style={{ color: 'var(--muted)', fontSize: 11, fontStyle: 'italic' }}>
+                    <span style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)', fontStyle: 'italic' }}>
                       — {ing.effect.length > 20 ? ing.effect.slice(0, 18) + '...' : ing.effect}
                     </span>
                   )}
@@ -359,23 +359,23 @@ ${rx.advice ? `<div class="rx-section"><span class="rx-label">【医嘱】</span
         {/* 煎服法 */}
         {rx.decoction && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, color: '#3498db', fontSize: 11, marginBottom: 2 }}>【煎服法】</div>
-            <div style={{ color: 'var(--fg-2)', whiteSpace: 'pre-wrap', fontSize: 12 }}>{rx.decoction}</div>
+            <div style={{ fontWeight: 600, color: '#3498db', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>【煎服法】</div>
+            <div style={{ color: 'var(--fg-2)', whiteSpace: 'pre-wrap', fontSize: 'var(--fs-sm)' }}>{rx.decoction}</div>
           </div>
         )}
 
         {/* 医嘱 */}
         {rx.advice && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, color: '#27ae60', fontSize: 11, marginBottom: 2 }}>【医嘱】</div>
-            <div style={{ color: 'var(--fg-2)', whiteSpace: 'pre-wrap', fontSize: 12 }}>{rx.advice}</div>
+            <div style={{ fontWeight: 600, color: '#27ae60', fontSize: 'var(--fs-micro)', marginBottom: 2 }}>【医嘱】</div>
+            <div style={{ color: 'var(--fg-2)', whiteSpace: 'pre-wrap', fontSize: 'var(--fs-sm)' }}>{rx.advice}</div>
           </div>
         )}
 
         {/* 免责声明 */}
         <div style={{
           padding: '8px 10px', background: '#fef9e7', border: '1px solid #f0c36d',
-          borderRadius: 4, fontSize: 11, color: '#856404', lineHeight: 1.5,
+          borderRadius: 4, fontSize: 'var(--fs-micro)', color: '#856404', lineHeight: 1.5,
         }}>
           ⚠️ {rx.disclaimer || '此辨证开方仅供参考和学习交流，不替代线下医师面诊。如症状严重或持续不缓解，请及时就医。'}
         </div>

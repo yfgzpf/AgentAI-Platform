@@ -97,8 +97,8 @@ export const WorkspaceSelector: React.FC = () => {
         key: root,
         title: (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <HddOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
-            <span style={{ fontSize: 12 }}>{root}</span>
+            <HddOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />
+            <span style={{ fontSize: 'var(--fs-sm)' }}>{root}</span>
           </span>
         ),
         isLeaf: false,
@@ -132,8 +132,8 @@ export const WorkspaceSelector: React.FC = () => {
         key: e.path,
         title: (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <FolderFilled style={{ color: '#e8a838', fontSize: 12 }} />
-            <span style={{ fontSize: 12 }}>{e.name}</span>
+            <FolderFilled style={{ color: '#e8a838', fontSize: 'var(--fs-sm)' }} />
+            <span style={{ fontSize: 'var(--fs-sm)' }}>{e.name}</span>
           </span>
         ),
         isLeaf: false,
@@ -246,16 +246,16 @@ export const WorkspaceSelector: React.FC = () => {
       <div style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 6 }}
            onClick={() => { setEditing(true); setValue(''); }}
            title="点击设置工作目录">
-        <FolderOpenOutlined style={{ color: 'var(--color-text-muted)', fontSize: 13 }} />
+        <FolderOpenOutlined style={{ color: 'var(--color-text-muted)', fontSize: 'var(--fs-md)' }} />
         <Spin size="small" />
-        <span style={{ fontSize: 11, color: 'var(--muted-2)', cursor: 'pointer' }}>检测项目目录... (点击手动设置)</span>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer' }}>检测项目目录... (点击手动设置)</span>
       </div>
     );
   }
 
   return (
     <div style={{ padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
-      <FolderOpenOutlined style={{ color: 'var(--accent)', fontSize: 13, flexShrink: 0 }} />
+      <FolderOpenOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-md)', flexShrink: 0 }} />
 
       {editing ? (
         <Input
@@ -269,14 +269,14 @@ export const WorkspaceSelector: React.FC = () => {
             else setEditing(false);
           }}
           placeholder="F:\agentai-platform"
-          style={{ flex: 1, fontSize: 12, fontFamily: 'monospace' }}
+          style={{ flex: 1, fontSize: 'var(--fs-sm)', fontFamily: 'monospace' }}
           suffix={
             <span style={{ display: 'flex', gap: 2 }}>
               <Button type="text" size="small" onClick={handleNativeBrowse}
-                style={{ color: 'var(--accent)', fontSize: 11 }}>本地</Button>
+                style={{ color: 'var(--accent)', fontSize: 'var(--fs-micro)' }}>本地</Button>
               <Button type="text" size="small" icon={<CheckOutlined />}
                 onClick={() => applyWorkspace(value)}
-                style={{ color: 'var(--accent)', fontSize: 12 }} />
+                style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />
             </span>
           }
         />
@@ -285,7 +285,7 @@ export const WorkspaceSelector: React.FC = () => {
           <span
             onClick={() => { setValue(workspace); setEditing(true); }}
             style={{
-              flex: 1, fontSize: 12, color: 'var(--fg)',
+              flex: 1, fontSize: 'var(--fs-sm)', color: 'var(--fg)',
               cursor: 'pointer', fontFamily: 'monospace',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               opacity: 0.85,
@@ -299,7 +299,7 @@ export const WorkspaceSelector: React.FC = () => {
       <Popover
         title="目录说明"
         content={
-          <div style={{ fontSize: 11, lineHeight: 1.8, maxWidth: 260 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', lineHeight: 1.8, maxWidth: 260 }}>
             <div><b>项目操作目录</b>: {workspace}</div>
             <div style={{ color: 'var(--muted)' }}>→ AI 在此进行文件读写</div>
             <div style={{ marginTop: 6 }}><b>AI 工作目录</b>: {aiWorkDir || '加载中...'}</div>
@@ -308,7 +308,7 @@ export const WorkspaceSelector: React.FC = () => {
         }
         trigger="click"
       >
-        <InfoCircleOutlined style={{ color: 'var(--muted-2)', fontSize: 12, flexShrink: 0, cursor: 'pointer' }} />
+        <InfoCircleOutlined style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-sm)', flexShrink: 0, cursor: 'pointer' }} />
       </Popover>
 
       {!editing && (
@@ -326,7 +326,7 @@ export const WorkspaceSelector: React.FC = () => {
               size="small" type="text"
               icon={<FolderFilled />}
               onClick={handleNativeBrowse}
-              style={{ color: 'var(--accent)', flexShrink: 0, fontSize: 11 }}
+              style={{ color: 'var(--accent)', flexShrink: 0, fontSize: 'var(--fs-micro)' }}
             >
               本地
             </Button>
@@ -359,7 +359,7 @@ export const WorkspaceSelector: React.FC = () => {
           <div style={{
             marginBottom: 8, padding: '6px 10px',
             background: 'var(--panel)', borderRadius: 4,
-            fontSize: 12, fontFamily: 'monospace',
+            fontSize: 'var(--fs-sm)', fontFamily: 'monospace',
             color: 'var(--accent)', wordBreak: 'break-all',
           }}>
             已选: {selectedPath}

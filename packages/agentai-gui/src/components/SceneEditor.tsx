@@ -420,7 +420,7 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
     <div style={{ position: 'fixed', inset: 0, background: 'var(--bg)', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
       {/* 顶部工具栏 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', borderBottom: '1px solid var(--border)', background: 'var(--panel)' }}>
-        <strong style={{ fontSize: 15 }}>🎬 场景精编器</strong>
+        <strong style={{ fontSize: 'var(--fs-md)' }}>🎬 场景精编器</strong>
         <Tag color="blue">{layers.length} 图层</Tag>
         <div style={{ flex: 1 }} />
         <Upload showUploadList={false} beforeUpload={(file) => { addImageLayer(file); return false; }}>
@@ -434,7 +434,7 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* 左侧: 图层面板 */}
         <div style={{ width: 240, borderRight: '1px solid var(--border)', overflow: 'auto', padding: 8, background: 'var(--panel)' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: 'var(--muted)' }}>图层</div>
+          <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 700, marginBottom: 8, color: 'var(--muted)' }}>图层</div>
           {layers.slice().reverse().map((layer) => (
             <div key={layer.id}
               onClick={() => setSelectedLayerId(layer.id)}
@@ -451,10 +451,10 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
               </div>
               {/* 名称 */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {layer.name}
                 </div>
-                <div style={{ fontSize: 9, color: 'var(--muted-2)' }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                   {layer.type === 'background' ? '背景' : layer.type === 'character' ? '角色' : '道具'}
                   {layer.cutoutUrl && ' · 已抠图'}
                 </div>
@@ -500,7 +500,7 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
         <div style={{ width: 260, borderLeft: '1px solid var(--border)', overflow: 'auto', padding: 12, background: 'var(--panel)' }}>
           {selectedLayer ? (
             <>
-              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 12 }}>属性 — {selectedLayer.name}</div>
+              <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 700, marginBottom: 12 }}>属性 — {selectedLayer.name}</div>
 
               {/* 抠图按钮 (角色层/道具层) */}
               {selectedLayer.type !== 'background' && (
@@ -511,47 +511,47 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
                     {selectedLayer.cutoutUrl ? '重新抠图' : '抠图 (去背景)'}
                   </Button>
                   {selectedLayer.cutoutUrl && (
-                    <div style={{ fontSize: 10, color: '#52c41a', marginTop: 4 }}>✅ 已抠图, 背景透明</div>
+                    <div style={{ fontSize: 'var(--fs-micro)', color: '#52c41a', marginTop: 4 }}>✅ 已抠图, 背景透明</div>
                   )}
                 </div>
               )}
 
               {/* 位置 X */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>X 位置: {selectedLayer.x.toFixed(0)}%</div>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 4 }}>X 位置: {selectedLayer.x.toFixed(0)}%</div>
                 <Slider min={0} max={100} value={selectedLayer.x} onChange={v => updateLayer(selectedLayer.id, { x: v })} />
               </div>
 
               {/* 位置 Y */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Y 位置: {selectedLayer.y.toFixed(0)}%</div>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 4 }}>Y 位置: {selectedLayer.y.toFixed(0)}%</div>
                 <Slider min={0} max={100} value={selectedLayer.y} onChange={v => updateLayer(selectedLayer.id, { y: v })} />
               </div>
 
               {/* 缩放 */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>缩放: {selectedLayer.scale.toFixed(2)}x</div>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 4 }}>缩放: {selectedLayer.scale.toFixed(2)}x</div>
                 <Slider min={0.05} max={2} step={0.01} value={selectedLayer.scale}
                   onChange={v => updateLayer(selectedLayer.id, { scale: v })} />
               </div>
 
               {/* 旋转 */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>旋转: {selectedLayer.rotation}°</div>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 4 }}>旋转: {selectedLayer.rotation}°</div>
                 <Slider min={-180} max={180} value={selectedLayer.rotation}
                   onChange={v => updateLayer(selectedLayer.id, { rotation: v })} />
               </div>
 
               {/* 透明度 */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>透明度: {(selectedLayer.opacity * 100).toFixed(0)}%</div>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 4 }}>透明度: {(selectedLayer.opacity * 100).toFixed(0)}%</div>
                 <Slider min={0} max={1} step={0.01} value={selectedLayer.opacity}
                   onChange={v => updateLayer(selectedLayer.id, { opacity: v })} />
               </div>
 
               {/* 提示 */}
               {selectedLayer.type !== 'background' && (
-                <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 16, padding: 8, background: 'var(--bg)', borderRadius: 6 }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 16, padding: 8, background: 'var(--bg)', borderRadius: 6 }}>
                   💡 提示: 在画布上拖拽角色可调整位置。抠图后角色背景变透明，可叠加在场景上。
                 </div>
               )}
@@ -559,7 +559,7 @@ export const SceneEditor: React.FC<SceneEditorProps> = ({
           ) : (
             <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 40 }}>
               <DragOutlined style={{ fontSize: 32, marginBottom: 8 }} />
-              <div style={{ fontSize: 12 }}>选择一个图层查看属性</div>
+              <div style={{ fontSize: 'var(--fs-sm)' }}>选择一个图层查看属性</div>
             </div>
           )}
         </div>

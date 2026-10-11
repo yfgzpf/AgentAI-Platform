@@ -189,7 +189,7 @@ export const ProactiveSuggestionsPanel: React.FC = () => {
                   color: insight.trend === 'up' ? '#52c41a' : insight.trend === 'down' ? '#f5222d' : '#666'
                 }}
               />
-              <Text type="secondary" style={{ fontSize: 12 }}>{insight.description}</Text>
+              <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>{insight.description}</Text>
             </Card>
           </Col>
         ))}
@@ -243,7 +243,7 @@ export const ProactiveSuggestionsPanel: React.FC = () => {
                     <Paragraph style={{ marginBottom: 0, maxWidth: 600 }}>
                       {item.description}
                     </Paragraph>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>
                       {item.createdAt}
                     </Text>
                   </Space>
@@ -258,7 +258,7 @@ export const ProactiveSuggestionsPanel: React.FC = () => {
       {/* 智能助手提示 */}
       <Card style={{ marginTop: 24 }}>
         <Space align="start">
-          <RobotOutlined style={{ fontSize: 24, color: '#1890ff' }} />
+          <RobotOutlined style={{ fontSize: 'var(--fs-xl)', color: '#1890ff' }} />
           <div>
             <Title level={5} style={{ marginTop: 0 }}>AI助手正在学习您的工作模式</Title>
             <Paragraph>

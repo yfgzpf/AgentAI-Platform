@@ -151,7 +151,7 @@ export const Model3DGen: React.FC = () => {
           {/* 密钥配置 */}
           {showKeys && (
 <div style={{ padding: 12, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
-<div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>密钥保存在浏览器本地, 不上传服务器</div>
+<div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8 }}>密钥保存在浏览器本地, 不上传服务器</div>
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
                 <Input.Password size="small" placeholder="豆包 ARK API Key" value={arkKey} onChange={e => setArkKey(e.target.value)}
                   addonBefore="豆包" />
@@ -192,15 +192,15 @@ export const Model3DGen: React.FC = () => {
           {imageBase64 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8, borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
               <img src={imageBase64} alt="参考图" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6 }} />
-              <div style={{ flex: 1, fontSize: 12, color: 'var(--muted)' }}>
+              <div style={{ flex: 1, fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
                 已上传参考图<br />
-                <span style={{ fontSize: 11, color: 'var(--muted-2)' }}>{provider === 'doubao' ? '豆包将基于此图生成 3D 模型' : '混元将基于此图生成 3D 模型'}</span>
+                <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{provider === 'doubao' ? '豆包将基于此图生成 3D 模型' : '混元将基于此图生成 3D 模型'}</span>
               </div>
               <Button size="small" danger onClick={() => setImageBase64('')}>移除</Button>
             </div>
           )}
 
-          <Alert type="info" showIcon style={{ fontSize: 11 }}
+          <Alert type="info" showIcon style={{ fontSize: 'var(--fs-micro)' }}
             message={provider === 'doubao'
               ? '豆包 Seed3D: 需要 ARK API Key (火山引擎), 仅支持图生3D, 输出 GLB/OBJ/USD 格式'
               : '混元 3D: 需要腾讯云 SecretId+SecretKey, 支持文生3D 和 图生3D, 输出多种格式'} />
@@ -215,10 +215,10 @@ export const Model3DGen: React.FC = () => {
               <Tag color={task.status === 'succeeded' ? 'green' : task.status === 'failed' ? 'red' : 'blue'}>
                 {task.status === 'succeeded' ? '完成' : task.status === 'failed' ? '失败' : task.status === 'running' ? '生成中' : '排队中'}
               </Tag>
-              <span style={{ flex: 1, fontSize: 12, color: 'var(--fg-2)' }}>
+              <span style={{ flex: 1, fontSize: 'var(--fs-sm)', color: 'var(--fg-2)' }}>
                 {task.prompt?.slice(0, 30) || '图生3D'} — {task.provider}
               </span>
-              <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>{new Date(task.ts).toLocaleTimeString()}</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{new Date(task.ts).toLocaleTimeString()}</span>
               {task.fileUrl && (
                 <Button size="small" icon={<DownloadOutlined />} href={task.fileUrl} target="_blank">
                   下载

@@ -85,11 +85,11 @@ class ErrorBoundary extends React.Component<
           }}>
             <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.7 }}>⚠️</div>
             <h2 style={{
-              fontSize: 18, margin: '0 0 8px',
+              fontSize: 'var(--fs-lg)', margin: '0 0 8px',
               color: 'var(--fg)', fontWeight: 600,
             }}>工作区遇到了一点小问题</h2>
             <p style={{
-              fontSize: 12, margin: '0 0 18px',
+              fontSize: 'var(--fs-sm)', margin: '0 0 18px',
               color: 'var(--muted)',
               lineHeight: 1.6,
               maxHeight: 80, overflow: 'auto',
@@ -103,7 +103,7 @@ class ErrorBoundary extends React.Component<
               }}
               style={{
                 padding: '9px 22px', borderRadius: 8,
-                fontSize: 14, fontWeight: 500,
+                fontSize: 'var(--fs-md)', fontWeight: 500,
                 background: 'var(--accent)',
                 color: 'white',
                 border: 'none', cursor: 'pointer',
@@ -120,7 +120,7 @@ class ErrorBoundary extends React.Component<
                 }}
                 style={{
                   marginTop: 8, padding: '6px 14px',
-                  borderRadius: 6, fontSize: 12,
+                  borderRadius: 6, fontSize: 'var(--fs-sm)',
                   background: 'transparent',
                   color: 'var(--muted)',
                   border: '1px solid var(--border)',

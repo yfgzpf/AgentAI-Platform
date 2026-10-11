@@ -178,15 +178,15 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
           pointerEvents: 'none',
         }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-          <CrownOutlined style={{ fontSize: 20, color: '#CD7A3A' }} />
-          <span style={{ fontSize: 12, color: '#CD7A3A', letterSpacing: 2, fontWeight: 600 }}>
+          <CrownOutlined style={{ fontSize: 'var(--fs-xl)', color: '#CD7A3A' }} />
+          <span style={{ fontSize: 'var(--fs-sm)', color: '#CD7A3A', letterSpacing: 2, fontWeight: 600 }}>
             PULSEFLOW
           </span>
         </div>
-        <h2 style={{ margin: 0, color: '#f0f0f4', fontSize: 22, fontWeight: 700 }}>
+        <h2 style={{ margin: 0, color: '#f0f0f4', fontSize: 'var(--fs-xl)', fontWeight: 700 }}>
           欢迎回来
         </h2>
-        <p style={{ margin: '6px 0 0', color: '#888892', fontSize: 13 }}>
+        <p style={{ margin: '6px 0 0', color: '#888892', fontSize: 'var(--fs-md)' }}>
           {allProfiles.length > 1
             ? `我们记住了 ${allProfiles.length} 个身份, 选一个继续工作吧`
             : '选择沿用此身份, 或重新开始'}
@@ -222,7 +222,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                     size={44}
                     style={{
                       background: `linear-gradient(135deg, ${industryMeta.color} 0%, ${industryMeta.color}88 100%)`,
-                      color: '#fff', fontSize: 18, fontWeight: 700,
+                      color: '#fff', fontSize: 'var(--fs-lg)', fontWeight: 700,
                       flexShrink: 0,
                     }}
                   >
@@ -231,11 +231,11 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                   {/* 名称 + meta */}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                      <span style={{ color: '#f0f0f4', fontSize: 15, fontWeight: 600 }}>
+                      <span style={{ color: '#f0f0f4', fontSize: 'var(--fs-md)', fontWeight: 600 }}>
                         {p.name}
                       </span>
                       {isCurrent && (
-                        <Tag color="processing" style={{ margin: 0, fontSize: 10, padding: '0 6px' }}>
+                        <Tag color="processing" style={{ margin: 0, fontSize: 'var(--fs-micro)', padding: '0 6px' }}>
                           上次使用
                         </Tag>
                       )}
@@ -244,7 +244,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                       <Tag
                         icon={industryMeta.icon}
                         style={{
-                          margin: 0, fontSize: 11,
+                          margin: 0, fontSize: 'var(--fs-micro)',
                           background: `${industryMeta.color}22`,
                           borderColor: `${industryMeta.color}44`,
                           color: industryMeta.color,
@@ -254,12 +254,12 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                       </Tag>
                       <Tag
                         icon={usecaseMeta.icon}
-                        style={{ margin: 0, fontSize: 11, background: 'transparent', borderColor: '#444', color: '#aaa' }}
+                        style={{ margin: 0, fontSize: 'var(--fs-micro)', background: 'transparent', borderColor: '#444', color: '#aaa' }}
                       >
                         {usecaseMeta.label}
                       </Tag>
                       <Tooltip title={p.onboardedAt ? new Date(p.onboardedAt).toLocaleString('zh-CN') : ''}>
-                        <span style={{ color: '#666', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <span style={{ color: '#666', fontSize: 'var(--fs-micro)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                           <ClockCircleOutlined /> {formatTimestamp(p.onboardedAt)}
                         </span>
                       </Tooltip>
@@ -267,7 +267,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                   </div>
                   {/* 选中标记 */}
                   {isSelected && (
-                    <CheckCircleFilled style={{ color: '#CD7A3A', fontSize: 20, flexShrink: 0 }} />
+                    <CheckCircleFilled style={{ color: '#CD7A3A', fontSize: 'var(--fs-xl)', flexShrink: 0 }} />
                   )}
                 </div>
               );
@@ -291,15 +291,15 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
                 icon={<PlusOutlined />}
               />
               <div style={{ flex: 1 }}>
-                <div style={{ color: '#ccc', fontSize: 14, fontWeight: 500 }}>新建身份</div>
-                <div style={{ color: '#666', fontSize: 11 }}>为其他人或场景配置</div>
+                <div style={{ color: '#ccc', fontSize: 'var(--fs-md)', fontWeight: 500 }}>新建身份</div>
+                <div style={{ color: '#666', fontSize: 'var(--fs-micro)' }}>为其他人或场景配置</div>
               </div>
             </div>
           </Space>
         ) : (
           // 新建身份: 输入名称预览
           <div style={{ padding: '8px 0' }}>
-            <div style={{ marginBottom: 12, color: '#ccc', fontSize: 13 }}>
+            <div style={{ marginBottom: 12, color: '#ccc', fontSize: 'var(--fs-md)' }}>
               为新身份起个名字
             </div>
             <Input
@@ -312,7 +312,7 @@ export const ReuseIdentityPrompt: React.FC<ReuseIdentityPromptProps> = ({
               autoFocus
               style={{ marginBottom: 16 }}
             />
-            <div style={{ color: '#888', fontSize: 12, lineHeight: 1.6 }}>
+            <div style={{ color: '#888', fontSize: 'var(--fs-sm)', lineHeight: 1.6 }}>
               接下来会引导你选择: <strong style={{ color: '#CD7A3A' }}>行业 / 用例 / 技能</strong> 等
               <br />
               完成的所有选择都会被记忆, 下次可一键沿用

@@ -444,7 +444,7 @@ setActiveModel(modelId);
           border: '2px dashed var(--success)',
           borderRadius: 8, margin: 4,
           pointerEvents: 'none',
-          fontSize: 14, fontWeight: 600, color: 'var(--success)',
+          fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--success)',
           letterSpacing: 1,
         }}>
           📎 释放文件以上传
@@ -453,11 +453,11 @@ setActiveModel(modelId);
       {/* Queued sends chips */}
       {queuedSends && queuedSends.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '6px 12px 0', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10, color: 'var(--muted)', paddingTop: 2 }}>排队 ({queuedSends.length}):</span>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', paddingTop: 2 }}>排队 ({queuedSends.length}):</span>
           {queuedSends.map((t, i) => (
             <span key={i} style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '1px 8px', borderRadius: 4, fontSize: 11,
+              padding: '1px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
               background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--muted)',
             }}>
               <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t}</span>
@@ -476,7 +476,7 @@ setActiveModel(modelId);
           borderRadius: 8,
           background: MODE_CONFIG[suggestedMode].color + '18',
           border: `1px solid ${MODE_CONFIG[suggestedMode].color}44`,
-          fontSize: 12,
+          fontSize: 'var(--fs-sm)',
           color: 'var(--fg-2)',
           display: 'flex',
           alignItems: 'center',
@@ -510,14 +510,14 @@ setActiveModel(modelId);
           <div style={{
             padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8,
             background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(236,72,153,0.08))',
-            borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--accent)',
+            borderBottom: '1px solid var(--border)', fontSize: 'var(--fs-micro)', color: 'var(--accent)',
           }}>
-            <PictureOutlined style={{ fontSize: 14 }} />
+            <PictureOutlined style={{ fontSize: 'var(--fs-md)' }} />
             <span>🎨 对话改图模式 — 上传图片后输入修改指令</span>
             <button
               className="icon-btn-sm"
               onClick={() => imageInputRef.current?.click()}
-              style={{ marginLeft: 'auto', background: 'var(--accent)', color: 'var(--fg)', borderRadius: 4, padding: '2px 10px', fontSize: 11, border: 'none', cursor: 'pointer' }}
+              style={{ marginLeft: 'auto', background: 'var(--accent)', color: 'var(--fg)', borderRadius: 4, padding: '2px 10px', fontSize: 'var(--fs-micro)', border: 'none', cursor: 'pointer' }}
             >
               上传图片
             </button>
@@ -529,12 +529,12 @@ setActiveModel(modelId);
             {detectedUrls.map((u, i) => (
               <span key={i} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '2px 8px', borderRadius: 12, fontSize: 11,
+                padding: '2px 8px', borderRadius: 12, fontSize: 'var(--fs-micro)',
                 background: 'rgba(99,102,241,0.1)', color: 'var(--accent)',
                 border: '1px solid rgba(99,102,241,0.2)',
                 maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
-                <span style={{ fontSize: 10 }}>🔗</span>
+                <span style={{ fontSize: 'var(--fs-micro)' }}>🔗</span>
                 <span style={{ fontWeight: 600 }}>{u.label}</span>
               </span>
             ))}
@@ -559,7 +559,7 @@ setActiveModel(modelId);
             borderBottom: mode !== 'auto' ? `1px solid ${activeModeConfig.color}44` : 'none',
             background: 'transparent',
             color: 'var(--fg)',
-            fontSize: 13, lineHeight: 1.5,
+            fontSize: 'var(--fs-md)', lineHeight: 1.5,
             outline: 'none', resize: 'none', fontFamily: 'inherit',
             minHeight: 36, maxHeight: 120,
             boxSizing: 'border-box',
@@ -580,7 +580,7 @@ setActiveModel(modelId);
                 padding: '2px 6px', borderRadius: 6,
                 background: att.kind === 'image' ? 'rgba(99,102,241,0.08)' : 'var(--panel)',
                 border: '1px solid var(--border)',
-                fontSize: 11, color: 'var(--fg-2)',
+                fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
               }}>
                 {/* 图片缩略图 */}
                 {att.kind === 'image' && att.dataUrl && (
@@ -594,9 +594,9 @@ setActiveModel(modelId);
                   />
                 )}
                 {/* Excel图标 */}
-                {att.kind === 'table' && <FileExcelOutlined style={{ color: 'var(--success)', fontSize: 13 }} />}
+                {att.kind === 'table' && <FileExcelOutlined style={{ color: 'var(--success)', fontSize: 'var(--fs-md)' }} />}
                 {/* 文本文件图标 */}
-                {att.kind === 'text' && <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 13 }} />}
+                {att.kind === 'text' && <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-md)' }} />}
                 {/* 文件名 */}
                 <span style={{ maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {att.name}
@@ -604,13 +604,13 @@ setActiveModel(modelId);
                 {/* 删除按钮 */}
                 <span
                   onClick={() => onAttachmentsChange?.(attachments.filter((_, j) => j !== i))}
-                  style={{ cursor: 'pointer', color: 'var(--muted-2)', fontSize: 10, marginLeft: 2 }}
+                  style={{ cursor: 'pointer', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', marginLeft: 2 }}
                 >
-                  <CloseOutlined style={{ fontSize: 9 }} />
+                  <CloseOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                 </span>
               </div>
             ))}
-            {parsing && <span style={{ fontSize: 10, color: 'var(--muted)' }}>解析中...</span>}
+            {parsing && <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>解析中...</span>}
           </div>
         )}
 
@@ -646,12 +646,12 @@ setActiveModel(modelId);
           {/* ── 核心控件 (左): 附件 + 图片 + 更多 ── */}
           <Tooltip title="上传文件">
             <button className="icon-btn-sm" onClick={() => fileInputRef.current?.click()}>
-              <PaperClipOutlined style={{ fontSize: 12 }} />
+              <PaperClipOutlined style={{ fontSize: 'var(--fs-sm)' }} />
             </button>
           </Tooltip>
           <Tooltip title="插入图片">
             <button className="icon-btn-sm" onClick={() => imageInputRef.current?.click()}>
-              <PictureOutlined style={{ fontSize: 12 }} />
+              <PictureOutlined style={{ fontSize: 'var(--fs-sm)' }} />
             </button>
           </Tooltip>
 
@@ -685,7 +685,7 @@ setActiveModel(modelId);
                   color: '#fff',
                 }}>
                   <span style={{ fontWeight: 600 }}>👅 中医舌诊 — 拍摄舌象</span>
-                  <button onClick={closeTongueCamera} style={{ color: '#fff', cursor: 'pointer', fontSize: 18, background: 'none', border: 'none' }}>✕</button>
+                  <button onClick={closeTongueCamera} style={{ color: '#fff', cursor: 'pointer', fontSize: 'var(--fs-lg)', background: 'none', border: 'none' }}>✕</button>
                 </div>
                 {/* 摄像头预览 */}
                 <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', display: 'block' }} />
@@ -693,14 +693,14 @@ setActiveModel(modelId);
                 <canvas ref={canvasRef} style={{ display: 'none' }} />
                 {/* 提示 + 按钮 */}
                 <div style={{ padding: 12, textAlign: 'center', background: '#111' }}>
-                  <p style={{ color: '#aaa', fontSize: 12, margin: '0 0 10px' }}>
+                  <p style={{ color: '#aaa', fontSize: 'var(--fs-sm)', margin: '0 0 10px' }}>
                     请将舌头伸出对准镜头，保持自然光线，点击下方按钮拍摄
                   </p>
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                     <button
                       onClick={captureTongueImage}
                       style={{
-                        padding: '8px 24px', borderRadius: 20, fontSize: 14, fontWeight: 600,
+                        padding: '8px 24px', borderRadius: 20, fontSize: 'var(--fs-md)', fontWeight: 600,
                         background: '#1abc9c', color: '#fff', border: 'none', cursor: 'pointer',
                         transition: 'transform 0.15s',
                       }}
@@ -712,7 +712,7 @@ setActiveModel(modelId);
                     <button
                       onClick={closeTongueCamera}
                       style={{
-                        padding: '8px 16px', borderRadius: 20, fontSize: 13,
+                        padding: '8px 16px', borderRadius: 20, fontSize: 'var(--fs-md)',
                         background: 'transparent', color: '#999', border: '1px solid #444', cursor: 'pointer',
                       }}
                     >
@@ -733,7 +733,7 @@ setActiveModel(modelId);
                 {
                   key: 'websearch',
                   label: (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)' }}>
                       <GlobalOutlined style={{ color: webSearch ? 'var(--success)' : 'var(--muted-2)' }} />
                       {webSearch ? '关闭联网搜索' : '开启联网搜索'}
                     </span>
@@ -743,7 +743,7 @@ setActiveModel(modelId);
                 {
                   key: 'thinking',
                   label: (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)' }}>
                       <BulbOutlined style={{ color: thinking ? 'var(--violet)' : 'var(--muted-2)' }} />
                       {thinking ? '关闭深度思考' : '开启深度思考'}
                     </span>
@@ -753,7 +753,7 @@ setActiveModel(modelId);
                 ...(srSupported ? [{
                   key: 'voice',
                   label: (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)' }}>
                       <AudioOutlined style={{ color: recording ? 'var(--danger)' : 'var(--muted-2)' }} />
                       {recording ? '停止语音输入' : '开始语音输入'}
                     </span>
@@ -763,7 +763,7 @@ setActiveModel(modelId);
                 {
                   key: 'optimize',
                   label: (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)' }}>
                       <BulbOutlined style={{ color: 'var(--muted-2)' }} />
                       优化提示词
                     </span>
@@ -778,7 +778,7 @@ setActiveModel(modelId);
                 {
                   key: 'wake',
                   label: (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)' }}>
                       <BellOutlined style={{ color: wakeOn ? 'var(--warning)' : 'var(--muted-2)' }} />
                       {wakeOn ? '关闭语音唤醒' : '开启语音唤醒'}
                     </span>
@@ -794,7 +794,7 @@ setActiveModel(modelId);
               <button className="icon-btn-sm" style={{
                 color: (webSearch || thinking || recording || ttsOn || wakeOn) ? 'var(--accent)' : undefined,
               }}>
-                <MoreOutlined style={{ fontSize: 12 }} />
+                <MoreOutlined style={{ fontSize: 'var(--fs-sm)' }} />
               </button>
             </Tooltip>
           </Dropdown>
@@ -823,7 +823,7 @@ setActiveModel(modelId);
                 size="small"
                 value={visibleModels.some(m => m.id === activeModelId) ? activeModelId : visibleModels[0]?.id}
                 onChange={handleModelChange}
-                style={{ width: 200, fontSize: 11 }}
+                style={{ width: 200, fontSize: 'var(--fs-micro)' }}
                 variant="borderless"
                 popupMatchSelectWidth={false}
                 getPopupContainer={() => document.body}
@@ -832,7 +832,7 @@ setActiveModel(modelId);
                 options={groupedArr.flatMap((g): any[] =>
                   g.models.length > 1
                     ? [{
-                        label: <span style={{ fontSize: 9, color: 'var(--muted-2)', fontWeight: 600 }}>{g.label} ({g.models.length})</span>,
+                        label: <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', fontWeight: 600 }}>{g.label} ({g.models.length})</span>,
                         title: g.label,
                         options: [
 // NVIDIA Auto 选项已移除
@@ -854,7 +854,7 @@ setActiveModel(modelId);
               onClick={() => setMode(k)}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 2,
-                padding: '1px 5px', borderRadius: 3, fontSize: 9, fontWeight: mode === k ? 600 : 400,
+                padding: '1px 5px', borderRadius: 3, fontSize: 'var(--fs-micro)', fontWeight: mode === k ? 600 : 400,
                 color: mode === k ? '#fff' : 'var(--muted-2)',
                 background: mode === k ? dot : 'transparent',
                 border: 'none', cursor: 'pointer',
@@ -890,7 +890,7 @@ setActiveModel(modelId);
                 background: chatMode === 'image_edit' ? 'var(--accent-soft)' : 'transparent',
               }}
             >
-              <ExperimentOutlined style={{ fontSize: 12 }} />
+              <ExperimentOutlined style={{ fontSize: 'var(--fs-sm)' }} />
             </button>
           </Tooltip>
 
@@ -905,7 +905,7 @@ setActiveModel(modelId);
                 cursor: draft.trim() && !optimizeDisabled ? 'pointer' : 'not-allowed',
               }}
             >
-              <StarOutlined style={{ fontSize: 12 }} />
+              <StarOutlined style={{ fontSize: 'var(--fs-sm)' }} />
             </button>
           </Tooltip>
 
@@ -923,7 +923,7 @@ setActiveModel(modelId);
               onClick={() => setVoiceSettingsOpen(true)}
               style={{ color: 'var(--muted-2)' }}
             >
-              <MoreOutlined style={{ fontSize: 10 }} />
+              <MoreOutlined style={{ fontSize: 'var(--fs-micro)' }} />
             </button>
           </Tooltip>
 
@@ -935,7 +935,7 @@ setActiveModel(modelId);
           {/* ── 发送/中止 ── */}
           {busy ? (
             <button onClick={onAbort} className="send-btn" style={{ background: 'var(--danger)' }}>
-              <StopOutlined style={{ fontSize: 14, color: 'var(--fg)' }} />
+              <StopOutlined style={{ fontSize: 'var(--fs-md)', color: 'var(--fg)' }} />
             </button>
           ) : (
             <button
@@ -947,7 +947,7 @@ setActiveModel(modelId);
                 color: draft.trim() || attachments.length > 0 ? '#fff' : 'var(--muted-2)',
               }}
             >
-              <SendOutlined style={{ fontSize: 14 }} />
+              <SendOutlined style={{ fontSize: 'var(--fs-md)' }} />
             </button>
           )}
         </div>
@@ -974,7 +974,7 @@ setActiveModel(modelId);
           borderRadius: 8, boxShadow: 'var(--shadow-lg)', padding: 4,
           maxHeight: 200, overflowY: 'auto', zIndex: 'var(--z-dropdown)',
         }}>
-          <div style={{ padding: '4px 8px', fontSize: 10, color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: 2 }}>
+          <div style={{ padding: '4px 8px', fontSize: 'var(--fs-micro)', color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: 2 }}>
             {popup.kind === 'slash' ? '/ 命令' : '@ 选择文件'}
           </div>
           {items.map((item, i) => {
@@ -990,7 +990,7 @@ setActiveModel(modelId);
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   padding: '6px 10px', borderRadius: 4, cursor: 'pointer',
-                  fontSize: 12, color: 'var(--fg-2)',
+                  fontSize: 'var(--fs-sm)', color: 'var(--fg-2)',
                   background: i === activeIdx ? 'var(--panel-2)' : 'transparent',
                 }}
               >
@@ -998,10 +998,10 @@ setActiveModel(modelId);
                   width: 20, height: 20, borderRadius: 4,
                   background: 'var(--accent-soft)', color: 'var(--accent)',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 10, fontWeight: 700, flexShrink: 0,
+                  fontSize: 'var(--fs-micro)', fontWeight: 700, flexShrink: 0,
                 }}>{isSlash ? '/' : '@'}</span>
                 <span style={{ fontWeight: 600 }}>{label}</span>
-                <span style={{ color: 'var(--muted-2)', fontSize: 11 }}>{desc}</span>
+                <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>{desc}</span>
               </div>
             );
           })}
@@ -1176,8 +1176,8 @@ const ConnectorsDropdown: React.FC = () => {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
         <span style={{ color: conn.enabled ? 'var(--accent)' : 'var(--muted-2)' }}>{conn.icon}</span>
         <span style={{ flex: 1 }}>
-          <div style={{ fontSize: 12, fontWeight: 500 }}>{conn.name}</div>
-          <div style={{ fontSize: 10, color: 'var(--muted)' }}>{conn.description}</div>
+          <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 500 }}>{conn.name}</div>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{conn.description}</div>
         </span>
         <span
           onClick={(e) => { e.stopPropagation(); toggleConnector(conn.id); }}
@@ -1207,7 +1207,7 @@ const ConnectorsDropdown: React.FC = () => {
         }}
         title="外部连接"
       >
-        <ThunderboltOutlined style={{ fontSize: 12 }} />
+        <ThunderboltOutlined style={{ fontSize: 'var(--fs-sm)' }} />
       </button>
     </Dropdown>
   );

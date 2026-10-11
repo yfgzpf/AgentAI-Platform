@@ -70,7 +70,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '10px 12px', borderBottom: '1px solid var(--border)',
         }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg-2)', flex: 1 }}>
+          <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 700, color: 'var(--fg-2)', flex: 1 }}>
             ✨ 提示词优化
           </span>
           <button onClick={onClose} style={{
@@ -78,7 +78,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
             background: 'transparent', cursor: 'pointer', color: 'var(--muted-2)',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <CloseOutlined style={{ fontSize: 11 }} />
+            <CloseOutlined style={{ fontSize: 'var(--fs-micro)' }} />
           </button>
         </div>
 
@@ -91,7 +91,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
                 border: '2px solid var(--border)', borderTopColor: 'var(--accent)',
                 animation: 'spin 0.6s linear infinite', display: 'inline-block', marginBottom: 8,
               }} />
-              <div style={{ fontSize: 11 }}>正在调用 AI 优化提示词...</div>
+              <div style={{ fontSize: 'var(--fs-micro)' }}>正在调用 AI 优化提示词...</div>
             </div>
           )}
 
@@ -99,7 +99,7 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
             <div style={{
               padding: '8px 12px', background: 'rgba(239,68,68,0.1)',
               border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6,
-              fontSize: 11, color: '#ef4444',
+              fontSize: 'var(--fs-micro)', color: '#ef4444',
             }}>
               ❌ {error}
             </div>
@@ -109,11 +109,11 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
             <>
               {/* 原始文本 */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }}>
+                <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }}>
                   原始输入
                 </div>
                 <div style={{
-                  fontSize: 11, lineHeight: 1.5, color: 'var(--muted)',
+                  fontSize: 'var(--fs-micro)', lineHeight: 1.5, color: 'var(--muted)',
                   padding: '6px 10px', background: 'var(--panel)', borderRadius: 6,
                   border: '1px solid var(--border)', whiteSpace: 'pre-wrap', maxHeight: 60, overflowY: 'auto',
                 }}>
@@ -123,11 +123,11 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
 
               {/* 优化后文本 */}
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--success)', marginBottom: 4 }}>
+                <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--success)', marginBottom: 4 }}>
                   优化后
                 </div>
                 <div style={{
-                  fontSize: 11, lineHeight: 1.5, color: 'var(--fg)',
+                  fontSize: 'var(--fs-micro)', lineHeight: 1.5, color: 'var(--fg)',
                   padding: '8px 10px', background: 'var(--bg-2)', borderRadius: 6,
                   border: '1px solid var(--border)', whiteSpace: 'pre-wrap', maxHeight: 150, overflowY: 'auto',
                 }}>
@@ -139,20 +139,20 @@ export const PromptOptimizer: React.FC<Props> = ({ draft, onApply, onClose }) =>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => { onApply(enhanced); onClose(); }} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '5px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  padding: '5px 14px', borderRadius: 6, fontSize: 'var(--fs-micro)', fontWeight: 600,
                   background: 'var(--success)', color: '#fff', border: 'none',
                   cursor: 'pointer', boxShadow: '0 1px 4px rgba(34,197,94,0.3)',
                 }}>
-                  <CheckOutlined style={{ fontSize: 11 }} />
+                  <CheckOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                   应用优化
                 </button>
                 <button onClick={() => { onApply(originalRef.current); onClose(); }} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '5px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  padding: '5px 14px', borderRadius: 6, fontSize: 'var(--fs-micro)', fontWeight: 600,
                   background: 'var(--panel)', color: 'var(--muted)', border: '1px solid var(--border)',
                   cursor: 'pointer',
                 }}>
-                  <UndoOutlined style={{ fontSize: 11 }} />
+                  <UndoOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                   恢复原始
                 </button>
               </div>

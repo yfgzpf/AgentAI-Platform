@@ -277,7 +277,7 @@ export const TaskCenterPanel: React.FC = () => {
           <Tooltip title={goal}>
             <span style={{ fontWeight: 500 }}>{goal || '(无目标)'}</span>
           </Tooltip>
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-secondary)' }}>
             {t.taskId.slice(0, 30)}...
           </span>
         </Space>
@@ -305,7 +305,7 @@ export const TaskCenterPanel: React.FC = () => {
       width: 80,
       render: (ts: number) => {
         const min = taskIdleMin({ lastUpdatedAt: ts } as any);
-        return <span style={{ fontSize: 12 }}>{min < 1 ? '刚刚' : `${min}分钟前`}</span>;
+        return <span style={{ fontSize: 'var(--fs-sm)' }}>{min < 1 ? '刚刚' : `${min}分钟前`}</span>;
       },
     },
     {
@@ -473,10 +473,10 @@ export const TaskCenterPanel: React.FC = () => {
                           <div style={{ fontSize: 32 }}>{w.icon}</div>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontWeight: 600, marginBottom: 4 }}>{w.name}</div>
-                            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>{w.description}</div>
+                            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8 }}>{w.description}</div>
                             <Space size={4}>
-                              <Tag color="blue" style={{ fontSize: 11 }}>{w.category}</Tag>
-                              <Tag style={{ fontSize: 11 }}>约 {w.estimatedTime} 分钟</Tag>
+                              <Tag color="blue" style={{ fontSize: 'var(--fs-micro)' }}>{w.category}</Tag>
+                              <Tag style={{ fontSize: 'var(--fs-micro)' }}>约 {w.estimatedTime} 分钟</Tag>
                             </Space>
                           </div>
                           <Button
@@ -601,7 +601,7 @@ export const TaskCenterPanel: React.FC = () => {
                 <Collapse size="small" items={workflowTemplates.slice(0, 10).map((w: any) => ({
                   key: w.id || w.name,
                   label: <Space><Tag>{w.industry || '通用'}</Tag>{w.name}</Space>,
-                  children: <div style={{ fontSize: 12 }}>
+                  children: <div style={{ fontSize: 'var(--fs-sm)' }}>
                     <p>{w.description || '无描述'}</p>
                     <p>步骤: {(w.steps || []).length} 个 · {(w.variables || []).length > 0 ? `变量: ${(w.variables || []).map((v: any) => v.name).join(', ')}` : '无变量'}</p>
                   </div>,
@@ -658,7 +658,7 @@ export const TaskCenterPanel: React.FC = () => {
             <Card size="small" title="基本信息">
               <Row gutter={[16, 8]}>
                 <Col span={8}><span style={{ color: 'var(--text-secondary)' }}>ID</span></Col>
-                <Col span={16}><code style={{ fontSize: 11 }}>{currentTask.taskId}</code></Col>
+                <Col span={16}><code style={{ fontSize: 'var(--fs-micro)' }}>{currentTask.taskId}</code></Col>
 
                 <Col span={8}><span style={{ color: 'var(--text-secondary)' }}>目标</span></Col>
                 <Col span={16}>{currentTask.goal}</Col>
@@ -696,7 +696,7 @@ export const TaskCenterPanel: React.FC = () => {
                     size={20}
                   />
                   <span>进度</span>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}>
                     {currentTask.progress.completedSteps.length} 完成 / {currentTask.progress.pendingSteps.length} 待办
                   </span>
                 </Space>
@@ -704,12 +704,12 @@ export const TaskCenterPanel: React.FC = () => {
             >
               {currentTask.progress.completedSteps.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
-                  <strong style={{ fontSize: 12, color: 'var(--text-secondary)' }}>✅ 已完成</strong>
+                  <strong style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}>✅ 已完成</strong>
                   <Timeline style={{ marginTop: 8 }}>
                     {currentTask.progress.completedSteps.map((s, i) => (
                       <Timeline.Item key={i} color="green">
                         <div style={{ fontWeight: 500 }}>{s.step}</div>
-                        {s.result && <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{s.result}</div>}
+                        {s.result && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}>{s.result}</div>}
                       </Timeline.Item>
                     ))}
                   </Timeline>
@@ -717,7 +717,7 @@ export const TaskCenterPanel: React.FC = () => {
               )}
               {currentTask.progress.pendingSteps.length > 0 && (
                 <div>
-                  <strong style={{ fontSize: 12, color: 'var(--text-secondary)' }}>⏳ 待办</strong>
+                  <strong style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}>⏳ 待办</strong>
                   <Timeline style={{ marginTop: 8 }}>
                     {currentTask.progress.pendingSteps.map((s, i) => (
                       <Timeline.Item key={i} color="gray">
@@ -735,7 +735,7 @@ export const TaskCenterPanel: React.FC = () => {
                   {currentTask.progress.keyDecisions.map((d, i) => (
                     <Timeline.Item key={i} color="blue">
                       <div style={{ fontWeight: 500 }}>{d.decision}</div>
-                      {d.reasoning && <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{d.reasoning}</div>}
+                      {d.reasoning && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}>{d.reasoning}</div>}
                     </Timeline.Item>
                   ))}
                 </Timeline>
@@ -752,7 +752,7 @@ export const TaskCenterPanel: React.FC = () => {
               <Card size="small" title={<Space><FileTextOutlined /><span>触碰文件</span></Space>}>
                 <Space direction="vertical" size={4} style={{ width: '100%' }}>
                   {currentTask.filesTouched.slice(-10).map((f, i) => (
-                    <div key={i} style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                    <div key={i} style={{ fontSize: 'var(--fs-sm)', fontFamily: 'monospace' }}>
                       <Tag color="cyan">{f.action}</Tag> {f.path}
                     </div>
                   ))}
@@ -764,7 +764,7 @@ export const TaskCenterPanel: React.FC = () => {
               <Card size="small" title={<Space><CloseCircleOutlined /><span>最近错误</span></Space>}>
                 <Space direction="vertical" size={4} style={{ width: '100%' }}>
                   {currentTask.recentErrors.slice(-5).map((e, i) => (
-                    <div key={i} style={{ fontSize: 12 }}>
+                    <div key={i} style={{ fontSize: 'var(--fs-sm)' }}>
                       <Tag color="red">{e.tool}</Tag> {e.error}
                     </div>
                   ))}

@@ -146,7 +146,7 @@ const UpdaterPanel: React.FC = () => {
             <Tag color="blue">v{current}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="Updater Endpoint">
-            <Text code style={{ fontSize: 11, userSelect: 'all' }}>
+            <Text code style={{ fontSize: 'var(--fs-micro)', userSelect: 'all' }}>
               github.com/PulseFlowAI/pulseflow-platform/releases/latest/download/latest.json
             </Text>
           </Descriptions.Item>
@@ -167,7 +167,7 @@ const UpdaterPanel: React.FC = () => {
             description={
               <div>
                 <div>发布日期: {String(latest.date).slice(0, 10)}</div>
-                {latest.body && <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 12, opacity: 0.88 }}>{latest.body}</div>}
+                {latest.body && <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 'var(--fs-sm)', opacity: 0.88 }}>{latest.body}</div>}
               </div>
             }
             style={{ marginTop: 6 }}
@@ -190,7 +190,7 @@ const UpdaterPanel: React.FC = () => {
         )}
 
         {error && (
-          <Alert type="error" showIcon message="更新失败" description={<span style={{ fontSize: 12 }}>{error}</span>} closable />
+          <Alert type="error" showIcon message="更新失败" description={<span style={{ fontSize: 'var(--fs-sm)' }}>{error}</span>} closable />
         )}
 
         <Space wrap>
@@ -208,7 +208,7 @@ const UpdaterPanel: React.FC = () => {
               icon: <InfoCircleOutlined />,
               width: 680,
               content: (
-                <ol style={{ paddingLeft: 18, lineHeight: 1.9, fontSize: 13 }}>
+                <ol style={{ paddingLeft: 18, lineHeight: 1.9, fontSize: 'var(--fs-md)' }}>
                   <li>本地生成密钥 (只需执行一次): <code>cd packages/agentai-desktop && pnpm tauri signer generate -w ~/.tauri/pulseflow.key</code></li>
                   <li>把输出的公钥 <code>-----BEGIN PUBLIC KEY-----....</code> 填入 <code>tauri.conf.json → plugins.updater.pubkey</code></li>
                   <li>GitHub Repo → Settings → Secrets and Variables → Actions → 新建 3 个 Repository Secrets:
@@ -632,8 +632,8 @@ export const Settings: React.FC = () => {
 return (
 <div style={{ padding: '12px 16px', color: 'var(--fg)', maxWidth: 900, margin: '0 auto' }}>
 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-<SettingOutlined style={{ fontSize: 16, color: 'var(--accent)' }} />
-<span style={{ fontSize: 15, fontWeight: 600 }}>岐枢设置</span>
+<SettingOutlined style={{ fontSize: 'var(--fs-lg)', color: 'var(--accent)' }} />
+<span style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>岐枢设置</span>
 </div>
 
       <Tabs
@@ -646,28 +646,28 @@ return (
             children: (
               <Card>
                 <Space direction="vertical" style={{ width: '100%' }} size={16}>
-                  <Divider style={{ fontSize: 12, color: 'var(--muted)', margin: 0 }}>通知提醒</Divider>
+                  <Divider style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>通知提醒</Divider>
                   {/* ... desktop notify ... */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}><BellOutlined /> 桌面通知</div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>任务完成时弹出桌面通知 (需浏览器权限)</Text>
+                      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg-2)' }}><BellOutlined /> 桌面通知</div>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>任务完成时弹出桌面通知 (需浏览器权限)</Text>
                     </div>
                     <Switch checked={desktopNotify} onChange={(v) => { setDesktopNotify(v); taskNotifier.setDesktopEnabled(v); }} />
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}><SoundOutlined /> 提示音</div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>任务完成时播放提示音</Text>
+                      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg-2)' }}><SoundOutlined /> 提示音</div>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>任务完成时播放提示音</Text>
                     </div>
                     <Switch checked={soundNotify} onChange={(v) => { setSoundNotify(v); taskNotifier.setSoundEnabled(v); }} />
                   </div>
 
-                  <Divider style={{ fontSize: 12, color: 'var(--muted)', margin: 0 }}>语音</Divider>
+                  <Divider style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>语音</Divider>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}><SoundOutlined /> AI 回复语音播报</div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>AI 回复完成时自动朗读</Text>
+                      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg-2)' }}><SoundOutlined /> AI 回复语音播报</div>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>AI 回复完成时自动朗读</Text>
                     </div>
                     <Switch checked={ttsEnabled} onChange={(v) => { setTtsEnabledState(v); setTtsEnabled(v); }} />
                   </div>
@@ -675,32 +675,32 @@ return (
                   {/* 音色选择 */}
                   {ttsEnabled && (
                     <div style={{ marginTop: 12, marginLeft: 24 }}>
-                      <div style={{ fontSize: 12, color: 'var(--muted-2)', marginBottom: 8 }}>选择音色</div>
+                      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted-2)', marginBottom: 8 }}>选择音色</div>
                       <VoiceSelector />
                     </div>
                   )}
 
-                  <Divider style={{ fontSize: 12, color: 'var(--muted)', margin: 0 }}>自动化</Divider>
+                  <Divider style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>自动化</Divider>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>🤖 自动恢复</div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>AI 意外中止时自动发送 continue 恢复任务</Text>
+                      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg-2)' }}>🤖 自动恢复</div>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>AI 意外中止时自动发送 continue 恢复任务</Text>
                     </div>
                     <Switch checked={autoResume} onChange={(v) => { setAutoResume(v); localStorage.setItem('agentai.settings.autoResume', JSON.stringify(v)); }} />
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>💬 追问卡片</div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>AI 遇到不明确需求时触发审批卡片让用户确认</Text>
+                      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg-2)' }}>💬 追问卡片</div>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>AI 遇到不明确需求时触发审批卡片让用户确认</Text>
                     </div>
                     <Switch defaultChecked onChange={(v) => localStorage.setItem('agentai.settings.askUser', JSON.stringify(v))} />
                   </div>
 
-                  <Divider style={{ fontSize: 12, color: 'var(--muted)', margin: 0 }}>模式设置</Divider>
+                  <Divider style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>模式设置</Divider>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>🔮 默认模式</div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>新会话启动时的默认运行模式</Text>
+                      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg-2)' }}>🔮 默认模式</div>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>新会话启动时的默认运行模式</Text>
                     </div>
                     <Select
                       size="small"
@@ -712,21 +712,21 @@ return (
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>💡 智能模式推荐</div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>根据消息内容自动推荐更合适的模式</Text>
+                      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg-2)' }}>💡 智能模式推荐</div>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>根据消息内容自动推荐更合适的模式</Text>
                     </div>
                     <Switch checked={recommendEnabled} onChange={(v) => setRecommendEnabled(v)} />
                   </div>
 
-                  <Divider style={{ fontSize: 12, color: 'var(--muted)', margin: 0 }}>存储</Divider>
+                  <Divider style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>存储</Divider>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>💾 自动记忆</div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>对话完成时自动保存到 MemoryEngine</Text>
+                      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg-2)' }}>💾 自动记忆</div>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>对话完成时自动保存到 MemoryEngine</Text>
                     </div>
                     <Switch defaultChecked onChange={(v) => localStorage.setItem('agentai.settings.autoMemory', JSON.stringify(v))} />
                   </div>
-                  <Alert type="info" message="以上设置立即生效, 无需重启" style={{ fontSize: 11 }} />
+                  <Alert type="info" message="以上设置立即生效, 无需重启" style={{ fontSize: 'var(--fs-micro)' }} />
                 </Space>
               </Card>
             ),
@@ -742,7 +742,7 @@ return (
                   
                   {/* ===== 免费模型区域 ===== */}
                   <div>
-                    <Divider orientation="left" style={{ fontSize: 14, color: 'var(--success)', margin: 0 }}>
+                    <Divider orientation="left" style={{ fontSize: 'var(--fs-md)', color: 'var(--success)', margin: 0 }}>
                       <ThunderboltOutlined style={{ color: 'var(--success)', marginRight: 6 }} />
                       免费模型 (内置, 无需配置)
                     </Divider>
@@ -758,7 +758,7 @@ return (
                               <span style={{ width: 10, height: 10, borderRadius: '50%', background: m.color, display: 'inline-block' }} />
                               <Text strong style={{ color: 'var(--fg)' }}>{m.label}</Text>
                               <Tag color="green">免费</Tag>
-                              <code style={{ fontSize: 10, color: 'var(--muted)' }}>{m.baseURL}</code>
+                              <code style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{m.baseURL}</code>
                             </Space>
                             <Space>
                               {status?.ok
@@ -789,18 +789,18 @@ return (
                         );
                       })}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, paddingLeft: 4 }}>
+                    <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 8, paddingLeft: 4 }}>
                       <ThunderboltOutlined /> 免费模型可用于主对话和子任务，自动切换，无速率限制担忧
                     </div>
                   </div>
 
                   {/* ===== 多媒体引擎密钥区域 ===== */}
                   <div>
-                    <Divider orientation="left" style={{ fontSize: 14, color: '#8B5CF6', margin: 0 }}>
+                    <Divider orientation="left" style={{ fontSize: 'var(--fs-md)', color: '#8B5CF6', margin: 0 }}>
                       <VideoCameraOutlined style={{ color: '#8B5CF6', marginRight: 6 }} />
                       视频生成引擎 (独立密钥)
                     </Divider>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, marginBottom: 12 }}>
+                    <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 8, marginBottom: 12 }}>
                       Agnes Video 2.5 正式版使用独立密钥, 与 Flash 对话密钥分开配置。配置后在「生视频」页面选择对应模型即可使用。
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -816,8 +816,8 @@ return (
                                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: m.color, display: 'inline-block' }} />
                                 <Text strong style={{ color: 'var(--fg)' }}>{m.label}</Text>
                               </Space>
-                              <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4, marginLeft: 20 }}>
-                                {m.desc} · <code style={{ fontSize: 10 }}>{m.baseURL}</code>
+                              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4, marginLeft: 20 }}>
+                                {m.desc} · <code style={{ fontSize: 'var(--fs-micro)' }}>{m.baseURL}</code>
                               </div>
                             </div>
                             <Space>
@@ -856,16 +856,16 @@ return (
 
                   {/* ===== 模型工厂 (ALRC 聚合平台) ===== */}
                   <div>
-                    <Divider orientation="left" style={{ fontSize: 14, color: 'var(--violet)', margin: 0 }}>
+                    <Divider orientation="left" style={{ fontSize: 'var(--fs-md)', color: 'var(--violet)', margin: 0 }}>
                       <ApiOutlined style={{ color: 'var(--violet)', marginRight: 6 }} />
                       模型工厂 (一个密钥解锁全部 AI 能力)
                     </Divider>
 
                     <Alert
                       type="info"
-                      style={{ marginTop: 8, marginBottom: 12, fontSize: 12 }}
+                      style={{ marginTop: 8, marginBottom: 12, fontSize: 'var(--fs-sm)' }}
                       message={
-                        <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+                        <div style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.8 }}>
                           <div>模型工厂接入 GPT-5、Claude、Grok、豆包等顶级模型，支持对话、生图、生视频等多种能力。</div>
                           <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--accent-soft)', borderRadius: 6, border: '1px dashed var(--accent)' }}>
                             <b>🔑 如何获取密钥？</b><br/>
@@ -889,8 +889,8 @@ return (
                             {/* 分组标题 + 密钥输入 */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                               <span style={{ width: 10, height: 10, borderRadius: 2, background: group.color, display: 'inline-block' }} />
-                              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>{group.label}</span>
-                              <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>{group.desc}</span>
+                              <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--fg-2)' }}>{group.label}</span>
+                              <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>{group.desc}</span>
                             </div>
                             <Space.Compact style={{ width: '100%' }}>
                               <Input.Password
@@ -926,7 +926,7 @@ return (
                             {groupModels.length > 0 && (
                               <>
                                 <div
-                                  style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 8, cursor: 'pointer', userSelect: 'none' }}
+                                  style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8, cursor: 'pointer', userSelect: 'none' }}
                                   onClick={() => setGroupExpanded(prev => ({ ...prev, [group.id]: !prev[group.id] }))}
                                 >
                                   {isExpanded ? '▼' : '▶'} {groupModels.length} 个模型 (启用后出现在选择器中)
@@ -944,13 +944,13 @@ return (
                                         }}>
                                           <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
                                           <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>
+                                            <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg-2)' }}>
                                               {m.label}
-                                              {isEnabled && <Tag style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }} color="purple">已启用</Tag>}
+                                              {isEnabled && <Tag style={{ marginLeft: 4, fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 4px' }} color="purple">已启用</Tag>}
                                             </div>
-                                            <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>
+                                            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                                               {'priceIn' in m ? `输入 ${m.priceIn}/1M · 输出 ${m.priceOut}/1M` : `按次 ${m.price}`}
-                                              {m.level && <span> · <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>{m.level}</Tag></span>}
+                                              {m.level && <span> · <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 4px' }}>{m.level}</Tag></span>}
                                             </div>
                                           </div>
                                           <Button
@@ -959,7 +959,7 @@ return (
                                             icon={isEnabled ? <CheckOutlined /> : <ApiOutlined />}
                                             disabled={!hasKey}
                                             onClick={() => useModelStore.getState().toggleModel(`factory-${m.id}`, !isEnabled)}
-                                            style={{ fontSize: 10 }}
+                                            style={{ fontSize: 'var(--fs-micro)' }}
                                           >
                                             {isEnabled ? '已启用' : '启用'}
                                           </Button>
@@ -971,12 +971,12 @@ return (
                               </>
                             )}
                             {groupModels.length === 0 && hasKey && (
-                              <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 4 }}>
+                              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 4 }}>
                                 ⏳ 该分组模型列表将从服务端动态加载
                               </div>
                             )}
                             {groupModels.length === 0 && !hasKey && (
-                              <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 4 }}>
+                              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 4 }}>
                                 🔒 填入密钥后显示可用模型
                               </div>
                             )}
@@ -988,7 +988,7 @@ return (
 
                   {/* ===== 商用模型区域 (备选接入方案) ===== */}
                   <div>
-                    <Divider orientation="left" style={{ fontSize: 14, color: 'var(--warning)', margin: 0 }}>
+                    <Divider orientation="left" style={{ fontSize: 'var(--fs-md)', color: 'var(--warning)', margin: 0 }}>
                       <CrownOutlined style={{ color: 'var(--warning)', marginRight: 6 }} />
                       商用模型 (需配置 API Key)
                     </Divider>
@@ -1013,7 +1013,7 @@ return (
                                   ? <Tag color="green">免费额度</Tag>
                                   : <Tag color="orange">付费</Tag>
                                 }
-                                <code style={{ fontSize: 10, color: 'var(--muted)' }}>{t.baseURL}</code>
+                                <code style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{t.baseURL}</code>
                               </Space>
                               <Space>
                                 {status?.ok
@@ -1027,15 +1027,15 @@ return (
                           children: (
                             <div style={{ padding: '8px 0' }}>
                               <div style={{ marginBottom: 8 }}>
-                                <Text type="secondary" style={{ fontSize: 11 }}>可用模型: </Text>
+                                <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>可用模型: </Text>
                                 {t.models.map((m, i) => (
-                                  <Tag key={m} style={{ fontSize: 10, marginRight: 4 }}>
+                                  <Tag key={m} style={{ fontSize: 'var(--fs-micro)', marginRight: 4 }}>
                                     {m}
                                   </Tag>
                                 ))}
                               </div>
                               <div style={{ marginBottom: 8 }}>
-                                <Text type="secondary" style={{ fontSize: 11 }}>
+                                <Text type="secondary" style={{ fontSize: 'var(--fs-micro)' }}>
                                   <LinkOutlined /> 获取密钥: <a href={t.docsUrl} target="_blank" rel="noreferrer">{t.docsUrl}</a>
                                 </Text>
                               </div>
@@ -1096,7 +1096,7 @@ return (
 
                   {/* ===== 自定义模型区域 ===== */}
                   <div>
-                    <Divider orientation="left" style={{ fontSize: 14, color: 'var(--muted)', margin: 0 }}>
+                    <Divider orientation="left" style={{ fontSize: 'var(--fs-md)', color: 'var(--muted)', margin: 0 }}>
                       <PlusOutlined style={{ marginRight: 6 }} />
                       自定义模型 (任意 OpenAI 兼容 API)
                     </Divider>
@@ -1104,7 +1104,7 @@ return (
                     {/* 已添加的自定义模型列表 */}
                     {models.filter(m => !m.isBuiltIn).length > 0 && (
                       <div style={{ marginTop: 12 }}>
-                        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>已添加的模型:</div>
+                        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8 }}>已添加的模型:</div>
                         {/* 按类型分组显示 */}
                         {(['image', 'video', 'chat'] as const).map(type => {
                           const typeModels = models.filter(m => !m.isBuiltIn && m.modelType === type);
@@ -1113,7 +1113,7 @@ return (
                           const typeColor = type === 'image' ? '#EC4899' : type === 'video' ? '#8B5CF6' : '#3B82F6';
                           return (
                             <div key={type} style={{ marginBottom: 12 }}>
-                              <div style={{ fontSize: 11, fontWeight: 600, color: typeColor, marginBottom: 6 }}>{typeLabel}</div>
+                              <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: typeColor, marginBottom: 6 }}>{typeLabel}</div>
                               {typeModels.map((m, idx) => (
                                 <div key={m.id} style={{
                                   display: 'flex', alignItems: 'center', gap: 8,
@@ -1122,15 +1122,15 @@ return (
                                 }}>
                                   <span style={{ width: 10, height: 10, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
                                   <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>{m.label}</div>
-                                    <div style={{ fontSize: 10, color: 'var(--muted-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.baseURL}</div>
+                                    <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--fg-2)' }}>{m.label}</div>
+                                    <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.baseURL}</div>
                                   </div>
                                   <Button
                                     size="small"
                                     icon={<CheckCircleOutlined />}
                                     onClick={() => testConnection(m.baseURL, getApiKey(m.apiKeyEnv) || commercialKeys[m.apiKeyEnv] || '', m.models?.[0] || m.label, `custom-${idx}`)}
                                     loading={testingId === `custom-${idx}`}
-                                    style={{ fontSize: 10 }}
+                                    style={{ fontSize: 'var(--fs-micro)' }}
                                   >测试</Button>
                                   <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
                                     // 清理: 移除模型 + 删除 API Key (commercialKeys + sessionStorage + gateway)
@@ -1147,7 +1147,7 @@ return (
                                     }
                                     removeModel(m.id);
                                     message.info(`已移除「${m.label}」及其密钥`);
-                                  }} style={{ fontSize: 10 }} />
+                                  }} style={{ fontSize: 'var(--fs-micro)' }} />
                                 </div>
                               ))}
                             </div>
@@ -1163,7 +1163,7 @@ return (
                       style={{ marginTop: 8 }}
                       items={[{
                         key: 'add-form',
-                        label: <span style={{ fontSize: 12, color: 'var(--muted)' }}><PlusOutlined style={{ marginRight: 4 }} />添加新的自定义模型</span>,
+                        label: <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}><PlusOutlined style={{ marginRight: 4 }} />添加新的自定义模型</span>,
                         children: (
                     <Form layout="vertical" size="small" style={{ marginTop: 4 }}>
                       <Form.Item label="模型名称 (显示名)">
@@ -1242,7 +1242,7 @@ return (
                         <ThunderboltOutlined style={{ color: 'var(--warning)' }} />
                         <Text strong>DeepSeek V4 Pro</Text>
                         <Tag color="orange">付费</Tag>
-                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>强力推理, 适合代码审查/架构/安全</span>
+                        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>强力推理, 适合代码审查/架构/安全</span>
                       </Space>
                       <Space>
                         {allKeyStatus.deepseek?.ok
@@ -1256,7 +1256,7 @@ return (
                       </Space>
                     </div>
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                  <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginTop: 4 }}>
                     💡 提示: 配置 DeepSeek Key 后, 当你执行代码审查、架构设计、安全分析等任务时, AI 会自动建议切换到 V4 Pro。你也可以随时在模型选择器中手动切换。
                   </div>
                 </Space>
@@ -1288,11 +1288,11 @@ return (
                     <div style={{ fontWeight: 600, marginBottom: 8 }}>⚙️ 灰度功能开关</div>
                     <Space direction="vertical" style={{ width: '100%' }} size={8}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>新模型选择器 <Tag style={{ fontSize: 9 }}>useNewModelSelector</Tag></span>
+                        <span>新模型选择器 <Tag style={{ fontSize: 'var(--fs-micro)' }}>useNewModelSelector</Tag></span>
                         <Switch checked={featureFlags.useNewModelSelector} onChange={(v) => setFeatureFlags(f => ({ ...f, useNewModelSelector: v }))} />
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>诊断优先主链路 <Tag style={{ fontSize: 9 }}>enableDiagnosisPipeline</Tag></span>
+                        <span>诊断优先主链路 <Tag style={{ fontSize: 'var(--fs-micro)' }}>enableDiagnosisPipeline</Tag></span>
                         <Switch checked={featureFlags.enableDiagnosisPipeline} onChange={(v) => setFeatureFlags(f => ({ ...f, enableDiagnosisPipeline: v }))} />
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1329,7 +1329,7 @@ return (
                 <Space direction="vertical" style={{ width: '100%' }} size={16}>
                   <Space>
                     {qqStatus.online ? <Tag color="success">已连接</Tag> : <Tag color="default">未连接</Tag>}
-                    {qqStatus.sessionId && <span style={{ color: 'var(--muted)', fontSize: 12 }}>Session: {qqStatus.sessionId}</span>}
+                    {qqStatus.sessionId && <span style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)' }}>Session: {qqStatus.sessionId}</span>}
                   </Space>
                   {qqStatus.online && (
                     <Descriptions size="small" column={1} bordered>
@@ -1355,7 +1355,7 @@ return (
             label: <span><ExperimentOutlined /> AI 进化</span>,
             children: (
               <Card>
-                <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--muted-2)' }}>
+                <div style={{ marginBottom: 12, fontSize: 'var(--fs-sm)', color: 'var(--muted-2)' }}>
                   AI 会跨会话学习你的偏好和教训, 越用越懂你。这里可以查看和管理 AI 学到的内容。
                 </div>
                 <EvolutionPanel />

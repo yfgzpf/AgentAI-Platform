@@ -158,13 +158,13 @@ export const DecorAI: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             color: '#fff',
-            fontSize: 18,
+            fontSize: 'var(--fs-lg)',
           }}>
             🏠
           </div>
           <div>
-            <Title level={5} style={{ margin: 0, fontSize: 16 }}>DecorAI</Title>
-            <Paragraph type="secondary" style={{ margin: 0, fontSize: 11 }}>
+            <Title level={5} style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>DecorAI</Title>
+            <Paragraph type="secondary" style={{ margin: 0, fontSize: 'var(--fs-micro)' }}>
               AI驱动的装修方案平台
             </Paragraph>
           </div>

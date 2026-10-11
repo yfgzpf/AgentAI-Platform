@@ -169,14 +169,14 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         .ai-change-deleted { background: rgba(239,68,68,0.06) !important; border-left: 3px solid rgba(239,68,68,0.5) !important; }
 
         /* AI 修改行号区域图标 */
-        .ai-gutter-created::after { content: '✨'; font-size: 10px; margin-left: 2px; }
-        .ai-gutter-modified::after { content: '✏️'; font-size: 10px; margin-left: 2px; }
-        .ai-gutter-deleted::after { content: '🗑️'; font-size: 10px; margin-left: 2px; }
+        .ai-gutter-created::after { content: '✨'; font-size: var(--fs-micro); margin-left: 2px; }
+        .ai-gutter-modified::after { content: '✏️'; font-size: var(--fs-micro); margin-left: 2px; }
+        .ai-gutter-deleted::after { content: '🗑️'; font-size: var(--fs-micro); margin-left: 2px; }
 
         /* AI 修改行尾注释 */
-        .ai-annotation-created::after { content: ' ← AI 新建'; color: #4ade80; font-size: 11px; opacity: 0.7; margin-left: 12px; }
-        .ai-annotation-modified::after { content: ' ← AI 修改'; color: #e8a838; font-size: 11px; opacity: 0.7; margin-left: 12px; }
-        .ai-annotation-deleted::after { content: ' ← AI 删除'; color: #ef4444; font-size: 11px; opacity: 0.7; margin-left: 12px; }
+        .ai-annotation-created::after { content: ' ← AI 新建'; color: #4ade80; font-size: var(--fs-micro); opacity: 0.7; margin-left: 12px; }
+        .ai-annotation-modified::after { content: ' ← AI 修改'; color: #e8a838; font-size: var(--fs-micro); opacity: 0.7; margin-left: 12px; }
+        .ai-annotation-deleted::after { content: ' ← AI 删除'; color: #ef4444; font-size: var(--fs-micro); opacity: 0.7; margin-left: 12px; }
       `;
       document.head.appendChild(style);
     }
@@ -221,6 +221,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         readOnly,
         minimap: { enabled: minimap },
         lineNumbers,
+        // Monaco 的 option 只接受 number, 不能传 CSS 变量 (对应 --fs-md 档 = 13)
         fontSize: 13,
         fontFamily: 'Consolas, "Courier New", monospace',
         lineHeight: 1.6,

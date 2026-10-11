@@ -69,7 +69,7 @@ export const SandboxStatusPanel: React.FC<Props> = ({ className }) => {
   if (error) {
     return (
       <Card size="small" style={{ margin: 16 }}>
-        <div style={{ color: '#f85149', fontSize: 12 }}>
+        <div style={{ color: '#f85149', fontSize: 'var(--fs-sm)' }}>
           <WarningOutlined /> {error}
         </div>
       </Card>
@@ -116,7 +116,7 @@ export const SandboxStatusPanel: React.FC<Props> = ({ className }) => {
       title={
         <Space>
           <SafetyOutlined style={{ color: '#58a6ff' }} />
-          <span style={{ fontSize: 13 }}>沙箱状态</span>
+          <span style={{ fontSize: 'var(--fs-md)' }}>沙箱状态</span>
           <Badge
             status={status.enabled ? 'success' : 'error'}
             text={status.enabled ? '已启用' : '未启用'}
@@ -133,7 +133,7 @@ export const SandboxStatusPanel: React.FC<Props> = ({ className }) => {
           children: (
             <Space direction="vertical" size="small" style={{ width: '100%' }}>
               {section.items.map((item, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-sm)' }}>
                   <span style={{ color: '#8b949e' }}>{item.label}</span>
                   <span style={{ color: item.color, fontFamily: 'monospace' }}>
                     {item.value}

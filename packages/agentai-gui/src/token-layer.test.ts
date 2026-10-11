@@ -120,3 +120,44 @@ describe('token 层: 圆角与字号尺度', () => {
     expect(themeNoComments).toMatch(/--ui-font-size\s*:\s*var\(--fs-micro\)/);
   });
 });
+
+describe('token 层: 字号调用点必须走尺度 (2026-10-11 收敛)', () => {
+  // 收敛前: 23 种 fontSize, ≤12px 上千处, 7/8/9/10 与 12/13/14/15 互相只差 1px 无法分辨
+  const FS_BAND_MIN = 7, FS_BAND_MAX = 28;
+
+  it('文本档 (7–28px) 不得再出现裸数字, 必须用 var(--fs-*)', () => {
+    // 白名单: 值会被传给**只接受 number 的第三方 API**, 塞不进 CSS 变量
+    //   MonacoEditor 的 options.fontSize 由 Monaco 自己解析, 不经过浏览器 CSS
+    const ALLOW: Array<{ file: string; reason: string }> = [
+      { file: 'components/MonacoEditor.tsx', reason: 'Monaco options.fontSize 只接受 number' },
+    ];
+    const allowed = (f: string) => ALLOW.some(a => f.replace(/\\/g, '/').endsWith(a.file));
+
+    const offenders: string[] = [];
+    for (const f of SOURCES) {
+      if (/\.test\./.test(f) || allowed(f)) continue;
+      for (const line of stripComments(readFileSync(f, 'utf-8')).split('\n')) {
+        const m = line.match(/fontSize:\s*(['"]?)([\d.]+)\1(?![\d.])/);
+        if (!m) continue;
+        const v = parseFloat(m[2]);
+        if (v >= FS_BAND_MIN && v <= FS_BAND_MAX) offenders.push(`${f}: ${line.trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('var(--fs-*) 确实被调用点消费 (不是零消费的僵尸 token)', () => {
+    let used = 0;
+    for (const f of SOURCES) {
+      if (/\.test\./.test(f)) continue;
+      used += (stripComments(readFileSync(f, 'utf-8')).match(/var\(--fs-(micro|sm|md|lg|xl|hero)\)/g) || []).length;
+    }
+    expect(used).toBeGreaterThan(1000);
+  });
+
+  it('图标/emoji/logo 档 (≥32px) 有意保留裸数字, 不得被并进文本尺度', () => {
+    // 这些是 Antd 图标 size / emoji / Splash 大标题, 不是文字尺度 (如 fontSize: 64 是头像)
+    const themeScale = themeNoComments.match(/--fs-(hero)\s*:\s*(\d+)px/);
+    expect(themeScale && parseFloat(themeScale[2])).toBe(28);
+  });
+});

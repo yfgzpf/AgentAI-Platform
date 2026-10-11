@@ -531,7 +531,7 @@ const sendToVideo = (imageUrl: string) => {
             {img && (
                 <div style={{ marginTop: 6, position: 'relative', display: 'inline-block' }}>
                     <img src={img} alt={label} style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
-                    <span onClick={() => setImg(null)} style={{ position: 'absolute', top: -4, right: -4, width: 18, height: 18, borderRadius: '50%', background: 'var(--danger)', color: '#fff', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>×</span>
+                    <span onClick={() => setImg(null)} style={{ position: 'absolute', top: -4, right: -4, width: 18, height: 18, borderRadius: '50%', background: 'var(--danger)', color: '#fff', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>×</span>
                 </div>
             )}
         </div>
@@ -568,42 +568,42 @@ const sendToVideo = (imageUrl: string) => {
                     <div style={{ display: 'flex', gap: 4, padding: '8px' }}>
                         {MODES.map(m => (
                             <button key={m.key} onClick={() => { setMode(m.key); setCurrent(null); setSourceImage(null); setRefImages([]); }}
-                                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '6px 2px', borderRadius: 8, fontSize: 10, cursor: 'pointer', background: mode === m.key ? 'rgba(16,185,129,0.15)' : 'transparent', border: `1px solid ${mode === m.key ? '#10b981' : 'transparent'}`, color: mode === m.key ? '#10b981' : 'var(--muted-2)', transition: 'all 0.2s' }}>
+                                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '6px 2px', borderRadius: 8, fontSize: 'var(--fs-micro)', cursor: 'pointer', background: mode === m.key ? 'rgba(16,185,129,0.15)' : 'transparent', border: `1px solid ${mode === m.key ? '#10b981' : 'transparent'}`, color: mode === m.key ? '#10b981' : 'var(--muted-2)', transition: 'all 0.2s' }}>
                                 {m.icon} {m.label}
                             </button>
                         ))}
                     </div>
                     {/* 参数设置 — 竖排不截断 */}
                     <div style={{ padding: '4px 12px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>参数设置</div>
+                        <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>参数设置</div>
                         <div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>模型</div>
+                            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 3 }}>模型</div>
                             <Select size="small" value={model} onChange={setModel} style={{ width: '100%' }} options={allModelOptions} />
                         </div>
                         <div style={{ display: 'flex', gap: 8 }}>
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>尺寸</div>
+                                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 3 }}>尺寸</div>
                                 <Select size="small" value={size} onChange={setSize} style={{ width: '100%' }} options={SIZES} />
                             </div>
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>强度</div>
+                                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 3 }}>强度</div>
                                 <Select size="small" value={String(strength)} onChange={v => setStrength(parseFloat(v))} style={{ width: '100%' }}
                                     options={[{ value: '0.3', label: '0.3 轻微' }, { value: '0.5', label: '0.5 适中' }, { value: '0.65', label: '0.65 默认' }, { value: '0.8', label: '0.8 强力' }, { value: '0.95', label: '0.95 重绘' }]} />
                             </div>
                         </div>
                         <div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>画幅</div>
+                            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 3 }}>画幅</div>
                             <Select size="small" value={ratio} onChange={setRatio} style={{ width: '100%' }} options={ASPECT_RATIOS} />
                         </div>
                     </div>
 
                     {/* 快捷操作 */}
                     <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>快捷操作</div>
+                        <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>快捷操作</div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                             {EDIT_QUICK_ACTIONS.map(a => (
                                 <button key={a.label} onClick={() => { if (!sourceImage && !current?.url) { message.warning('请先上传图片'); return; } setEditInput(a.prompt); }}
-                                    style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg-2)', cursor: 'pointer', transition: 'all 0.15s' }}
+                                    style={{ fontSize: 'var(--fs-micro)', padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg-2)', cursor: 'pointer', transition: 'all 0.15s' }}
                                     onMouseEnter={e => { e.currentTarget.style.borderColor = '#10b981'; e.currentTarget.style.color = '#10b981'; }}
                                     onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--fg-2)'; }}>
                                     {a.label}
@@ -613,12 +613,12 @@ const sendToVideo = (imageUrl: string) => {
                     </div>
                     {/* 生成历史缩略图 */}
                     <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', justifyContent: 'space-between' }}>
+                        <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', justifyContent: 'space-between' }}>
                             <span>生成历史 ({history.length})</span>
                             {history.length > 0 && <span style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => { try { localStorage.removeItem('agentai-image-tasks'); setHistory([]); } catch {} }}>清空</span>}
                         </div>
                         {history.length === 0 ? (
-                            <div style={{ fontSize: 11, color: 'var(--muted-2)', textAlign: 'center', padding: 20 }}>暂无历史记录</div>
+                            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', textAlign: 'center', padding: 20 }}>暂无历史记录</div>
                         ) : (
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                                 {history.slice(0, 30).map(h => (
@@ -626,7 +626,7 @@ const sendToVideo = (imageUrl: string) => {
                                         onClick={() => { setSourceImage(h.url); setRefImages([h.url]); setCurrent(h); setEditInput(''); message.info('已设为底图, 输入修改指令'); }}
                                         title={h.prompt}>
                                         <img src={h.url} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
-                                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 8, padding: '2px 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 'var(--fs-micro)', padding: '2px 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                             {h.prompt.slice(0, 22)}
                                         </div>
                                         {/* 悬停操作栏 */}
@@ -634,10 +634,10 @@ const sendToVideo = (imageUrl: string) => {
                                             onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
                                             onMouseLeave={e => { e.currentTarget.style.opacity = '0'; }}>
                                             <button onClick={(e) => { e.stopPropagation(); downloadImg(h.url); }}
-                                                style={{ width: 18, height: 18, borderRadius: 4, background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                style={{ width: 18, height: 18, borderRadius: 4, background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                                 title="下载"><DownloadOutlined /></button>
                                             <button onClick={(e) => { e.stopPropagation(); deleteHistoryItem(h.id); }}
-                                                style={{ width: 18, height: 18, borderRadius: 4, background: 'rgba(239,68,68,0.85)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                style={{ width: 18, height: 18, borderRadius: 4, background: 'rgba(239,68,68,0.85)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                                 title="删除"><DeleteOutlined /></button>
                                         </div>
                                     </div>
@@ -655,8 +655,8 @@ const sendToVideo = (imageUrl: string) => {
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <MessageOutlined style={{ color: '#10b981' }} />
-                            <span style={{ fontSize: 14, fontWeight: 700 }}>对话改图</span>
-                            {sourceImage && <Tag color="green" style={{ fontSize: 10 }}>底图已加载</Tag>}
+                            <span style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>对话改图</span>
+                            {sourceImage && <Tag color="green" style={{ fontSize: 'var(--fs-micro)' }}>底图已加载</Tag>}
                         </div>
                         <Space size={4}>
                             <Button size="small" icon={<UploadOutlined />} onClick={() => sourceRef.current?.click()}>上传图片</Button>
@@ -673,20 +673,20 @@ const sendToVideo = (imageUrl: string) => {
                             /* 空状态引导 */
                             <div style={{ textAlign: 'center', marginTop: 80 }}>
                                 <div style={{ marginBottom: 16, color: 'var(--muted)' }}><MessageOutlined style={{ fontSize: 48 }} /></div>
-                                <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>AI 对话改图</div>
-                                <div style={{ fontSize: 14, color: 'var(--muted-2)', marginBottom: 24, maxWidth: 400, margin: '0 auto 24px' }}>
+                                <div style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, marginBottom: 8 }}>AI 对话改图</div>
+                                <div style={{ fontSize: 'var(--fs-md)', color: 'var(--muted-2)', marginBottom: 24, maxWidth: 400, margin: '0 auto 24px' }}>
                                     上传一张图片，用自然语言描述修改需求，AI 逐步迭代优化。<br/>
                                     支持多轮对话，每次基于上次结果继续编辑。
                                 </div>
                                 <Button type="primary" size="large" icon={<UploadOutlined />} onClick={() => sourceRef.current?.click()}
-                                    style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none', borderRadius: 12, height: 48, padding: '0 32px', fontSize: 15 }}>
+                                    style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none', borderRadius: 12, height: 48, padding: '0 32px', fontSize: 'var(--fs-md)' }}>
                                     上传图片开始
                                 </Button>
                                 <input ref={sourceRef} type="file" accept="image/*" style={{ display: 'none' }}
                                     onChange={e => { if (e.target.files?.length) readImages(e.target.files, 1, imgs => { setSourceImage(imgs[0]); setRefImages([imgs[0]]); setCurrent({ id: 'src', prompt: '上传图片', url: imgs[0], size: '', ts: Date.now(), mode: 'edit' }); }); e.target.value = ''; }} />
                                 <div style={{ marginTop: 32, display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 600, margin: '32px auto 0' }}>
                                     {EDIT_QUICK_ACTIONS.slice(0, 6).map(a => (
-                                        <Tag key={a.label} style={{ cursor: 'pointer', fontSize: 12, padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border)' }}
+                                        <Tag key={a.label} style={{ cursor: 'pointer', fontSize: 'var(--fs-sm)', padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border)' }}
                                             onClick={() => { message.info('请先上传一张图片'); }}>{a.label}</Tag>
                                     ))}
                                 </div>
@@ -699,7 +699,7 @@ const sendToVideo = (imageUrl: string) => {
                                         <Dropdown menu={imgContextMenu(sourceImage)} trigger={['contextMenu']}>
                                             <img src={sourceImage} alt="source" style={{ maxWidth: 500, maxHeight: 500, borderRadius: 12, border: '2px solid var(--border)', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} onClick={() => setZoomUrl(sourceImage)} />
                                         </Dropdown>
-                                        <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 8 }}>📷 当前底图 · 右键可发送到其他模式</div>
+                                        <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)', marginTop: 8 }}>📷 当前底图 · 右键可发送到其他模式</div>
                                         <div style={{ marginTop: 8 }}>
                                             <Button size="small" type="primary" ghost icon={<EditOutlined />} onClick={() => { setRegionEditImage(sourceImage); setShowRegionEditor(true); }}>
                                                 框选区域编辑
@@ -723,14 +723,14 @@ const sendToVideo = (imageUrl: string) => {
                                                         </div>
                                                     )}
                                                     {msg.content && (
-                                                        <div style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--fg)', padding: '12px 18px', borderRadius: '18px 18px 4px 18px', fontSize: 14, lineHeight: 1.6 }}>{msg.content}</div>
+                                                        <div style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--fg)', padding: '12px 18px', borderRadius: '18px 18px 4px 18px', fontSize: 'var(--fs-md)', lineHeight: 1.6 }}>{msg.content}</div>
                                                     )}
                                                 </div>
                                             </div>
                                         ) : (
                                             /* AI 消息 — 左对齐 + 图片 + 操作栏 */
                                             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#fff', fontSize: 14, fontWeight: 700 }}>AI</div>
+                                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#fff', fontSize: 'var(--fs-md)', fontWeight: 700 }}>AI</div>
                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                     {msg.imageUrl && (
                                                         <Dropdown menu={imgContextMenu(msg.imageUrl)} trigger={['contextMenu']}>
@@ -738,7 +738,7 @@ const sendToVideo = (imageUrl: string) => {
                                                         </Dropdown>
                                                     )}
                                                     {msg.content && (
-                                                        <div style={{ background: msg.error ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.10)', color: msg.error ? '#ef4444' : 'var(--fg)', padding: '12px 16px', borderRadius: '4px 18px 18px 18px', maxWidth: 500, fontSize: 14, lineHeight: 1.6 }}>{msg.content}</div>
+                                                        <div style={{ background: msg.error ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.10)', color: msg.error ? '#ef4444' : 'var(--fg)', padding: '12px 16px', borderRadius: '4px 18px 18px 18px', maxWidth: 500, fontSize: 'var(--fs-md)', lineHeight: 1.6 }}>{msg.content}</div>
                                                     )}
                                                     {/* 错误重试按钮 */}
                                                     {msg.error && msg.retryData && (
@@ -768,9 +768,9 @@ const sendToVideo = (imageUrl: string) => {
                                 {/* 加载中 */}
                                 {busy && (
                                     <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, fontWeight: 700 }}>AI</div>
+                                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 'var(--fs-md)', fontWeight: 700 }}>AI</div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <Spin size="small" /> <span style={{ color: 'var(--muted)', fontSize: 13 }}>正在生成图片...</span>
+                                            <Spin size="small" /> <span style={{ color: 'var(--muted)', fontSize: 'var(--fs-md)' }}>正在生成图片...</span>
                                         </div>
                                     </div>
                                 )}
@@ -788,13 +788,13 @@ const sendToVideo = (imageUrl: string) => {
                                 {sourceImage && (
                                     <div style={{ position: 'relative', width: 64, height: 64 }} title="当前底图">
                                         <img src={sourceImage} alt="底图" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, border: '2px solid #10b981' }} />
-                                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(16,185,129,0.85)', color: '#fff', fontSize: 8, textAlign: 'center', padding: '1px 0', borderRadius: '0 0 6px 6px' }}>底图</div>
+                                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(16,185,129,0.85)', color: '#fff', fontSize: 'var(--fs-micro)', textAlign: 'center', padding: '1px 0', borderRadius: '0 0 6px 6px' }}>底图</div>
                                         {/* 悬停编辑入口 */}
                                         <button onClick={(e) => { e.stopPropagation(); setRegionEditImage(sourceImage); setShowRegionEditor(true); }}
-                                            style={{ position: 'absolute', top: 2, left: 2, width: 20, height: 20, borderRadius: 4, background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.7 }}
+                                            style={{ position: 'absolute', top: 2, left: 2, width: 20, height: 20, borderRadius: 4, background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.7 }}
                                             title="框选编辑"><EditOutlined /></button>
                                         <button onClick={() => { setSourceImage(null); setRefImages([]); }}
-                                            style={{ position: 'absolute', top: -4, right: -4, width: 18, height: 18, borderRadius: '50%', background: 'var(--danger)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>✕</button>
+                                            style={{ position: 'absolute', top: -4, right: -4, width: 18, height: 18, borderRadius: '50%', background: 'var(--danger)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>✕</button>
                                     </div>
                                 )}
                                 {/* 待发送图片缩略图 — 悬停显示编辑入口 */}
@@ -802,16 +802,16 @@ const sendToVideo = (imageUrl: string) => {
                                     <div key={`pending-${idx}`} style={{ position: 'relative', width: 64, height: 64 }}>
                                         <img src={img} alt={`pending-${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
                                         <button onClick={(e) => { e.stopPropagation(); setRegionEditImage(img); setShowRegionEditor(true); }}
-                                            style={{ position: 'absolute', top: 2, left: 2, width: 20, height: 20, borderRadius: 4, background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.7 }}
+                                            style={{ position: 'absolute', top: 2, left: 2, width: 20, height: 20, borderRadius: 4, background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.7 }}
                                             title="框选编辑"><EditOutlined /></button>
                                         <button onClick={() => setEditInputImages(prev => prev.filter((_, i) => i !== idx))}
-                                            style={{ position: 'absolute', top: -4, right: -4, width: 18, height: 18, borderRadius: '50%', background: 'var(--danger)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>✕</button>
+                                            style={{ position: 'absolute', top: -4, right: -4, width: 18, height: 18, borderRadius: '50%', background: 'var(--danger)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>✕</button>
                                     </div>
                                 ))}
                                 {/* 添加更多图片按钮 */}
                                 <button onClick={() => editInputRef.current?.click()}
-                                    style={{ width: 64, height: 64, borderRadius: 6, border: '1px dashed var(--border)', background: 'var(--bg)', color: 'var(--muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>+</button>
-                                <span style={{ fontSize: 10, color: 'var(--muted)' }}>
+                                    style={{ width: 64, height: 64, borderRadius: 6, border: '1px dashed var(--border)', background: 'var(--bg)', color: 'var(--muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--fs-xl)' }}>+</button>
+                                <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>
                                     {sourceImage ? '底图' : ''}{sourceImage && editInputImages.length > 0 ? ' + ' : ''}{editInputImages.length > 0 ? `${editInputImages.length}张待发` : ''}
                                 </span>
                             </div>
@@ -821,14 +821,14 @@ const sendToVideo = (imageUrl: string) => {
                             {/* 上传按钮 — 在输入框左侧 */}
                             <Tooltip title={editInputImages.length > 0 ? `已选 ${editInputImages.length} 张, 点击添加更多` : '上传图片 (支持多选)'}>
                                 <button onClick={() => editInputRef.current?.click()} disabled={busy}
-                                    style={{ width: 44, height: 44, flexShrink: 0, border: 'none', background: 'none', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--accent)', fontSize: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    style={{ width: 44, height: 44, flexShrink: 0, border: 'none', background: 'none', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--accent)', fontSize: 'var(--fs-xl)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <PictureOutlined />
                                 </button>
                             </Tooltip>
                             <Input.TextArea value={editInput} onChange={e => setEditInput(e.target.value)} placeholder={editInputImages.length > 0 ? '描述修改需求 (可不填, 直接发送图片)' : '描述你想要的修改，如：把背景换成海边日落...'} autoSize={{ minRows: 1, maxRows: 6 }} disabled={busy}
-                                onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); sendEditMessage(); } }} style={{ flex: 1, border: 'none', background: 'transparent', borderRadius: 0, fontSize: 14, padding: '12px 8px', resize: 'none', boxShadow: 'none' }} />
+                                onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); sendEditMessage(); } }} style={{ flex: 1, border: 'none', background: 'transparent', borderRadius: 0, fontSize: 'var(--fs-md)', padding: '12px 8px', resize: 'none', boxShadow: 'none' }} />
                             <Button type="primary" icon={<MessageOutlined />} loading={busy} onClick={sendEditMessage} disabled={!editInput.trim() && editInputImages.length === 0}
-                                style={{ borderRadius: 10, background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none', height: 40, minWidth: 72, fontSize: 14, fontWeight: 600, margin: '2px' }}>
+                                style={{ borderRadius: 10, background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none', height: 40, minWidth: 72, fontSize: 'var(--fs-md)', fontWeight: 600, margin: '2px' }}>
                                 {busy ? '生成中' : '发送'}
                             </Button>
                         </div>
@@ -843,19 +843,19 @@ const sendToVideo = (imageUrl: string) => {
                     <PaneGrip resizable={editRightPane} min={180} max={400} label="调整预设模版面板宽度" />
                     {/* 内层滚动: .pane-grip 是 position:absolute, 放进滚动容器会随内容一起滚走 */}
                     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '8px 10px' }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 700, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 4 }}>
                         <BulbOutlined /> 预设模版
                     </div>
                     {EDIT_TEMPLATES.map(cat => (
                         <div key={cat.category} style={{ marginBottom: 12 }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg-2)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 700, color: 'var(--fg-2)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <span>{cat.icon}</span> {cat.category}
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                                 {cat.items.map(item => (
                                     <button key={item.label}
                                         onClick={() => { if (!sourceImage && !current?.url) { message.warning('请先上传图片'); return; } setEditInput(item.prompt); }}
-                                        style={{ textAlign: 'left', fontSize: 11, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg-2)', cursor: 'pointer', transition: 'all 0.15s', lineHeight: 1.4 }}
+                                        style={{ textAlign: 'left', fontSize: 'var(--fs-micro)', padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg-2)', cursor: 'pointer', transition: 'all 0.15s', lineHeight: 1.4 }}
                                         onMouseEnter={e => { e.currentTarget.style.borderColor = '#10b981'; e.currentTarget.style.color = '#10b981'; e.currentTarget.style.background = 'rgba(16,185,129,0.06)'; }}
                                         onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--fg-2)'; e.currentTarget.style.background = 'var(--bg)'; }}>
                                         {item.label}
@@ -864,7 +864,7 @@ const sendToVideo = (imageUrl: string) => {
                             </div>
                         </div>
                     ))}
-                    <div style={{ fontSize: 9, color: 'var(--muted-2)', textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
+                    <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
                         点击模版自动填入输入框<br/>可在此基础上修改后发送
                     </div>
                     </div>{/* /内层滚动 */}
@@ -883,10 +883,10 @@ const sendToVideo = (imageUrl: string) => {
                                 {promptLibrary.getByCategory(cat).map(t => (
                                     <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)', cursor: 'pointer' }}
                                         onClick={() => { setEditInput(t.prompt); setShowPromptLib(false); message.success(`已加载: ${t.label}`); }}>
-                                        <StarOutlined style={{ fontSize: 16, color: 'var(--accent)' }} />
+                                        <StarOutlined style={{ fontSize: 'var(--fs-lg)', color: 'var(--accent)' }} />
                                         <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</div>
-                                            <div style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.prompt}</div>
+                                            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>{t.label}</div>
+                                            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.prompt}</div>
                                         </div>
                                         {!t.isBuiltIn && <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={e => { e.stopPropagation(); promptLibrary.remove(t.id); }} />}
                                     </div>
@@ -947,8 +947,8 @@ const sendToVideo = (imageUrl: string) => {
                         return (
                             <button key={m.key} onClick={() => { setMode(m.key); setCurrent(null); setSourceImage(null); setRefImages([]); }}
                                 style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '8px 2px', borderRadius: 8, cursor: 'pointer', background: active ? `${c}18` : 'var(--panel)', border: `2px solid ${active ? c : 'var(--border)'}`, transition: 'all 0.2s' }}>
-                                <span style={{ fontSize: 16, color: active ? c : 'var(--muted-2)' }}>{m.icon}</span>
-                                <span style={{ fontSize: 10, fontWeight: active ? 700 : 600, color: active ? c : 'var(--fg-2)' }}>{m.label}</span>
+                                <span style={{ fontSize: 'var(--fs-lg)', color: active ? c : 'var(--muted-2)' }}>{m.icon}</span>
+                                <span style={{ fontSize: 'var(--fs-micro)', fontWeight: active ? 700 : 600, color: active ? c : 'var(--fg-2)' }}>{m.label}</span>
                             </button>
                         );
                     })}
@@ -981,7 +981,7 @@ const sendToVideo = (imageUrl: string) => {
 
                         {/* 画幅比例 — 后端一直支持 ratio, 这里之前根本没有入口, 所以出图恒为 1:1 */}
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <span style={{ fontSize: 11, color: 'var(--muted)', flexShrink: 0 }}>画幅</span>
+                            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', flexShrink: 0 }}>画幅</span>
                             <Select size="small" value={ratio} onChange={setRatio} style={{ flex: 1 }} options={ASPECT_RATIOS} disabled={busy} />
                         </div>
 
@@ -1013,12 +1013,12 @@ const sendToVideo = (imageUrl: string) => {
                                             <div key={i} style={{ position: 'relative' }}>
                                                 <img src={img} alt={`ref${i}`} style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
                                                 <span onClick={() => { setRefImages(prev => prev.filter((_, j) => j !== i)); if (i === 0) setSourceImage(null); }}
-                                                    style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: '50%', background: 'var(--danger)', color: '#fff', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>×</span>
+                                                    style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: '50%', background: 'var(--danger)', color: '#fff', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>×</span>
                                             </div>
                                         ))}
                                     </div>
                                 )}
-                                <div style={{ marginTop: 6 }}><span style={{ color: 'var(--muted)', fontSize: 11 }}>强度: {strength.toFixed(2)}</span>
+                                <div style={{ marginTop: 6 }}><span style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>强度: {strength.toFixed(2)}</span>
                                     <Slider min={0.1} max={0.95} step={0.05} value={strength} onChange={setStrength} style={{ width: '100%' }} /></div>
                             </div>
                         )}
@@ -1036,8 +1036,8 @@ const sendToVideo = (imageUrl: string) => {
 
                         {/* 负面提示词 */}
                         <div>
-                            <button onClick={() => setShowNegative(!showNegative)} style={{ background: 'none', border: 'none', color: 'var(--muted-2)', fontSize: 11, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                {showNegative ? <span style={{ fontSize: 9 }}>▼</span> : <span style={{ fontSize: 9 }}>▶</span>} 负面提示词
+                            <button onClick={() => setShowNegative(!showNegative)} style={{ background: 'none', border: 'none', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                {showNegative ? <span style={{ fontSize: 'var(--fs-micro)' }}>▼</span> : <span style={{ fontSize: 'var(--fs-micro)' }}>▶</span>} 负面提示词
                             </button>
                             {showNegative && <Input.TextArea value={negativePrompt} onChange={e => setNegativePrompt(e.target.value)} placeholder="blurry, low quality..." autoSize={{ minRows: 1, maxRows: 2 }} size="small" disabled={busy} style={{ marginTop: 4 }} />}
                         </div>
@@ -1057,13 +1057,13 @@ const sendToVideo = (imageUrl: string) => {
                         {/* ★ 填充: 最近提示词 */}
                         {history.length > 0 && (
                             <div>
-                                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
                                     <HistoryOutlined /> 最近提示词
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     {history.slice(0, 4).map(h => (
                                         <div key={h.id} onClick={() => { setPrompt(h.prompt); message.success('已加载提示词'); }}
-                                            style={{ padding: '6px 8px', borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: 11, color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'all 0.2s' }}
+                                            style={{ padding: '6px 8px', borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'all 0.2s' }}
                                             onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; }}
                                             onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--fg-2)'; }}>
                                             {h.prompt}
@@ -1075,15 +1075,15 @@ const sendToVideo = (imageUrl: string) => {
 
                         {/* ★ 填充: 模型信息 */}
                         <div style={{ padding: '8px 10px', borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 4 }}>当前引擎</div>
-                            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                            <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg-2)', marginBottom: 4 }}>当前引擎</div>
+                            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
                                 {model === 'agnes' && 'Agnes Image 2.5 Flash — 支持文生图/图生图/风格迁移/改图'}
                                 {model === 'cogview' && 'Cogview-3-Flash — 智谱免费模型, 仅支持文生图'}
                                 {model.startsWith('alrc-') && `${MODELS.find(m => m.value === model)?.label || model} — 通过模型工厂接入`}
                                 {model.startsWith('custom:') && `自定义模型: ${customModels.find(m => 'custom:' + m.id === model)?.name || ''}`}
                             </div>
                             {mode !== 'text2img' && model === 'cogview' && (
-                                <div style={{ fontSize: 10, color: 'var(--danger)', marginTop: 4 }}>此模型不支持当前模式, 将自动切换 Agnes</div>
+                                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)', marginTop: 4 }}>此模型不支持当前模式, 将自动切换 Agnes</div>
                             )}
                         </div>
                     </div>
@@ -1110,8 +1110,8 @@ const sendToVideo = (imageUrl: string) => {
                             </Dropdown>
                         </div>
                         <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between' }}>
-                            <div style={{ color: 'var(--muted)', fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{current.prompt}</div>
-                            <div style={{ color: 'var(--muted-2)', fontSize: 11, marginLeft: 8 }}>{current.size} · {new Date(current.ts).toLocaleTimeString()}</div>
+                            <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{current.prompt}</div>
+                            <div style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', marginLeft: 8 }}>{current.size} · {new Date(current.ts).toLocaleTimeString()}</div>
                         </div>
                     </Card>
                 )}
@@ -1129,19 +1129,19 @@ const sendToVideo = (imageUrl: string) => {
                 {!current && !busy && history.length === 0 && (
                     <div style={{ textAlign: 'center', marginTop: 60 }}>
                         <div style={{ marginBottom: 12, color: 'var(--muted)' }}><PictureOutlined style={{ fontSize: 40 }} /></div>
-                        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>AI 图像工作室</div>
+                        <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700, marginBottom: 6 }}>AI 图像工作室</div>
                         {/* 这里是风格预设 (TEXT2IMG_PRESETS), 不是模式 —— 模式下拉在左栏
                             (文生图/图生图/风格迁移/改图/换装)。原文案写「选择模式」会让同一个词
                             被两处争用, 用户分不清点哪边 (2026-10-11 截图发现) */}
-                        <div style={{ fontSize: 13, color: 'var(--muted-2)', marginBottom: 24 }}>选一个风格预设，或直接输入描述</div>
+                        <div style={{ fontSize: 'var(--fs-md)', color: 'var(--muted-2)', marginBottom: 24 }}>选一个风格预设，或直接输入描述</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 8, maxWidth: 500, margin: '0 auto' }}>
                             {TEXT2IMG_PRESETS.slice(0, 6).map(p => (
                                 <button key={p.label} onClick={() => { setMode('text2img'); setPrompt(p.prompt); }}
                                     style={{ padding: '14px 8px', borderRadius: 10, cursor: 'pointer', background: 'var(--panel)', border: '1px solid var(--border)', transition: 'all 0.2s', textAlign: 'center' }}
                                     onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
                                     onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; }}>
-                                    <span style={{ fontSize: 13, fontWeight: 600, display: 'block' }}>{p.label}</span>
-                                    <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>套用此风格</span>
+                                    <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, display: 'block' }}>{p.label}</span>
+                                    <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>套用此风格</span>
                                 </button>
                             ))}
                         </div>
@@ -1160,13 +1160,13 @@ const sendToVideo = (imageUrl: string) => {
                                         onContextMenu={e => { e.preventDefault(); downloadImg(item.url); }}>
                                         <img src={item.url} alt={item.prompt} style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }} />
                                         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '3px 6px', background: 'linear-gradient(transparent, rgba(0,0,0,0.75))' }}>
-                                            <div style={{ fontSize: 10, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{MODES.find(m => m.key === item.mode)?.label || item.mode}</div>
+                                            <div style={{ fontSize: 'var(--fs-micro)', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{MODES.find(m => m.key === item.mode)?.label || item.mode}</div>
                                         </div>
                                     </div>
                                 </Dropdown>
                             ))}
                         </div>
-                        <div style={{ textAlign: 'center', marginTop: 6, fontSize: 10, color: 'var(--muted-2)' }}>右键图片可发送到其他模式</div>
+                        <div style={{ textAlign: 'center', marginTop: 6, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>右键图片可发送到其他模式</div>
                     </Card>
                 )}
             </div>
@@ -1183,13 +1183,13 @@ const sendToVideo = (imageUrl: string) => {
             {/* 自定义模型弹窗 */}
             <Modal open={showAddModel} title="添加自定义模型" onCancel={() => { setShowAddModel(false); setNewModel({}); }} onOk={handleAddModel} okText="添加" width={460}>
                 <Space direction="vertical" style={{ width: '100%' }} size="middle">
-                    <div><label style={{ fontSize: 13, marginBottom: 4, display: 'block' }}>模型名称 <span style={{ color: 'var(--danger)' }}>*</span></label>
+                    <div><label style={{ fontSize: 'var(--fs-md)', marginBottom: 4, display: 'block' }}>模型名称 <span style={{ color: 'var(--danger)' }}>*</span></label>
                         <Input placeholder="如: DALL·E 3" value={newModel.name} onChange={e => setNewModel(prev => ({ ...prev, name: e.target.value }))} /></div>
-                    <div><label style={{ fontSize: 13, marginBottom: 4, display: 'block' }}>API Key <span style={{ color: 'var(--danger)' }}>*</span></label>
+                    <div><label style={{ fontSize: 'var(--fs-md)', marginBottom: 4, display: 'block' }}>API Key <span style={{ color: 'var(--danger)' }}>*</span></label>
                         <Input.Password placeholder="sk-..." value={newModel.apiKey} onChange={e => setNewModel(prev => ({ ...prev, apiKey: e.target.value }))} /></div>
-                    <div><label style={{ fontSize: 13, marginBottom: 4, display: 'block' }}>Base URL (可选)</label>
+                    <div><label style={{ fontSize: 'var(--fs-md)', marginBottom: 4, display: 'block' }}>Base URL (可选)</label>
                         <Input placeholder="https://api.openai.com/v1" value={newModel.baseUrl} onChange={e => setNewModel(prev => ({ ...prev, baseUrl: e.target.value }))} /></div>
-                    <Alert type="info" message="API Key 安全存储在本地浏览器中" showIcon style={{ fontSize: 11 }} />
+                    <Alert type="info" message="API Key 安全存储在本地浏览器中" showIcon style={{ fontSize: 'var(--fs-micro)' }} />
                 </Space>
             </Modal>
 
@@ -1202,10 +1202,10 @@ const sendToVideo = (imageUrl: string) => {
                             {promptLibrary.getByCategory(cat).map(t => (
                                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)', cursor: 'pointer' }}
                                     onClick={() => { setPrompt(t.prompt); setShowPromptLib(false); message.success(`已加载: ${t.label}`); }}>
-                                    <StarOutlined style={{ fontSize: 16, color: 'var(--accent)' }} />
+                                    <StarOutlined style={{ fontSize: 'var(--fs-lg)', color: 'var(--accent)' }} />
                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</div>
-                                        <div style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.prompt}</div>
+                                        <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>{t.label}</div>
+                                        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.prompt}</div>
                                     </div>
                                     {!t.isBuiltIn && <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={e => { e.stopPropagation(); promptLibrary.remove(t.id); }} />}
                                 </div>
@@ -1220,13 +1220,13 @@ const sendToVideo = (imageUrl: string) => {
                 onOk={() => { if (newPromptLabel.trim()) { promptLibrary.add(newPromptLabel, prompt, newPromptCategory); setShowSavePrompt(false); setNewPromptLabel(''); message.success('已保存'); } }}
                 okText="保存" width={400}>
                 <Space direction="vertical" style={{ width: '100%' }} size="middle">
-                    <div><label style={{ fontSize: 13, marginBottom: 4, display: 'block' }}>名称</label>
+                    <div><label style={{ fontSize: 'var(--fs-md)', marginBottom: 4, display: 'block' }}>名称</label>
                         <Input value={newPromptLabel} onChange={e => setNewPromptLabel(e.target.value)} placeholder="给提示词起个名字" /></div>
-                    <div><label style={{ fontSize: 13, marginBottom: 4, display: 'block' }}>分类</label>
+                    <div><label style={{ fontSize: 'var(--fs-md)', marginBottom: 4, display: 'block' }}>分类</label>
                         <Select value={newPromptCategory} onChange={setNewPromptCategory} style={{ width: '100%' }}
                             options={[{ value: '生图', label: '生图' }, { value: '生视频', label: '生视频' }, { value: '改图指令', label: '改图指令' }, { value: '自定义', label: '自定义' }]} /></div>
-                    <div><label style={{ fontSize: 13, marginBottom: 4, display: 'block' }}>内容</label>
-                        <Input.TextArea value={prompt} readOnly autoSize={{ minRows: 2, maxRows: 4 }} style={{ fontSize: 12 }} /></div>
+                    <div><label style={{ fontSize: 'var(--fs-md)', marginBottom: 4, display: 'block' }}>内容</label>
+                        <Input.TextArea value={prompt} readOnly autoSize={{ minRows: 2, maxRows: 4 }} style={{ fontSize: 'var(--fs-sm)' }} /></div>
                 </Space>
             </Modal>
 

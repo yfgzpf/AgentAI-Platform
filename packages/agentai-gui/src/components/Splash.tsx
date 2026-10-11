@@ -229,7 +229,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
           </div>
           {/* 英文副品牌名 */}
           <div style={{
-            fontSize: 14, fontWeight: 700,
+            fontSize: 'var(--fs-md)', fontWeight: 700,
             letterSpacing: 10, color: '#CD7A3A',
             marginTop: 10,
             fontFamily: '"Orbitron", "Exo 2", "Syncopate", "Segoe UI", sans-serif',
@@ -254,7 +254,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
           </div>
           {/* ★ 一句话品牌定位 (新增) */}
           <div style={{
-            fontSize: 13, color: 'rgba(240,240,248,0.6)',
+            fontSize: 'var(--fs-md)', color: 'rgba(240,240,248,0.6)',
             letterSpacing: 2, marginTop: 4,
             fontWeight: 400,
           }}>
@@ -274,7 +274,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
             <div
               key={t.label}
               style={{
-                fontSize: 11, color: t.color,
+                fontSize: 'var(--fs-micro)', color: t.color,
                 background: `${t.color}15`,
                 border: `1px solid ${t.color}40`,
                 padding: '5px 12px', borderRadius: 100,
@@ -296,7 +296,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
           }}
         >
           <div style={{
-            fontSize: 18, color: '#CD7A3A',
+            fontSize: 'var(--fs-lg)', color: '#CD7A3A',
             fontFamily: '"ZCOOL XiaoWei", "Ma Shan Zheng", "Noto Serif SC", "Microsoft YaHei", "PingFang SC", cursive',
             letterSpacing: 10, fontWeight: 600,
             opacity: 0.95,
@@ -304,7 +304,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
             望闻问切 · 因证施治
           </div>
           <div style={{
-            fontSize: 11, color: '#666670',
+            fontSize: 'var(--fs-micro)', color: '#666670',
             letterSpacing: 5, marginTop: 10,
             fontFamily: '"Orbitron", "Segoe UI", monospace',
             textTransform: 'lowercase',
@@ -336,7 +336,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
           </div>
           {/* 状态文字轮播 */}
           <div style={{
-            fontSize: 11, color: '#777780',
+            fontSize: 'var(--fs-micro)', color: '#777780',
             fontFamily: 'monospace', letterSpacing: 2,
             display: 'inline-flex', alignItems: 'center', gap: 8,
           }}>
@@ -352,7 +352,7 @@ export const Splash: React.FC<Props> = ({ onFinish, duration = 4000, minDuration
           {/* ★ 跳过提示 (新增) */}
           {!skipped && (
             <div style={{
-              fontSize: 10, color: 'rgba(255,255,255,0.2)',
+              fontSize: 'var(--fs-micro)', color: 'rgba(255,255,255,0.2)',
               marginTop: 16, letterSpacing: 1,
               animation: 'splash-fade-in 1s ease-out 2.5s both',
             }}>

@@ -46,13 +46,13 @@ export const AIToolCallPanel: React.FC = () => {
 
   return (
     <div style={{ padding: '4px 8px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-2)', marginBottom: 6 }}>
-        <ToolOutlined style={{ fontSize: 12, color: 'var(--accent)' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', marginBottom: 6 }}>
+        <ToolOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--accent)' }} />
         <span style={{ fontWeight: 500 }}>工具调用</span>
-        <span style={{ fontSize: 10, color: 'var(--muted-2)', marginLeft: 'auto' }}>{summaryLabel()}</span>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginLeft: 'auto' }}>{summaryLabel()}</span>
       </div>
       {toolCalls.length === 0 ? (
-        <div style={{ fontSize: 10, color: 'var(--muted-2)', fontStyle: 'italic', padding: '4px 0' }}>
+        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', fontStyle: 'italic', padding: '4px 0' }}>
           等待 AI 调用工具...
         </div>
       ) : (
@@ -61,15 +61,15 @@ export const AIToolCallPanel: React.FC = () => {
             <Tooltip key={`${t.name}-${i}`} title={`${t.name} · ${t.status === 'running' ? '进行中' : t.status === 'success' ? '成功' : '失败'}`}>
               <Tag
                 style={{
-                  fontSize: 9, borderRadius: 2, margin: 0, border: 'none',
+                  fontSize: 'var(--fs-micro)', borderRadius: 2, margin: 0, border: 'none',
                   lineHeight: '18px', padding: '0 5px', cursor: 'default',
                   background: t.status === 'success' ? 'var(--bg-2)' : t.status === 'failed' ? 'var(--danger-soft)' : 'var(--violet-soft)',
                   color: t.status === 'success' ? 'var(--fg-2)' : t.status === 'failed' ? 'var(--danger)' : 'var(--violet)',
                 }}
               >
                 {t.status === 'running' ? <LoadingOutlined style={{ marginRight: 2 }} /> :
-                 t.status === 'success' ? <CheckCircleFilled style={{ marginRight: 2, fontSize: 9 }} /> :
-                 <CloseCircleFilled style={{ marginRight: 2, fontSize: 9 }} />}
+                 t.status === 'success' ? <CheckCircleFilled style={{ marginRight: 2, fontSize: 'var(--fs-micro)' }} /> :
+                 <CloseCircleFilled style={{ marginRight: 2, fontSize: 'var(--fs-micro)' }} />}
                 {t.name.replace(/_/g, ' ')}
               </Tag>
             </Tooltip>

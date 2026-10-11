@@ -179,7 +179,7 @@ const FileChangeTree: React.FC<FileChangeTreeProps> = ({ segments, onOpen }) => 
           cursor: 'pointer',
           background: 'var(--bg-2)',
           userSelect: 'none',
-          fontSize: 11,
+          fontSize: 'var(--fs-micro)',
         }}
       >
         {/* 文件图标 */}
@@ -215,7 +215,7 @@ const FileChangeTree: React.FC<FileChangeTreeProps> = ({ segments, onOpen }) => 
           display: 'inline-flex',
           alignItems: 'center',
         }}>
-          <CaretRightOutlined style={{ fontSize: 9 }} />
+          <CaretRightOutlined style={{ fontSize: 'var(--fs-micro)' }} />
         </span>
       </div>
 
@@ -233,7 +233,7 @@ const FileChangeTree: React.FC<FileChangeTreeProps> = ({ segments, onOpen }) => 
                   alignItems: 'center',
                   gap: 6,
                   padding: '3px 8px',
-                  fontSize: 11,
+                  fontSize: 'var(--fs-micro)',
                   cursor: onOpen ? 'pointer' : undefined,
                   transition: 'background 0.15s',
                 }}
@@ -245,7 +245,7 @@ const FileChangeTree: React.FC<FileChangeTreeProps> = ({ segments, onOpen }) => 
                   display: 'inline-block',
                   padding: '0 4px',
                   borderRadius: 3,
-                  fontSize: 9,
+                  fontSize: 'var(--fs-micro)',
                   fontWeight: 600,
                   lineHeight: '16px',
                   color: meta.color,

@@ -66,7 +66,7 @@ const WorkspaceErrorFallback: React.FC<{ onRetry: () => void }> = ({ onRetry }) 
         background: 'var(--bg-secondary)',
         color: 'var(--text-primary)',
         cursor: 'pointer',
-        fontSize: 14,
+        fontSize: 'var(--fs-md)',
       }}
     >
       刷新工作区
@@ -200,7 +200,7 @@ const ModeIndicator: React.FC<{ mode: string }> = ({ mode }) => {
         borderRadius: 10,
         background: 'rgba(255,255,255,0.06)',
         border: '1px solid rgba(255,255,255,0.08)',
-        fontSize: 11,
+        fontSize: 'var(--fs-micro)',
         color: 'var(--text-tertiary)',
         pointerEvents: 'none',
         userSelect: 'none',
@@ -254,7 +254,7 @@ const WORKSPACE_STYLES = `
   .workspace-mode-indicator {
     top: 4px; right: 8px;
     padding: 2px 8px !important;
-    font-size: 10px !important;
+    font-size: var(--fs-micro) !important;
   }
 }
 `;

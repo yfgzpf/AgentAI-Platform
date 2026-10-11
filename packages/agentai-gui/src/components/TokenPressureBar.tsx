@@ -89,7 +89,7 @@ export const TokenPressureBar: React.FC<Props> = ({
   return (
     <Tooltip
       title={
-        <div style={{ fontSize: 11 }}>
+        <div style={{ fontSize: 'var(--fs-micro)' }}>
           <div>已用: {used.toLocaleString()} / {max.toLocaleString()} tokens</div>
           <div>压力: {percent}% ({label})</div>
           <div>消息数: {messageCount}</div>
@@ -111,7 +111,7 @@ export const TokenPressureBar: React.FC<Props> = ({
         }}
       >
         <div style={{
-          fontSize: 10,
+          fontSize: 'var(--fs-micro)',
           color: isWarning ? color : 'var(--muted-2)',
           fontWeight: isWarning ? 600 : 400,
           whiteSpace: 'nowrap',

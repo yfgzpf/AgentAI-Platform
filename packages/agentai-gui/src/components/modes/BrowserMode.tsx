@@ -182,7 +182,7 @@ export const BrowserMode: React.FC = () => {
         >
           {/* 安全图标 */}
           {currentUrl && currentUrl !== DEFAULT_URL && (
-            <span style={{ marginRight: 6, fontSize: 14, flexShrink: 0 }}>
+            <span style={{ marginRight: 6, fontSize: 'var(--fs-md)', flexShrink: 0 }}>
               {isSecure ? <SafetyCertificateOutlined style={{ color: '#4ade80' }} /> : <LockOutlined style={{ color: '#fbbf24' }} />}
             </span>
           )}
@@ -195,7 +195,7 @@ export const BrowserMode: React.FC = () => {
             variant="borderless"
             style={{
               flex: 1,
-              fontSize: 13,
+              fontSize: 'var(--fs-md)',
               color: 'var(--text-primary)',
               background: 'transparent',
               padding: 0,
@@ -225,7 +225,7 @@ export const BrowserMode: React.FC = () => {
               style={{
                 color: aiControlled ? '#fff' : 'var(--text-tertiary)',
                 background: aiControlled ? 'var(--accent,#f97316)' : 'transparent',
-                fontSize: 11,
+                fontSize: 'var(--fs-micro)',
               }}
             />
           </Tooltip>
@@ -309,7 +309,7 @@ export const BrowserMode: React.FC = () => {
           height: 24,
           paddingLeft: 12,
           paddingRight: 12,
-          fontSize: 11,
+          fontSize: 'var(--fs-micro)',
           color: 'var(--text-tertiary)',
           background: 'rgba(0,0,0,0.25)',
           borderTop: '1px solid rgba(255,255,255,0.04)',
@@ -319,9 +319,9 @@ export const BrowserMode: React.FC = () => {
             {urlObj ? urlObj.host : (currentUrl || '就绪')}
           </span>
           <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-            {aiControlled && <Tag color="orange" style={{ fontSize: 10, lineHeight: 18, padding: '0 6px' }}>AI 控制</Tag>}
+            {aiControlled && <Tag color="orange" style={{ fontSize: 'var(--fs-micro)', lineHeight: 18, padding: '0 6px' }}>AI 控制</Tag>}
             {elements.length > 0 && <span>{elements.length} 个可交互元素</span>}
-            {screenSize === 'mobile' && <Tag style={{ fontSize: 10, lineHeight: 18, padding: '0 6px' }}>移动端</Tag>}
+            {screenSize === 'mobile' && <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: 18, padding: '0 6px' }}>移动端</Tag>}
           </span>
         </div>
       )}

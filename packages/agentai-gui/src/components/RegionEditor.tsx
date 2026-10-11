@@ -374,7 +374,7 @@ export const RegionEditor: React.FC<RegionEditorProps> = ({ imageUrl, onApply, o
             style={{ cursor: 'crosshair', display: 'block' }}
           />
           {regions.length === 0 && !isDrawing && (
-            <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', color: 'var(--muted)', fontSize: 12, background: 'rgba(0,0,0,0.5)', padding: '4px 12px', borderRadius: 6, whiteSpace: 'nowrap' }}>
+            <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', color: 'var(--muted)', fontSize: 'var(--fs-sm)', background: 'rgba(0,0,0,0.5)', padding: '4px 12px', borderRadius: 6, whiteSpace: 'nowrap' }}>
               在图片上拖拽画区域 → 下方填写修改描述 → 点击整合发送
             </div>
           )}
@@ -382,21 +382,21 @@ export const RegionEditor: React.FC<RegionEditorProps> = ({ imageUrl, onApply, o
 
         {/* 右侧: 区域提示词列表 */}
         <div style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 6, overflow: 'auto', flexShrink: 0 }}>
-          <div style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 600, marginBottom: 4 }}>
+          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', fontWeight: 600, marginBottom: 4 }}>
             已标注区域 ({regions.length})
           </div>
           {regions.length === 0 && (
-            <div style={{ color: 'var(--muted-2)', fontSize: 12, textAlign: 'center', marginTop: 40 }}>
+            <div style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-sm)', textAlign: 'center', marginTop: 40 }}>
               画一个区域试试
             </div>
           )}
           {regions.map((region, i) => (
             <div key={region.id} style={{ padding: 8, borderRadius: 8, background: 'var(--panel)', border: `2px solid ${region.color}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                <div style={{ width: 20, height: 20, borderRadius: '50%', background: region.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#000' }}>
+                <div style={{ width: 20, height: 20, borderRadius: '50%', background: region.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--fs-micro)', fontWeight: 700, color: '#000' }}>
                   {i + 1}
                 </div>
-                <Tag style={{ margin: 0, fontSize: 10 }}>{TOOL_LABELS[region.tool]}</Tag>
+                <Tag style={{ margin: 0, fontSize: 'var(--fs-micro)' }}>{TOOL_LABELS[region.tool]}</Tag>
                 <div style={{ flex: 1 }} />
                 <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeRegion(region.id)} />
               </div>
@@ -405,7 +405,7 @@ export const RegionEditor: React.FC<RegionEditorProps> = ({ imageUrl, onApply, o
                 onChange={e => updateRegionPrompt(region.id, e.target.value)}
                 placeholder="这个区域改成什么..."
                 autoSize={{ minRows: 2, maxRows: 4 }}
-                style={{ fontSize: 12, marginBottom: 6 }}
+                style={{ fontSize: 'var(--fs-sm)', marginBottom: 6 }}
               />
               {/* 参考图缩略图 */}
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -413,11 +413,11 @@ export const RegionEditor: React.FC<RegionEditorProps> = ({ imageUrl, onApply, o
                   <div key={idx} style={{ position: 'relative', width: 44, height: 44 }}>
                     <img src={img} alt={`ref-${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }} />
                     <button onClick={() => removeRegionRefImage(region.id, idx)}
-                      style={{ position: 'absolute', top: -3, right: -3, width: 14, height: 14, borderRadius: '50%', background: '#ff4d4f', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                      style={{ position: 'absolute', top: -3, right: -3, width: 14, height: 14, borderRadius: '50%', background: '#ff4d4f', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 'var(--fs-micro)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
                   </div>
                 ))}
                 {(region.refImages || []).length < 2 && (
-                  <label style={{ width: 44, height: 44, borderRadius: 4, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--muted)', fontSize: 16 }}
+                  <label style={{ width: 44, height: 44, borderRadius: 4, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--muted)', fontSize: 'var(--fs-lg)' }}
                     title="上传参考图">
                     <PictureOutlined />
                     <input type="file" accept="image/*" style={{ display: 'none' }}

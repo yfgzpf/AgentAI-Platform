@@ -123,7 +123,7 @@ export const SubagentStatus: React.FC<SubagentStatusProps> = ({ agents, pending,
         opacity: isDone ? 0.7 : 1,
         transition: 'all 0.2s',
       }}>
-        <span style={{ fontSize: 13, flexShrink: 0 }}>{icon}</span>
+        <span style={{ fontSize: 'var(--fs-md)', flexShrink: 0 }}>{icon}</span>
         <span style={{ fontWeight: 500, color: 'var(--fg)', flexShrink: 0 }}>
           {label}
         </span>
@@ -161,7 +161,7 @@ export const SubagentStatus: React.FC<SubagentStatusProps> = ({ agents, pending,
       borderRadius: 8,
       background: 'var(--accent-soft)',
       border: '1px solid var(--border)',
-      fontSize: 12,
+      fontSize: 'var(--fs-sm)',
       lineHeight: 1.6,
       opacity: fading ? 0 : 1,
       transition: 'opacity 0.4s',
@@ -172,7 +172,7 @@ export const SubagentStatus: React.FC<SubagentStatusProps> = ({ agents, pending,
         style={{
           fontWeight: 600,
           color: 'var(--fg-2)',
-          fontSize: 11,
+          fontSize: 'var(--fs-micro)',
           display: 'flex',
           alignItems: 'center',
           gap: 6,
@@ -206,7 +206,7 @@ export const SubagentStatus: React.FC<SubagentStatusProps> = ({ agents, pending,
             <div style={{
               marginTop: 6, paddingTop: 6,
               borderTop: '1px solid var(--border)',
-              fontSize: 11, color: 'var(--muted)', lineHeight: 1.7,
+              fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.7,
             }}>
               {agents.filter(a => a.steps && a.steps.length > 0).map(a => {
                 const label = ROLE_LABELS[a.type] || a.type;
@@ -240,7 +240,7 @@ export const SubagentStatus: React.FC<SubagentStatusProps> = ({ agents, pending,
           gap: 8,
           flexWrap: 'wrap',
           color: 'var(--muted)',
-          fontSize: 11,
+          fontSize: 'var(--fs-micro)',
         }}>
           {running.length > 0 && <span style={{ color: 'var(--accent)' }}>▶ {running.length} 运行中</span>}
           {done.length > 0 && <span style={{ color: 'var(--success)' }}>✓ {done.length} 完成</span>}
@@ -249,7 +249,7 @@ export const SubagentStatus: React.FC<SubagentStatusProps> = ({ agents, pending,
       )}
 
       {pending && running.length === 0 && agents.length > 0 && (
-        <div style={{ color: 'var(--muted)', fontSize: 11, marginTop: 4 }}>
+        <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)', marginTop: 4 }}>
           ⏳ 等待子智能体启动...
         </div>
       )}

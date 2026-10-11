@@ -38,7 +38,7 @@ export const TurnDivider: React.FC<{ label: string }> = ({ label }) => (
       background: 'var(--accent)', flexShrink: 0,
       boxShadow: '0 0 6px var(--accent)',
     }} />
-    <span style={{ fontSize: 10, color: 'var(--muted-2)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' }}>
+    <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' }}>
       {label}
     </span>
     <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg, var(--border), transparent)' }} />
@@ -69,7 +69,7 @@ export const UserMsg: React.FC<{
     <div className="msg-enter" style={{ display: 'flex', padding: `6px var(--chat-row-padding-x)`, gap: 'var(--chat-row-gap)', alignItems: 'flex-start', justifyContent: 'flex-end' }}>
       <div style={{ maxWidth: '78%', minWidth: 0, order: 1 }}>
         {time && (
-          <div style={{ textAlign: 'right', fontSize: 10, color: 'var(--muted-2)', marginBottom: 4, paddingRight: 4 }}>
+          <div style={{ textAlign: 'right', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4, paddingRight: 4 }}>
             {time}
           </div>
         )}
@@ -99,7 +99,7 @@ export const UserMsg: React.FC<{
           )}
           {/* 文件标记 (PDF/Excel/文本等非图片附件) */}
           {fileTags.length > 0 && (
-            <div style={{ marginBottom: 6, fontSize: 11, opacity: 0.9 }}>
+            <div style={{ marginBottom: 6, fontSize: 'var(--fs-micro)', opacity: 0.9 }}>
               {fileTags.map((seg, i) => (
                 <div key={i}>{(seg as any).text}</div>
               ))}
@@ -204,7 +204,7 @@ export const AssistantText: React.FC<{ text: string; streaming?: boolean }> = Re
         onClick={handleCopy}
         style={{
           position: 'absolute', top: 4, right: 4,
-          padding: '2px 8px', borderRadius: 4, fontSize: 10,
+          padding: '2px 8px', borderRadius: 4, fontSize: 'var(--fs-micro)',
           color: 'var(--muted-2)', background: 'var(--panel)',
           border: '1px solid var(--border)', cursor: 'pointer',
           opacity: 0, transition: 'opacity 0.15s',
@@ -237,7 +237,7 @@ export const ToolCollapseSummary: React.FC<{
         <div
           onClick={() => setExpanded(false)}
           style={{
-            fontSize: 11, color: 'var(--accent)', cursor: 'pointer',
+            fontSize: 'var(--fs-micro)', color: 'var(--accent)', cursor: 'pointer',
             padding: '4px 8px', userSelect: 'none',
           }}
         >
@@ -263,12 +263,12 @@ export const ToolCollapseSummary: React.FC<{
         background: 'var(--panel)', border: '1px dashed var(--border)',
         cursor: 'pointer', userSelect: 'none',
         display: 'flex', alignItems: 'center', gap: 6,
-        fontSize: 11, color: 'var(--muted)',
+        fontSize: 'var(--fs-micro)', color: 'var(--muted)',
       }}
     >
       <span style={{ color: 'var(--accent)', fontWeight: 600 }}>···</span>
       <span>{summary}</span>
-      <span style={{ fontSize: 10, opacity: 0.5 }}>点击展开</span>
+      <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.5 }}>点击展开</span>
     </div>
   );
 };
@@ -302,27 +302,27 @@ export const ReasoningCard: React.FC<{ text: string; streaming?: boolean }> = ({
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '5px 10px', cursor: 'pointer',
-          userSelect: 'none', fontSize: 11, fontWeight: 500,
+          userSelect: 'none', fontSize: 'var(--fs-micro)', fontWeight: 500,
           color: 'var(--muted)',
         }}
       >
         <span style={{
           display: 'inline-flex', transition: 'transform 0.2s ease',
           transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
-          fontSize: 9,
-        }}><CaretRightOutlined style={{fontSize:9}} /></span>
+          fontSize: 'var(--fs-micro)',
+        }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>
         <span style={{
           width: 4, height: 4, borderRadius: '50%',
           background: streaming ? 'var(--accent)' : 'var(--muted)',
           animation: streaming ? 'pulse 1.6s ease-out infinite' : undefined,
         }} />
         <span>推理过程</span>
-        {streaming && <span style={{ color: 'var(--accent)', fontSize: 10 }}>进行中..</span>}
-        {!streaming && !open && <span style={{ fontSize: 10, opacity: 0.5 }}>点击展开</span>}
+        {streaming && <span style={{ color: 'var(--accent)', fontSize: 'var(--fs-micro)' }}>进行中..</span>}
+        {!streaming && !open && <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.5 }}>点击展开</span>}
       </div>
       {open && (
         <div style={{
-          padding: '6px 10px 8px', fontSize: 11.5, lineHeight: 1.55,
+          padding: '6px 10px 8px', fontSize: 'var(--fs-sm)', lineHeight: 1.55,
           color: 'var(--muted)', whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
           borderTop: '1px solid var(--border)',
@@ -330,7 +330,7 @@ export const ReasoningCard: React.FC<{ text: string; streaming?: boolean }> = ({
           maxHeight: 200, overflowY: 'auto',
         }}>
           {text.length > 1500 ? text.slice(0, 1500) + '\n… (已截断)' : text}
-          {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:9}} /></span>}
+          {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>}
         </div>
       )}
     </div>
@@ -378,20 +378,20 @@ const WriteInProgressCard: React.FC<{
         borderBottom: '1px solid var(--border)',
         background: 'var(--accent-soft)',
       }}>
-        <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
-        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)', flex: 1,
+        <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />
+        <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)', flex: 1,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {filePath}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 3 }}>
-          <LoadingOutlined style={{ fontSize: 10 }} />
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 3 }}>
+          <LoadingOutlined style={{ fontSize: 'var(--fs-micro)' }} />
           写入中… {lineCount} 行
         </span>
       </div>
       {/* Content preview with typewriter effect */}
       <pre style={{
         margin: 0, padding: '6px 10px',
-        fontSize: 10, fontFamily: 'monospace', lineHeight: 1.5,
+        fontSize: 'var(--fs-micro)', fontFamily: 'monospace', lineHeight: 1.5,
         color: 'var(--fg-2)', overflowX: 'auto',
         maxHeight: 120, overflowY: 'auto',
         whiteSpace: 'pre',
@@ -437,27 +437,27 @@ export const ThinkingCard: React.FC<{ text: string; streaming?: boolean }> = ({ 
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '5px 10px', cursor: 'pointer',
-          userSelect: 'none', fontSize: 11, fontWeight: 500,
+          userSelect: 'none', fontSize: 'var(--fs-micro)', fontWeight: 500,
           color: 'var(--muted)',
         }}
       >
         <span style={{
           display: 'inline-flex', transition: 'transform 0.2s ease',
           transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
-          fontSize: 9,
-        }}><CaretRightOutlined style={{fontSize:9}} /></span>
+          fontSize: 'var(--fs-micro)',
+        }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>
         <span style={{
           width: 4, height: 4, borderRadius: '50%',
           background: streaming ? 'var(--accent)' : 'var(--muted)',
           animation: streaming ? 'pulse 1.6s ease-out infinite' : undefined,
         }} />
         <span>思考过程</span>
-        {streaming && <span style={{ color: 'var(--accent)', fontSize: 10 }}>思考中...</span>}
-        {!streaming && !open && <span style={{ fontSize: 10, opacity: 0.5 }}>点击展开</span>}
+        {streaming && <span style={{ color: 'var(--accent)', fontSize: 'var(--fs-micro)' }}>思考中...</span>}
+        {!streaming && !open && <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.5 }}>点击展开</span>}
       </div>
       {open && (
         <div style={{
-          padding: '6px 10px 8px', fontSize: 11.5, lineHeight: 1.55,
+          padding: '6px 10px 8px', fontSize: 'var(--fs-sm)', lineHeight: 1.55,
           color: 'var(--muted)', whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
           borderTop: '1px solid var(--border)',
@@ -465,7 +465,7 @@ export const ThinkingCard: React.FC<{ text: string; streaming?: boolean }> = ({ 
           maxHeight: 200, overflowY: 'auto',
         }}>
           {text.length > 1500 ? text.slice(0, 1500) + '\n… (已截断)' : text}
-          {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:9}} /></span>}
+          {streaming && <span style={{ animation: 'blink 1s infinite', marginLeft: 1, color: 'var(--accent)' }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>}
         </div>
       )}
     </div>
@@ -516,19 +516,19 @@ export const ShellCard: React.FC<{
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: '6px 12px', fontSize: 11,
+        padding: '6px 12px', fontSize: 'var(--fs-micro)',
         background: 'var(--panel)', borderBottom: '1px solid var(--border)',
       }}>
         <span style={{ color: stateColors[state], fontWeight: 700 }}>$</span>
         <code style={{
-          flex: 1, fontSize: 11, color: 'var(--fg-2)',
+          flex: 1, fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
           {command}
         </code>
         <span style={{
           display: 'inline-flex', alignItems: 'center', gap: 4,
-          color: stateColors[state], fontSize: 10, fontWeight: 600,
+          color: stateColors[state], fontSize: 'var(--fs-micro)', fontWeight: 600,
         }}>
           {state === 'running' && (
             <span style={{
@@ -547,7 +547,7 @@ export const ShellCard: React.FC<{
       {/* Output */}
       {output && (
         <div style={{
-          padding: '8px 12px', fontSize: 11, lineHeight: 1.5,
+          padding: '8px 12px', fontSize: 'var(--fs-micro)', lineHeight: 1.5,
           color: 'var(--muted)', whiteSpace: 'pre-wrap', overflowX: 'auto',
           maxHeight: 200, overflowY: 'auto',
           fontFamily: "'Cascadia Code', 'Fira Code', monospace",
@@ -563,7 +563,7 @@ export const ShellCard: React.FC<{
           <button
             onClick={onApprove}
             style={{
-              padding: '3px 12px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+              padding: '3px 12px', borderRadius: 4, fontSize: 'var(--fs-micro)', fontWeight: 600,
               background: 'var(--success)', color: 'var(--fg)', border: 'none', cursor: 'pointer',
               boxShadow: '0 1px 4px rgba(34,197,94,0.3)',
             }}
@@ -574,7 +574,7 @@ export const ShellCard: React.FC<{
             <button
               onClick={onReject}
               style={{
-                padding: '3px 12px', borderRadius: 4, fontSize: 11,
+                padding: '3px 12px', borderRadius: 4, fontSize: 'var(--fs-micro)',
                 background: 'transparent', color: 'var(--muted)',
                 border: '1px solid var(--border)', cursor: 'pointer',
               }}
@@ -642,26 +642,26 @@ export const ToolCard: React.FC<{
         onClick={() => setExpanded(v => !v)}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          padding: '5px 10px', cursor: 'pointer', fontSize: 11,
+          padding: '5px 10px', cursor: 'pointer', fontSize: 'var(--fs-micro)',
           color: 'var(--fg-2)', userSelect: 'none',
           transition: 'background 0.1s',
         }}
         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-2)'; }}
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
       >
-        <span style={{ color: statusColor, fontSize: 11, fontWeight: 700 }}>
+        <span style={{ color: statusColor, fontSize: 'var(--fs-micro)', fontWeight: 700 }}>
           {ok === true ? '✓' : ok === false ? '✗' : '◐'}
         </span>
-        <span style={{ fontWeight: 600, fontSize: 11 }}>{name}</span>
+        <span style={{ fontWeight: 600, fontSize: 'var(--fs-micro)' }}>{name}</span>
         {durationMs != null && (
-          <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>
+          <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
             {(durationMs / 1000).toFixed(1)}s
           </span>
         )}
         {/* 结果预览摘要 (不展开即可看到) */}
         {result && ok && !expanded && (
           <span style={{
-            flex: 1, fontSize: 10, color: 'var(--muted-2)',
+            flex: 1, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
             overflow: 'hidden', textOverflow: 'ellipsis',
             whiteSpace: 'nowrap', maxWidth: 200, marginLeft: 4,
             opacity: 0.6,
@@ -671,10 +671,10 @@ export const ToolCard: React.FC<{
         )}
         <span style={{ flex: 1 }} />
         <span style={{
-          fontSize: 9, color: 'var(--muted-2)',
+          fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
           transition: 'transform 0.2s ease',
           transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-        }}><CaretRightOutlined style={{fontSize:9}} /></span>
+        }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>
       </div>
       {expanded && (
         <div style={{
@@ -682,7 +682,7 @@ export const ToolCard: React.FC<{
           animation: 'msgSlideIn 0.2s ease',
         }}>
           {args && (
-            <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--muted-2)', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ padding: '6px 10px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', borderBottom: '1px solid var(--border)' }}>
               <div style={{ marginBottom: 2, fontWeight: 600 }}>参数:</div>
               <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{(typeof args === 'string' ? args : JSON.stringify(args, null, 2)).slice(0, 200)}</pre>
             </div>
@@ -699,13 +699,13 @@ export const ToolCard: React.FC<{
             </div>
           )}
           {result != null && (
-            <div style={{ padding: '6px 10px', fontSize: 10, color: ok ? 'var(--muted)' : 'var(--danger)' }}>
+            <div style={{ padding: '6px 10px', fontSize: 'var(--fs-micro)', color: ok ? 'var(--muted)' : 'var(--danger)' }}>
               <div style={{ marginBottom: 2, fontWeight: 600 }}>结果:</div>
               <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: 120, overflowY: 'auto' }}>
                 {result.slice(0, 500)}
               </pre>
               {result.length > 500 && (
-                <div style={{ marginTop: 2, fontSize: 9, color: 'var(--muted-2)' }}>
+                <div style={{ marginTop: 2, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                   ··· 结果已截断 ({result.length} 字符, 显示前 500) ···
                 </div>
               )}
@@ -755,17 +755,17 @@ const WidgetCard: React.FC<{
         borderBottom: visible ? '1px solid var(--border)' : 'none',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 14 }}>🖼️</span>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>{widget.title}</span>
-          <span style={{ fontSize: 9, color: 'var(--muted-2)', background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 4 }}>
+          <span style={{ fontSize: 'var(--fs-md)' }}>🖼️</span>
+          <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--fg-2)' }}>{widget.title}</span>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 4 }}>
             {widget.contentType === 'svg' ? 'SVG' : 'HTML'}
           </span>
         </div>
         <span style={{
-          fontSize: 10, color: 'var(--accent)',
+          fontSize: 'var(--fs-micro)', color: 'var(--accent)',
           transform: visible ? 'rotate(90deg)' : 'rotate(0deg)',
           transition: 'transform 0.2s ease',
-        }}><CaretRightOutlined style={{fontSize:9}} /></span>
+        }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>
       </div>
       {visible && (
         <div style={{
@@ -941,15 +941,15 @@ export const ActivityTimeline: React.FC<{
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '5px 10px', cursor: 'pointer',
-          userSelect: 'none', fontSize: 11, fontWeight: 500,
+          userSelect: 'none', fontSize: 'var(--fs-micro)', fontWeight: 500,
           color: 'var(--muted)',
         }}
       >
         <span style={{
           display: 'inline-flex', transition: 'transform 0.2s ease',
           transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
-          fontSize: 9,
-        }}><CaretRightOutlined style={{fontSize:9}} /></span>
+          fontSize: 'var(--fs-micro)',
+        }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>
         {pending && (
           <span style={{
             width: 5, height: 5, borderRadius: '50%',
@@ -966,13 +966,13 @@ export const ActivityTimeline: React.FC<{
         </span>
         {/* 成功/失败统计 (完成后) */}
         {!pending && toolSegs.length > 0 && (
-          <span style={{ fontSize: 10, opacity: 0.7 }}>
+          <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.7 }}>
             {successCount > 0 && <span style={{ color: 'var(--success)' }}>{successCount}✓</span>}
             {successCount > 0 && failCount > 0 && ' · '}
             {failCount > 0 && <span style={{ color: 'var(--danger)' }}>{failCount}✗</span>}
           </span>
         )}
-        {!pending && !open && <span style={{ fontSize: 10, opacity: 0.5, marginLeft: 4 }}>点击展开</span>}
+        {!pending && !open && <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.5, marginLeft: 4 }}>点击展开</span>}
         {/* 内联进度条 (流式时) */}
         {pending && progress && (
           <div style={{
@@ -1006,7 +1006,7 @@ export const ActivityTimeline: React.FC<{
               return (
                 <div key={`a-${i}`} style={{
                   display: 'flex', gap: 6, padding: '3px 6px',
-                  fontSize: 11, lineHeight: 1.5,
+                  fontSize: 'var(--fs-micro)', lineHeight: 1.5,
                   color: 'var(--muted)', fontStyle: 'italic',
                 }}>
                   <span style={{ flexShrink: 0, opacity: 0.5 }}>💭</span>
@@ -1020,7 +1020,7 @@ export const ActivityTimeline: React.FC<{
                       <span style={{
                         animation: 'blink 1s infinite',
                         marginLeft: 1, color: 'var(--accent)',
-                      }}><CaretRightOutlined style={{fontSize:9}} /></span>
+                      }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>
                     )}
                   </span>
                 </div>
@@ -1054,7 +1054,7 @@ export const ActivityTimeline: React.FC<{
                     onMouseEnter={e => { if (!isSubagent) (e.currentTarget as HTMLElement).style.background = 'var(--bg-2)'; }}
                     onMouseLeave={e => { if (!isSubagent) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                   >
-                    <span style={{ fontSize: 12 }}>{icon}</span>
+                    <span style={{ fontSize: 'var(--fs-sm)' }}>{icon}</span>
                     {/* 子智能体显示类型和任务摘要 */}
                     <span style={{ fontWeight: isSubagent ? 700 : 600, color: isSubagent ? 'var(--accent)' : undefined }}>
                       {isSubagent ? `子智能体: ${subagentInfo?.type}` : s.name}
@@ -1062,7 +1062,7 @@ export const ActivityTimeline: React.FC<{
                     {/* 子智能体任务描述预览 */}
                     {isSubagent && subagentInfo?.task && (
                       <span style={{
-                        fontSize: 10, color: 'var(--muted-2)',
+                        fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
                         overflow: 'hidden', textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap', maxWidth: 200, marginLeft: 4,
                       }}>
@@ -1072,7 +1072,7 @@ export const ActivityTimeline: React.FC<{
                     {/* 参数预览 (子智能体不显示参数预览) */}
                     {s.args && !isExpanded && !isSubagent && (
                       <span style={{
-                        fontSize: 10, color: 'var(--muted-2)',
+                        fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
                         overflow: 'hidden', textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap', maxWidth: 150,
                       }}>
@@ -1082,7 +1082,7 @@ export const ActivityTimeline: React.FC<{
                     <span style={{ flex: 1 }} />
                     {/* 状态 */}
                     <span style={{
-                      color: statusColor, fontWeight: 700, fontSize: 11,
+                      color: statusColor, fontWeight: 700, fontSize: 'var(--fs-micro)',
                       display: 'inline-flex', alignItems: 'center', gap: 3,
                     }}>
                       {isRunning && (
@@ -1096,15 +1096,15 @@ export const ActivityTimeline: React.FC<{
                     </span>
                     {/* 耗时 */}
                     {s.durationMs != null && !isRunning && (
-                      <span style={{ color: 'var(--muted-2)', fontSize: 10 }}>
+                      <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
                         {(s.durationMs / 1000).toFixed(1)}s
                       </span>
                     )}
                     <span style={{
-                      fontSize: 9, color: 'var(--muted-2)',
+                      fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
                       transition: 'transform 0.2s ease',
                       transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                    }}><CaretRightOutlined style={{fontSize:9}} /></span>
+                    }}><CaretRightOutlined style={{fontSize:'var(--fs-micro)'}} /></span>
                   </div>
                   {/* 写入中实时预览: write_file/create_file/edit_file 等工具执行时展示文件内容 */}
                   {/* 2026-08-03: 工具完成后自动折叠, 不占据窗口 */}
@@ -1122,11 +1122,11 @@ export const ActivityTimeline: React.FC<{
                           background: 'var(--bg-2)',
                           borderRadius: 6,
                           border: '1px solid var(--border)',
-                          fontSize: 11,
+                          fontSize: 'var(--fs-micro)',
                         }}>
                           {/* 类型标签 */}
                           <div style={{ marginBottom: 8 }}>
-                            <Tag color="purple" style={{ fontSize: 10 }}>
+                            <Tag color="purple" style={{ fontSize: 'var(--fs-micro)' }}>
                               {subagentInfo?.type}
                             </Tag>
                           </div>
@@ -1134,7 +1134,7 @@ export const ActivityTimeline: React.FC<{
                           {/* 任务描述 */}
                           {subagentInfo?.task && (
                             <div style={{ marginBottom: 8 }}>
-                              <div style={{ color: 'var(--muted)', fontSize: 10, marginBottom: 4 }}>📋 任务描述:</div>
+                              <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)', marginBottom: 4 }}>📋 任务描述:</div>
                               <div style={{
                                 padding: '6px 8px',
                                 background: 'var(--card)',
@@ -1153,7 +1153,7 @@ export const ActivityTimeline: React.FC<{
                           {/* 提示词 (如果有) */}
                           {subagentInfo?.prompt && (
                             <div style={{ marginBottom: 8 }}>
-                              <div style={{ color: 'var(--muted)', fontSize: 10, marginBottom: 4 }}>💡 系统提示:</div>
+                              <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)', marginBottom: 4 }}>💡 系统提示:</div>
                               <div style={{
                                 padding: '6px 8px',
                                 background: 'var(--card)',
@@ -1163,7 +1163,7 @@ export const ActivityTimeline: React.FC<{
                                 overflowY: 'auto',
                                 whiteSpace: 'pre-wrap',
                                 wordBreak: 'break-word',
-                                fontSize: 10,
+                                fontSize: 'var(--fs-micro)',
                               }}>
                                 {subagentInfo.prompt}
                               </div>
@@ -1173,7 +1173,7 @@ export const ActivityTimeline: React.FC<{
                           {/* 执行结果 */}
                           {s.result && (
                             <div>
-                              <div style={{ color: 'var(--muted)', fontSize: 10, marginBottom: 4 }}>✅ 执行结果:</div>
+                              <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)', marginBottom: 4 }}>✅ 执行结果:</div>
                               <div style={{
                                 padding: '6px 8px',
                                 background: 'var(--card)',
@@ -1191,7 +1191,7 @@ export const ActivityTimeline: React.FC<{
                           
                           {/* 耗时 */}
                           {s.durationMs != null && (
-                            <div style={{ marginTop: 8, textAlign: 'right', color: 'var(--muted-2)', fontSize: 10 }}>
+                            <div style={{ marginTop: 8, textAlign: 'right', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
                               ⏱️ {(s.durationMs / 1000).toFixed(1)}s
                             </div>
                           )}
@@ -1298,12 +1298,12 @@ export const AssistantMsg: React.FC<{
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingLeft: 2 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)' }}>
+          <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg-2)' }}>
             PulseFlow
           </span>
           {model && (
             <span style={{
-              fontSize: 9, color: 'var(--accent)',
+              fontSize: 'var(--fs-micro)', color: 'var(--accent)',
               padding: '0 5px', borderRadius: 6,
               background: 'var(--accent-soft)',
               opacity: 0.75,
@@ -1311,10 +1311,10 @@ export const AssistantMsg: React.FC<{
               {model}
             </span>
           )}
-          {time && <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>{time}</span>}
+          {time && <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{time}</span>}
           {pending && (
             <span style={{
-              fontSize: 9, color: 'var(--accent)',
+              fontSize: 'var(--fs-micro)', color: 'var(--accent)',
               display: 'inline-flex', alignItems: 'center', gap: 4,
             }}>
               <span style={{
@@ -1408,7 +1408,7 @@ export const AssistantMsg: React.FC<{
           )}
           {!pending && usage && fmtUsage(usage) && (
             <div style={{
-              fontSize: 10, color: 'var(--muted-2)',
+              fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
               display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5,
             }}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1444,7 +1444,7 @@ export const AssistantMsg: React.FC<{
                 <button
                   onClick={onEdit}
                   style={{
-                    fontSize: 10, color: 'var(--muted-2)',
+                    fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
                     background: 'transparent', border: 'none', cursor: 'pointer',
                     padding: '0 4px', width: 18, height: 18,
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -1501,13 +1501,13 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
           userSelect: 'none',
         }}
       >
-        <span style={{ fontSize: 12 }}>{expanded ? '▼' : '▶'}</span>
+        <span style={{ fontSize: 'var(--fs-sm)' }}>{expanded ? '▼' : '▶'}</span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
           <circle cx="8.5" cy="8.5" r="1.5"/>
           <polyline points="21 15 16 10 5 21"/>
         </svg>
-        <span style={{ fontSize: 12, color: 'var(--fg-2)', flex: 1 }}>
+        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', flex: 1 }}>
           浏览器截图 ({segments.length}张)
         </span>
         {!expanded && (
@@ -1521,7 +1521,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
               />
             ))}
             {segments.length > 3 && (
-              <span style={{ fontSize: 10, color: 'var(--muted-2)', marginLeft: 4 }}>+{segments.length - 3}</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginLeft: 4 }}>+{segments.length - 3}</span>
             )}
           </div>
         )}
@@ -1553,7 +1553,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
                 />
                 <div style={{
                   position: 'absolute', bottom: 0, left: 0, right: 0,
-                  padding: '2px 4px', fontSize: 9, color: '#fff',
+                  padding: '2px 4px', fontSize: 'var(--fs-micro)', color: '#fff',
                   background: 'rgba(0,0,0,0.6)', textAlign: 'center',
                 }}>
                   #{i + 1}
@@ -1592,7 +1592,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
             >
               ← 上一张
             </button>
-            <span style={{ color: '#fff', fontSize: 14 }}>
+            <span style={{ color: '#fff', fontSize: 'var(--fs-md)' }}>
               {selectedIndex + 1} / {segments.length}
             </span>
             <button
@@ -1631,10 +1631,10 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
           style={{ width: 60, height: 40, borderRadius: 4, objectFit: 'cover' }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {alt || '图片'}
           </div>
-          <div style={{ fontSize: 9, color: 'var(--muted-2)' }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
             点击查看大图
           </div>
         </div>
@@ -1681,13 +1681,13 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
                   window.open(src, '_blank');
                 }
               }}
-              style={{ padding: '8px 20px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}
+              style={{ padding: '8px 20px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 'var(--fs-md)', fontWeight: 500 }}
             >
               ⬇ 保存图片
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setShowLarge(false); }}
-              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer', fontSize: 13 }}
+              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer', fontSize: 'var(--fs-md)' }}
             >
               关闭
             </button>
@@ -1718,7 +1718,7 @@ export const ImageCard: React.FC<{
       background: 'var(--panel)',
     }}>
       <div style={{
-        padding: '5px 10px', fontSize: 10, color: 'var(--muted-2)',
+        padding: '5px 10px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
         borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', gap: 6,
       }}>
@@ -1732,8 +1732,8 @@ export const ImageCard: React.FC<{
       </div>
       <div style={{ padding: 8, display: 'flex', justifyContent: 'center', background: 'var(--bg)', minHeight: 120 }}>
         {error ? (
-          <div style={{ padding: '40px 20px', color: 'var(--danger)', fontSize: 12, textAlign: 'center', width: '100%' }}>
-            <div style={{ fontSize: 20, marginBottom: 4 }}>⚠️</div>
+          <div style={{ padding: '40px 20px', color: 'var(--danger)', fontSize: 'var(--fs-sm)', textAlign: 'center', width: '100%' }}>
+            <div style={{ fontSize: 'var(--fs-xl)', marginBottom: 4 }}>⚠️</div>
             图片加载失败
           </div>
         ) : !loaded && (
@@ -1781,7 +1781,7 @@ const ErrorCard: React.FC<{ error: string; details?: string; fix?: string }> = (
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6,
-        padding: '6px 10px', fontSize: 12, fontWeight: 500,
+        padding: '6px 10px', fontSize: 'var(--fs-sm)', fontWeight: 500,
         color: 'var(--danger)',
       }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1793,7 +1793,7 @@ const ErrorCard: React.FC<{ error: string; details?: string; fix?: string }> = (
         {(details || fix) && (
           <span
             onClick={() => setExpanded(v => !v)}
-            style={{ cursor: 'pointer', fontSize: 10, color: 'var(--muted-2)', userSelect: 'none' }}
+            style={{ cursor: 'pointer', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', userSelect: 'none' }}
           >
             {expanded ? '▲ 收起' : '▼ 详情'}
           </span>
@@ -1803,7 +1803,7 @@ const ErrorCard: React.FC<{ error: string; details?: string; fix?: string }> = (
         <div style={{
           padding: '6px 10px 10px',
           borderTop: '1px solid rgba(239,68,68,0.15)',
-          fontSize: 11, lineHeight: 1.6, color: 'var(--fg-2)',
+          fontSize: 'var(--fs-micro)', lineHeight: 1.6, color: 'var(--fg-2)',
           whiteSpace: 'pre-wrap',
         }}>
           {details && <div style={{ marginBottom: fix ? 6 : 0 }}>📋 {details}</div>}
@@ -1832,10 +1832,10 @@ const VideoPlayer: React.FC<{ url: string; poster?: string; alt?: string }> = ({
       <div style={{
         margin: '6px 0', borderRadius: 8, padding: '12px 16px',
         background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
-        fontSize: 12, color: 'var(--fg-2)',
+        fontSize: 'var(--fs-sm)', color: 'var(--fg-2)',
       }}>
         <span style={{ color: 'var(--danger)' }}>⚠️</span> 视频加载失败: {alt || url}
-        <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4, wordBreak: 'break-all' }}>
+        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4, wordBreak: 'break-all' }}>
           {url}
         </div>
       </div>
@@ -1848,7 +1848,7 @@ const VideoPlayer: React.FC<{ url: string; poster?: string; alt?: string }> = ({
     }}>
       {alt && (
         <div style={{
-          padding: '4px 8px', fontSize: 10, color: 'var(--muted-2)',
+          padding: '4px 8px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
           background: 'rgba(255,255,255,0.05)',
           borderBottom: '1px solid rgba(255,255,255,0.05)',
         }}>
@@ -1863,7 +1863,7 @@ const VideoPlayer: React.FC<{ url: string; poster?: string; alt?: string }> = ({
         onError={() => setError(true)}
         style={{ width: '100%', maxHeight: 480, display: 'block', outline: 'none' }}
       >
-        <p style={{ padding: 20, color: 'var(--muted-2)', fontSize: 12, textAlign: 'center' }}>
+        <p style={{ padding: 20, color: 'var(--muted-2)', fontSize: 'var(--fs-sm)', textAlign: 'center' }}>
           您的浏览器不支持视频播放
         </p>
       </video>
@@ -1902,7 +1902,7 @@ export const UserReviewCard: React.FC<{
     border: '1px solid var(--border)',
     boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
   }}>
-    <div style={{ fontSize: 13, color: 'var(--fg)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+    <div style={{ fontSize: 'var(--fs-md)', color: 'var(--fg)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
       {text}
     </div>
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -1913,7 +1913,7 @@ export const UserReviewCard: React.FC<{
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             padding: '4px 12px', borderRadius: 6,
-            fontSize: 12, fontWeight: a.primary ? 600 : 400,
+            fontSize: 'var(--fs-sm)', fontWeight: a.primary ? 600 : 400,
             cursor: 'pointer', border: '1px solid var(--border)',
             background: a.primary
               ? (a.danger ? '#ef4444' : 'var(--accent)')
@@ -1941,7 +1941,7 @@ export const FollowUpCard: React.FC<{
     background: 'var(--bg-2)',
     border: '1px dashed var(--border)',
   }}>
-    <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 6 }}>
+    <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 6 }}>
       追问建议:
     </div>
     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -1950,7 +1950,7 @@ export const FollowUpCard: React.FC<{
           key={i}
           onClick={() => onSelect(q)}
           style={{
-            padding: '3px 10px', borderRadius: 12, fontSize: 11,
+            padding: '3px 10px', borderRadius: 12, fontSize: 'var(--fs-micro)',
             cursor: 'pointer', border: '1px solid var(--border)',
             background: 'var(--card)', color: 'var(--fg-2)',
             transition: 'all 0.15s',

@@ -67,7 +67,7 @@ const ImagePreview: React.FC<{ src: string; fileName: string }> = ({ src, fileNa
         flexShrink: 0,
       }}>
         <Tooltip title="缩小"><Button type="text" size="small" icon={<ZoomOutOutlined />} onClick={handleZoomOut} /></Tooltip>
-        <div style={{ width: 80, textAlign: 'center', fontSize: 12, color: 'var(--text-secondary)' }}>
+        <div style={{ width: 80, textAlign: 'center', fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}>
           {Math.round(zoom * 100)}%
         </div>
         <Tooltip title="放大"><Button type="text" size="small" icon={<ZoomInOutlined />} onClick={handleZoomIn} /></Tooltip>
@@ -161,7 +161,7 @@ const PdfPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileName
           disabled={currentPage <= 1}
           onClick={() => setCurrentPage(p => p - 1)}
         />
-        <span style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 80, textAlign: 'center' }}>
+        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)', minWidth: 80, textAlign: 'center' }}>
           第 {currentPage} 页 / 共 {numPages || '?'} 页
         </span>
         <Button
@@ -172,7 +172,7 @@ const PdfPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileName
         />
         <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)' }} />
         <Tooltip title="缩小"><Button type="text" size="small" icon={<ZoomOutOutlined />} onClick={() => setScale(s => Math.max(0.5, s - 0.2))} /></Tooltip>
-        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{Math.round(scale * 100)}%</span>
+        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}>{Math.round(scale * 100)}%</span>
         <Tooltip title="放大"><Button type="text" size="small" icon={<ZoomInOutlined />} onClick={() => setScale(s => Math.min(3, s + 0.2))} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined />} onClick={() => {
           const a = document.createElement('a');
@@ -206,7 +206,7 @@ const PdfPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileName
             padding: 60,
             textAlign: 'center',
             color: '#ccc',
-            fontSize: 14,
+            fontSize: 'var(--fs-md)',
           }}>
             <p>无法在浏览器中直接预览 PDF</p>
             <a href={pdfUrl} download={fileName} style={{ color: 'var(--accent,#f97316)' }}>
@@ -277,7 +277,7 @@ const AudioPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileNa
         <source src={audioUrl} />
         您的浏览器不支持音频播放
       </audio>
-      <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{fileName}</span>
+      <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-tertiary)' }}>{fileName}</span>
     </div>
   );
 };
@@ -329,7 +329,7 @@ const HtmlPreview: React.FC<{ src: string; fileName: string }> = ({ src, fileNam
         borderBottom: '1px solid rgba(255,255,255,0.08)',
         flexShrink: 0,
       }}>
-        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}>
           🌐 HTML 预览
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -382,7 +382,7 @@ const TextPreview: React.FC<{ content: string; filePath: string }> = ({ content,
     margin: 0,
     padding: '20px 28px',
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
-    fontSize: 13,
+    fontSize: 'var(--fs-md)',
     lineHeight: 1.7,
     color: 'var(--text-primary)',
     background: 'var(--bg-primary)',

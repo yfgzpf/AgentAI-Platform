@@ -258,7 +258,7 @@ export const XuanjiPanel: React.FC = () => {
               }
               description={
                 <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>
                     {new Date(item.timestamp).toLocaleString()} · 
                     治法: {item.treatment.approach} · 
                     置信度: {(item.diagnosis.palpation.confidence * 100).toFixed(0)}%
@@ -388,7 +388,7 @@ export const XuanjiPanel: React.FC = () => {
             <MedicineBoxOutlined style={{ marginRight: 8 }} />
             PulseFlow 医案中心
           </Title>
-          <Text type="secondary" style={{ fontSize: 12 }}>
+          <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>
             四诊合参 · 辨证论治 · 经验积累
           </Text>
         </div>

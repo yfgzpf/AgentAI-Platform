@@ -317,7 +317,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
             transition: 'all 0.15s',
           }}
         >
-          <SoundOutlined style={{ fontSize: 12 }} />
+          <SoundOutlined style={{ fontSize: 'var(--fs-sm)' }} />
           {state.enabled && (
             <span style={{
               position: 'absolute', top: 1, right: 1,
@@ -346,13 +346,13 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
         >
           {/* 标题 + 关闭 */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>
+            <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--fg)' }}>
               <CustomerServiceOutlined style={{ marginRight: 6, color: '#6366F1' }} />
               语音播报设置
             </span>
             <span
               onClick={() => setOpen(false)}
-              style={{ cursor: 'pointer', color: 'var(--muted-2)', fontSize: 12, padding: 2 }}
+              style={{ cursor: 'pointer', color: 'var(--muted-2)', fontSize: 'var(--fs-sm)', padding: 2 }}
             >
               <CloseOutlined />
             </span>
@@ -362,13 +362,13 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
 
           {/* 播报开关 */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 12, color: 'var(--fg)' }}>AI 回复语音播报</span>
+            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg)' }}>AI 回复语音播报</span>
             <Switch size="small" checked={state.enabled} onChange={toggle} />
           </div>
 
           {/* TTS 引擎 */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 12, color: 'var(--fg)' }}>TTS 引擎</span>
+            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg)' }}>TTS 引擎</span>
             <Select
               size="small"
               value={state.engine}
@@ -383,9 +383,9 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
           {state.engine === 'moss' && mossStatus?.download?.phase === 'downloading' && (
             <div style={{ background: 'rgba(99,102,241,0.08)', borderRadius: 6, padding: '8px 10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <DownloadOutlined style={{ color: '#6366F1', fontSize: 12 }} />
-                <span style={{ fontSize: 11, color: 'var(--fg)' }}>正在下载模型 (~2GB)</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 'auto' }}>
+                <DownloadOutlined style={{ color: '#6366F1', fontSize: 'var(--fs-sm)' }} />
+                <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--fg)' }}>正在下载模型 (~2GB)</span>
+                <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginLeft: 'auto' }}>
                   {mossStatus.download.progress}%
                 </span>
               </div>
@@ -396,7 +396,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
                 strokeColor="#6366F1"
                 trailColor="rgba(99,102,241,0.15)"
               />
-              <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4 }}>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4 }}>
                 {mossStatus.download.message || '正在通过 HuggingFace 镜像下载...'}
               </div>
             </div>
@@ -405,10 +405,10 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
           {/* MOSS 下载失败 */}
           {state.engine === 'moss' && mossStatus?.download?.phase === 'error' && (
             <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 6, padding: '8px 10px' }}>
-              <span style={{ fontSize: 11, color: '#ef4444' }}>
+              <span style={{ fontSize: 'var(--fs-micro)', color: '#ef4444' }}>
                 模型下载失败: {mossStatus.download.error || '未知错误'}
               </span>
-              <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4 }}>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4 }}>
                 将使用浏览器 TTS 作为备用
               </div>
             </div>
@@ -418,13 +418,13 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
           {state.engine === 'moss' && mossChecking && !mossStatus && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0' }}>
               <Spin size="small" />
-              <span style={{ fontSize: 11, color: 'var(--muted)' }}>检查 MOSS 服务状态...</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>检查 MOSS 服务状态...</span>
             </div>
           )}
 
           {/* 音色选择（所有引擎共用，数据源不同） */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 12, color: 'var(--fg)' }}>音色</span>
+            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg)' }}>音色</span>
             {voicesLoading && state.engine !== 'browser' ? (
               <Spin size="small" style={{ marginRight: 8 }} />
             ) : (
@@ -444,7 +444,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
 
           {/* 语速（所有引擎通用） */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: 'var(--fg)', width: 50, flexShrink: 0 }}>语速</span>
+            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg)', width: 50, flexShrink: 0 }}>语速</span>
             <Slider
               min={0.5}
               max={2.0}
@@ -453,14 +453,14 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
               onChange={(v) => updateField('rate', v)}
               style={{ flex: 1, margin: '0 4px' }}
             />
-            <span style={{ fontSize: 11, color: 'var(--muted)', width: 30, textAlign: 'right' }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', width: 30, textAlign: 'right' }}>
               {state.rate.toFixed(1)}x
             </span>
           </div>
 
           {/* 音调（所有引擎通用） */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: 'var(--fg)', width: 50, flexShrink: 0 }}>音调</span>
+            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg)', width: 50, flexShrink: 0 }}>音调</span>
             <Slider
               min={0.5}
               max={2.0}
@@ -469,7 +469,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
               onChange={(v) => updateField('pitch', v)}
               style={{ flex: 1, margin: '0 4px' }}
             />
-            <span style={{ fontSize: 11, color: 'var(--muted)', width: 30, textAlign: 'right' }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', width: 30, textAlign: 'right' }}>
               {state.pitch.toFixed(1)}x
             </span>
           </div>
@@ -481,7 +481,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
               icon={<CustomerServiceOutlined />}
               onClick={handleTest}
               loading={testing}
-              style={{ fontSize: 11, flex: 1 }}
+              style={{ fontSize: 'var(--fs-micro)', flex: 1 }}
             >
               试听
             </Button>
@@ -490,7 +490,7 @@ const VoiceSettings: React.FC<Props> = ({ state, onChange, externalOpen, onExter
               danger
               icon={<CloseOutlined />}
               onClick={() => stopTts()}
-              style={{ fontSize: 11 }}
+              style={{ fontSize: 'var(--fs-micro)' }}
             >
               停止
             </Button>

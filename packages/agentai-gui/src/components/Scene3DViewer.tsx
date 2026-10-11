@@ -73,7 +73,7 @@ export const Scene3DViewer: React.FC<Props> = ({ scene }) => {
         style={{ margin: '8px 0', background: 'var(--panel)' }}
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 13 }}>🎲 {scene.title || '3D 场景'}</span>
+            <span style={{ fontSize: 'var(--fs-md)' }}>🎲 {scene.title || '3D 场景'}</span>
           </div>
         }
         extra={
@@ -92,7 +92,7 @@ export const Scene3DViewer: React.FC<Props> = ({ scene }) => {
       >
         {iframeEl}
         {scene.params && scene.params.length > 0 && (
-          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--muted-2)' }}>
+          <div style={{ marginTop: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
             可调参数: {scene.params.map(p => p.label).join(' · ')}
           </div>
         )}

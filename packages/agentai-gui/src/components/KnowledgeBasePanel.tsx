@@ -224,10 +224,10 @@ export const KnowledgeBasePanel: React.FC = () => {
             <Text strong>搜索结果 ({searchResults.length})：</Text>
             {searchResults.map((r, i) => (
               <Card key={i} size="small" style={{ marginTop: 8 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
+                <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>
                   来源: {r.docName} · 相关度: {(r.score * 10).toFixed(1)}%
                 </Text>
-                <Paragraph style={{ margin: '4px 0 0', fontSize: 13, whiteSpace: 'pre-wrap' }}>
+                <Paragraph style={{ margin: '4px 0 0', fontSize: 'var(--fs-md)', whiteSpace: 'pre-wrap' }}>
                   {r.chunk.text.slice(0, 300)}...
                 </Paragraph>
               </Card>
@@ -338,7 +338,7 @@ export const KnowledgeBasePanel: React.FC = () => {
                 ]}
               >
                 <List.Item.Meta
-                  avatar={<FileTextOutlined style={{ fontSize: 24, color: '#1677ff' }} />}
+                  avatar={<FileTextOutlined style={{ fontSize: 'var(--fs-xl)', color: '#1677ff' }} />}
                   title={doc.name}
                   description={
                     <Space>
@@ -357,7 +357,7 @@ export const KnowledgeBasePanel: React.FC = () => {
 
       {/* 记忆图谱 */}
       <Card title="记忆图谱" style={{ marginTop: 16 }}>
-        <Suspense fallback={<div style={{ padding: 20, color: 'var(--muted)', fontSize: 12 }}>记忆图谱加载中…</div>}>
+        <Suspense fallback={<div style={{ padding: 20, color: 'var(--muted)', fontSize: 'var(--fs-sm)' }}>记忆图谱加载中…</div>}>
           <KnowledgeGraphPanelChunk />
         </Suspense>
       </Card>

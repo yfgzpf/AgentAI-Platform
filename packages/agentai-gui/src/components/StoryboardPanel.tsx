@@ -778,9 +778,9 @@ return (
               placeholder="描述你的创意, 例: 一个建筑从地基到完工的生长动画, 5集"
               autoSize={{ minRows: 2, maxRows: 6 }} />
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 12, color: 'var(--muted)' }}>集数:</span>
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>集数:</span>
               <InputNumber min={1} max={20} value={episodeCount} onChange={v => setEpisodeCount(v || 1)} size="small" style={{ width: 60 }} />
-              <span style={{ fontSize: 12, color: 'var(--muted)' }}>单镜时长:</span>
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>单镜时长:</span>
               <Select size="small" value={shotDuration} onChange={v => setShotDuration(v)} style={{ width: 80 }}
                 options={[{ value: 4, label: '4s' }, { value: 5, label: '5s' }, { value: 8, label: '8s' }, { value: 10, label: '10s' }]} />
               <div style={{ flex: 1 }} />
@@ -788,7 +788,7 @@ return (
                 {generating ? '生成中...' : '生成剧本'}
               </Button>
             </div>
-            {refImages.length > 0 && <div style={{ fontSize: 11, color: 'var(--muted)' }}><PictureOutlined /> 已上传 {refImages.length} 张参考图</div>}
+            {refImages.length > 0 && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}><PictureOutlined /> 已上传 {refImages.length} 张参考图</div>}
           </div>
         </Card>
 
@@ -833,33 +833,33 @@ return (
                     ) : (
                       <div style={{ textAlign: 'center', color: 'var(--muted)' }}>
                         <UserOutlined style={{ fontSize: 32 }} />
-                        <div style={{ fontSize: 10, marginTop: 4 }}>暂无定妆图</div>
+                        <div style={{ fontSize: 'var(--fs-micro)', marginTop: 4 }}>暂无定妆图</div>
                       </div>
                     )}
                     {char.portraitUrl && (
-                      <div style={{ position: 'absolute', bottom: 2, right: 2, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 3 }}>🔍 点击放大</div>
+                      <div style={{ position: 'absolute', bottom: 2, right: 2, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 'var(--fs-micro)', padding: '1px 4px', borderRadius: 3 }}>🔍 点击放大</div>
                     )}
                   </div>
                   {/* 角色信息 */}
-                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{char.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, lineHeight: 1.4 }}>{char.description}</div>
+                  <div style={{ fontWeight: 700, fontSize: 'var(--fs-md)', marginBottom: 2 }}>{char.name}</div>
+                  <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 6, lineHeight: 1.4 }}>{char.description}</div>
                   {char.refImageIndex !== undefined && refImages[char.refImageIndex] && (
-                    <Tag color="blue" style={{ fontSize: 10, marginBottom: 4 }}>参考图 {char.refImageIndex + 1}</Tag>
+                    <Tag color="blue" style={{ fontSize: 'var(--fs-micro)', marginBottom: 4 }}>参考图 {char.refImageIndex + 1}</Tag>
                   )}
                   {/* 九宫格缩略图 — 点击查看大图 */}
                   {char.sheetUrl && (
                     <div style={{ marginBottom: 6, cursor: 'zoom-in' }}
                       onClick={() => setZoomPortrait({ url: char.sheetUrl!, name: `${char.name} — 九宫格参考` })}>
                       <img src={char.sheetUrl} alt={`${char.name} 九宫格`} style={{ width: '100%', borderRadius: 4, border: '1px solid var(--border)' }} />
-                      <div style={{ fontSize: 9, color: 'var(--muted)', textAlign: 'center', marginTop: 2 }}>📋 九宫格参考 (点击放大)</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', textAlign: 'center', marginTop: 2 }}>📋 九宫格参考 (点击放大)</div>
                     </div>
                   )}
                   {/* 操作按钮 */}
                   <div style={{ display: 'flex', gap: 4 }}>
                     <Button size="small" type="primary" ghost icon={<CameraOutlined />} loading={generatingPortrait === char.name}
-                      onClick={() => generatePortrait(char.name)} style={{ fontSize: 11, flex: 1 }}>生成角色图</Button>
+                      onClick={() => generatePortrait(char.name)} style={{ fontSize: 'var(--fs-micro)', flex: 1 }}>生成角色图</Button>
                     <Upload showUploadList={false} beforeUpload={(file) => { uploadPortrait(char.name, file); return false; }}>
-                      <Button size="small" icon={<PictureOutlined />} style={{ fontSize: 11 }}>上传</Button>
+                      <Button size="small" icon={<PictureOutlined />} style={{ fontSize: 'var(--fs-micro)' }}>上传</Button>
                     </Upload>
                   </div>
                 </div>
@@ -870,7 +870,7 @@ return (
 
         {/* 批量生成进度 */}
         {batchGenerating && (
-          <Card size="small"><Progress percent={batchProgress} status="active" /><div style={{ textAlign: 'center', fontSize: 12, color: 'var(--muted)' }}>批量生成中... {batchProgress}%</div></Card>
+          <Card size="small"><Progress percent={batchProgress} status="active" /><div style={{ textAlign: 'center', fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>批量生成中... {batchProgress}%</div></Card>
         )}
 
         {/* 批量生成按钮 — 仅商业模型显示, Flash 免费模型由用户逐镜生成 */}
@@ -881,7 +881,7 @@ return (
           </Button>
         )}
         {storyboard && isFlashModel && (
-          <Alert type="info" showIcon style={{ fontSize: 11 }}
+          <Alert type="info" showIcon style={{ fontSize: 'var(--fs-micro)' }}
             message="当前为 Flash 免费模型, 有速率限制"
             description="请逐镜点击「生成」按钮, 一个一个生成。切换到商业模型可批量生成。" />
         )}
@@ -901,7 +901,7 @@ return (
                     <Button size="small" type="primary" ghost icon={<ThunderboltOutlined />}
                       loading={generatingSequel === epIdx}
                       onClick={(e) => { e.stopPropagation(); generateSequel(epIdx); }}
-                      style={{ fontSize: 10 }}>
+                      style={{ fontSize: 'var(--fs-micro)' }}>
                       智能续集
                     </Button>
                   )}
@@ -918,19 +918,19 @@ return (
                         ) : generatingScene === epIdx ? (
                           <Spin size="small" />
                         ) : (
-                          <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: 10 }}><PictureOutlined style={{ fontSize: 20 }} /><br />暂无场景图</div>
+                          <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}><PictureOutlined style={{ fontSize: 'var(--fs-xl)' }} /><br />暂无场景图</div>
                         )}
                       </div>
                       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                        <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 2 }}>🎬 {ep.scene.name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginBottom: 4 }}>{ep.scene.description}</div>
+                        <div style={{ fontWeight: 600, fontSize: 'var(--fs-sm)', marginBottom: 2 }}>🎬 {ep.scene.name}</div>
+                        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.4, marginBottom: 4 }}>{ep.scene.description}</div>
                         <Button size="small" type="primary" ghost icon={<CameraOutlined />} loading={generatingScene === epIdx}
-                          onClick={() => generateSceneImage(epIdx)} style={{ fontSize: 10, width: 'fit-content' }}>
+                          onClick={() => generateSceneImage(epIdx)} style={{ fontSize: 'var(--fs-micro)', width: 'fit-content' }}>
                           {ep.scene.imageUrl ? '重新生成场景' : '生成场景图'}
                         </Button>
                         {ep.scene.imageUrl && (
                           <Button size="small" type="primary" icon={<EditOutlined />}
-                            onClick={() => setEditingScene(epIdx)} style={{ fontSize: 10, marginLeft: 4 }}>
+                            onClick={() => setEditingScene(epIdx)} style={{ fontSize: 'var(--fs-micro)', marginLeft: 4 }}>
                             精编
                           </Button>
                         )}
@@ -945,22 +945,22 @@ return (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                           <Checkbox checked={shot.selected} onChange={() => toggleShot(epIdx, shot.id)} />
                           <Tag>{shot.type}</Tag><Tag color="blue">{shot.duration}s</Tag>
-                          <span style={{ fontSize: 11, color: 'var(--muted)' }}>{shot.camera_motion} · {shot.mood}</span>
+                          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{shot.camera_motion} · {shot.mood}</span>
                           <div style={{ flex: 1 }} />
-                          {shot.characters?.map((c, i) => <Tag key={i} color="purple" style={{ fontSize: 10 }}>{c}</Tag>)}
+                          {shot.characters?.map((c, i) => <Tag key={i} color="purple" style={{ fontSize: 'var(--fs-micro)' }}>{c}</Tag>)}
                           {shot.status === 'completed' && <Tag color="green">✓</Tag>}
                           {shot.status === 'generating' && <Spin size="small" />}
                           {shot.status === 'failed' && <Tag color="red">失败</Tag>}
                           <Button size="small" type="primary" loading={shot.status === 'generating'} disabled={shot.status === 'generating' || shot.status === 'completed'}
-                            onClick={() => generateSingleShot(epIdx, shot.id)} style={{ fontSize: 10, padding: '0 6px' }}>
+                            onClick={() => generateSingleShot(epIdx, shot.id)} style={{ fontSize: 'var(--fs-micro)', padding: '0 6px' }}>
                             {shot.status === 'generating' ? '生成中' : shot.status === 'failed' ? '重试' : shot.status === 'completed' ? '已生成' : '生成'}
                           </Button>
                           <Tooltip title="删除"><Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => deleteShot(epIdx, shot.id)} /></Tooltip>
                         </div>
                       <TextArea value={shot.prompt} onChange={e => updateShotPrompt(epIdx, shot.id, e.target.value)}
-                        autoSize={{ minRows: 2, maxRows: 6 }} style={{ fontSize: 12 }} disabled={shot.status === 'generating'} />
-                      {shot.dialogue && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>台词: "{shot.dialogue}"</div>}
-                      {shot.error && <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>{shot.error}</div>}
+                        autoSize={{ minRows: 2, maxRows: 6 }} style={{ fontSize: 'var(--fs-sm)' }} disabled={shot.status === 'generating'} />
+                      {shot.dialogue && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 4 }}>台词: "{shot.dialogue}"</div>}
+                      {shot.error && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)', marginTop: 4 }}>{shot.error}</div>}
                     </div>
                   ))}
                 </div>
@@ -985,8 +985,8 @@ return (
               header={
                 <Space>
                   <VideoCameraOutlined />
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>分镜预览</span>
-                  <Tag style={{ fontSize: 9 }}>
+                  <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>分镜预览</span>
+                  <Tag style={{ fontSize: 'var(--fs-micro)' }}>
                     {storyboard.episodes.reduce((sum, ep) => sum + ep.shots.filter(s => s.videoUrl).length, 0)} 个视频
                   </Tag>
                 </Space>
@@ -1001,9 +1001,9 @@ return (
                       e.preventDefault();
                       if (dragShot) { moveShotToEpisode(dragShot.epIdx, dragShot.shotId, ep.index - 1); setDragShot(null); }
                     }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, margin: '8px 0 4px', color: 'var(--fg-2)' }}>第 {ep.index} 集 · {ep.title}</div>
+                    <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, margin: '8px 0 4px', color: 'var(--fg-2)' }}>第 {ep.index} 集 · {ep.title}</div>
                     {ep.shots.filter(s => s.videoUrl).length === 0 ? (
-                      <div style={{ fontSize: 11, color: 'var(--muted-2)', padding: 4 }}>暂无已生成的视频 · 可从其他集拖拽镜头到此</div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', padding: 4 }}>暂无已生成的视频 · 可从其他集拖拽镜头到此</div>
                     ) : (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
                         {ep.shots.filter(s => s.videoUrl).map(shot => (
@@ -1012,7 +1012,7 @@ return (
                             onDragStart={() => setDragShot({ epIdx: ep.index - 1, shotId: shot.id })}
                             onDragEnd={() => setDragShot(null)}>
                             <video src={shot.videoUrl} controls style={{ width: '100%', borderRadius: 6, background: '#000' }} />
-                            <div style={{ position: 'absolute', top: 4, left: 4, background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>
+                            <div style={{ position: 'absolute', top: 4, left: 4, background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 'var(--fs-micro)', padding: '2px 6px', borderRadius: 4 }}>
                               {ep.index}-{shot.id} · {shot.type}
                             </div>
                           </div>
@@ -1030,8 +1030,8 @@ return (
               header={
                 <Space>
                   <FileOutlined />
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>剧集成品 · 拼接导出</span>
-                  <Tag style={{ fontSize: 9 }} color="green">
+                  <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>剧集成品 · 拼接导出</span>
+                  <Tag style={{ fontSize: 'var(--fs-micro)' }} color="green">
                     {storyboard.episodes.filter(ep => ep.shots.length > 0 && ep.shots.every(s => s.videoUrl)).length}/{storyboard.episodes.length} 集完成
                   </Tag>
                 </Space>
@@ -1045,12 +1045,12 @@ return (
                   const isComplete = completedShots.length === totalShots && totalShots > 0;
                   return (
                     <div key={ep.index} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', marginBottom: 4 }}>
-                      <div style={{ flexShrink: 0, width: 28, height: 28, borderRadius: '50%', background: isComplete ? '#52c41a' : 'var(--bg)', color: isComplete ? '#fff' : 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700 }}>
+                      <div style={{ flexShrink: 0, width: 28, height: 28, borderRadius: '50%', background: isComplete ? '#52c41a' : 'var(--bg)', color: isComplete ? '#fff' : 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--fs-sm)', fontWeight: 700 }}>
                         {ep.index}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ep.title}</div>
-                        <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>{completedShots.length}/{totalShots} 镜已完成</div>
+                        <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ep.title}</div>
+                        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{completedShots.length}/{totalShots} 镜已完成</div>
                       </div>
                       {isComplete ? (
                         <Button size="small" type="primary" icon={<VideoCameraOutlined />}
@@ -1077,16 +1077,16 @@ return (
                             } catch (e: any) { message.error('拼接失败: ' + e.message); }
                             finally { setMerging(null); }
                           }}
-                          style={{ fontSize: 10 }}>
+                          style={{ fontSize: 'var(--fs-micro)' }}>
                           拼接播放
                         </Button>
                       ) : (
-                        <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px' }} color="orange">未完成</Tag>
+                        <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px' }} color="orange">未完成</Tag>
                       )}
                     </div>
                   );
                 })}
-                <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 6, textAlign: 'center' }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 6, textAlign: 'center' }}>
                   所有镜头生成完毕后, 点击「拼接播放」自动合并为完整剧集视频 (需后端 ffmpeg 支持)。
                 </div>
               </div>
@@ -1095,9 +1095,9 @@ return (
         ) : (
           <div style={{ textAlign: 'center', marginTop: 60, color: 'var(--muted)' }}>
             <VideoCameraOutlined style={{ fontSize: 40, marginBottom: 12 }} />
-            <div style={{ fontSize: 14, fontWeight: 600 }}>剧本分镜</div>
-            <div style={{ fontSize: 12, color: 'var(--muted-2)', marginTop: 4 }}>输入创意 → 生成剧本 → 编辑分镜 → 逐镜生成</div>
-            <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 8 }}>右侧可折叠: 分镜预览 · 剧集成品拼接</div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>剧本分镜</div>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted-2)', marginTop: 4 }}>输入创意 → 生成剧本 → 编辑分镜 → 逐镜生成</div>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8 }}>右侧可折叠: 分镜预览 · 剧集成品拼接</div>
           </div>
         )}
        </div>

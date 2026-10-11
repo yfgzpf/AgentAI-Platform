@@ -87,16 +87,16 @@ export const EvolutionPanel: React.FC = () => {
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8,
         }}>
           <div style={{ padding: 8, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)' }}>{summary.totalEntries}</div>
-            <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>总记忆条数</div>
+            <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700, color: 'var(--accent)' }}>{summary.totalEntries}</div>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>总记忆条数</div>
           </div>
           <div style={{ padding: 8, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--success)' }}>{(summary.successRate * 100).toFixed(0)}%</div>
-            <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>成功率</div>
+            <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700, color: 'var(--success)' }}>{(summary.successRate * 100).toFixed(0)}%</div>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>成功率</div>
           </div>
           <div style={{ padding: 8, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', textAlign: 'center' }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--warning)' }}>{summary.failureCount}</div>
-            <div style={{ fontSize: 10, color: 'var(--muted-2)' }}>失败次数</div>
+            <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700, color: 'var(--warning)' }}>{summary.failureCount}</div>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>失败次数</div>
           </div>
         </div>
       )}
@@ -104,10 +104,10 @@ export const EvolutionPanel: React.FC = () => {
       {/* 用户偏好 */}
       {summary && summary.topPreferences.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, color: 'var(--muted-2)', marginBottom: 4, fontWeight: 600 }}>AI 记住了你的偏好</div>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4, fontWeight: 600 }}>AI 记住了你的偏好</div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {summary.topPreferences.map((p, i) => (
-              <Tag key={i} color="gold" style={{ fontSize: 10 }}>{p}</Tag>
+              <Tag key={i} color="gold" style={{ fontSize: 'var(--fs-micro)' }}>{p}</Tag>
             ))}
           </div>
         </div>
@@ -116,7 +116,7 @@ export const EvolutionPanel: React.FC = () => {
       {/* 自进化规则 */}
       {rules.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, color: 'var(--muted-2)', marginBottom: 4, fontWeight: 600 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4, fontWeight: 600 }}>
             AI 自我修改的行为规则 ({rules.length})
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -125,7 +125,7 @@ export const EvolutionPanel: React.FC = () => {
                 display: 'flex', alignItems: 'flex-start', gap: 6,
                 padding: '4px 8px', borderRadius: 4,
                 background: 'var(--panel)', border: '1px solid var(--border)',
-                fontSize: 11, color: 'var(--fg-2)',
+                fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
               }}>
                 <ExperimentOutlined style={{ color: 'var(--violet)', marginTop: 2, flexShrink: 0 }} />
                 <span style={{ flex: 1 }}>{rule}</span>
@@ -144,7 +144,7 @@ export const EvolutionPanel: React.FC = () => {
       {/* 进化记忆时间线 */}
       {entries.length > 0 ? (
         <div>
-          <div style={{ fontSize: 11, color: 'var(--muted-2)', marginBottom: 4, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             进化记忆时间线
             <ReloadOutlined style={{ cursor: 'pointer' }} onClick={fetchData} />
           </div>
@@ -156,15 +156,15 @@ export const EvolutionPanel: React.FC = () => {
                   display: 'flex', alignItems: 'flex-start', gap: 6,
                   padding: '4px 8px', borderRadius: 4,
                   background: 'var(--panel)', border: '1px solid var(--border)',
-                  fontSize: 11,
+                  fontSize: 'var(--fs-micro)',
                 }}>
                   <span style={{ color: meta.color, marginTop: 1, flexShrink: 0 }}>{meta.icon}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ color: 'var(--fg-2)' }}>{e.content.slice(0, 100)}</div>
                     <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
-                      <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color={meta.color}>{meta.label}</Tag>
-                      {e.taskType && <Tag style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', marginRight: 0 }}>{e.taskType}</Tag>}
-                      <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>
+                      <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px', marginRight: 0 }} color={meta.color}>{meta.label}</Tag>
+                      {e.taskType && <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 3px', marginRight: 0 }}>{e.taskType}</Tag>}
+                      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                         {new Date(e.ts).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
                       </span>
                     </div>

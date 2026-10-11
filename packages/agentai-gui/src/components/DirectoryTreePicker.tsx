@@ -190,18 +190,18 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                 style={{ color: 'var(--accent)' }}
               />
             </Tooltip>
-            <Text ellipsis style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--fg-2)', flex: 1 }}>
+            <Text ellipsis style={{ fontSize: 'var(--fs-micro)', fontFamily: 'monospace', color: 'var(--fg-2)', flex: 1 }}>
               {currentDir}
             </Text>
             <span style={{
-              fontSize: 9, color: 'var(--muted-2)', flexShrink: 0,
+              fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flexShrink: 0,
               padding: '0 6px', background: 'var(--success-soft)', borderRadius: 4,
             }}>
               {entries.length} 个子目录
             </span>
           </>
         ) : (
-          <Text style={{ fontSize: 11, color: 'var(--muted-2)' }}>
+          <Text style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
             选择一个驱动器开始浏览
           </Text>
         )}
@@ -211,10 +211,10 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
       {loading ? (
         <div style={{ textAlign: 'center', padding: 20 }}>
           <Spin size="small" />
-          <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4 }}>加载中...</div>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4 }}>加载中...</div>
         </div>
       ) : error ? (
-        <div style={{ padding: 12, textAlign: 'center', color: 'var(--danger)', fontSize: 11 }}>
+        <div style={{ padding: 12, textAlign: 'center', color: 'var(--danger)', fontSize: 'var(--fs-micro)' }}>
           {error}
           <Button size="small" onClick={loadDrives} style={{ marginLeft: 8 }}>重试</Button>
         </div>
@@ -222,7 +222,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
         /* 目录条目列表 */
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           {entries.length === 0 ? (
-            <div style={{ padding: 12, textAlign: 'center', color: 'var(--muted-2)', fontSize: 11 }}>
+            <div style={{ padding: 12, textAlign: 'center', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
               此目录下没有子目录
             </div>
           ) : (
@@ -235,18 +235,18 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
                     padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
-                    fontSize: 11,
+                    fontSize: 'var(--fs-micro)',
                     color: selected ? 'var(--accent)' : 'var(--fg-2)',
                     background: selected ? 'var(--accent-soft)' : 'transparent',
                   }}
                   onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--panel)'; }}
                   onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
                 >
-                  <FolderOutlined style={{ color: 'var(--warning)', fontSize: 13, flexShrink: 0 }} />
+                  <FolderOutlined style={{ color: 'var(--warning)', fontSize: 'var(--fs-md)', flexShrink: 0 }} />
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {entry.name}
                   </span>
-                  <span style={{ fontSize: 9, color: 'var(--muted-2)', flexShrink: 0 }}>
+                  <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flexShrink: 0 }}>
                     ▶
                   </span>
                 </div>
@@ -259,9 +259,9 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
               marginTop: 8, padding: '4px 8px',
               background: 'var(--success-soft)', borderRadius: 4,
               border: '1px dashed var(--success)',
-              fontSize: 10, color: 'var(--muted)',
+              fontSize: 'var(--fs-micro)', color: 'var(--muted)',
             }}>
-              ✅ 当前目录: <Text code style={{ fontSize: 10 }}>{currentDir}</Text>
+              ✅ 当前目录: <Text code style={{ fontSize: 'var(--fs-micro)' }}>{currentDir}</Text>
               <span style={{ marginLeft: 6, color: 'var(--accent)' }}>
                 — 点击"选择此目录"确认
               </span>
@@ -274,7 +274,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
           {/* 常用目录 */}
           {common.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 4 }}>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4 }}>
                 <HomeOutlined style={{ marginRight: 4 }} />常用目录
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -285,14 +285,14 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                     style={{
                       display: 'flex', alignItems: 'center', gap: 6,
                       padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
-                      fontSize: 11, color: 'var(--fg-2)',
+                      fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
                     }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--panel)'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                   >
-                    <FolderOpenOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
+                    <FolderOpenOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />
                     <span style={{ flex: 1 }}>{dir}</span>
-                    <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>▶</span>
+                    <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>▶</span>
                   </div>
                 ))}
               </div>
@@ -301,7 +301,7 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
 
           {/* 驱动器 */}
           <div>
-            <div style={{ fontSize: 10, color: 'var(--muted-2)', marginBottom: 4 }}>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 4 }}>
               <HddOutlined style={{ marginRight: 4 }} />驱动器
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -312,14 +312,14 @@ export const DirectoryTreePicker: React.FC<Props> = ({ value, onSelect, visible,
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
                     padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
-                    fontSize: 11, color: 'var(--fg-2)',
+                    fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
                   }}
                   onMouseEnter={e => { e.currentTarget.style.background = 'var(--panel)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                 >
-                  <HddOutlined style={{ color: 'var(--violet)', fontSize: 12 }} />
+                  <HddOutlined style={{ color: 'var(--violet)', fontSize: 'var(--fs-sm)' }} />
                   <span>{drive}</span>
-                  <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>▶</span>
+                  <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>▶</span>
                 </div>
               ))}
             </div>

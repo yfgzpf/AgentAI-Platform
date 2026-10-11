@@ -129,10 +129,10 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
           {step === 'name' && (
             <div style={{ textAlign: 'center', animation: 'fadeIn 0.4s ease' }}>
               <div style={{ fontSize: 48, marginBottom: 16 }}>{avatar}</div>
-              <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 24, fontWeight: 700 }}>
+              <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 'var(--fs-xl)', fontWeight: 700 }}>
                 你好！给我起个名字吧
               </h2>
-              <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 32px', fontSize: 14 }}>
+              <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 32px', fontSize: 'var(--fs-md)' }}>
                 这是你与 AI 对话的身份标识
               </p>
               <Input
@@ -144,7 +144,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
                 style={{
                   maxWidth: 280, margin: '0 auto 24px', display: 'block',
                   background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-                  color: '#fff', fontSize: 16,
+                  color: '#fff', fontSize: 'var(--fs-lg)',
                 }}
                 onPressEnter={() => name.trim() && setStep('industry')}
               />
@@ -154,7 +154,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
                 disabled={!name.trim()}
                 style={{
                   background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                  border: 'none', borderRadius: 12, padding: '0 40px', fontSize: 16,
+                  border: 'none', borderRadius: 12, padding: '0 40px', fontSize: 'var(--fs-lg)',
                 }}
               >
                 继续
@@ -184,10 +184,10 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
           {step === 'done' && (
             <div style={{ textAlign: 'center', animation: 'fadeIn 0.5s ease' }}>
               <div style={{ fontSize: 64, marginBottom: 16 }}>{avatar}</div>
-              <h2 style={{ color: 'var(--fg)', margin: '0 0 12px', fontSize: 28, fontWeight: 700 }}>
+              <h2 style={{ color: 'var(--fg)', margin: '0 0 12px', fontSize: 'var(--fs-hero)', fontWeight: 700 }}>
                 欢迎回来，{name.trim() || '用户'}！
               </h2>
-              <p style={{ color: 'rgba(255,255,255,0.6)', margin: '0 0 32px', fontSize: 14 }}>
+              <p style={{ color: 'rgba(255,255,255,0.6)', margin: '0 0 32px', fontSize: 'var(--fs-md)' }}>
                 我是你的 AI 伙伴，已准备好为你服务
               </p>
               <Button
@@ -195,7 +195,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
                 onClick={() => setStep('done')}
                 style={{
                   background: 'linear-gradient(135deg, #10b981, #06b6d4)',
-                  border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 16,
+                  border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 'var(--fs-lg)',
                 }}
               >
                 开始对话 →
@@ -212,7 +212,7 @@ export const IdentityOnboarding: React.FC<{ onDone?: () => void }> = ({ onDone }
               position: 'absolute', top: 16, right: 16,
               background: 'none', border: 'none',
               color: 'rgba(255,255,255,0.4)', cursor: 'pointer',
-              fontSize: 12, padding: '4px 8px', borderRadius: 6,
+              fontSize: 'var(--fs-sm)', padding: '4px 8px', borderRadius: 6,
             }}
           >
             跳过设置

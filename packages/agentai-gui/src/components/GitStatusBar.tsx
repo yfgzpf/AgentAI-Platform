@@ -158,13 +158,13 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg, #252525)',
     borderRadius: '4px',
     cursor: 'pointer',
-    fontSize: '11px',
+    fontSize: 'var(--fs-micro)',
     color: 'var(--fg, #e0e0e0)',
     transition: 'background 0.2s',
     userSelect: 'none',
   },
   icon: {
-    fontSize: '14px',
+    fontSize: 'var(--fs-md)',
   },
   text: {
     color: 'var(--fg-muted)',
@@ -176,7 +176,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
   },
   branchIcon: {
-    fontSize: '10px',
+    fontSize: 'var(--fs-micro)',
   },
   changes: {
     display: 'flex',
@@ -187,7 +187,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '3px',
   },
   changeIcon: {
-    fontSize: '10px',
+    fontSize: 'var(--fs-micro)',
   },
   additions: {
     color: '#238636',
@@ -212,7 +212,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   spinner: {
     animation: 'spin 1s linear infinite',
-    fontSize: '12px',
+    fontSize: 'var(--fs-sm)',
   },
 };
 

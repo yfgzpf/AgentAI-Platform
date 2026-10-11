@@ -242,26 +242,26 @@ export const FileCard: React.FC<FileCardProps> = ({
             width: 24, height: 24, borderRadius: 4,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: color, color: '#fff',
-            fontSize: 8, fontWeight: 700,
+            fontSize: 'var(--fs-micro)', fontWeight: 700,
             flexShrink: 0,
           }}>{icon}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{
-              fontSize: 11, fontWeight: 600, color: 'var(--fg)',
+              fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>{filename}</div>
             {dir && (
               <div style={{
-                fontSize: 9, color: 'var(--muted-2)',
+                fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>{dir}</div>
             )}
           </div>
           {size != null && (
-            <span style={{ fontSize: 9, color: 'var(--muted-2)', flexShrink: 0 }}>{formatBytes(size)}</span>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', flexShrink: 0 }}>{formatBytes(size)}</span>
           )}
           <span style={{
-            fontSize: 8, padding: '1px 5px', borderRadius: 3,
+            fontSize: 'var(--fs-micro)', padding: '1px 5px', borderRadius: 3,
             background: opMeta.bg, color: opMeta.color, flexShrink: 0,
           }}>{opMeta.icon} 已读取</span>
           
@@ -269,7 +269,7 @@ export const FileCard: React.FC<FileCardProps> = ({
           <button
             onClick={(e) => { e.stopPropagation(); void toggleInline(); }}
             style={{
-              fontSize: 9, color: 'var(--accent)', background: 'transparent',
+              fontSize: 'var(--fs-micro)', color: 'var(--accent)', background: 'transparent',
               border: 'none', cursor: 'pointer', padding: '0 4px', flexShrink: 0,
             }}
           >
@@ -281,15 +281,15 @@ export const FileCard: React.FC<FileCardProps> = ({
         {showContent && (
           <div style={{ borderTop: '1px solid var(--border)' }}>
             {fetching ? (
-              <div style={{ padding: '8px 12px', fontSize: 10, color: 'var(--muted-2)' }}>加载中…</div>
+              <div style={{ padding: '8px 12px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>加载中…</div>
             ) : totalLines === 0 ? (
-              <div style={{ padding: '8px 12px', fontSize: 10, color: 'var(--muted-2)' }}>
+              <div style={{ padding: '8px 12px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                 {content == null && fetched == null ? '（内容不可用）' : '（空文件或读取失败）'}
               </div>
             ) : (
             <pre style={{
               margin: 0, padding: '8px 12px',
-              fontSize: 10, lineHeight: 1.4,
+              fontSize: 'var(--fs-micro)', lineHeight: 1.4,
               fontFamily: "'Consolas', monospace",
               color: 'var(--fg-2)',
               background: 'var(--bg-2)',
@@ -316,14 +316,14 @@ export const FileCard: React.FC<FileCardProps> = ({
             {capReached && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                padding: '4px 12px', fontSize: 10, color: 'var(--muted-2)',
+                padding: '4px 12px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
                 borderBottom: '1px solid var(--border)',
               }}>
                 <span>已显示前 {PREVIEW_LINE_CAP} 行 / 共 {totalLines} 行</span>
                 <button
                   onClick={(e) => { e.stopPropagation(); setShowAll(true); }}
                   style={{
-                    fontSize: 10, color: 'var(--accent)', background: 'transparent',
+                    fontSize: 'var(--fs-micro)', color: 'var(--accent)', background: 'transparent',
                     border: 'none', cursor: 'pointer', padding: 0,
                   }}
                 >显示全部</button>
@@ -377,19 +377,19 @@ export const FileCard: React.FC<FileCardProps> = ({
           width: 24, height: 24, borderRadius: 4,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: color, color: '#fff',
-          fontSize: 8, fontWeight: 700,
+          fontSize: 'var(--fs-micro)', fontWeight: 700,
           flexShrink: 0,
         }}>{icon}</div>
 
         {/* 文件名 */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
-            fontSize: 11, fontWeight: 600, color: 'var(--fg)',
+            fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>{filename}</div>
           {dir && (
             <div style={{
-              fontSize: 9, color: 'var(--muted-2)',
+              fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>{dir}</div>
           )}
@@ -397,7 +397,7 @@ export const FileCard: React.FC<FileCardProps> = ({
 
         {/* 操作徽标 */}
         <span style={{
-          fontSize: 8, fontWeight: 700,
+          fontSize: 'var(--fs-micro)', fontWeight: 700,
           padding: '1px 5px', borderRadius: 3,
           background: opMeta.bg, color: opMeta.color,
           whiteSpace: 'nowrap',
@@ -406,7 +406,7 @@ export const FileCard: React.FC<FileCardProps> = ({
         {/* 改动统计 */}
         {diffStats && (diffStats.added > 0 || diffStats.removed > 0) && (
           <span style={{
-            fontSize: 10, fontFamily: 'monospace',
+            fontSize: 'var(--fs-micro)', fontFamily: 'monospace',
             display: 'inline-flex', gap: 3,
           }}>
             {diffStats.added > 0 && <span style={{ color: 'var(--success)' }}>+{diffStats.added}</span>}
@@ -416,7 +416,7 @@ export const FileCard: React.FC<FileCardProps> = ({
 
         {/* 状态 */}
         {ok === false && (
-          <span style={{ fontSize: 9, color: 'var(--danger)' }}>✗</span>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)' }}>✗</span>
         )}
 
         {/* 展开/收起按钮 — 只在 write/edit 模式显示 */}
@@ -424,7 +424,7 @@ export const FileCard: React.FC<FileCardProps> = ({
           <button
             onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
             style={{
-              fontSize: 9, color: 'var(--accent)', background: 'transparent',
+              fontSize: 'var(--fs-micro)', color: 'var(--accent)', background: 'transparent',
               border: 'none', cursor: 'pointer', padding: '0 4px', flexShrink: 0,
             }}
           >
@@ -437,7 +437,7 @@ export const FileCard: React.FC<FileCardProps> = ({
       {!expanded && (size != null || content) && (
         <div style={{
           padding: '0 10px 5px 42px',
-          display: 'flex', gap: 8, fontSize: 9, color: 'var(--muted-2)',
+          display: 'flex', gap: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
         }}>
           {size != null && <span>{formatBytes(size)}</span>}
           {totalLines > 0 && <span>{totalLines} 行</span>}
@@ -455,7 +455,7 @@ export const FileCard: React.FC<FileCardProps> = ({
             /* 纯文本预览 (create 模式或 read) */
             <pre style={{
               margin: 0, padding: '8px 12px',
-              fontSize: 10, lineHeight: 1.4,
+              fontSize: 'var(--fs-micro)', lineHeight: 1.4,
               fontFamily: "'Consolas', monospace",
               color: 'var(--fg-2)',
               background: 'var(--bg-2)',
@@ -490,14 +490,14 @@ export const FileCard: React.FC<FileCardProps> = ({
           {capReached && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
-              padding: '4px 12px', fontSize: 10, color: 'var(--muted-2)',
+              padding: '4px 12px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
               borderBottom: '1px solid var(--border)',
             }}>
               <span>已显示前 {PREVIEW_LINE_CAP} 行 / 共 {totalLines} 行</span>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowAll(true); }}
                 style={{
-                  fontSize: 10, color: 'var(--accent)', background: 'transparent',
+                  fontSize: 'var(--fs-micro)', color: 'var(--accent)', background: 'transparent',
                   border: 'none', cursor: 'pointer', padding: 0,
                 }}
               >显示全部</button>
@@ -508,7 +508,7 @@ export const FileCard: React.FC<FileCardProps> = ({
           {editStats && (
             <div style={{
               padding: '4px 12px',
-              fontSize: 10,
+              fontSize: 'var(--fs-micro)',
               color: 'var(--muted-2)',
               display: 'flex',
               gap: 12,
@@ -556,7 +556,7 @@ function ActionButton({ onClick, icon, label }: {
       onClick={onClick}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 2,
-        padding: '2px 6px', borderRadius: 3, fontSize: 10,
+        padding: '2px 6px', borderRadius: 3, fontSize: 'var(--fs-micro)',
         color: 'var(--fg-2)', background: 'transparent',
         border: '1px solid var(--border)', cursor: 'pointer',
         transition: 'all 0.1s',
@@ -686,9 +686,9 @@ export const FilesFromToolSegment: React.FC<{
           fontSize: 'var(--tool-font-size, 11px)', color: 'var(--muted)',
         }}
       >
-        <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 11 }} />
+        <FileTextOutlined style={{ color: 'var(--accent)', fontSize: 'var(--fs-micro)' }} />
         <span>{summary}</span>
-        <span style={{ fontSize: 10, opacity: 0.5 }}>点击展开</span>
+        <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.5 }}>点击展开</span>
       </div>
     );
   }
@@ -700,7 +700,7 @@ export const FilesFromToolSegment: React.FC<{
       <div
         onClick={() => setCollapsed(true)}
         style={{
-          fontSize: 11, color: 'var(--accent)', cursor: 'pointer',
+          fontSize: 'var(--fs-micro)', color: 'var(--accent)', cursor: 'pointer',
           padding: '4px 8px', userSelect: 'none', marginBottom: 2,
         }}
       >
@@ -733,9 +733,9 @@ const DiffPreviewLines: React.FC<{ oldContent: string; newContent: string }> = (
 
     if (ol === nl) {
       rows.push(
-        <div key={`ctx-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 10, lineHeight: '18px', fontFamily: "'Consolas', monospace" }}>
-          <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 8, color: '#999', userSelect: 'none' }}>{li + 1}</span>
-          <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 8, color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
+        <div key={`ctx-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 'var(--fs-micro)', lineHeight: '18px', fontFamily: "'Consolas', monospace" }}>
+          <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}>{li + 1}</span>
+          <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
           <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: 'var(--fg-2)' }}>{ol}</span>
         </div>
       );
@@ -744,9 +744,9 @@ const DiffPreviewLines: React.FC<{ oldContent: string; newContent: string }> = (
       // 有差异: 显示被删行
       if (ol !== null) {
         rows.push(
-          <div key={`del-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 10, lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(239,68,68,0.08)', borderLeft: '3px solid #ef4444' }}>
-            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 8, color: '#999', userSelect: 'none' }}>{li + 1}</span>
-            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 8, color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}></span>
+          <div key={`del-${li}`} style={{ display: 'flex', minHeight: 18, fontSize: 'var(--fs-micro)', lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(239,68,68,0.08)', borderLeft: '3px solid #ef4444' }}>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}>{li + 1}</span>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}></span>
             <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: '#dc2626' }}>- {ol}</span>
           </div>
         );
@@ -755,9 +755,9 @@ const DiffPreviewLines: React.FC<{ oldContent: string; newContent: string }> = (
       // 显示新增行
       if (nl !== null) {
         rows.push(
-          <div key={`add-${ni}`} style={{ display: 'flex', minHeight: 18, fontSize: 10, lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(34,197,94,0.08)', borderLeft: '3px solid #22c55e' }}>
-            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 8, color: '#999', userSelect: 'none' }}></span>
-            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 8, color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
+          <div key={`add-${ni}`} style={{ display: 'flex', minHeight: 18, fontSize: 'var(--fs-micro)', lineHeight: '18px', fontFamily: "'Consolas', monospace", background: 'rgba(34,197,94,0.08)', borderLeft: '3px solid #22c55e' }}>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 4, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none' }}></span>
+            <span style={{ width: 28, textAlign: 'right', paddingRight: 6, fontSize: 'var(--fs-micro)', color: '#999', userSelect: 'none', borderRight: '1px solid var(--border)' }}>{ni + 1}</span>
             <span style={{ flex: 1, paddingLeft: 6, whiteSpace: 'pre', overflow: 'hidden', color: '#16a34a' }}>+ {nl}</span>
           </div>
         );

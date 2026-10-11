@@ -289,17 +289,17 @@ export const PascalEditor: React.FC = () => {
                         }>
                           {el.type}
                         </Tag>
-                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{el.id}</span>
+                        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>{el.id}</span>
                       </Space>
                     }
                   >
                     {el.position && (
-                      <div style={{ fontSize: 12 }}>
+                      <div style={{ fontSize: 'var(--fs-sm)' }}>
                         位置: ({el.position.x}, {el.position.y}, {el.position.z})
                       </div>
                     )}
                     {el.dimensions && (
-                      <div style={{ fontSize: 12 }}>
+                      <div style={{ fontSize: 'var(--fs-sm)' }}>
                         尺寸: {el.dimensions.width} × {el.dimensions.height}
                         {el.dimensions.depth && ` × ${el.dimensions.depth}`}
                       </div>
@@ -324,7 +324,7 @@ export const PascalEditor: React.FC = () => {
       )}
 
       <Card title="使用说明" style={{ marginTop: 16 }}>
-        <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+        <div style={{ fontSize: 'var(--fs-md)', lineHeight: 1.8 }}>
           <p><strong>1. 启动服务</strong></p>
           <p>点击"启动服务"按钮，启动 Pascal Editor MCP Server。</p>
           

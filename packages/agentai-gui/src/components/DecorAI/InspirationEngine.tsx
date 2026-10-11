@@ -172,8 +172,8 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
             style={{ background: 'var(--card)', height: 200 }}
           >
             <p><UploadOutlined style={{ fontSize: 32, color: 'var(--accent)' }} /></p>
-            <p style={{ fontSize: 14 }}>点击或拖拽上传参考图</p>
-            <p style={{ fontSize: 12, color: '#999' }}>支持小红书/抖音截图</p>
+            <p style={{ fontSize: 'var(--fs-md)' }}>点击或拖拽上传参考图</p>
+            <p style={{ fontSize: 'var(--fs-sm)', color: '#999' }}>支持小红书/抖音截图</p>
           </Dragger>
         </Col>
         <Col span={12}>
@@ -202,7 +202,7 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
 
       {/* 快捷描述 */}
       <div style={{ marginTop: 16 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>热门描述：</Text>
+        <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>热门描述：</Text>
         <Space wrap style={{ marginTop: 8 }}>
           {[
             '120平三室两厅现代简约',
@@ -296,10 +296,10 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
                 />
                 
                 <div style={{ textAlign: 'center', marginBottom: 12 }}>
-                  <Text style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--accent)' }}>
+                  <Text style={{ fontSize: 'var(--fs-xl)', fontWeight: 'bold', color: 'var(--accent)' }}>
                     ¥{(tier.budget / 10000).toFixed(0)}万
                   </Text>
-                  <div style={{ fontSize: 12, color: '#999' }}>
+                  <div style={{ fontSize: 'var(--fs-sm)', color: '#999' }}>
                     约{tier.perSqm}元/㎡（按100㎡计）
                   </div>
                 </div>
@@ -307,10 +307,10 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
                 <Divider style={{ margin: '12px 0' }} />
 
                 <div style={{ marginBottom: 12 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>核心亮点：</Text>
+                  <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>核心亮点：</Text>
                   <div style={{ marginTop: 4 }}>
                     {tier.highlights.map(h => (
-                      <div key={h} style={{ fontSize: 12, marginBottom: 2 }}>
+                      <div key={h} style={{ fontSize: 'var(--fs-sm)', marginBottom: 2 }}>
                         <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
                         {h}
                       </div>
@@ -319,10 +319,10 @@ export const InspirationEngine: React.FC<InspirationEngineProps> = ({
                 </div>
 
                 <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>主要材料：</Text>
+                  <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>主要材料：</Text>
                   <div style={{ marginTop: 4 }}>
                     {tier.materials.slice(0, 3).map(m => (
-                      <Tag key={m} style={{ marginBottom: 4, fontSize: 11 }}>{m}</Tag>
+                      <Tag key={m} style={{ marginBottom: 4, fontSize: 'var(--fs-micro)' }}>{m}</Tag>
                     ))}
                   </div>
                 </div>

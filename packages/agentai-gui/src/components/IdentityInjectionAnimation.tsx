@@ -58,10 +58,10 @@ export const IdentityInjectionAnimation: React.FC<Props> = ({ avatar, name, indu
         }} />
       </div>
 
-      <h2 style={{ color: 'var(--fg)', margin: '0 0 8px', fontSize: 24, fontWeight: 700 }}>
+      <h2 style={{ color: 'var(--fg)', margin: '0 0 8px', fontSize: 'var(--fs-xl)', fontWeight: 700 }}>
         身份已激活！
       </h2>
-      <div style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 32, fontSize: 14 }}>
+      <div style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 32, fontSize: 'var(--fs-md)' }}>
         <b style={{ color: 'var(--fg)' }}>{name}</b> · {industry.icon} {industry.label}
       </div>
 
@@ -85,13 +85,13 @@ export const IdentityInjectionAnimation: React.FC<Props> = ({ avatar, name, indu
               animation: i <= checked ? 'checkPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' : 'none',
             }}
           >
-            <span style={{ fontSize: 16 }}>{i <= checked ? '✓' : '○'}</span>
-            <span style={{ fontSize: 13 }}>{item}</span>
+            <span style={{ fontSize: 'var(--fs-lg)' }}>{i <= checked ? '✓' : '○'}</span>
+            <span style={{ fontSize: 'var(--fs-md)' }}>{item}</span>
           </div>
         ))}
       </div>
 
-      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
+      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 'var(--fs-sm)' }}>
         正在同步到 AI 系统...
       </div>
 

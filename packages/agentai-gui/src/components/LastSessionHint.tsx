@@ -87,18 +87,18 @@ export const LastSessionHint: React.FC<{ workspace?: string }> = ({ workspace })
         background: 'linear-gradient(135deg, rgba(205, 122, 58, 0.08) 0%, rgba(26, 26, 34, 0.4) 100%)',
         border: '1px solid rgba(205, 122, 58, 0.25)',
         borderRadius: 10,
-        fontSize: 12,
+        fontSize: 'var(--fs-sm)',
         color: 'var(--fg-2)',
         position: 'relative',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <HistoryOutlined style={{ color: '#CD7A3A', fontSize: 14, marginTop: 2 }} />
+        <HistoryOutlined style={{ color: '#CD7A3A', fontSize: 'var(--fs-md)', marginTop: 2 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ color: 'var(--fg)', fontWeight: 600, marginBottom: 4 }}>
             上轮会话 ({ageStr})
             {data.taskType && (
-              <Tag color="orange" style={{ marginLeft: 6, fontSize: 10, padding: '0 6px' }}>
+              <Tag color="orange" style={{ marginLeft: 6, fontSize: 'var(--fs-micro)', padding: '0 6px' }}>
                 {data.taskType}
               </Tag>
             )}
@@ -114,7 +114,7 @@ export const LastSessionHint: React.FC<{ workspace?: string }> = ({ workspace })
               <Space size={4} wrap>
                 <span style={{ opacity: 0.7 }}><ToolOutlined /> 工具:</span>
                 {tools.map(t => (
-                  <Tag key={t} color="geekblue" style={{ fontSize: 10, margin: 0, padding: '0 5px', lineHeight: '16px' }}>
+                  <Tag key={t} color="geekblue" style={{ fontSize: 'var(--fs-micro)', margin: 0, padding: '0 5px', lineHeight: '16px' }}>
                     {t}
                   </Tag>
                 ))}
@@ -126,7 +126,7 @@ export const LastSessionHint: React.FC<{ workspace?: string }> = ({ workspace })
               <Space size={4} wrap>
                 <span style={{ opacity: 0.7 }}><FileTextOutlined /> 文件:</span>
                 {files.map(f => (
-                  <Tag key={f} color="cyan" style={{ fontSize: 10, margin: 0, padding: '0 5px', lineHeight: '16px' }}>
+                  <Tag key={f} color="cyan" style={{ fontSize: 'var(--fs-micro)', margin: 0, padding: '0 5px', lineHeight: '16px' }}>
                     {f.split(/[\\/]/).pop()}
                   </Tag>
                 ))}
@@ -135,8 +135,8 @@ export const LastSessionHint: React.FC<{ workspace?: string }> = ({ workspace })
           )}
           {data.summary && (
             <details style={{ marginTop: 4, opacity: 0.85 }}>
-              <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--muted)' }}>查看详情</summary>
-              <div style={{ marginTop: 4, padding: 6, background: 'rgba(0,0,0,0.2)', borderRadius: 4, fontSize: 11, lineHeight: 1.5, color: 'var(--muted-2)' }}>
+              <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>查看详情</summary>
+              <div style={{ marginTop: 4, padding: 6, background: 'rgba(0,0,0,0.2)', borderRadius: 4, fontSize: 'var(--fs-micro)', lineHeight: 1.5, color: 'var(--muted-2)' }}>
                 {data.summary.slice(0, 400)}
                 {data.summary.length > 400 && '...'}
               </div>

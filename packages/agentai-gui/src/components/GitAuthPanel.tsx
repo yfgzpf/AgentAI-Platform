@@ -285,7 +285,7 @@ export const GitAuthPanel: React.FC<GitAuthPanelProps> = ({ visible, onClose }) 
                       value={publicKey}
                       readOnly
                       rows={4}
-                      style={{ fontFamily: 'monospace', fontSize: 12 }}
+                      style={{ fontFamily: 'monospace', fontSize: 'var(--fs-sm)' }}
                     />
                     <Button icon={<CopyOutlined />} onClick={() => copyToClipboard(publicKey)} style={{ marginTop: 8 }}>
                       复制公钥

@@ -107,10 +107,10 @@ const MCPConfigModal: React.FC<MCPConfigModalProps> = ({ open, onClose }) => {
               <List.Item.Meta
                 avatar={
                   s.connected
-                    ? <CheckCircleOutlined style={{ color: 'var(--success)', fontSize: 16 }} />
+                    ? <CheckCircleOutlined style={{ color: 'var(--success)', fontSize: 'var(--fs-lg)' }} />
                     : s.enabled
-                      ? <CloseCircleOutlined style={{ color: 'var(--warning)', fontSize: 16 }} />
-                      : <ToolOutlined style={{ color: 'var(--muted)', fontSize: 16 }} />
+                      ? <CloseCircleOutlined style={{ color: 'var(--warning)', fontSize: 'var(--fs-lg)' }} />
+                      : <ToolOutlined style={{ color: 'var(--muted)', fontSize: 'var(--fs-lg)' }} />
                 }
                 title={
                   <Space>
@@ -120,7 +120,7 @@ const MCPConfigModal: React.FC<MCPConfigModalProps> = ({ open, onClose }) => {
                   </Space>
                 }
                 description={
-                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
                     {s.transport} {s.command ? `→ ${s.command} ${(s.args || []).join(' ')}` : ''}
                   </span>
                 }

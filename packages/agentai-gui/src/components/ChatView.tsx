@@ -1910,7 +1910,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
               message={
                 <Space>
                   <span>正在恢复长任务</span>
-                  <code style={{ fontSize: 11 }}>{activeTaskId.slice(0, 40)}...</code>
+                  <code style={{ fontSize: 'var(--fs-micro)' }}>{activeTaskId.slice(0, 40)}...</code>
                 </Space>
               }
               description="发送消息时, AI 将自动加载此任务之前的进度、已完成步骤、待办和关键决策"
@@ -2065,7 +2065,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             padding: '4px 12px', margin: '4px 0',
             background: 'var(--panel)', borderRadius: 6,
             border: '1px solid var(--border)',
-            fontSize: 10, color: 'var(--muted-2)',
+            fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
             overflowX: 'auto', whiteSpace: 'nowrap',
           }}>
             <span style={{ flexShrink: 0, fontWeight: 600, color: 'var(--muted)' }}>📑 对话摘要</span>
@@ -2330,10 +2330,10 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
               transition: 'width 0.4s ease',
             }} />
           </div>
-          <span style={{ fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap', color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)' }}>
+          <span style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, whiteSpace: 'nowrap', color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)' }}>
             {tokenInfo.pct}%
           </span>
-          <span style={{ fontSize: 9, color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)', opacity: 0.8, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 'var(--fs-micro)', color: tokenInfo.critical ? 'var(--danger)' : 'var(--warning)', opacity: 0.8, whiteSpace: 'nowrap' }}>
             {formatTokens(tokenInfo.tokens)} tokens
           </span>
           {tokenInfo.critical && (
@@ -2407,7 +2407,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         <div style={{
           margin: '0 12px 6px', padding: '4px 10px',
           borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted)',
+          display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted)',
         }}>
           <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⏳</span>
           <span>AI 思考中...</span>
@@ -2441,7 +2441,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           background: 'oklch(20% 0.006 255 / 0.6)',
           border: '2px dashed var(--accent)',
           display: 'grid', placeItems: 'center',
-          color: 'var(--fg)', fontSize: 14, fontWeight: 500,
+          color: 'var(--fg)', fontSize: 'var(--fs-md)', fontWeight: 500,
           pointerEvents: 'none',
         }}>
           Drop to attach as @-mention

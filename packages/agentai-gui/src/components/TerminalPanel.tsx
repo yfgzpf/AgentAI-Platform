@@ -173,7 +173,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                     </Text>
                   </Space>
                   <Space>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>
                       <Clock size={12} style={{ marginRight: 4 }} />
                       {formatDuration(task.startTime, task.endTime)}
                     </Text>
@@ -216,7 +216,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                         复制输出
                       </Button>
                       {task.status !== 'running' && task.exitCode !== undefined && (
-                        <Text type={task.exitCode === 0 ? 'success' : 'danger'} style={{ fontSize: 12 }}>
+                        <Text type={task.exitCode === 0 ? 'success' : 'danger'} style={{ fontSize: 'var(--fs-sm)' }}>
                           退出码: {task.exitCode}
                         </Text>
                       )}
@@ -336,7 +336,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
   },
   title: {
-    fontSize: 14,
+    fontSize: 'var(--fs-md)',
     fontWeight: 600,
   },
   taskList: {
@@ -379,7 +379,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 12,
     background: '#0d0d0d',
     fontFamily: 'monospace',
-    fontSize: 12,
+    fontSize: 'var(--fs-sm)',
     lineHeight: 1.6,
   },
   outputLine: {

@@ -123,8 +123,8 @@ const FeatureGuide: React.FC<{
         gap: 12,
         flexShrink: 0,
       }}>
-        <span style={{ fontSize: 14 }}>💡</span>
-        <span style={{ fontSize: 12, color: 'var(--fg-2)', flex: 1 }}>
+        <span style={{ fontSize: 'var(--fs-md)' }}>💡</span>
+        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', flex: 1 }}>
           当前使用<span style={{ fontWeight: 600, color: 'var(--accent)' }}> 免费内置模型</span>，
           能力有限。添加密钥可解锁 <b>GPT Image 2</b>、<b>Nano Banana</b> 等高级模型。
         </span>
@@ -148,7 +148,7 @@ const FeatureGuide: React.FC<{
 /* ════════════════ 右栏模式切换条样式 (模块级, 避免每次渲染新建对象) ════════════════ */
 function railTabStyle(active: boolean): React.CSSProperties {
   return {
-    fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+    fontSize: 'var(--fs-micro)', fontWeight: 600, padding: '2px 8px', borderRadius: 4,
     cursor: 'pointer', userSelect: 'none',
     color: active ? 'var(--accent)' : 'var(--muted-2)',
     background: active ? 'var(--accent-soft)' : 'transparent',
@@ -159,7 +159,7 @@ function railTabStyle(active: boolean): React.CSSProperties {
 const railIconStyle: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   width: 20, height: 20, borderRadius: 4, cursor: 'pointer',
-  fontSize: 11, color: 'var(--muted-2)',
+  fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
 };
 
 /* ════════════════ 对话改图切换按钮 ════════════════ */
@@ -196,7 +196,7 @@ const ChatModeToggle: React.FC = () => {
           color: isImageMode ? 'var(--accent)' : 'var(--muted-2)',
           background: isImageMode ? 'var(--accent-soft)' : 'transparent',
           transition: 'all 0.15s ease', marginRight: 8,
-          fontSize: 16,
+          fontSize: 'var(--fs-lg)',
         }}
       >
         🎨
@@ -363,7 +363,7 @@ const NavGroupDropdown: React.FC<{
     >
       {icon}
       <span>{label}</span>
-      <DownOutlined style={{ fontSize: 9, marginLeft: 2, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      <DownOutlined style={{ fontSize: 'var(--fs-micro)', marginLeft: 2, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
       {open && (
         <div
           role="menu"
@@ -405,19 +405,19 @@ const NavGroupDropdown: React.FC<{
                 {item.icon}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: item.active ? 600 : 500, color: 'var(--fg)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)', fontWeight: item.active ? 600 : 500, color: 'var(--fg)' }}>
                   {item.label}
                   {item.badge && (
-                    <span style={{ fontSize: 9, padding: '0 5px', borderRadius: 8, background: 'var(--accent)', color: '#fff', lineHeight: '14px' }}>
+                    <span style={{ fontSize: 'var(--fs-micro)', padding: '0 5px', borderRadius: 8, background: 'var(--accent)', color: '#fff', lineHeight: '14px' }}>
                       {item.badge}
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.desc}
                 </div>
               </div>
-              {item.active && <CheckCircleFilled style={{ color: 'var(--accent)', fontSize: 12 }} />}
+              {item.active && <CheckCircleFilled style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />}
             </div>
           ))}
         </div>
@@ -1078,9 +1078,9 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
           <div className="app-brand" style={{ gap: 4 }}>
             <img src="/favicon-32.png" alt="岐枢"
               style={{ width: 20, height: 20, borderRadius: 4 }} />
-            <span className="app-brand-name" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span className="app-brand-name" style={{ fontSize: 'var(--fs-sm)', display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ fontWeight: 600, color: 'var(--fg)' }}>岐枢</span>
-              <span style={{ opacity: 0.6, fontSize: 10 }}>|</span>
+              <span style={{ opacity: 0.6, fontSize: 'var(--fs-micro)' }}>|</span>
               <span style={{ opacity: 0.8 }}>PulseFlow</span>
             </span>
           </div>
@@ -1162,13 +1162,13 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   {
                     key: 'theme-group',
                     type: 'group',
-                    label: <span style={{ fontSize: 11, color: 'var(--muted-2)' }}>主题</span>,
+                    label: <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>主题</span>,
                     children: THEME_OPTIONS.map(t => ({
                       key: `theme-${t.value}`,
                       label: (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
                           <span style={{ width: 16, height: 16, borderRadius: 4, background: t.swatch, border: '1px solid var(--border)' }} />
-                          <span style={{ fontSize: 12 }}>{t.label}</span>
+                          <span style={{ fontSize: 'var(--fs-sm)' }}>{t.label}</span>
                           {themeStyle === t.value && <span style={{ marginLeft: 'auto', color: 'var(--accent)' }}>✓</span>}
                         </div>
                       ),
@@ -1179,7 +1179,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   {
                     key: 'font-group',
                     type: 'group',
-                    label: <span style={{ fontSize: 11, color: 'var(--muted-2)' }}>字体大小</span>,
+                    label: <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>字体大小</span>,
                     children: (['small', 'medium', 'large', 'xlarge'] as FontSize[]).map(f => ({
                       key: `font-${f}`,
                       label: (
@@ -1188,7 +1188,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                             fontSize: f === 'small' ? 11 : f === 'medium' ? 13 : f === 'large' ? 15 : 17,
                             color: 'var(--fg-2)',
                           }}>Aa</span>
-                          <span style={{ fontSize: 12 }}>{FONT_SIZE_MAP[f].label}</span>
+                          <span style={{ fontSize: 'var(--fs-sm)' }}>{FONT_SIZE_MAP[f].label}</span>
                           {fontSize === f && <span style={{ marginLeft: 'auto', color: 'var(--accent)' }}>✓</span>}
                         </div>
                       ),
@@ -1206,7 +1206,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                 onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--card-hover)'; }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
               >
-                {isDark ? <SunOutlined style={{ fontSize: 15 }} /> : <MoonOutlined style={{ fontSize: 15 }} />}
+                {isDark ? <SunOutlined style={{ fontSize: 'var(--fs-md)' }} /> : <MoonOutlined style={{ fontSize: 'var(--fs-md)' }} />}
               </span>
             </Dropdown>
           </Tooltip>
@@ -1223,7 +1223,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                     background: sidebarVisible ? 'var(--accent-soft)' : 'transparent',
                     transition: 'all 0.15s ease', marginLeft: 4,
                   }}>
-                  {sidebarVisible ? <LeftOutlined style={{ fontSize: 13 }} /> : <RightOutlined style={{ fontSize: 13 }} />}
+                  {sidebarVisible ? <LeftOutlined style={{ fontSize: 'var(--fs-md)' }} /> : <RightOutlined style={{ fontSize: 'var(--fs-md)' }} />}
                 </span>
               </Tooltip>
               <Tooltip title="右侧信息栏">
@@ -1235,7 +1235,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                     background: rightPanelVisible ? 'var(--accent-soft)' : 'transparent',
                     transition: 'all 0.15s ease',
                   }}>
-                  {rightPanelVisible ? <RightOutlined style={{ fontSize: 13 }} /> : <LeftOutlined style={{ fontSize: 13 }} />}
+                  {rightPanelVisible ? <RightOutlined style={{ fontSize: 'var(--fs-md)' }} /> : <LeftOutlined style={{ fontSize: 'var(--fs-md)' }} />}
                 </span>
               </Tooltip>
               <Tooltip title="文件树 (添加到上下文)">
@@ -1247,7 +1247,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                     background: fileTreeVisible ? 'var(--accent-soft)' : 'transparent',
                     transition: 'all 0.15s ease',
                   }}>
-                  <FolderOpenOutlined style={{ fontSize: 14 }} />
+                  <FolderOpenOutlined style={{ fontSize: 'var(--fs-md)' }} />
                 </span>
               </Tooltip>
             </>
@@ -1265,7 +1265,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)'; }}
             >
-              <GithubOutlined style={{ fontSize: 16 }} />
+              <GithubOutlined style={{ fontSize: 'var(--fs-lg)' }} />
             </a>
           </Tooltip>
 
@@ -1280,7 +1280,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)'; }}
             >
-              <WechatOutlined style={{ fontSize: 16 }} />
+              <WechatOutlined style={{ fontSize: 'var(--fs-lg)' }} />
             </span>
           </Tooltip>
 
@@ -1289,8 +1289,8 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
             background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 14, marginLeft: 4,
           }}>
-            <UserOutlined style={{ fontSize: 12, color: 'var(--muted)' }} />
-            <span style={{ fontSize: 12, color: 'var(--fg-2)', fontWeight: 500 }}>
+            <UserOutlined style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }} />
+            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', fontWeight: 500 }}>
               {profile?.name || '游客'}
             </span>
           </div>
@@ -1332,7 +1332,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                         ? 'color-mix(in srgb, var(--accent) 12%, transparent)'
                         : 'var(--panel)',
                       color: updaterStage === 'ready' ? 'var(--accent)' : 'var(--muted)',
-                      fontSize: 11, lineHeight: 1, cursor: 'default',
+                      fontSize: 'var(--fs-micro)', lineHeight: 1, cursor: 'default',
                       userSelect: 'none',
                     }}
                     onClick={() => {
@@ -1365,7 +1365,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   className="window-control-btn"
                   data-action="minimize"
                 >
-                  <MinusOutlined style={{ fontSize: 11 }} />
+                  <MinusOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                 </span>
               </Tooltip>
               <Tooltip title="最大化">
@@ -1374,7 +1374,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   className="window-control-btn"
                   data-action="maximize"
                 >
-                  <BorderOutlined style={{ fontSize: 11 }} />
+                  <BorderOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                 </span>
               </Tooltip>
               <Tooltip title="关闭">
@@ -1383,7 +1383,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   className="window-control-btn window-control-close"
                   data-action="close"
                 >
-                  <CloseOutlined style={{ fontSize: 11 }} />
+                  <CloseOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                 </span>
               </Tooltip>
             </div>
@@ -1492,7 +1492,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   // 非 chat 页只有浏览器模式 (见 showInfoRail 注释)
                   <span
                     data-testid="rail-mode-browser"
-                    style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)' }}
+                    style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg-2)' }}
                   >浏览器</span>
                 )}
                 <span style={{ flex: 1 }} />
@@ -1602,10 +1602,10 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
         <div style={{ marginBottom: 16 }}>
           <WechatOutlined style={{ fontSize: 32, color: 'var(--wechat)' }} />
         </div>
-        <h3 style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 600, color: 'var(--fg)' }}>
+        <h3 style={{ margin: '0 0 8px', fontSize: 'var(--fs-lg)', fontWeight: 600, color: 'var(--fg)' }}>
           联系开发者
         </h3>
-        <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--muted)' }}>
+        <p style={{ margin: '0 0 16px', fontSize: 'var(--fs-md)', color: 'var(--muted)' }}>
           扫描二维码添加微信，获取技术支持
         </p>
         <img
@@ -1619,7 +1619,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             marginBottom: 12,
           }}
         />
-        <p style={{ margin: 0, fontSize: 12, color: 'var(--muted-2)' }}>
+        <p style={{ margin: 0, fontSize: 'var(--fs-sm)', color: 'var(--muted-2)' }}>
           工作时间：9:00 - 18:00
         </p>
       </Modal>
@@ -1689,7 +1689,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             </div>
             <div style={{ flex: 1 }}>
               <div style={{
-                fontSize: 16, fontWeight: 600, marginBottom: 4,
+                fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 4,
                 color: 'var(--fg)',
               }}>
                 PulseFlow {updaterPending?.version ?? '新版本'} ·{' '}
@@ -1697,7 +1697,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
                   {updaterPending?.date || ''}
                 </span>
               </div>
-              <div style={{ fontSize: 13, color: 'var(--muted-2)' }}>
+              <div style={{ fontSize: 'var(--fs-md)', color: 'var(--muted-2)' }}>
                 安装包 {updaterPending?.bytes ? `${Math.max(1, Math.round(updaterPending.bytes / 1048576))} MB` : ''}
                  · 安装后自动重启
               </div>
@@ -1718,7 +1718,7 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
             padding: '8px 12px',
             border: '1px dashed var(--border)',
             borderRadius: 10,
-            fontSize: 13,
+            fontSize: 'var(--fs-md)',
             color: 'var(--fg)',
             background: 'color-mix(in srgb, var(--panel) 50%, transparent)',
           }}>

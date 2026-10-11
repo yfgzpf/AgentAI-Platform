@@ -191,7 +191,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     width: 24, height: 24, borderRadius: 4, border: 'none',
     background: 'transparent', color: 'var(--muted-2)', cursor: 'pointer',
-    fontSize: 11, padding: 0,
+    fontSize: 'var(--fs-micro)', padding: 0,
   };
 
   return (
@@ -209,7 +209,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
             ? 'linear-gradient(90deg, rgba(205, 122, 58, 0.12) 0%, rgba(26, 26, 34, 0.4) 100%)'
             : 'var(--bg)',
           cursor: 'pointer',
-          fontSize: 10, color: '#999',
+          fontSize: 'var(--fs-micro)', color: '#999',
         }}
         title="点击打开浏览器"
       >
@@ -224,15 +224,15 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
               {browserState.activeTabUrl}
             </span>
             {browserState.elements.length > 0 && (
-              <span style={{ color: '#666', fontSize: 9 }}>
+              <span style={{ color: '#666', fontSize: 'var(--fs-micro)' }}>
                 [{browserState.elements.length} 元素]
               </span>
             )}
             {browserState.playwrightConnected && (
-              <span style={{ color: '#4caf50', fontSize: 9 }}>● 引擎已连接</span>
+              <span style={{ color: '#4caf50', fontSize: 'var(--fs-micro)' }}>● 引擎已连接</span>
             )}
             {actionHistory.length > 0 && actionHistory[0].result === 'pending' && (
-              <span style={{ color: '#CD7A3A', fontSize: 9 }}>⏳ {actionHistory[0].action}</span>
+              <span style={{ color: '#CD7A3A', fontSize: 'var(--fs-micro)' }}>⏳ {actionHistory[0].action}</span>
             )}
           </>
         ) : (
@@ -242,7 +242,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         <Button
           type="text" size="small"
           onClick={(e) => { e.stopPropagation(); openGlobalBrowser(); }}
-          style={{ color: '#CD7A3A', fontSize: 10, padding: '0 6px', height: 18 }}
+          style={{ color: '#CD7A3A', fontSize: 'var(--fs-micro)', padding: '0 6px', height: 18 }}
         >
           {browserState.activeTabUrl ? '查看' : '打开'}
         </Button>
@@ -255,12 +255,12 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         background: 'var(--bg-2)',
       }}>
         <BrandLogo size={16} />
-        <span style={{ fontSize: 11, color: '#ccc', fontWeight: 600, marginRight: 4 }}>AI 对话</span>
+        <span style={{ fontSize: 'var(--fs-micro)', color: '#ccc', fontWeight: 600, marginRight: 4 }}>AI 对话</span>
         <Select
           size="small"
           value={activeModelId}
           onChange={setActiveModel}
-          style={{ flex: 1, fontSize: 10 }}
+          style={{ flex: 1, fontSize: 'var(--fs-micro)' }}
           variant="borderless"
           options={models.map(m => ({
             value: m.id,
@@ -273,12 +273,12 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
           }))}
         />
         <Tooltip title="新对话">
-          <Button size="small" type="text" style={{ color: '#888', height: 20, width: 20, fontSize: 9, padding: 0 }}
+          <Button size="small" type="text" style={{ color: '#888', height: 20, width: 20, fontSize: 'var(--fs-micro)', padding: 0 }}
             onClick={() => clearMessages()}>
-            <PlusOutlined style={{ fontSize: 10 }} />
+            <PlusOutlined style={{ fontSize: 'var(--fs-micro)' }} />
           </Button>
         </Tooltip>
-        <Button size="small" type="text" style={{ color: '#888', height: 20, width: 20, fontSize: 9, padding: 0 }}
+        <Button size="small" type="text" style={{ color: '#888', height: 20, width: 20, fontSize: 'var(--fs-micro)', padding: 0 }}
           onClick={() => clearMessages()}>×</Button>
       </div>
 
@@ -288,9 +288,9 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         display: 'flex', flexDirection: 'column', gap: 4,
       }}>
         {editorMsgs.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#666', fontSize: 11, padding: 20, marginTop: 20 }}>
+          <div style={{ textAlign: 'center', color: '#666', fontSize: 'var(--fs-micro)', padding: 20, marginTop: 20 }}>
             <div style={{ marginBottom: 8 }}><BrandLogo size={40} /></div>
-            <div style={{ fontWeight: 600, color: '#888', fontSize: 12 }}>AI 对话</div>
+            <div style={{ fontWeight: 600, color: '#888', fontSize: 'var(--fs-sm)' }}>AI 对话</div>
             <div style={{ marginTop: 4, lineHeight: 1.6 }}>
               输入代码相关的问题<br />AI 可读取当前工作目录文件
             </div>
@@ -359,7 +359,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
             width: '100%', padding: '6px 8px',
             border: '1px solid var(--border)', borderRadius: 8,
             background: 'var(--bg)', color: 'var(--fg)',
-            fontSize: 12, lineHeight: 1.4,
+            fontSize: 'var(--fs-sm)', lineHeight: 1.4,
             outline: 'none', resize: 'none', fontFamily: 'inherit',
             minHeight: 32, maxHeight: 80, boxSizing: 'border-box',
           }}
@@ -369,12 +369,12 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 4 }}>
           <Tooltip title="上传文件">
             <span style={{ ...iconBtn }} onClick={() => fileInputRef.current?.click()}>
-              <PaperClipOutlined style={{ fontSize: 11 }} />
+              <PaperClipOutlined style={{ fontSize: 'var(--fs-micro)' }} />
             </span>
           </Tooltip>
           <Tooltip title="插入图片">
             <span style={{ ...iconBtn }} onClick={() => imageInputRef.current?.click()}>
-              <PictureOutlined style={{ fontSize: 11 }} />
+              <PictureOutlined style={{ fontSize: 'var(--fs-micro)' }} />
             </span>
           </Tooltip>
           <Tooltip title={webSearch ? '关闭联网搜索' : '开启联网搜索'}>
@@ -382,7 +382,7 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
               ...iconBtn, color: webSearch ? '#4ade80' : undefined,
               background: webSearch ? 'rgba(74,222,128,0.12)' : undefined,
             }}>
-              <GlobalOutlined style={{ fontSize: 11 }} />
+              <GlobalOutlined style={{ fontSize: 'var(--fs-micro)' }} />
             </span>
           </Tooltip>
           {srSupported ? (
@@ -392,13 +392,13 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
                 color: recording ? '#ef4444' : undefined,
                 animation: recording ? 'pulse 1.2s ease-out infinite' : undefined,
               }}>
-                <AudioOutlined style={{ fontSize: 11 }} />
+                <AudioOutlined style={{ fontSize: 'var(--fs-micro)' }} />
               </span>
             </Tooltip>
           ) : (
             <Tooltip title="语音输入 (浏览器不支持)">
               <span style={{ ...iconBtn, opacity: 0.3, cursor: 'not-allowed' }}>
-                <AudioMutedOutlined style={{ fontSize: 11 }} />
+                <AudioMutedOutlined style={{ fontSize: 'var(--fs-micro)' }} />
               </span>
             </Tooltip>
           )}
@@ -408,10 +408,10 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
           {loading ? (
             <span onClick={handleAbort} style={{
               padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
-              background: '#ef4444', color: '#fff', fontSize: 10,
+              background: '#ef4444', color: '#fff', fontSize: 'var(--fs-micro)',
               display: 'inline-flex', alignItems: 'center', gap: 3,
             }}>
-              <StopOutlined style={{ fontSize: 10 }} /> 停止
+              <StopOutlined style={{ fontSize: 'var(--fs-micro)' }} /> 停止
             </span>
           ) : (
             <span onClick={() => handleSend()} style={{
@@ -419,9 +419,9 @@ export const EditorChatPanel: React.FC<Props> = ({ workspaceDir }) => {
               cursor: draft.trim() ? 'pointer' : 'default',
               background: draft.trim() ? '#6366F1' : '#333',
               color: draft.trim() ? '#fff' : '#666',
-              fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3,
+              fontSize: 'var(--fs-micro)', display: 'inline-flex', alignItems: 'center', gap: 3,
             }}>
-              <SendOutlined style={{ fontSize: 10 }} /> 发送
+              <SendOutlined style={{ fontSize: 'var(--fs-micro)' }} /> 发送
             </span>
           )}
         </div>

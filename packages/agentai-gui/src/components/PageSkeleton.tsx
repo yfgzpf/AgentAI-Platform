@@ -35,7 +35,7 @@ export const PageSkeleton: React.FC = () => {
     }}>
       {showTimeout && (
         <div style={{
-          fontSize: 12,
+          fontSize: 'var(--fs-sm)',
           color: 'var(--muted)',
           textAlign: 'right',
           padding: '0 2px',

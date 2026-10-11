@@ -262,7 +262,7 @@ export const VoiceSelector: React.FC = () => {
         </Button>
         
         {selectedVoiceInfo && (
-          <span style={{ fontSize: 12, color: '#888' }}>
+          <span style={{ fontSize: 'var(--fs-sm)', color: '#888' }}>
             当前: {selectedVoiceInfo.name} 
             {selectedVoiceInfo.style && `(${getStyleLabel(selectedVoiceInfo.style)})`}
           </span>

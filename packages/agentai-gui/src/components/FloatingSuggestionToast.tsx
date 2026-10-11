@@ -155,7 +155,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 18,
+            fontSize: 'var(--fs-lg)',
             flexShrink: 0,
             color: '#fff',
           }}>
@@ -170,7 +170,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
               marginBottom: 2,
             }}>
               <span style={{
-                fontSize: 10,
+                fontSize: 'var(--fs-micro)',
                 fontWeight: 700,
                 padding: '1px 6px',
                 borderRadius: 4,
@@ -182,7 +182,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
                 {theme.label}
               </span>
               <span style={{
-                fontSize: 14,
+                fontSize: 'var(--fs-md)',
                 fontWeight: 600,
                 color: 'var(--fg)',
                 overflow: 'hidden',
@@ -193,7 +193,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
               </span>
             </div>
             <div style={{
-              fontSize: 12,
+              fontSize: 'var(--fs-sm)',
               color: 'var(--muted)',
               lineHeight: 1.5,
               maxHeight: 40,
@@ -214,7 +214,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
               border: 'none',
               cursor: 'pointer',
               color: 'var(--muted-2)',
-              fontSize: 16,
+              fontSize: 'var(--fs-lg)',
               padding: 0,
               lineHeight: 1,
               flexShrink: 0,
@@ -239,7 +239,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
               borderRadius: 8,
               border: 'none',
               cursor: 'pointer',
-              fontSize: 13,
+              fontSize: 'var(--fs-md)',
               fontWeight: 600,
               color: '#fff',
               background: theme.iconBg,
@@ -255,7 +255,7 @@ const FloatingSuggestionToast: React.FC<Props> = ({ onAccept }) => {
               borderRadius: 8,
               border: '1px solid var(--border)',
               cursor: 'pointer',
-              fontSize: 13,
+              fontSize: 'var(--fs-md)',
               fontWeight: 500,
               color: 'var(--muted)',
               background: 'transparent',

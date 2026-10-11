@@ -339,7 +339,7 @@ export const AutomationPanel: React.FC = () => {
       render: (text: string, record: Schedule) => (
         <div>
           <div style={{ fontWeight: 500 }}>{text}</div>
-          <div style={{ fontSize: 12, color: 'var(--muted)' }}>{record.description}</div>
+          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>{record.description}</div>
         </div>
       ),
     },
@@ -662,19 +662,19 @@ export const AutomationPanel: React.FC = () => {
                              record.status === 'failed' ? '失败' : 
                              record.status === 'timeout' ? '超时' : '运行中'}
                           </Tag>
-                          <span style={{ fontSize: 12, color: 'var(--muted-2)' }}>
+                          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted-2)' }}>
                             {new Date(record.startedAt).toLocaleString('zh-CN')}
                           </span>
-                          {record.triggeredBy === 'manual' && <Tag style={{ fontSize: 10 }}>手动</Tag>}
+                          {record.triggeredBy === 'manual' && <Tag style={{ fontSize: 'var(--fs-micro)' }}>手动</Tag>}
                         </div>
                         {record.durationMs && (
-                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
                             耗时: {record.durationMs}ms
                             {record.retryCount > 0 && ` (重试${record.retryCount}次)`}
                           </div>
                         )}
                         {record.error && (
-                          <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>
+                          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--danger)', marginTop: 4 }}>
                             {record.error.slice(0, 100)}
                           </div>
                         )}
@@ -724,13 +724,13 @@ export const AutomationPanel: React.FC = () => {
                   ]}
                 >
                   <Card.Meta
-                    title={<span style={{ fontSize: 13 }}>{p.name}</span>}
+                    title={<span style={{ fontSize: 'var(--fs-md)' }}>{p.name}</span>}
                     description={
                       <div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>{p.description}</div>
-                        <Tag style={{ fontSize: 10 }}>{p.defaultExpression}</Tag>
-                        <Tag color="blue" style={{ fontSize: 10 }}>{p.defaultAction}</Tag>
-                        <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 4, padding: 4, background: 'var(--bg-2)', borderRadius: 4 }}>
+                        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 6 }}>{p.description}</div>
+                        <Tag style={{ fontSize: 'var(--fs-micro)' }}>{p.defaultExpression}</Tag>
+                        <Tag color="blue" style={{ fontSize: 'var(--fs-micro)' }}>{p.defaultAction}</Tag>
+                        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4, padding: 4, background: 'var(--bg-2)', borderRadius: 4 }}>
                           💡 {p.guide}
                         </div>
                       </div>

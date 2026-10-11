@@ -25,10 +25,10 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
   return (
     <div style={{ animation: 'fadeIn 0.5s ease', textAlign: 'center' }}>
       <div style={{ fontSize: 48, marginBottom: 16 }}>{industry.icon}</div>
-      <h2 style={{ color: 'var(--fg)', margin: '0 0 8px', fontSize: 22, fontWeight: 700 }}>
+      <h2 style={{ color: 'var(--fg)', margin: '0 0 8px', fontSize: 'var(--fs-xl)', fontWeight: 700 }}>
         {industry.label} 身份激活中
       </h2>
-      <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 32px', fontSize: 14 }}>
+      <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 32px', fontSize: 'var(--fs-md)' }}>
         正在加载行业专业技能和知识库...
       </p>
 
@@ -47,7 +47,7 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
             animation: 'holoScan 1.5s linear infinite',
           }} />
         )}
-        <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginBottom: 16, fontFamily: 'monospace' }}>
+        <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 'var(--fs-sm)', marginBottom: 16, fontFamily: 'monospace' }}>
           {`> Loading industry skills for ${industry.label}...`}
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
@@ -61,7 +61,7 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
                   : 'rgba(255,255,255,0.05)',
                 border: `1px solid ${visibleSkills.includes(skill) ? '#10b981' : 'rgba(255,255,255,0.1)'}`,
                 borderRadius: 8, color: visibleSkills.includes(skill) ? '#10b981' : 'rgba(255,255,255,0.4)',
-                fontSize: 13, transition: 'all 0.3s ease',
+                fontSize: 'var(--fs-md)', transition: 'all 0.3s ease',
                 animation: visibleSkills.includes(skill) ? 'skillPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' : 'none',
               }}
             >
@@ -72,7 +72,7 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
       </div>
 
       {scanning ? (
-        <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
+        <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 'var(--fs-md)' }}>
           正在初始化行业引擎...
         </div>
       ) : (
@@ -81,7 +81,7 @@ export const IdentitySkillHologram: React.FC<Props> = ({ industry, onContinue })
           onClick={onContinue}
           style={{
             background: 'linear-gradient(135deg, #10b981, #06b6d4)',
-            border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 16,
+            border: 'none', borderRadius: 12, padding: '0 48px', fontSize: 'var(--fs-lg)',
           }}
         >
           激活身份 →

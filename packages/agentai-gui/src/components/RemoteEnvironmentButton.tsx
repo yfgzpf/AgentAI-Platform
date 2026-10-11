@@ -249,7 +249,7 @@ export const RemoteEnvironmentButton: React.FC = () => {
               position: 'relative',
             }}
           >
-            <CloudServerOutlined style={{ fontSize: 14 }} />
+            <CloudServerOutlined style={{ fontSize: 'var(--fs-md)' }} />
             {connectedEnv && (
               <span
                 style={{

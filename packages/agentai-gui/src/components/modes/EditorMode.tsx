@@ -53,10 +53,10 @@ const EditorEmptyState: React.FC = () => {
       color: 'var(--text-tertiary)',
     }}>
       <CodeOutlined style={{ fontSize: 64, opacity: 0.3 }} />
-      <h2 style={{ margin: 0, fontWeight: 500, fontSize: 18, color: 'var(--text-secondary)' }}>
+      <h2 style={{ margin: 0, fontWeight: 500, fontSize: 'var(--fs-lg)', color: 'var(--text-secondary)' }}>
         选择文件开始编辑
       </h2>
-      <p style={{ margin: 0, fontSize: 13, maxWidth: 360, textAlign: 'center', lineHeight: 1.6 }}>
+      <p style={{ margin: 0, fontSize: 'var(--fs-md)', maxWidth: 360, textAlign: 'center', lineHeight: 1.6 }}>
         从左侧文件树选择文件，或打开文件夹开始浏览项目代码
       </p>
 
@@ -91,7 +91,7 @@ const EditorEmptyState: React.FC = () => {
         borderRadius: 8,
         background: 'rgba(255,255,255,0.03)',
         border: '1px solid rgba(255,255,255,0.06)',
-        fontSize: 12,
+        fontSize: 'var(--fs-sm)',
         color: 'var(--text-tertiary)',
         lineHeight: 2,
       }}>
@@ -262,7 +262,7 @@ export const EditorMode: React.FC = () => {
               gap: 6,
               padding: '0 12px',
               height: '100%',
-              fontSize: 12,
+              fontSize: 'var(--fs-sm)',
               color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
               background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
               borderBottom: isActive ? '2px solid var(--accent, #f97316)' : '2px solid transparent',
@@ -272,16 +272,16 @@ export const EditorMode: React.FC = () => {
               transition: 'all 0.15s',
             }}
           >
-            <span style={{ fontSize: 9, opacity: 0.5 }}>{lang.toUpperCase()}</span>
+            <span style={{ fontSize: 'var(--fs-micro)', opacity: 0.5 }}>{lang.toUpperCase()}</span>
             <span>{file.name}</span>
-            {isDirty && <span style={{ color: '#facc15', fontSize: 10 }}>●</span>}
+            {isDirty && <span style={{ color: '#facc15', fontSize: 'var(--fs-micro)' }}>●</span>}
             {openFiles.length > 1 && (
               <span
                 onClick={(e) => { e.stopPropagation(); removeOpenFile(file.path); }}
                 className="editor-tab-close"
                 style={{
                   marginLeft: 4,
-                  fontSize: 16,
+                  fontSize: 'var(--fs-lg)',
                   lineHeight: 1,
                   opacity: 0.4,
                   cursor: 'pointer',
@@ -303,7 +303,7 @@ export const EditorMode: React.FC = () => {
             icon={<SaveOutlined />}
             loading={saving}
             onClick={handleSave}
-            style={{ marginRight: 8, fontSize: 11 }}
+            style={{ marginRight: 8, fontSize: 'var(--fs-micro)' }}
           >
             保存
           </Button>
@@ -354,7 +354,7 @@ export const EditorMode: React.FC = () => {
         height: 24,
         paddingLeft: 12,
         paddingRight: 12,
-        fontSize: 11,
+        fontSize: 'var(--fs-micro)',
         color: 'var(--text-tertiary)',
         background: 'rgba(0,0,0,0.2)',
         borderTop: '1px solid rgba(255,255,255,0.04)',

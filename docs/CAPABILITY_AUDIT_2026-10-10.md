@@ -235,8 +235,8 @@ create_tool    → .agentai/custom-tools/ + registry.json
 - **布局特点：绝大多数测试与源码同目录并置**，`__tests__/` 只有 2 个文件
 - 安全测试做得扎实：`b1-security.test.ts`(10.7KB)、sandbox 四件套、safety 三件套
 - **缺口：6416 行的 agentai-loop.ts 零覆盖，repairPipeline 六步无专项测试**
-- 前端(`packages/agentai-gui`)基线 **162 测试 / 9 文件**（2026-10-11：在 109/7 基础上新增
-  `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(32)，均为源码文本断言：
+- 前端(`packages/agentai-gui`)基线 **165 测试 / 9 文件**（2026-10-11：在 109/7 基础上新增
+  `src/layout-panes.test.ts`(19) + `src/rail-browser.test.ts`(21) + `src/token-layer.test.ts`(35)，均为源码文本断言：
   前者锁布局机制 —— 中栏宽度必须自适应 `clamp()`、页面内面板必须两层结构、页面根高度必须 `100%`
   而非 `calc(100vh - N)`；后者锁右栏 信息/浏览器 双模式（`agentai.pane.browser.width` 分轨宽度、
   右栏内容判 `effectiveRailMode` 而非持久化的 `railMode`、恰好 2 个 `.pane-grip`）、
@@ -246,8 +246,28 @@ create_tool    → .agentai/custom-tools/ + registry.json
   浏览器空态不叠层（iframe 空态必须 `!playwrightMode`）与内容区不写死 `#fff`；
   token-layer 锁 **CSS token 层契约** —— 18 条语义别名必须真实存在、其依赖的 9 个底层 token
   必须在全部 5 个主题块里有定义（否则换主题即解析失败）、别名调用点不得残留硬编码死 fallback、
-  `--radius-lg` 不得同层重复定义、通用文本尺度 `--fs-*` 必须存在。
+  `--radius-lg` 不得同层重复定义、通用文本尺度 `--fs-*` 必须存在、
+  **文本档（7–28px）禁止裸数字字号**（防再次分叉）、**`var(--fs-*)` 必须真被调用点消费**（防僵尸 token）。
   核验：`cd packages/agentai-gui && npx vitest run`）
+- ✅ **前端字号已收敛（2026-10-11）**：23 种 `fontSize` → 尺度 **六档 11/12/13/16/20/28**。
+  ⚠️ 更正：先前文档写的「≤12px 874 处」用的是更严格的正则（要求数字后紧跟 `,`/`}`），属**低估**；
+  实测 **1164 处**（8:31 / 9:165 / 10:334 / 11:361 / 12:273）。映射：
+  `7,8,9,10,11→--fs-micro(11)`、`11.5,12→--fs-sm(12)`、`13,14,15→--fs-md(13)`、`16,18→--fs-lg(16)`、
+  `20,22,24→--fs-xl(20)`、`28→--fs-hero(28)`；共改 **1429 处 / 104 文件**（含 CSS-in-JS 模板串与 `.css` 26 处）。
+  有意保留：**≥32px 的图标/emoji/logo 档 35 处**（32×9 / 36×1 / 40×8 / 46×1 / 48×11 / 64×5，
+  其中 `fontSize: 64` 是 `{avatar}`、46 是 Splash 大标题）、`em` 相对单位（Markdown 标题 `0.9em`/`1.3em`）、
+  以及 `MonacoEditor.tsx` 的 `options.fontSize`（Monaco 只收 number，测试白名单 + 理由）。
+  核验：文本档残留裸数字应只剩白名单一处
+  `grep -rnE "fontSize:\s*(['\"]?)([7-9]|1[0-9]|2[0-8])\1(?![\d.])" --include=*.tsx packages/agentai-gui/src`
+  踩坑记录：替换正则漏 `(?![\d.])` 会把 `fontSize: 9.5` 切成 `'var(--fs-micro)'.5`；
+  值换成 CSS 变量必须补引号，否则 `fontSize: var(...)` 里 `var` 是关键字直接语法错；
+  CSS 侧需 `(?<![\w-])font-size:` 否则会改坏 `--tool-font-size: 11px` 这类 token 定义。
+- ⚠️ **前端设计尺度（圆角/颜色/内联样式）仍未收敛（2026-10-11 实测）**：token 层与字号已就绪 ——
+  `borderRadius` **19 种**；tsx 里硬编码 hex **208 种**（1012 次），而 CSS 变量只用到 **57 个**；
+  内联 `style={{` **3417 处 / 111 个 tsx 文件**。
+  同语义多值是最直接的"看着乱"来源：成功绿 4 个（`#52c41a`/`#10b981`/`#4ade80`/`#22c55e`）、
+  错误红 3 个（`#ef4444`/`#ff4d4f`/`#f5222d`）、灰阶 5 个（`#666`/`#999`/`#888`/`#333`/`#ccc`）、
+  纯白 `#fff` 72 次（含"深色底上的文字"与"亮色底上的文字"两种语义，**不能盲替**）。
 - ✅ **前端 CSS token 层已修（2026-10-11，这是"乱"的根因，非审美问题）**：
   **18 个变量被 tsx 消费但从未在任何 CSS 中定义** —— `--text-primary/secondary/tertiary`、`--bg-1`、
   `--muted-1`/`--muted-3`、`--muted-soft`、`--border-color`、`--color-text-muted`、`--bg-primary/secondary`、
@@ -265,16 +285,6 @@ create_tool    → .agentai/custom-tools/ + registry.json
   核验：残留死 fallback
   `grep -rEoh "var\(--(text-primary|text-secondary|text-tertiary|bg-1|hover|bg-active|accent-bg|fg-on-accent|muted-1|muted-3|muted-soft|color-text-muted|bg-primary|bg-secondary|border-color) ?, ?(#|rgba)" --include=*.tsx packages/agentai-gui/src | wc -l` → **0**（修复前 39）；
   `grep -n "radius-lg" packages/agentai-gui/src/styles/agentai-theme.css` → 仅 2 处且均为 14px
-- ⚠️ **前端设计尺度（调用点层面）仍未收敛（2026-10-11 实测）**：token 层已就绪，但调用点尚未改动 ——
-  `fontSize` **23 种**（0,1,7,8,9,10,11,12,13,14,15,16,18,20,22,24,28,32,36,40,46,48,64），
-  其中 ≤12px **874 处**；`borderRadius` **19 种**；tsx 里硬编码 hex **208 种**（1012 次），
-  而 CSS 变量只用到 **57 个**；内联 `style={{` **3417 处 / 111 个 tsx 文件**。
-  同语义多值是最直接的"看着乱"来源：成功绿 4 个（`#52c41a`/`#10b981`/`#4ade80`/`#22c55e`）、
-  错误红 3 个（`#ef4444`/`#ff4d4f`/`#f5222d`）、灰阶 5 个（`#666`/`#999`/`#888`/`#333`/`#ccc`）、
-  纯白 `#fff` 72 次。⚠️ 收敛 fontSize 时**不可一刀切**：≥20 的值压倒性是图标/emoji/hero
-  （如 `ThunderboltOutlined style={{fontSize:40}}`、`{avatar}` 的 `fontSize:64`），不得并入文本尺度。
-  核验：
-  `grep -rEoh "fontSize: ?['\"]?[0-9]+" --include=*.tsx packages/agentai-gui/src | grep -oE "[0-9]+$" | sort -nu | wc -l`
 
 ---
 

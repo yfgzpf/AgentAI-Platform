@@ -373,7 +373,7 @@ export const NotificationPanel: React.FC = () => {
                       <Text type="secondary" style={{ opacity: item.read ? 0.6 : 1 }}>
                         {item.content}
                       </Text>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
+                      <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>
                         {item.timestamp}
                       </Text>
                     </Space>

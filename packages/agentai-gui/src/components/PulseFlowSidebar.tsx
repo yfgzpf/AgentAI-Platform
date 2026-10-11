@@ -76,7 +76,7 @@ const RelativeTime: React.FC<{ ts: number }> = ({ ts }) => {
       }
     }
   }, [ts]);
-  return <span style={{ fontSize: 10, color: 'var(--muted-2)' }}>{label}</span>;
+  return <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>{label}</span>;
 };
 
 /** 单个会话列表项 */
@@ -112,13 +112,13 @@ const SessionListItem: React.FC<{
     {
       key: 'rename',
       label: '重命名',
-      icon: <EditOutlined style={{ fontSize: 11 }} />,
+      icon: <EditOutlined style={{ fontSize: 'var(--fs-micro)' }} />,
       onClick: () => setEditing(true),
     },
     {
       key: 'delete',
       label: '删除',
-      icon: <DeleteOutlined style={{ fontSize: 11 }} />,
+      icon: <DeleteOutlined style={{ fontSize: 'var(--fs-micro)' }} />,
       danger: true,
       onClick: () => {
         Modal.confirm({
@@ -142,13 +142,13 @@ const SessionListItem: React.FC<{
         cursor: editing ? 'default' : 'pointer',
         color: active ? 'var(--accent)' : 'var(--fg-2)',
         background: active ? 'var(--card)' : 'transparent',
-        fontSize: 12,
+        fontSize: 'var(--fs-sm)',
         borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
         transition: 'background 0.12s',
       }}
     >
       {/* 会话图标 */}
-      <MessageOutlined style={{ fontSize: 10, color: active ? 'var(--accent)' : 'var(--muted-2)' }} />
+      <MessageOutlined style={{ fontSize: 'var(--fs-micro)', color: active ? 'var(--accent)' : 'var(--muted-2)' }} />
       
       {/* 会话信息 */}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -160,7 +160,7 @@ const SessionListItem: React.FC<{
             onChange={e => setDraft(e.target.value)}
             onPressEnter={commitTitle}
             onBlur={commitTitle}
-            style={{ height: 20, fontSize: 11 }}
+            style={{ height: 20, fontSize: 'var(--fs-micro)' }}
           />
         ) : (
           <>
@@ -172,7 +172,7 @@ const SessionListItem: React.FC<{
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 1 }}>
               <RelativeTime ts={session.updatedAt} />
-              {msgCount > 0 && <span style={{ fontSize: 9 }}>· {msgCount}条消息</span>}
+              {msgCount > 0 && <span style={{ fontSize: 'var(--fs-micro)' }}>· {msgCount}条消息</span>}
             </div>
           </>
         )}
@@ -181,7 +181,7 @@ const SessionListItem: React.FC<{
       {/* 更多操作 */}
       {!editing && (
         <Dropdown menu={{ items }} trigger={['click']} placement="bottomRight">
-          <MoreOutlined style={{ fontSize: 10, color: 'var(--muted-2)', cursor: 'pointer', padding: '0 4px' }} />
+          <MoreOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', cursor: 'pointer', padding: '0 4px' }} />
         </Dropdown>
       )}
     </div>
@@ -206,7 +206,7 @@ const SessionsByDateGroup: React.FC<{
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '6px 8px', cursor: 'pointer',
-          fontSize: 10, fontWeight: 600, color: 'var(--muted)',
+          fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--muted)',
           userSelect: 'none',
         }}
       >
@@ -214,9 +214,9 @@ const SessionsByDateGroup: React.FC<{
           transition: 'transform 0.2s',
           transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
         }}>
-          <DownOutlined style={{ fontSize: 8 }} />
+          <DownOutlined style={{ fontSize: 'var(--fs-micro)' }} />
         </span>
-        <CalendarOutlined style={{ fontSize: 10 }} />
+        <CalendarOutlined style={{ fontSize: 'var(--fs-micro)' }} />
         <span>{groupLabel}</span>
         <span style={{ color: 'var(--muted-2)', fontWeight: 400 }}>({sessions.length})</span>
       </div>
@@ -240,9 +240,9 @@ const SessionsByDateGroup: React.FC<{
 };
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: 'sessions', label: '会话', icon: <MessageOutlined style={{ fontSize: 12 }} /> },
-  { key: 'files', label: '文件', icon: <FolderOpenOutlined style={{ fontSize: 12 }} /> },
-  { key: 'tasks', label: '工作流', icon: <ThunderboltOutlined style={{ fontSize: 12 }} /> },
+  { key: 'sessions', label: '会话', icon: <MessageOutlined style={{ fontSize: 'var(--fs-sm)' }} /> },
+  { key: 'files', label: '文件', icon: <FolderOpenOutlined style={{ fontSize: 'var(--fs-sm)' }} /> },
+  { key: 'tasks', label: '工作流', icon: <ThunderboltOutlined style={{ fontSize: 'var(--fs-sm)' }} /> },
 ];
 
 /* ════════════ File tree panel ════════════ */
@@ -355,7 +355,7 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
           style={{ 
             paddingLeft: depth * 12 + 4, 
             padding: '2px 4px', 
-            fontSize: 11, 
+            fontSize: 'var(--fs-micro)', 
             cursor: 'pointer',
             borderRadius: 3, 
             display: 'flex', 
@@ -378,7 +378,7 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
             fontWeight: isHighlighted ? 600 : 'normal',
             color: isHighlighted ? 'var(--accent)' : undefined,
           }}>{node.name}</span>
-          {isHighlighted && <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--accent)' }}>◀</span>}
+          {isHighlighted && <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-micro)', color: 'var(--accent)' }}>◀</span>}
         </div>
         {isDir && isExpanded && node.children && (
           <div>{node.children.map(c => renderNode(c, depth + 1))}</div>
@@ -387,16 +387,16 @@ const FileTreePanel: React.FC<{ workspace: string; onFileOpen?: (path: string) =
     );
   };
 
-  if (!workspace) return <div style={{ padding: 8, fontSize: 11, color: 'var(--muted-2)' }}>请先设置工作目录</div>;
+  if (!workspace) return <div style={{ padding: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>请先设置工作目录</div>;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ padding: '4px 4px', fontSize: 10, color: 'var(--muted-2)', display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ padding: '4px 4px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', display: 'flex', alignItems: 'center', gap: 4 }}>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{workspace}</span>
-        <button onClick={loadTree} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-2)', fontSize: 10, padding: 2 }}>⟳</button>
+        <button onClick={loadTree} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', padding: 2 }}>⟳</button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '2px 0' }}>
-        {loading ? <div style={{ padding: 8, fontSize: 11, color: 'var(--muted-2)' }}>加载中...</div>
-          : tree.length === 0 ? <div style={{ padding: 8, fontSize: 11, color: 'var(--muted-2)' }}>空目录</div>
+        {loading ? <div style={{ padding: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>加载中...</div>
+          : tree.length === 0 ? <div style={{ padding: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>空目录</div>
           : tree.map(n => renderNode(n, 0))}
       </div>
     </div>
@@ -475,14 +475,14 @@ const PresetWorkflowList: React.FC = () => {
   };
 
   if (loading) {
-    return <div style={{ padding: 12, fontSize: 11, color: 'var(--muted-2)' }}>加载工作流...</div>;
+    return <div style={{ padding: 12, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>加载工作流...</div>;
   }
 
   if (workflows.length === 0) {
     return (
-      <div style={{ padding: 8, fontSize: 11, color: 'var(--muted-2)' }}>
+      <div style={{ padding: 8, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
-          <ThunderboltOutlined style={{ fontSize: 24, color: 'var(--muted-2)', marginBottom: 8 }} />
+          <ThunderboltOutlined style={{ fontSize: 'var(--fs-xl)', color: 'var(--muted-2)', marginBottom: 8 }} />
           <div>暂无预置工作流</div>
         </div>
       </div>
@@ -491,10 +491,10 @@ const PresetWorkflowList: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ padding: '4px 4px', fontSize: 10, color: 'var(--muted-2)', display: 'flex', alignItems: 'center', gap: 4 }}>
-        <ThunderboltOutlined style={{ fontSize: 10 }} />
+      <div style={{ padding: '4px 4px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', display: 'flex', alignItems: 'center', gap: 4 }}>
+        <ThunderboltOutlined style={{ fontSize: 'var(--fs-micro)' }} />
         <span style={{ flex: 1 }}>预置工作流 ({workflows.length})</span>
-        <button onClick={load} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-2)', fontSize: 10, padding: 2 }}>⟳</button>
+        <button onClick={load} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', padding: 2 }}>⟳</button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 2px' }}>
         {workflows.map((w) => (
@@ -516,18 +516,18 @@ const PresetWorkflowList: React.FC = () => {
               (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
             }}
           >
-            <span style={{ fontSize: 18, flexShrink: 0 }}>{w.icon}</span>
+            <span style={{ fontSize: 'var(--fs-lg)', flexShrink: 0 }}>{w.icon}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{
-                fontSize: 11, fontWeight: 600, color: 'var(--fg)',
+                fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--fg)',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>{w.description || w.name}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
                 <span style={{
-                  fontSize: 9, color: 'var(--accent)',
+                  fontSize: 'var(--fs-micro)', color: 'var(--accent)',
                   background: 'var(--accent-soft)', padding: '0 4px', borderRadius: 3,
                 }}>{w.category}</span>
-                <span style={{ fontSize: 9, color: 'var(--muted-2)' }}>~{w.estimatedTime}分钟</span>
+                <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>~{w.estimatedTime}分钟</span>
               </div>
             </div>
           </div>
@@ -607,14 +607,14 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
               <button
                 onClick={() => handleNewSession('chat')}
                 style={{
-                  width: '100%', padding: '6px 8px', borderRadius: 6, fontSize: 11,
+                  width: '100%', padding: '6px 8px', borderRadius: 6, fontSize: 'var(--fs-micro)',
                   background: 'var(--accent-soft)', color: 'var(--accent)',
                   border: '1px solid var(--accent)', cursor: 'pointer', fontWeight: 500,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
                   marginBottom: 6,
                 }}
               >
-                <PlusOutlined style={{ fontSize: 10 }} />
+                <PlusOutlined style={{ fontSize: 'var(--fs-micro)' }} />
                 新对话
               </button>
               
@@ -624,12 +624,12 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                 placeholder="搜索会话..."
                 variant="borderless"
                 size="small"
-                prefix={<SearchOutlined style={{ fontSize: 10, color: 'var(--muted-2)' }} />}
+                prefix={<SearchOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }} />}
                 style={{
                   background: 'var(--card)',
                   borderRadius: 6,
                   padding: '4px 8px',
-                  fontSize: 11,
+                  fontSize: 'var(--fs-micro)',
                 }}
               />
             </div>
@@ -641,7 +641,7 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                   padding: '20px 8px',
                   textAlign: 'center',
                   color: 'var(--muted-2)',
-                  fontSize: 11,
+                  fontSize: 'var(--fs-micro)',
                 }}>
                   {searchQuery ? '未找到匹配的会话' : '暂无对话'}
                 </div>
@@ -700,7 +700,7 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             style={{
-              flex: 1, padding: '10px 4px', fontSize: 11,
+              flex: 1, padding: '10px 4px', fontSize: 'var(--fs-micro)',
               fontWeight: activeTab === tab.key ? 600 : 400,
               background: activeTab === tab.key ? 'var(--accent-soft)' : 'transparent',
               color: activeTab === tab.key ? 'var(--accent)' : 'var(--fg-2)',
@@ -724,13 +724,13 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
       {/* 底部用户信息 + 使用说明入口 */}
       <div style={{
         padding: '8px 10px', borderTop: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', gap: 6, fontSize: 11,
+        display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-micro)',
       }}>
         <span style={{
           width: 24, height: 24, borderRadius: '50%',
           background: 'linear-gradient(135deg,#6366F1,#EC4899)',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          color: '#fff', fontSize: 10, fontWeight: 700, flexShrink: 0,
+          color: '#fff', fontSize: 'var(--fs-micro)', fontWeight: 700, flexShrink: 0,
         }}>
           {(profile?.name?.charAt(0) || 'U').toUpperCase()}
         </span>
@@ -745,13 +745,13 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
             onClick={() => window.dispatchEvent(new CustomEvent('agentai:show-guide'))}
             style={{
               background: 'transparent', border: 'none',
-              color: 'var(--muted-2)', cursor: 'pointer', fontSize: 14, padding: 2,
+              color: 'var(--muted-2)', cursor: 'pointer', fontSize: 'var(--fs-md)', padding: 2,
               transition: 'color 0.15s',
             }}
             onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--accent)'}
             onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.color = 'var(--muted-2)'}
           >
-            <BookOutlined style={{ fontSize: 13 }} />
+            <BookOutlined style={{ fontSize: 'var(--fs-md)' }} />
           </button>
         </Tooltip>
         <Tooltip title="设置">
@@ -759,7 +759,7 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
             onClick={() => window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'settings' } }))}
             style={{
               background: 'transparent', border: 'none',
-              color: 'var(--muted-2)', cursor: 'pointer', fontSize: 14, padding: 2,
+              color: 'var(--muted-2)', cursor: 'pointer', fontSize: 'var(--fs-md)', padding: 2,
             }}
           >
             ⚙

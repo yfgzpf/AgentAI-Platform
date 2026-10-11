@@ -217,7 +217,7 @@ export const SchedulePanel: React.FC = () => {
       render: (text: string, record: ScheduledTask) => (
         <Space direction="vertical" size={0}>
           <Text strong>{text}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>{record.description}</Text>
+          <Text type="secondary" style={{ fontSize: 'var(--fs-sm)' }}>{record.description}</Text>
         </Space>
       ),
     },

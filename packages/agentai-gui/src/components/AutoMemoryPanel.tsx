@@ -172,7 +172,7 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
         marginBottom: 12,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)' }}>
+          <span style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: 'var(--fg)' }}>
             AI 主动记忆
           </span>
           <Badge
@@ -206,7 +206,7 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
           flexWrap: 'wrap',
           gap: 6,
           marginBottom: 12,
-          fontSize: 10,
+          fontSize: 'var(--fs-micro)',
           color: 'var(--muted-2)',
         }}>
           {(Object.keys(CATEGORY_CONFIG) as MemoryCategory[]).map(cat => {
@@ -217,7 +217,7 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
               <Tag
                 key={cat}
                 style={{
-                  fontSize: 10,
+                  fontSize: 'var(--fs-micro)',
                   padding: '1px 6px',
                   border: `1px solid ${cfg.color}`,
                   color: cfg.color,
@@ -237,10 +237,10 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
-              <span style={{ color: 'var(--muted-2)', fontSize: 11 }}>
+              <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
                 暂无 AI 主动记忆
                 <br />
-                <span style={{ fontSize: 10 }}>
+                <span style={{ fontSize: 'var(--fs-micro)' }}>
                   AI 在长任务中会自动捕获关键发现/决策/教训
                 </span>
               </span>
@@ -268,9 +268,9 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
                     gap: 6,
                     marginBottom: 4,
                   }}>
-                    <span style={{ color: cfg.color, fontSize: 12 }}>{cfg.icon}</span>
+                    <span style={{ color: cfg.color, fontSize: 'var(--fs-sm)' }}>{cfg.icon}</span>
                     <span style={{
-                      fontSize: 12,
+                      fontSize: 'var(--fs-sm)',
                       fontWeight: 600,
                       color: 'var(--fg)',
                       flex: 1,
@@ -281,7 +281,7 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
                       {item.title}
                     </span>
                     <Tooltip title={`重要性: ${Math.round(item.importance * 5)}/5`}>
-                      <span style={{ fontSize: 10, color: 'var(--warning)' }}>
+                      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--warning)' }}>
                         {importanceStars(item.importance)}
                       </span>
                     </Tooltip>
@@ -289,7 +289,7 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
 
                   {/* 内容 */}
                   <div style={{
-                    fontSize: 11,
+                    fontSize: 'var(--fs-micro)',
                     color: 'var(--muted)',
                     marginBottom: 4,
                     lineHeight: 1.5,
@@ -308,7 +308,7 @@ export const AutoMemoryPanel: React.FC<{ workspace?: string }> = ({ workspace })
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
-                    fontSize: 10,
+                    fontSize: 'var(--fs-micro)',
                     color: 'var(--muted-2)',
                   }}>
                     <Tooltip title={new Date(item.ts).toLocaleString('zh-CN')}>

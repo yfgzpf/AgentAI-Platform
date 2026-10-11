@@ -76,17 +76,17 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '4px 16px', cursor: 'pointer', userSelect: 'none',
-          fontSize: 11, color: 'var(--muted-2)',
+          fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
         }}
       >
         <span style={{
-          fontSize: 8, transition: 'transform 0.2s',
+          fontSize: 'var(--fs-micro)', transition: 'transform 0.2s',
           transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
           color: 'var(--muted)',
         }}>
           ▶
         </span>
-        <FolderOpenOutlined style={{ fontSize: 11, color: 'var(--accent)' }} />
+        <FolderOpenOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)' }} />
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {wsLabel}
         </span>
@@ -96,7 +96,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
           const tpl = INDUSTRY_TEMPLATES.find(t => t.id === cur);
           return tpl && cur !== 'general' ? (
             <span style={{
-              padding: '0 5px', borderRadius: 3, fontSize: 9,
+              padding: '0 5px', borderRadius: 3, fontSize: 'var(--fs-micro)',
               background: 'rgba(99,102,241,0.12)', color: 'var(--accent)',
               flexShrink: 0,
             }}>
@@ -104,13 +104,13 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
             </span>
           ) : null;
         })()}
-        <span style={{ color: 'var(--muted)', fontSize: 10 }}>|</span>
+        <span style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>|</span>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
           {sessionTitle || summary}
         </span>
         {tokenInfo.tokens > 0 && (
           <span style={{
-            padding: '1px 5px', borderRadius: 3, fontSize: 9,
+            padding: '1px 5px', borderRadius: 3, fontSize: 'var(--fs-micro)',
             background: tokenInfo.critical ? 'rgba(239,68,68,0.15)' : tokenInfo.nearing ? 'rgba(250,204,21,0.1)' : 'rgba(255,255,255,0.05)',
             color: tokenInfo.critical ? '#ef4444' : tokenInfo.nearing ? '#eab308' : 'var(--muted)',
           }}>
@@ -128,7 +128,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--panel)'; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
             >
-              <DeleteOutlined style={{ fontSize: 10 }} />
+              <DeleteOutlined style={{ fontSize: 'var(--fs-micro)' }} />
             </span>
           </Tooltip>
         )}
@@ -142,7 +142,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
         }}>
           {/* 工作区路径编辑 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 10, color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
               工作目录
             </span>
             {editingWs ? (
@@ -152,11 +152,11 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                   value={wsDraft}
                   onChange={e => setWsDraft(e.target.value)}
                   placeholder="输入项目目录绝对路径..."
-                  style={{ fontSize: 11, height: 26, flex: 1 }}
+                  style={{ fontSize: 'var(--fs-micro)', height: 26, flex: 1 }}
                   onPressEnter={saveWs}
                 />
-                <Button size="small" type="primary" onClick={saveWs} style={{ fontSize: 10, height: 26 }}>确定</Button>
-                <Button size="small" onClick={() => setEditingWs(false)} style={{ fontSize: 10, height: 26 }}>取消</Button>
+                <Button size="small" type="primary" onClick={saveWs} style={{ fontSize: 'var(--fs-micro)', height: 26 }}>确定</Button>
+                <Button size="small" onClick={() => setEditingWs(false)} style={{ fontSize: 'var(--fs-micro)', height: 26 }}>取消</Button>
               </div>
             ) : (
               <div style={{ display: 'flex', gap: 4, flex: 1 }}>
@@ -164,7 +164,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                   onClick={() => { setWsDraft(profile?.workspace || ''); setEditingWs(true); }}
                   style={{
                     flex: 1, padding: '3px 8px', borderRadius: 4, cursor: 'pointer',
-                    fontSize: 11, fontFamily: 'monospace',
+                    fontSize: 'var(--fs-micro)', fontFamily: 'monospace',
                     color: profile?.workspace ? 'var(--fg-2)' : 'var(--muted-2)',
                     background: 'var(--panel)', border: '1px solid var(--border)',
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -177,7 +177,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                   size="small"
                   icon={<FolderOpenOutlined />}
                   onClick={() => setPickerVisible(true)}
-                  style={{ fontSize: 10, height: 26, flexShrink: 0 }}
+                  style={{ fontSize: 'var(--fs-micro)', height: 26, flexShrink: 0 }}
                 >
                   浏览
                 </Button>
@@ -197,7 +197,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
 
           {/* 行业身份选择 — 紧凑横向排列 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 10, color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
               行业身份
             </span>
             <div style={{ display: 'flex', gap: 3, flex: 1, flexWrap: 'wrap' }}>
@@ -239,7 +239,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                         }
                       }}
                       style={{
-                        padding: '2px 6px', borderRadius: 3, fontSize: 10,
+                        padding: '2px 6px', borderRadius: 3, fontSize: 'var(--fs-micro)',
                         border: active ? '1px solid var(--accent)' : '1px solid transparent',
                         background: active ? 'var(--accent-soft)' : 'transparent',
                         color: active ? 'var(--accent)' : 'var(--muted-2)',
@@ -248,7 +248,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                         lineHeight: '16px',
                       }}
                     >
-                      {active && <span style={{ fontSize: 8 }}>✓</span>}
+                      {active && <span style={{ fontSize: 'var(--fs-micro)' }}>✓</span>}
                       <span>{t.icon}</span>
                       <span>{t.label}</span>
                     </button>
@@ -261,11 +261,11 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
           {/* 对话摘要 */}
           {messageCount > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 10, color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
                 对话摘要
               </span>
               <div style={{
-                flex: 1, fontSize: 11, color: 'var(--fg-2)',
+                flex: 1, fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
                 display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
               }}>
                 <span>{messageCount} 条消息</span>
@@ -290,7 +290,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                       }} />
                     </span>
                     <span style={{
-                      fontSize: 9, color: tokenInfo.critical ? '#ef4444' : tokenInfo.nearing ? '#f59e0b' : 'var(--muted-2)',
+                      fontSize: 'var(--fs-micro)', color: tokenInfo.critical ? '#ef4444' : tokenInfo.nearing ? '#f59e0b' : 'var(--muted-2)',
                     }}>
                       {tokenInfo.pct}%
                     </span>
@@ -303,11 +303,11 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
           {/* 时间线 - 显示当前会话信息 */}
           {sessionId && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 10, color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', width: 56, flexShrink: 0 }}>
                 时间线
               </span>
               <div style={{
-                flex: 1, fontSize: 10, color: 'var(--muted-2)',
+                flex: 1, fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
                 display: 'flex', alignItems: 'center', gap: 4,
               }}>
                 <span style={{
@@ -321,7 +321,7 @@ export const WorkspaceSummaryBar: React.FC<Props> = ({
                     })}
                   </span>
                 )}
-                <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--muted-2)' }}>
+                <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
                   会话ID: {sessionId.slice(-8)}
                 </span>
               </div>

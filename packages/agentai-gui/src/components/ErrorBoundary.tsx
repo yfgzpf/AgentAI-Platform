@@ -86,11 +86,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
               maxWidth: 380, width: '100%',
             }}
           >
-            <div style={{ fontSize: 28, opacity: 0.55 }}>⚠️</div>
-            <div style={{ fontSize: 15, fontWeight: 500 }}>页面加载中断</div>
+            <div style={{ fontSize: 'var(--fs-hero)', opacity: 0.55 }}>⚠️</div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 500 }}>页面加载中断</div>
             <div
               style={{
-                fontSize: 12, color: 'var(--muted)',
+                fontSize: 'var(--fs-sm)', color: 'var(--muted)',
                 textAlign: 'center', lineHeight: 1.6,
                 maxHeight: 60, overflow: 'auto',
                 padding: '0 8px',
@@ -101,7 +101,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
             {this.state.retried && (
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: 'var(--fs-micro)',
                   color: 'var(--danger)',
                   padding: '4px 10px',
                   borderRadius: 6,
