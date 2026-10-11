@@ -875,6 +875,10 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'browser_click_by_index', description: '按 DOM 脱水索引点击元素. 比 CSS selector 更可靠: 索引是实时分配的, 不受 DOM 变化影响. 需先用 browser_extract type=dehydration 获取页面索引, 然后用索引号操作. 例: 脱水返回 [3]<button>提交</>, 调用 browser_click_by_index({index:3}).', parameters: { type: 'object', properties: { index: { type: 'number', description: '脱水返回的元素索引号' } }, required: ['index'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'browser_close', description: '关闭内嵌浏览器. 当浏览器任务已完成 (如已获取所需信息、已提交表单、已截图) 时调用此工具自动关闭浏览器, 无需用户手动关闭. 也可在 AI 判断不再需要浏览器时调用.', parameters: { type: 'object', properties: { reason: { type: 'string', description: '关闭原因 (如 "任务已完成", "不再需要浏览器")' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'browser_type_by_index', description: '按 DOM 脱水索引在元素中输入文本. 需先用 browser_extract type=dehydration 获取页面索引后用索引号输入. 例: 脱水返回 [5]<input placeholder="搜索">', parameters: { type: 'object', properties: { index: { type: 'number', description: '脱水返回的元素索引号' }, text: { type: 'string', description: '要输入的文本' }, press_enter: { type: 'boolean', default: false, description: '输入后是否按Enter' } }, required: ['index','text'] }, parallelSafe: false, riskLevel: 'medium' },
+  // ====== 前端自审闭环: 边做边看 (2026-10-11) ======
+  // 把"打开页面 → 截图 → 人眼审查"的动作固化成工具: AI 每写完一版前端都能自己看一遍,
+  // 而不是等用户报"排列性有问题"。复用 capture_screen 的 vision 链路 (zhipu/glm-4.6v-flash)。
+  { name: 'review_frontend', description: '打开页面并做一次"前端自审": 自动导航 → 截图 → DOM 结构快照 → 交给视觉模型审查布局与完整性, 返回结构化问题清单(截断/重叠/溢出/留白/对齐/缺失元素)。写完后端/前端页面后调用它自查, 像真人一样"看着"页面验收, 而不是只读代码。默认审查本地前端开发服务器.', parameters: { type: 'object', properties: { url: { type: 'string', description: '要审查的页面地址, 默认本地前端开发服务器 (http://127.0.0.1:5173)' }, focus: { type: 'string', description: '审查重点 (可选), 如 "登录页表单对齐" / "工具调用面板留白"' }, full_page: { type: 'boolean', default: false, description: '是否截取完整页面 (含滚动区域)' }, wait_ms: { type: 'number', default: 3000, description: '页面加载后再等待多少毫秒才截图 (SPA 启动页/骨架屏需要时间, 默认 3000)' } }, required: [] }, parallelSafe: false, riskLevel: 'low' },
   // ====== RPA 操作录制与回放 ======
   { name: 'browser_record', description: '录制浏览器操作序列. 用户在浏览器中手动操作, 系统自动捕获并转为可回放的步骤脚本. action=start 开始录制, action=stop 停止并保存, action=status 查看录制状态, action=cancel 取消录制, action=list 列出已保存脚本, action=delete 删除脚本, action=get 查看脚本详情.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['start','stop','status','cancel','list','delete','get'], default: 'status', description: '录制控制动作' }, name: { type: 'string', description: '脚本名称 (start 时)' }, start_url: { type: 'string', description: '录制起始URL (start 时)' }, description: { type: 'string', description: '脚本描述 (stop 时可选)' }, script_id: { type: 'string', description: '脚本ID (delete/get 时)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'browser_replay', description: '回放已录制的浏览器操作脚本. 按录制的步骤自动执行, 支持变量替换 ({{变量名}}). 也可直接传入步骤列表创建临时回放. 适合重复性网页操作: 数据采集、表单批量填写、定时巡检等.', parameters: { type: 'object', properties: { script_id: { type: 'string', description: '已保存的脚本ID (二选一)' }, steps: { type: 'array', items: { type: 'object', properties: { action: { type: 'string', description: '操作类型: navigate/click/type/select/submit/wait/press_key/hover' }, selector: { type: 'string' }, text: { type: 'string' }, url: { type: 'string' }, value: { type: 'string' }, key: { type: 'string' }, wait_ms: { type: 'number' }, screenshot: { type: 'boolean' } } }, description: '直接传入步骤列表 (无需预录制, 二选一)' }, variables: { type: 'object', description: '变量替换 (如 {keyword:"手机"} → 步骤中 {{keyword}} 被替换)' }, name: { type: 'string', description: '创建新脚本时的名称 (与 steps 配合使用)' } }, required: [] }, parallelSafe: false, riskLevel: 'high' },
@@ -4235,6 +4239,130 @@ const ws = getWs();
       }
       return { success: false, output: '快照获取失败' };
     } catch (e: any) { return { success: false, output: `browser_snapshot error: ${e.message}` }; }
+  },
+
+  // ====== 前端自审闭环: 边做边看 (2026-10-11) ======
+  review_frontend: async (args: any, _ctx?: any) => {
+    try {
+      // 默认地址走环境变量 + 端口, 不写死主机 (AGENTS.md 禁忌: 禁止硬编码路径/地址)
+      const webPort = process.env.AGENTAI_WEB_PORT || '5173';
+      const url = args?.url || process.env.AGENTAI_REVIEW_URL || `http://127.0.0.1:${webPort}`;
+      if (!/^https?:\/\//i.test(url)) {
+        return { success: false, output: `❌ url 必须是 http(s) 绝对地址, 收到: ${url}` };
+      }
+      const { getBrowserEngine } = await import('./browser-engine.js');
+      const engine = getBrowserEngine();
+      // navigate() 内部会 start(), 所以不预启动, 也不要求用户先手动 browser_navigate
+      const nav = await engine.navigate(url, 'networkidle');
+      // 额外稳定期: SPA 在 networkidle 之后往往还在跑启动动画/骨架屏 (实测本平台首屏是
+      // "初始化行业知识库" 启动页), 立刻截图只会审到过渡态。默认再等 3s, 可被 wait_ms 覆盖。
+      await new Promise(r => setTimeout(r, Math.max(0, Number(args?.wait_ms ?? 3000))));
+      const shot = await engine.screenshot(undefined, !!args?.full_page);
+
+      // 结构体检: 视觉模型给"观感", 像素量化兜住它测不准的部分 (溢出/过小/横向滚动)
+      let domText = '';
+      let domStats = '';
+      let layoutIssues: string[] = [];
+      try {
+        const els = await engine.scanElements();
+        const vp: any = await engine.evaluate(
+          '({ width: window.innerWidth, height: window.innerHeight, scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth })'
+        ).catch(() => null);
+        domStats = `可交互元素 ${els.length} 个` + (vp ? ` / 视口 ${vp.width}x${vp.height}` : '');
+        if (vp && vp.scrollWidth > vp.clientWidth + 2) {
+          layoutIssues.push(`横向滚动条: 文档宽 ${vp.scrollWidth} > 视口宽 ${vp.clientWidth} (有内容横向溢出)`);
+        }
+        if (vp) {
+          const CONTROLS = new Set(['button', 'a', 'input', 'select', 'textarea', 'summary', 'label']);
+          for (const el of els) {
+            const r = (el as any).rect;
+            if (!r) continue;
+            const tag = String((el as any).tag || '').toLowerCase();
+            const label = `<${tag}> ${((el as any).text || '').slice(0, 20) || (el as any).selector}`;
+            if (r.x + r.width > vp.width + 2 || r.x < -2) layoutIssues.push(`溢出视口: ${label} (x=${r.x} 宽=${r.width})`);
+            // 只对真控件判定"过小", 且要求宽高**都**小 —— 否则状态栏里的长文本行 (如路径 516x19)
+            // 会被误报成点击目标, 把真正的问题淹没 (实测噪声比约 3:1)
+            else if (CONTROLS.has(tag) && r.width < 24 && r.height < 24) layoutIssues.push(`点击区过小: ${label} (${r.width}x${r.height})`);
+          }
+        }
+        domText = els.slice(0, 20).map((e: any) =>
+          `[${e.interactivity ?? '?'}] <${e.tag}> "${(e.text || '').slice(0, 24)}" @(${e.rect?.x ?? '?'},${e.rect?.y ?? '?'}) ${e.selector}`
+        ).join('\n');
+        if (layoutIssues.length > 12) layoutIssues = layoutIssues.slice(0, 12).concat(`… 另有 ${layoutIssues.length - 12} 条`);
+      } catch (e: any) {
+        domStats = `结构扫描失败: ${e.message?.slice(0, 80)}`;
+      }
+
+      // 截图落盘: 让用户也能直接看到这张图, 而不是只有 AI 看过
+      let savedPath = '';
+      try {
+        const dir = path.join(process.cwd(), '.agentai', 'reviews');
+        fs.mkdirSync(dir, { recursive: true });
+        savedPath = path.join(dir, `review-${Date.now()}.jpg`);
+        fs.writeFileSync(savedPath, Buffer.from(shot.base64, 'base64'));
+      } catch { /* 落盘失败不影响自审结果 */ }
+
+      const reviewPrompt = [
+        '你是前端 UI 审查员。下面是网页截图, 只报告**排版/布局/完整性**问题, 不要评价业务逻辑。',
+        `页面: ${url} (${nav.title || '无标题'})`,
+        args?.focus ? `审查重点: ${args.focus}` : '',
+        '',
+        '逐项检查 (有问题就指认元素与位置, 没问题就写"正常"):',
+        '1. 截断 — 文字被切、省略号、按钮文字挤出容器',
+        '2. 重叠/挤压 — 元素互相覆盖、拥挤贴边、间距不均',
+        '3. 溢出 — 内容超出视口、出现横向滚动条',
+        '4. 留白 — 大片空白未利用、内容偏居一角',
+        '5. 对齐 — 基线/左右/网格错位',
+        '6. 完整性 — 该有的区域是否缺失(空面板/未渲染/占位符/裸 unknown 之类的调试字样)',
+        '',
+        '输出: 第一行总体结论(✅通过 / ⚠️需修), 然后按严重度(高/中/低)列条目, 每条 = 问题 + 位置 + 建议改法。不要泛泛而谈。',
+      ].filter(Boolean).join('\n');
+
+      let vision = '';
+      try {
+        const { AgentAIRouter } = await import('./llm-router.js');
+        const router = new AgentAIRouter();
+        const response = await router.chat({
+          model: 'zhipu',
+          subModel: 'glm-4.6v-flash',  // 真 vision 模型 (同 capture_screen)
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: reviewPrompt },
+              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${shot.base64}` } },
+            ] as any,
+          }],
+          maxTokens: 1800,
+        });
+        vision = (response.content || '').trim();
+      } catch (e: any) {
+        vision = `[视觉模型调用失败: ${e.message?.slice(0, 120)}]`;
+      }
+
+      const output = [
+        `🔍 前端自审: ${nav.title || url}`,
+        `URL: ${nav.url || url}`,
+        `截图: ${shot.width}x${shot.height}  ${domStats}`,
+        savedPath ? `截图已存: ${savedPath}` : '',
+        '',
+        '',
+        '── 视觉审查 ──',
+        vision,
+        layoutIssues.length ? `\n── 像素级结构问题 (${layoutIssues.length} 条) ──\n${layoutIssues.map(s => '• ' + s).join('\n')}` : '\n── 像素级结构问题 ──\n(无: 无溢出/无过小点击区/无横向滚动)',
+        domText ? `\n── 可交互元素 (前 20) ──\n${domText}` : '',
+      ].filter(Boolean).join('\n');
+
+      return {
+        success: true,
+        output,
+        _show_browser: true,   // 边做边看: 让前端把浏览器面板打开 (消费方见 GlobalBrowserDrawer)
+        _image_base64: shot.base64,
+        _image_mime: 'image/jpeg',
+        data: { url: nav.url || url, title: nav.title, width: shot.width, height: shot.height, vision, savedPath, layoutIssues },
+      };
+    } catch (e: any) {
+      return { success: false, output: `review_frontend error: ${e.message}` };
+    }
   },
 
   // ====== RPA 操作录制与回放处理器 ======
