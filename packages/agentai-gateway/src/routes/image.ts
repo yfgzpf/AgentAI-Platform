@@ -19,6 +19,24 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+/**
+ * cogview-3-flash 只认一组固定像素尺寸, 没有 1K/2K/4K 档位概念。
+ * 原实现用 `['1024x1024',...].includes(size)` 判断, 但 size 现在是档位字符串
+ * ('1K'/'2K'/'4K'), 永远不命中 → 无论用户选什么档位和比例, 智谱都只出 1024x1024。
+ * 改为按 ratio 选一个它支持的等比例尺寸。
+ * 注意: 档位对智谱无意义 —— cogview-3-flash 没有 2K/4K 档, 选 2K/4K 仍按同比例出图。
+ */
+const COGVIEW_SIZE_BY_RATIO: Record<string, string> = {
+  '1:1': '1024x1024',
+  '16:9': '1440x720',
+  '9:16': '720x1440',
+  '4:3': '1344x768',
+  '3:4': '864x1152',
+};
+function cogviewSize(ratio: string | undefined): string {
+  return COGVIEW_SIZE_BY_RATIO[ratio || '1:1'] || '1024x1024';
+}
+
 /** 下载图片 URL 到本地临时文件, 返回文件路径 */
 async function downloadToTempFile(url: string): Promise<string | null> {
   try {
@@ -197,14 +215,13 @@ export function createImageRouter() {
         const zhipuKey = process.env['ZHIPU_API_KEY'];
         if (zhipuKey) {
           try {
-            const cogviewSize = ['1024x1024','768x1344','864x1152','1344x768','1152x864','1440x720','720x1440'].includes(size) ? size : '1024x1024';
             const resp = await fetch('https://open.bigmodel.cn/api/paas/v4/images/generations', {
               method: 'POST',
               headers: { Authorization: `Bearer ${zhipuKey}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 model: 'cogview-3-flash',
                 prompt: finalPrompt,
-                size: cogviewSize,
+                size: cogviewSize(ratio),
               }),
               signal: AbortSignal.timeout(60000),
             });
@@ -341,7 +358,7 @@ export function createImageRouter() {
           const zhipuKey2 = process.env['ZHIPU_API_KEY'];
           if (zhipuKey2) {
             try {
-              const cogSize = ['1024x1024','768x1344','864x1152','1344x768','1152x864','1440x720','720x1440'].includes(size) ? size : '1024x1024';
+              const cogSize = cogviewSize(ratio);
               const zr = await fetch('https://open.bigmodel.cn/api/paas/v4/images/generations', {
                 method: 'POST', headers: { Authorization: `Bearer ${zhipuKey2}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model: 'cogview-3-flash', prompt: finalPrompt, size: cogSize }),
