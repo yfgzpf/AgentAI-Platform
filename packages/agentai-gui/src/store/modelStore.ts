@@ -97,10 +97,12 @@ const FREE_CHAT_MODELS: ModelConfig[] = [];
 // ===== 官方文本模型 (独立 API) =====
 const OFFICIAL_CHAT_MODELS: ModelConfig[] = [
   // DeepSeek (2026-10-11: V4.1-Flash 起模型名改为 deepseek-flash)
-  { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 1M)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'deepseek', contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (1.6T)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#059669', enabled: false, isBuiltIn: true, provider: 'deepseek', contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
+  // ⚠️ models[0] 是发给 API 的真实模型名 (ChatView → gateway 的 modelConfig.modelName), 与 label 无关;
+  //    缺了它 ChatView 会回退到 label, 于是 "DeepSeek Flash (V4.1, 1M)" 被当模型名发出 → 官方接口 400
+  { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 1M)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'deepseek', models: ['deepseek-flash'], contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (1.6T)', baseURL: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', color: '#059669', enabled: false, isBuiltIn: true, provider: 'deepseek', models: ['deepseek-v4-pro'], contextWindow: 1000000, isCommercial: true, groupLabel: 'DeepSeek', modelType: 'chat' },
   // OpenAI
-  { id: 'openai-gpt4o', label: 'OpenAI GPT-4o / o1/o3-mini', baseURL: 'https://api.openai.com/v1', apiKeyEnv: 'OPENAI_API_KEY', color: '#F59E0B', enabled: false, isBuiltIn: true, provider: 'openai', contextWindow: 128000, isCommercial: true, groupLabel: 'OpenAI', modelType: 'chat' },
+  { id: 'openai-gpt4o', label: 'OpenAI GPT-4o / o1/o3-mini', baseURL: 'https://api.openai.com/v1', apiKeyEnv: 'OPENAI_API_KEY', color: '#F59E0B', enabled: false, isBuiltIn: true, provider: 'openai', models: ['gpt-4o'], contextWindow: 128000, isCommercial: true, groupLabel: 'OpenAI', modelType: 'chat' },
   // 通义千问 (阿里云)
   { id: 'qwen-max', label: '通义千问 Qwen-Max (阿里云)', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKeyEnv: 'DASHSCOPE_API_KEY', color: '#FF6A00', enabled: false, isBuiltIn: true, provider: 'qwen', models: ['qwen-max'], contextWindow: 131072, isCommercial: true, groupLabel: '通义千问', modelType: 'chat', freeQuotaNote: '100万Token免费' },
   // 豆包/火山引擎 (文本)

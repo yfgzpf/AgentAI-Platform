@@ -586,6 +586,10 @@ const sendEvent = (event: string, data: any) => {
           // NVIDIA NIM 模型已移除 (2026-07-25): 需自建 GPU Docker + 端点不稳定 + 中国大陆不可达
         };
 
+        // 内置 id 快照 —— 必须在下方动态注册之前捕获:
+        // 注册后 MODEL_MAP 会混入前端自定义模型, 就再也分不清"内置"和"自定义"了
+        const BUILTIN_IDS = new Set(Object.keys(MODEL_MAP));
+
         // 动态注册自定义模型 (前端通过 modelConfig 传递)
         if (modelConfig && effectiveModel && !MODEL_MAP[effectiveModel]) {
           MODEL_MAP[effectiveModel] = {
@@ -610,8 +614,11 @@ const sendEvent = (event: string, data: any) => {
             return result;
           }
 
-          // 🔧 自定义模型优先: 如果请求带了 modelConfig (前端传入), 直接使用, 不走降级
-          if (requestedModel && modelConfig?.baseURL && modelConfig?.provider) {
+          // 🔧 自定义模型优先: 仅当 requestedModel 不是内置 id 时, 才直接采信前端传入的 modelConfig
+          // ⚠️ 内置 id 必须走 MODEL_MAP: 前端对每个模型都会带 modelConfig, 其 modelName 可能是**显示标签**
+          //    (如 "DeepSeek Flash (V4.1, 1M)"), 若在此处采信, 它会被当成 API 模型名发给官方接口 → HTTP 400
+          //    "The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed ..."
+          if (requestedModel && !BUILTIN_IDS.has(requestedModel) && modelConfig?.baseURL && modelConfig?.provider) {
             console.log(`[chat] selectAvailableModel: 自定义模型 ${requestedModel} → ${modelConfig.provider}/${modelConfig.modelName || ''} (baseURL=${modelConfig.baseURL})`);
             return {
               provider: modelConfig.provider,

@@ -1434,9 +1434,11 @@ const [loading, setLoading] = useState(false);
       const activeModelConfig = useModelStore.getState().models.find(m => m.id === provider);
       const contextWindow = activeModelConfig?.contextWindow || 128000;
       // 传递模型配置给 gateway (所有模型都传, 包括内置模型)
+      // ⚠️ modelName 必须是真实 API 模型名, 绝不能回退到 label —— label 是给人看的
+      //    ("DeepSeek Flash (V4.1, 1M)"), 当模型名发给官方接口会 HTTP 400
       const modelConfig = activeModelConfig ? {
         baseURL: activeModelConfig.baseURL,
-        modelName: activeModelConfig.models?.[0] || activeModelConfig.label,
+        modelName: activeModelConfig.models?.[0] || activeModelConfig.id,
         provider: activeModelConfig.provider,
       } : undefined;
       // 长任务快照: 若用户在任务中心激活了 taskId, 把 taskId 透传给后端以恢复上下文

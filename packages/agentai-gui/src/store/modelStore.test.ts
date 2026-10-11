@@ -3,7 +3,7 @@
  * 覆盖：analyzeComplexity 评分分层、getModelIdsByType、getImageEditModelIds
  */
 import { describe, it, expect } from 'vitest';
-import { analyzeComplexity, getModelIdsByType, getImageEditModelIds } from './modelStore';
+import { analyzeComplexity, getModelIdsByType, getImageEditModelIds, useModelStore } from './modelStore';
 
 describe('analyzeComplexity', () => {
   it('短消息 → 简单任务，无建议层级', () => {
@@ -63,5 +63,35 @@ describe('getImageEditModelIds', () => {
     expect(ids).toContain('img-model');
     expect(ids).toContain('zhipu');
     expect(ids).not.toContain('plain-chat');
+  });
+});
+
+/**
+ * 回归: 官方条目的 modelName 契约
+ * -------------------------------------------------
+ * ChatView 把 `models[0]` 当作真实 API 模型名透传给 gateway; 若条目缺 models,
+ * 它会回退到显示 label (如 "DeepSeek Flash (V4.1, 1M)"), 被当成模型名发给官方接口
+ * → HTTP 400 "The supported API model names are deepseek-flash, deepseek-v4-pro,
+ *   but you passed DeepSeek Flash (V4.1, 1M)"
+ */
+describe('官方模型条目的 modelName 契约', () => {
+  const store = () => useModelStore.getState().models;
+
+  it('deepseek / openai 条目必须声明真实 API 模型名', () => {
+    for (const id of ['deepseek-flash', 'deepseek-v4-pro', 'openai-gpt4o']) {
+      const m = store().find(x => x.id === id);
+      expect(m, `${id} 应存在于 store`).toBeTruthy();
+      const apiName = m!.models?.[0];
+      expect(apiName, `${id} 必须声明 models[0] (真实 API 模型名)`).toBeTruthy();
+      // 真实模型名不含空格/括号 —— 那是给人看的 label 才有的特征
+      expect(apiName, `${id} 的 models[0] 不能是显示标签`).not.toMatch(/[\s()]/);
+    }
+  });
+
+  it('内置条目凡声明 models 的, 首项都必须是模型名而非显示标签', () => {
+    for (const m of store()) {
+      if (!m.isBuiltIn || !m.models?.length) continue;
+      expect(m.models[0], `${m.id} 的 models[0] 疑似显示标签`).not.toMatch(/[\s()]/);
+    }
   });
 });
