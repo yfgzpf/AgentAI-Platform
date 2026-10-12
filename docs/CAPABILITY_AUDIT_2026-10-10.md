@@ -652,3 +652,108 @@ grep -c "const allExempt = " src/agentai-loop.ts          # 0 (旧全有全无�
 - 行为级测试的 LLM 是**打桩的**，验证的是**循环控制流**（不产生 `dead_loop_stop` / `force_break`
   directive 与 `loop:hard-stop` 事件），**不是**"真机上模型不再被误杀"。真机复现需用户重跑同一提示词。
 - 未改 `toolMsgs`（整个会话口径）—— 它仍被 `:4804` 的「操作感知提醒」使用，该提醒**有意**看全局，只修了死循环判据。
+
+---
+
+## 十、2026-10-12 批次3b addendum — 迭代预算只打印不生效 (+ agnes 标注更正)
+
+### 10.1 现象
+
+用户："4.1 模型是个强模型呀！是可以做长任的呀！为什么会断呢"
+
+批次3 修掉了第 1 个真因（死循环护栏在 iter=1 误杀，commit `f69a6ac`）。本节记录**第 2 个真因**。
+
+### 10.2 缺陷：能力层算了迭代预算，但从不写回
+
+`model-classifier.ts:813 getRuntimeParams()` 明确产出三档：
+
+| tier | 基础值 | 快模型微调 (`speed > 0.7` → +10) | 最终 |
+|---|---|---|---|
+| autonomous | 80 | +10 | **90** |
+| guided | 60 | +10 | **70** |
+| supervised | 40 | +10 | **50** |
+
+但 `agentai-loop.ts`「应用运行时参数」只写回了三项：
+
+```ts
+if (!this.opts.userPickedModel) { this.opts.thinking = rt.thinking; this.opts.thinkingBudget = rt.thinkingBudget; }
+(this as any)._contextCompressThreshold = rt.contextCompressThreshold;
+// ← rt.maxIterations 到此为止。它只出现在下面这行日志里:
+logger.info(`... maxIter=${rt.maxIterations} ...`);   // agentai-loop.ts:812 附近
+```
+
+核验：
+```bash
+grep -n "this\.opts\.maxIterations *=" packages/agentai-gateway/src/agentai-loop.ts   # 修复前: 无匹配
+grep -n "maxIter=" packages/agentai-gateway/src/agentai-loop.ts                      # 只此一处, 在 logger.info 内
+```
+
+真正的上限因此是调用方传入的 `opts.maxIterations`，而 `routes/chat.ts` **5 处** loop 构造全都写死：
+
+| 位置 | 原值 | 场景 |
+|---|---|---|
+| `:719` | 30 | /v1/chat 早分支建会话 |
+| `:1473` | 30 | **显式选模型**（用户实际路径） |
+| `:1501` | `auto ? 30 : 10` | 未选模型 → 普通对话**只有 10 轮** |
+| `:1704` | 30 | plan 模式 |
+| `:1774` | 30 | goal 模式（注释却写"允许更多迭代"，自相矛盾） |
+
+**结论**：显式选 DeepSeek 4.1（能力层认定 autonomous=90 轮）做长任务，实际 30 轮就被要求收尾；
+日志里那句 `maxIter=90` 是**误导性的**。
+
+### 10.3 修法
+
+1. `agentai-loop.ts`「应用运行时参数」新增一行，紧邻既有三项：
+   `this.opts.maxIterations = Math.min(rt.maxIterations, this.opts.maxIterations);`
+   —— 语义：`opts.maxIterations` 降级为**天花板**；取 `min` 所以只可能收紧。
+2. `routes/chat.ts` 新增 `const MAX_ITERATION_CEILING = 90;`（= autonomous 档上界，即"不额外限制"），
+   5 处写死值全部改用它。
+3. **有意设小预算的调用方行为完全不变**（`min` 只会收紧）：
+   `subagent.ts:422` 10 / `goal-runner.ts:317,454` 30,20 / `master-controller.ts:575` 20。
+
+### 10.4 本轮核验命令
+
+```bash
+cd packages/agentai-gateway
+npx tsc --noEmit                                                 # 0 error
+npx vitest run src/runtime-guard.test.ts --reporter=dot          # 38 passed (原 33 + 改-11 共 5)
+npx vitest run --reporter=dot                                    # 843 / 2 failed (b1-security 1, code-runner 1 — 改动前既有)
+grep -n "Math.min(rt.maxIterations" src/agentai-loop.ts          # 1
+grep -c "MAX_ITERATION_CEILING" src/routes/chat.ts               # 7 (1 定义 + 4 直接用 + 1 经 autoMaxIters + 1 注释提及)
+grep -n "maxIterations: 30\b" src/routes/chat.ts                 # 仅注释
+```
+
+### 10.5 如实披露
+
+- **未活体验证**：无 LLM 环境下**不能**证明"选 4.1 真能跑满 90 轮"。改-11 只做源码契约
+  （能力层产出值 / min 语义 / 5 处全覆盖 / 天花板不低于任何一档）+ 一条 min 语义行为断言。
+- **行为范围扩大**（需知悉）：plan 模式与 goal 模式的迭代上限也一并从 30 放到 90。
+  理由是它们用的是同一个武断值、同一类缺陷；goal 模式那行注释与取值本就自相矛盾。
+  仍受 60 分钟绝对超时 / `TOOL_CALL_BUDGET=200` / token 预算三重约束。
+
+### 10.6 更正：agnes 的能力标注**不是**那行推荐日志的因（不改代码）
+
+批次2 的日志里 `[model-classifier] 推荐模型: agentai:agnes-2.0-flash` 曾被归因为
+"agnes 能力评分虚高把 4.1 挤掉"。**实测推翻**：
+
+```bash
+# 用真实 routeByScore 跑（1755 字符 complex 消息）
+未过滤候选            → deepseek:v4-flash | agentai:agnes-2.0-flash | ...   ← deepseek 第 1
+forceProvider=agentai → agentai:agnes-2.0-flash                            ← agnes 唯一候选
+forceProvider=deepseek→ deepseek:v4-flash
+```
+
+- `model-classifier.ts:556` 打印的是 `result.slice(0, 3)` —— **只出现 1 个模型 = 候选只剩 1 个**。
+- `llm-router.ts:554` `forceProvider = req.model` + `model-classifier.ts:519`
+  `if (input.forceProvider && model.provider !== input.forceProvider) continue`。
+  所以那次请求到达时 `model='agentai'`，与评分无关。
+- 且即使把 agnes 的 `reasoningLevel` 由 `advanced`(0.95) 降到 `enhanced`(0.6)：
+  `overall = .35*.95 + .09 + .09 + .05 + .25 + .15 = 0.96` → `.35*.60 + ... = 0.84`，
+  而 tier 规则是 `overall>=0.65 AND reasoning>=0.55` → **0.84 与 0.96 同样判为 autonomous**，
+  门控行为不变。**故按 AGENTS.md 规矩3「精准修改」决定不改**，仅在此记录
+  「agnes 的 `reasoningLevel: 'advanced'` 属虚标，但因 tier 阈值设计它不影响任何门控」。
+
+**仍未能定位**：批次2 第二段日志里 `model= agentai / msgs=1 / 无 [run:chat] 前缀` 的那次调用
+**不是主循环**，但用户贴出的日志是截断的，缺少它的上方上下文，无法判定它是哪个内部辅助调用
+（`context-manager.ts:243` / `goal-runner` / `marketing-acquisition-engine` 等多处都硬编码 `model: 'agentai'`）。
+要定位需要该行**往上 20 行**的完整内容。

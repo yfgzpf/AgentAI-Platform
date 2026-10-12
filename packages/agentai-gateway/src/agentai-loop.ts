@@ -801,6 +801,17 @@ private _forbiddenResponseCount: number = 0;
         this.opts.thinking = rt.thinking;
         this.opts.thinkingBudget = rt.thinkingBudget;
       }
+      // ═══ 2026-10-12: 能力层的迭代预算真正生效 ═══
+      // 修复前: `rt.maxIterations` (autonomous 90 / guided 70 / supervised 50) **只被打印,
+      //   从不写回** —— 主循环 G4 闸门 (:2825) 与超时块 (:3119) 用的是调用方传入的
+      //   `opts.maxIterations`, 而 routes/chat.ts 把它写死成 30 (显式选模型) / 10 (普通对话)。
+      //   结果: 用户显式选了 DeepSeek 4.1 (能力层认定 autonomous=90 轮), 实际天花板仍是 30 轮;
+      //   日志里那句 `maxIter=90` 是误导性的 —— 这正是"强模型也做不完长任务"的第 2 个来源
+      //   (第 1 个是死循环护栏误杀, 见 commit f69a6ac)。
+      // 语义: 能力层给出该模型"应得"的轮数, `opts.maxIterations` 降级为**上限封顶**。
+      //   取 min 保证只可能**收紧**、不可能突破调用方的许可 —— 于是 subagent(10) / goal-runner(20)
+      //   等有意设置小预算的调用方行为完全不变, 只有 chat.ts 的武断值被放开。
+      this.opts.maxIterations = Math.min(rt.maxIterations, this.opts.maxIterations);
       // 上下文压缩阈值存储供压缩逻辑使用
       (this as any)._contextCompressThreshold = rt.contextCompressThreshold;
 

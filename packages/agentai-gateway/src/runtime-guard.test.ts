@@ -606,3 +606,73 @@ describe('改-10 死循环护栏误杀 (批次3)', () => {
   }, 60000);
 });
 
+/**
+ * 批次3b「迭代预算只打印不生效」(2026-10-12)
+ * ==========================================================================
+ * 用户: "4.1模型是个强模型呀！是可以做长任的呀！为什么会断呢"
+ * 第 2 个真因 (第 1 个是死循环误杀, 见上面的 改-10):
+ *   能力层 `getRuntimeParams()` 算出 autonomous=90 / guided=70 / supervised=50,
+ *   但 agentai-loop 的"应用运行时参数"**只写回 thinking/thinkingBudget/contextCompressThreshold**,
+ *   `rt.maxIterations` 仅出现在 logger.info 里 → 从不生效。
+ *   真正的上限是 routes/chat.ts 写死的 `maxIterations`, 它**冒充了模型预算**:
+ *   显式选模型 30 / 普通对话 10 / plan 30 / goal 30。
+ *
+ * 改-11 迭代预算:  loop 侧 `min(能力层值, opts)` + chat.ts 的写死值降级为「天花板」
+ */
+describe('改-11 迭代预算: 能力层裁决 + opts 封顶 (批次3b)', () => {
+  const CHAT_SRC = readFileSync(new URL('./routes/chat.ts', import.meta.url), 'utf-8');
+  const CAP_SRC_ = readFileSync(new URL('./model-classifier.ts', import.meta.url), 'utf-8');
+
+  it('T1 能力层确实产出了 maxIterations (autonomous/guided/supervised 三档)', () => {
+    // 先把"能力层有值可给"钉住 —— 否则写回什么都是 0
+    expect(CAP_SRC_).toMatch(/export function getRuntimeParams/);
+    expect(CAP_SRC_).toMatch(/if \(cap\.tier === 'autonomous'\) \{\s*\n\s*maxIterations = 80;/);
+    expect(CAP_SRC_).toMatch(/if \(cap\.tier === 'guided'\) \{\s*\n\s*maxIterations = 60;/);
+    expect(CAP_SRC_).toMatch(/if \(cap\.tier === 'supervised'\) \{\s*\n\s*maxIterations = 40;/);
+    // 速度微调 (快 +10 / 慢 -10) → autonomous:80+10=90
+    expect(CAP_SRC_).toMatch(/if \(cap\.speed > 0\.7\) maxIterations \+= 10;\s*\n\s*else if \(cap\.speed < 0\.4\) maxIterations -= 10;/);
+  });
+
+  it('T2 loop 把能力层值写回, 且只可能收紧 (min 语义)', () => {
+    expect(LOOP_SRC, 'rt.maxIterations 必须真正写回 this.opts.maxIterations').toMatch(
+      /this\.opts\.maxIterations = Math\.min\(rt\.maxIterations, this\.opts\.maxIterations\)/,
+    );
+    // 关键: 必须是 min, 不能是直接赋值 —— 否则 subagent(10)/goal-runner(20) 的小预算会被顶掉
+    expect(LOOP_SRC).not.toMatch(/this\.opts\.maxIterations = rt\.maxIterations;/);
+    // 写回位置必须在 logger.info(`🧠 模型能力` 之前 (否则日志里的 maxIter 与实际不一致)
+    const writeIdx = LOOP_SRC.indexOf('this.opts.maxIterations = Math.min(rt.maxIterations');
+    const logIdx = LOOP_SRC.indexOf("`🧠 模型能力: ${this.opts.model}");
+    expect(writeIdx).toBeGreaterThan(-1);
+    expect(logIdx).toBeGreaterThan(-1);
+    expect(writeIdx, '写回须在能力日志之前, 否则日志继续误导').toBeLessThan(logIdx);
+  });
+
+  it('T3 chat.ts 的写死值已降级为天花板 (5 处全覆盖, 无残留)', () => {
+    expect(CHAT_SRC).toMatch(/const MAX_ITERATION_CEILING = 90;/);
+    // 5 处 loop 构造: 4 处直接传天花板, 1 处经 autoMaxIters 间接传 (= MAX_ITERATION_CEILING)
+    const directSites = CHAT_SRC.match(/maxIterations: MAX_ITERATION_CEILING/g) || [];
+    expect(directSites.length, 'chat.ts 应有 4 处直接使用天花板').toBe(4);
+    expect(CHAT_SRC).toMatch(/const autoMaxIters = MAX_ITERATION_CEILING;/);
+    // 旧的武断值不得残留 (注释里提到不算 —— 只查代码行)
+    const codeLines = CHAT_SRC.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l));
+    const codeOnly = codeLines.join('\n');
+    expect(codeOnly).not.toMatch(/maxIterations: 30\b/);
+    expect(codeOnly).not.toMatch(/const autoMaxIters = auto \? 30 : 10;/);
+  });
+
+  it('T4 天花板不得低于任何一档能力值 (否则天花板反而成为瓶颈)', () => {
+    const m = CHAT_SRC.match(/const MAX_ITERATION_CEILING = (\d+);/);
+    expect(m).toBeTruthy();
+    const ceiling = Number(m![1]);
+    // autonomous 档上界 = 80 + 10 (快模型) = 90
+    expect(ceiling).toBeGreaterThanOrEqual(90);
+  });
+
+  it('行为级: opts.maxIterations 作为天花板被 min 收紧, 不被顶高', () => {
+    // 直接验证 min 语义的可观测后果: 用小预算构造时, G4 闸门仍按小预算触发
+    const { loop } = makeLoop(() => ({ content: 'ok', finishReason: 'stop' }), { maxIterations: 10 });
+    // 不可能被能力层顶到 90 —— 构造后立即断言
+    expect(loop.opts.maxIterations).toBeLessThanOrEqual(10);
+  }, 60000);
+});
+

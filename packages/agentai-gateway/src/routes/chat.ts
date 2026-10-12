@@ -62,6 +62,20 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
   // 活跃loop追踪 — 用于中断正在运行的任务
   const activeLoops = new Map<string, { loop: AgentAILoop; abort: () => void }>();
 
+  /**
+   * 迭代轮数「天花板」— 2026-10-12
+   * ============================================================
+   * 修复前: 本文件 5 处 loop 构造都写死 `maxIterations: 30` (普通对话路径更是只有 10)。
+   *   而 AgentAILoop 的 G4 闸门用的就是这个值 ⇒ 它**冒充了模型预算**, 把能力层算出的
+   *   autonomous=90 / guided=70 / supervised=50 全部压掉 (能力层那个值原先只打印、不生效)。
+   *   症状: 用户显式选 DeepSeek 4.1 (能力层认定 90 轮) 做长任务, 实际 30 轮就被要求收尾。
+   * 现在: loop 内部取 `min(能力层值, opts.maxIterations)` (见 agentai-loop.ts「能力层的迭代预算
+   *   真正生效」), 所以这里传的语义是**上限封顶**而非模型预算。90 = autonomous 档的上界,
+   *   即"不额外限制", 真正的轮数交给能力层裁决。
+   * 有意设置小预算的调用方 (subagent 10 / goal-runner 20 / master-controller 20) 不受影响 —— min 只会收紧。
+   */
+  const MAX_ITERATION_CEILING = 90;
+
   // 待审批计划存储 — 规划模式审批后等待用户确认
   const pendingPlans = new Map<string, { execPlan: any; message: string; userId: string; workspace: string; sessionId: string; profile?: any; model?: string; displayModel: string }>();
 
@@ -702,7 +716,7 @@ const sendEvent = (event: string, data: any) => {
           const selected = selectAvailableModel(effectiveModel);
           const userPickedModel = !!effectiveModel && effectiveModel in MODEL_MAP;
           loop = new AgentAILoop(router, registry, [], {
-            maxIterations: 30, userId, workspace, persistentMemory,
+            maxIterations: MAX_ITERATION_CEILING, userId, workspace, persistentMemory,
             fts5Memory,
             model: selected.provider,
             modelName: selected.subModel || '',
@@ -1456,7 +1470,7 @@ req.on('close', () => {
           // SuperAPI: 从 modelConfig 获取子模型名
           const superApiModelName = mapped.provider === 'alrc' && modelConfig?.modelName ? modelConfig.modelName : '';
           loop = new AgentAILoop(router, registry, [], {
-            maxIterations: 30, userId, workspace, mode,
+            maxIterations: MAX_ITERATION_CEILING, userId, workspace, mode,
             model: mapped.provider,
             modelName: mapped.subModel || superApiModelName || '',
             contextWindow: contextWindow || mapped.contextWindow,
@@ -1482,8 +1496,9 @@ req.on('close', () => {
           // ① pro 官方已下线; ② 用户显式选的模型不再被自动替换 (这正是用户抱怨
           //   「选 4.1 却跑到 pro 从而频繁中断」的两处来源之一, 另一处是 model-selector.ts)。
           console.log(`[chat:non-stream] no explicit model, using user preference: ${userPref} → ${chatModel}/${modelName || '(default)'}`);
-          // 自动化任务使用更高的 maxIterations，避免复杂任务被提前截断
-          const autoMaxIters = auto ? 30 : 10;
+          // 2026-10-12: 原来这里是 `auto ? 30 : 10` —— 普通对话只有 10 轮, 是"长任务断"的
+          //   又一个来源 (见 MAX_ITERATION_CEILING 的说明)。现在统一交给能力层裁决。
+          const autoMaxIters = MAX_ITERATION_CEILING;
           loop = new AgentAILoop(router, registry, [], {
             maxIterations: autoMaxIters, userId, workspace, mode, model: chatModel, modelName, persistentMemory, emotion,
             thinking: !!thinking,
@@ -1686,7 +1701,7 @@ req.on('close', () => {
         });
       } else {
         loop = new AgentAILoop(planRouter, planRegistry, [], {
-          maxIterations: 30, userId: planUserId, workspace: planWorkspace, mode: 'planning',
+          maxIterations: MAX_ITERATION_CEILING, userId: planUserId, workspace: planWorkspace, mode: 'planning',
           model: 'agentai', persistentMemory: planPM,
         });
         master = new MasterController({
@@ -1756,7 +1771,7 @@ req.on('close', () => {
         userId,
         workspace: ws,
         model,
-        maxIterations: 30,  // Goal 模式允许更多迭代
+        maxIterations: MAX_ITERATION_CEILING,  // 2026-10-12: 原写死 30 与"允许更多迭代"的注释自相矛盾
         reflectEvery: 5,
         includeSkillsIndex: true,
       });
