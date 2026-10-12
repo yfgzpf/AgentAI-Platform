@@ -170,6 +170,10 @@ export class ExpertTeam {
         }
 
         task.status = 'running';
+        // ⚠️ 2026-10-12 注: ExpertTeam 类全仓无实例化 (只用到本文件的 EXPERT_TEAM_CONFIGS),
+        //   故这行未随「子智能体继承父模型」批次改造 (该类拿不到父模型)。
+        //   若将来把它接进 run 路径, 必须同时把 parentModel + parentModelName 传下来,
+        //   否则子智能体会退化成 agentai 默认档。
         const result = await runSubagent(
           'explore',
           fullTask,

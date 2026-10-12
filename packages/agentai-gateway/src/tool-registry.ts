@@ -44,10 +44,18 @@ export interface ToolContext {
    */
   _router?: import('./llm-router.js').AgentAIRouter;
   /**
-   * 2026-10-11 新增: 当前会话的模型名 (如 agnes-3.0-flash), 消除 4 处
-   * `ctx?.model` 对 `ctx?: any` 的依赖。agentai-loop.ts 构造 ctx 时传入。
+   * 2026-10-11 新增: 当前会话的 provider 名 (如 'agentai' / 'deepseek')。
+   * ⚠️ 这是 provider, 不是模型名 —— 见下方 modelName。
    */
   model?: string;
+  /**
+   * 2026-10-12 新增: 当前会话的**精确子模型名** (如 'deepseek-flash' / 'agnes-2.5-flash')。
+   *
+   * 用户规则: 强模型调子智能体必须用**父模型自身**。子智能体构造时需要 provider + 精确模型名
+   * 两样才能完全复刻父模型; 只有 `model` (provider) 会退化成 provider 默认模型。
+   * agentai-loop.ts 在 dispatchToolCalls 里用 `this.opts.modelName` 注入。
+   */
+  modelName?: string;
   /**
    * 2026-10-11 新增: 工具注册表 (递归调用 handler 用), 消除 3 处
    * `(ctx as any)?._registry` 强转。agentai-loop.ts 构造 ctx 时注入。

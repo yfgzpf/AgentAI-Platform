@@ -255,7 +255,7 @@ export class SmartModelSwitcher {
       provider: 'agentai',
       apiKeyEnvKey: 'AGENTAI_API_KEY',
       endpoint: 'https://api.agnes-ai.cn/v1',
-      model: 'agnes-2.0-flash',
+      model: 'agnes-2.5-flash', // 2026-10-12: 原 agnes-2.0-flash 已下架(503)
       costPerRequest: 0,      // 免费
       rateLimit: 60,
     });

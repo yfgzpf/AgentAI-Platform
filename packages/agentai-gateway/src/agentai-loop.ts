@@ -2364,7 +2364,8 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
         // 1) 调用视觉模型分析图片 → 2) 将分析结果注入上下文 → 3) 主模型处理
         logger.info('[vision] detected image input, current model does not support vision, starting visual proxy');
 
-        // 视觉代理模型选择: 优先 zhipu glm-4.6v-flash，其次 agentai agnes-2.0-flash
+        // 视觉代理模型选择: 优先 zhipu glm-4.6v-flash，其次 agentai agnes-2.5-flash
+        // (2026-10-12: 原 agnes-2.0-flash 已下架 503, 改用活的 2.5-flash)
         const zhipuStats = (this.router as any)?.providers?.get('zhipu');
         const agentaiStats = (this.router as any)?.providers?.get('agentai');
         const zhipuAvailable = zhipuStats && !zhipuStats.tripped && !!process.env.ZHIPU_API_KEY;
@@ -2377,7 +2378,7 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
           visionModel = 'glm-4.6v-flash';
           visionProvider = 'zhipu';
         } else if (agentaiAvailable) {
-          visionModel = 'agnes-2.0-flash';
+          visionModel = 'agnes-2.5-flash'; // 2026-10-12: 原 agnes-2.0-flash 已下架(503)
           visionProvider = 'agentai';
         }
 
@@ -6267,6 +6268,8 @@ try {
       priorMessages: this.context.appendOnlyLog as ToolContext['priorMessages'],
       _router: this.router,
       model: this.opts.model,
+      // 2026-10-12: 精确模型名一并注入 — 子智能体靠它复刻父模型 (见 ToolContext.modelName)
+      modelName: this.opts.modelName,
       _registry: this.registry, // ToolContext._registry (2026-10-11 接口新增)
     };
 

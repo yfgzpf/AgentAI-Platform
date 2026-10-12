@@ -757,3 +757,140 @@ forceProvider=deepseek→ deepseek:v4-flash
 **不是主循环**，但用户贴出的日志是截断的，缺少它的上方上下文，无法判定它是哪个内部辅助调用
 （`context-manager.ts:243` / `goal-runner` / `marketing-acquisition-engine` 等多处都硬编码 `model: 'agentai'`）。
 要定位需要该行**往上 20 行**的完整内容。
+
+> ⚠️ **2026-10-12 名称更正（见 §11）**：本节引用的 `agentai:agnes-2.0-flash`
+> 已在 §11 中被改名到 `agentai:agnes-2.5-flash`（官方下架，仅改名 + 窗口 256K→512K，
+> 评分权重与 `reasoningLevel` **一字未动**），故本节全部结论不变，只是名字变了。
+
+---
+
+## 十一、2026-10-12 批次4 addendum — 已下架 agnes-2.0 全链路清理 + 子智能体继承父模型
+
+### 11.1 现象（用户实机反馈）
+
+> "子任务是调用了 Agnes 2.0 模型，但这个模型已经被官方下架了，已经不能用了，现有是 2.5-flash 替代了。
+>  再说各强模型调用子智能体是自身呀？不要去调其它模型……"
+
+拆成三条独立诉求：
+- **D1** `agnes-2.0` / `agnes-2.0-flash` 官方下架（实测 HTTP 503「分组 default 下模型无可用渠道」），全量清除；活替身是 `agnes-2.5-flash`。
+- **D2** 强模型调子智能体必须用**父模型自身**（provider + 精确子模型名），**只在断连/熔断时**才降级。
+- **D3** 断连降级也要落到**正确的 `agnes-2.5-flash`**，而不是死掉的 2.0。
+
+### 11.2 四条叠加缺陷（全部实测定位，缺一不可）
+
+| # | 缺陷 | 证据（行号） |
+|---|------|--------------|
+| **1** | `MODEL_MAP['agnes-2.0']` 在 `BUILTIN_IDS` 内 → 前端 `modelConfig` **覆盖不了它**，死名直达上游 | `routes/chat.ts:608`（`BUILTIN_IDS`）、`:634-638`（仅非内置 id 才采信前端）、`:529-532`（`subModel: 'agnes-2.0'`） |
+| **2** | 两张别名表**都没有 agnes 键**，老客户端/老持久化发来的死名无人拦 | 修前 `llm-router.ts:63-72`（只有 deepseek/alrc/factory/sensenova）、`model-capabilities.ts:232-237`（只有 deepseek） |
+| **3** | `routes/chat.ts:722 modelName: selected.subModel` 把死名灌进 `opts.modelName`，内联子智能体原样继承 —— **这正是用户看到的现象** | `agentai-loop.ts` 内联 spawn `let subModelName = this.opts.modelName;` |
+| **4** | `subagent.ts` 另一条路径：`parentModel \|\| 'agentai'` + `modelName: … : ''` **恒空串**，且 5 个调用点**一个 parentModel 都没传** → 子智能体静默跑免费默认档 | 修前 `subagent.ts:396`、`:426`；`tools.ts` 5 处、`expert-team.ts` 1 处 |
+
+### 11.3 修法
+
+**(a) 死模型名清理（网关 10 文件 + GUI 3 文件）**
+
+| 文件 | 改动 |
+|------|------|
+| `routes/chat.ts:532` / `:1402` | 两张 `MODEL_MAP` 的 `'agnes-2.0'` 键**保留**、`subModel` 改 `'agnes-2.5-flash'`、label 标「原 2.0 别名」、窗口 512000（沿用 deepseek-v4-pro 先例：老 id 静默降级，不再 503） |
+| `llm-router.ts:79-82` | `RETIRED_MODEL_ALIASES` 加 **4 键**（`agentai:` / `agnes:` 各 2 键）→ `agnes-2.5-flash`；`resolveRetiredModelAlias` 改为 **export**（供测试断言） |
+| `llm-router.ts:44` | `FREE_PROVIDERS` 里 `'agnes-2.0'` **刻意保留**（见 11.6 披露） |
+| `model-classifier.ts:67-92` | 注册项 id/subModel 改名 → `agentai:agnes-2.5-flash`，`maxContext` 256K→512K |
+| `model-capabilities.ts:50` | 删掉**重复且过期**的 `agnes-2.0`(256K) 条目（与活条目指向同一模型）；`:230-231` `LEGACY_MODEL_ALIASES` 双键兜底 |
+| `model-selector.ts:24` | id 保留做别名，`subModel` 改活名 |
+| `agentai-loop.ts:2381` / `tools.ts:5088` / `smart-model-switcher.ts:258` | 3 处硬编码 `agnes-2.0-flash` → `agnes-2.5-flash` |
+| `run-vision-test.ts:36` | 手工 vision 实测脚本里的死名 → 活名（**全仓扫查时额外发现，不在原 plan 清单内**） |
+| GUI `store.ts` / `store/modelStore.ts` / `store/modelStore.test.ts` | `DEFAULT_PROVIDER` → 活 id；别名条目 `models[0]` → 活名；`removeModel` 回退值由隐藏 id `'agentai'` → 活 id；**新增 v16 迁移**（v15 只覆盖 `'agnes-2.0'` 与 `'agentai'`，**漏了 `'agnes-2.0-flash'`**） |
+
+**(b) 子智能体继承父模型（5 条路径全修）**
+
+```
+父 loop (this.opts.model / this.opts.modelName)
+   │
+   ├─ 内联 spawn (agentai-loop.ts, 强模型主路径)  —— 本就正确, 未动
+   │
+   └─ dispatchToolCalls 注入 ToolContext { model, modelName }   ← B1/B2 新增
+        ├─ spawn_subagent        (tools.ts)   ← B4
+        ├─ agent_battle          (tools.ts)   ← B4
+        ├─ code_review ×3 并行   (tools.ts)   ← B4
+        ├─ run_team              (tools.ts)   ← B4
+        └─ team-orchestrator 5 层签名转发      ← B4
+             → runSubagent(..., parentModel, parentModelName)   ← B3
+                  → new AgentAILoop({ model: subModel, modelName: subModelName })
+                       ↳ 仅当父 provider 熔断时: 换 provider + subModelName = ''(走该 provider 默认/env)
+```
+
+- `tool-registry.ts:58` 新增 `modelName?: string`，注释明确它与 `model`（provider 名）的区别。
+- `subagent.ts:433` `modelName: subModelName || (sensenova 旧兜底)` —— 保留 sensenova 历史兼容分支，不回归。
+- **语义关键**：`subModelName = ''` 不是"没模型"，而是"交给 `executeProvider` 按 env/默认解析"；
+  熔断换 provider 后父模型名对新 provider 无意义，必须清空。
+
+### 11.4 顺手验证：`maxContext` 256K→512K 会不会改变 5D 路由顺序？
+
+按 `model-classifier.ts` 的权重手算（`W_CONTEXT=.15`，`contextFit = min(maxContext/1M, 1)`）：
+
+| 模型 | ctxFit(256K) | ctxFit(512K) | 变化 |
+|------|--------------|--------------|------|
+| agnes | 0.0384 | 0.0768 | **+0.0384** |
+
+代入 `computeScore` 得总分：deepseek:v4-flash **0.8074** > agnes@512K **0.7518** > agnes@256K 0.7134。
+**结论：改名+调窗口不改变路由顺序**（deepseek 仍第 1）。
+再用真实 `routeByScore` 跑两条消息（`short-simple` / `long-hard`）实测确认：
+两种窗口下第 1 名都是 `deepseek:v4-flash`、第 2 名都是 agnes。
+
+### 11.5 本轮核验命令（可复用）
+
+```bash
+# 1) 新增回归测试 (24 项: 10 行为 + 14 契约)
+cd packages/agentai-gateway && npx vitest run src/subagent-model-inherit.test.ts --reporter=dot
+
+# 2) 别名解析行为级断言 (断言 resolveRetiredModelAlias 的 4 个 agnes 键)
+cd packages/agentai-gateway && npx vitest run src/subagent-model-inherit.test.ts -t resolveRetiredModelAlias
+
+# 3) 死名残留审计 —— 期望只剩 注释 / 别名键 / 别名目标 / FREE_PROVIDERS / vendor 分组别名
+grep -rn "agnes-2\.0" packages/agentai-gateway/src --include=*.ts | grep -v "\.test\.ts"
+
+# 4) 继承链注入点计数
+grep -c "ctx?.modelName" packages/agentai-gateway/src/tools.ts            # → 6
+grep -c "parentModelName" packages/agentai-gateway/src/team-orchestrator.ts # → 14 (5 形参 + 9 转发/调用)
+
+# 5) 模型注册表 + GUI 迁移
+cd packages/agentai-gateway && npx vitest run src/model-registry.test.ts --reporter=dot   # 22 项
+cd packages/agentai-gui && npx vitest run src/store/modelStore.test.ts --reporter=dot     # 15 项
+
+# 6) 类型 + 工具一致性 + 全量测试
+cd packages/agentai-gateway && npx tsc --noEmit && pnpm verify:tools
+cd packages/agentai-gateway && npx vitest run --reporter=dot   # 868 测试 / 2 既有基线失败
+cd packages/agentai-gui && npx tsc --noEmit && npx vitest run --reporter=dot  # 258 全通
+```
+
+**本轮实测结果**：网关 `tsc` 退出 0；网关 vitest **865 passed / 2 failed**（仅 `b1-security`、
+`safety/code-runner` 两个**改动前就在失败**的基线，无新增失败）；GUI `tsc` 退出 0 +
+**258/258 通过**；`pnpm verify:tools` **ERROR=0**（202 声明 / 203 实现）。
+
+### 11.6 如实披露（必读）
+
+1. **A3 有意偏离 plan**：plan 说「删除 `FREE_PROVIDERS` 里的 `'agnes-2.0'`」，实现时**保留**了。
+   理由：`isFreeProvider` 的语义是「免费档 → 禁用子智能体并发」（`agentai-loop.ts:4051-4058`）。
+   若删除，任何**仍以 `agnes-2.0` 作为 modelName** 的路径会被**误判为付费档 → 放行子智能体 → 撞免费额度**，
+   正是该处注释原本警告的失效模式。而该名已在 `executeProvider` 里被改写成 `agnes-2.5-flash`，
+   到达不了上游，留着无害。已在 `llm-router.ts:40-44` 就地注释说明，并由测试断言"这是刻意的"。
+
+2. **无法端到端验证**：没有可用的真实上游凭据时，**"子智能体确实跑在父模型上"无法自动化证明**。
+   本轮的证明只到**参数级**：用打桩的 `AgentAILoop` 断言子 loop 收到的 `{model, modelName}` 正确
+   （`subagent-model-inherit.test.ts` 的 6 条行为断言）。真正的"上游返回了什么"需要线上实测，
+   这一项**未验证**，不声称已验证。
+
+3. **`expert-team.ts:177` 未改**：`ExpertTeam` 类**全仓无实例化**（只用到同文件的 `EXPERT_TEAM_CONFIGS`，
+   见 `tools.ts:7036`），该 `runSubagent` 调用是死代码，拿不到父模型。按「精准修改」**不动**，
+   已加 6 行注释警告：若将来把它接进 run 路径，必须同时传 `parentModel + parentModelName`。
+
+4. **`model-classifier.ts` 改名 + 256K→512K 的可见副作用**：`routeByScore` 的候选显示名会从
+   `agentai:agnes-2.0-flash` 变成 `agentai:agnes-2.5-flash`（评分维度一字未动 ⇒ 行为等价，
+   见 11.4 的实测）。历史日志/文档里出现的旧名属正常，不必按新名去 grep 告警。
+
+5. **`llm-router.ts:1591` 注释同步**：原文写「`agnes-2.0` → 256K」，该条目已删、旧名现在经
+   `LEGACY_MODEL_ALIASES` 解析到 512K，注释已更正（纯注释，无行为变化）。
+
+6. **两个既有基线失败未修**：`b1-security`（断言 `tools.ts` 用 `execFile('git')`）、
+   `safety/code-runner`（断言 `scanForbiddenPatterns` 拒绝 `fs` import）。**与本轮无关、改动前即在失败**，
+   保持原样，未在本批次处理。

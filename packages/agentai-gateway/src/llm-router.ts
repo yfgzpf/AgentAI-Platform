@@ -37,6 +37,10 @@ import { sanitizeToolMessages } from './message-utils.js';
 //   现在: 所有地方统一用 isFreeProvider()。
 export const FREE_PROVIDERS = new Set([
     'agnes', 'agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat',
+    // 'agnes-2.0' 已于 2026-10-12 下架 (见 RETIRED_MODEL_ALIASES), 保留在白名单里是**刻意**的:
+    //   isFreeProvider 的语义是「免费档 → 禁用子智能体并发」(agentai-loop.ts:4051)。
+    //   若移除, 任何仍以 agnes-2.0 作为 modelName 的路径会**误判为付费档 → 放行子智能体 →
+    //   撞免费额度**。该名已在 executeProvider 里被改写成 agnes-2.5-flash, 到达不了上游, 留着无害。
     'agnes-2.5-flash', 'agnes-2.0', 'deepseek-flash', 'deepseek-v4-flash',
 ]);
 
@@ -69,10 +73,17 @@ const RETIRED_MODEL_ALIASES: Record<string, string> = {
   'alrc:deepseek-v4-pro': 'deepseek-v4-flash',
   'factory:deepseek-v4-pro': 'deepseek-v4-flash',
   'sensenova:deepseek-v4-pro': 'deepseek-v4-flash',
+  // 2026-10-12: Agnes 2.0 全系官方下架 (实测 HTTP 503「分组 default 下模型无可用渠道」),
+  //   上游 /models 目录只剩 agnes-2.5-flash / agnes-2.5-pro* / agnes-3.0-flash。
+  //   provider 作用域同时覆盖 'agentai' (MODEL_MAP 统一用的 id) 与 'agnes' (model-selector 用的 id)。
+  'agentai:agnes-2.0': 'agnes-2.5-flash',
+  'agentai:agnes-2.0-flash': 'agnes-2.5-flash',
+  'agnes:agnes-2.0': 'agnes-2.5-flash',
+  'agnes:agnes-2.0-flash': 'agnes-2.5-flash',
 };
 
-/** 按 provider 作用域解析已下线模型名; 未命中返回原名。 */
-function resolveRetiredModelAlias(providerId: string, name: string): string {
+/** 按 provider 作用域解析已下线模型名; 未命中返回原名。(导出仅供测试断言) */
+export function resolveRetiredModelAlias(providerId: string, name: string): string {
   const target = RETIRED_MODEL_ALIASES[`${providerId}:${name}`];
   if (target && target !== name) {
     console.info(`[router] 🔁 已下线模型名别名: ${providerId}:${name} → ${target}`);
@@ -1577,7 +1588,7 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
     // ✅ 单源读取: model-capabilities.ts 优先, fallback 到 provider 默认, 再 fallback 到 req 自定义
     const ctxWindow = Math.max(4096,
       req.contextWindow                          // ① 最高: 用户手动填的"上下文扩展"值
-        || getModelContextWindow(modelName)     // ② model 名精确匹配 (agnes-2.5-flash → 512K, agnes-2.0 → 256K)
+        || getModelContextWindow(modelName)     // ② model 名精确匹配 (agnes-2.5-flash → 512K; 旧名 agnes-2.0 走别名同为 512K)
         || defaultCtx                           // ③ provider 级默认 (agnes → 512K)
     );
     const maxInputTokens = Math.floor(ctxWindow * 0.85); // 留15%给输出

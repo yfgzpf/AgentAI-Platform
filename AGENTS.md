@@ -807,13 +807,15 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 上下文注入 | 8 层 | **8 层是目标，实际 32 处字面量 / 49 处 `systemMsgs.push` / 14 个顶层 try-catch**（buildImmutablePrefix `:812-1927`）| `grep -c "systemMsgs.push(" src/agentai-loop.ts`；`awk 'NR>=812 && NR<=1927 && /^    try \{/' …` |
 | system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
 | 60K 上下文预算实际覆盖 | "硬闸门" | **只覆盖 7 条 soul 注入, 其中仅 priority=30 的 5 条可丢**；44 条注入不可触碰 | `grep -n "track('" src/agentai-loop.ts` → 7 |
-| 测试覆盖 | "无 E2E" | 68 文件 / **843 测试 / 2 失败**（2026-10-12 重测；原 804/7 中 5 个是循环无上限导致的超时） | vitest |
+| 测试覆盖 | "无 E2E" | 69 文件 / **868 测试 / 2 失败**（2026-10-12 重测；原 804/7 中 5 个是循环无上限导致的超时） | vitest |
 | 运行时守卫 | 无 | **4 个真缺口已补**（`_failTracker` / `repeat_write` / `TOOL_CALL_BUDGET=200` / 独立迭代硬闸），**对所有 tier 生效** | `packages/agentai-gateway/src/runtime-guard.test.ts` |
 | 死循环护栏误杀 | 判据吃**整个会话**的 tool 消息 + 搜索豁免全有全无 + `_hardStopCount`/`_toolCallHistory` 进程级只写不清零 → **新任务第 1 轮被强杀** | **已修**：`_iterToolStartIdx` 水位线（判据只切本轮）+ 豁免按签名剔除（`countedSigs`）+ 三者在 `run()` 开头归零 | `grep -n "_iterToolStartIdx" packages/agentai-gateway/src/agentai-loop.ts`；`npx vitest run src/runtime-guard.test.ts` → 改-10 组 |
 | 迭代轮数上限 | 能力层算出 autonomous=90/guided=70/supervised=50 但 **只打印不写回**；实际上限是 `chat.ts` 写死的 **30**（普通对话 **10**） | **已修**：loop 侧 `min(能力层值, opts)` 写回；`chat.ts` 5 处写死值 → `MAX_ITERATION_CEILING=90`（语义降级为天花板） | `grep -n "Math.min(rt.maxIterations" packages/agentai-gateway/src/agentai-loop.ts`；`grep -c "MAX_ITERATION_CEILING" packages/agentai-gateway/src/routes/chat.ts` → 7（1 定义 + 4 直接用 + 1 经 autoMaxIters + 1 注释提及） |
 | 历史压缩吞 user 消息 | 压缩后 `appendOnlyLog` 里 **0 条 user** → router 注入"请继续完成之前的任务。" → 空回复 → 救援链 → 任务中断 | **修**: 被压掉的旧 user 原样搬回 `recent`（`carriedUsers` 上限 3 条）；摘要输入仍是整个 `head` | `grep -n "const carriedUsers" packages/agentai-gateway/src/agentai-loop.ts`；`npx vitest run src/context-fidelity.test.ts` → 9/9 |
 | 自动化抢用户任务 | cron tick 与用户任务并发 → 卡顿 | **修**: 用户任务期间跳过 cron tick（TTL 心跳 `runtime-activity.ts`，`USER_TASK_TTL_MS=300_000`），纯让路（不计数、不自动禁用）；`officecli` 的 `execSync` 改异步 exec | `grep -n "isUserTaskActive" packages/agentai-gateway/src/automation-engine.ts` |
 | deepseek-v4-pro | 强模型/救援目标/GUI 列表均有"pro" | **已下线**（官方 2026-09-14 已停）；provider 作用域别名兜底 `RETIRED_MODEL_ALIASES` | `grep -rn "v4-pro" packages/agentai-gateway/src/model-classifier.ts`（仅注释） |
+| agnes-2.0 / agnes-2.0-flash | 注册表/推荐/GUI/硬编码共 **12 处网关 + 5 处 GUI** 仍指死模型 | **已下线**（官方 2026-10-12 实测 HTTP 503「分组 default 下模型无可用渠道」）；id 保留为**别名**指向活的 `agnes-2.5-flash`，4 键入 `RETIRED_MODEL_ALIASES`（`agentai:` / `agnes:` 各 2 键） | `grep -rn "agnes-2\.0" packages/agentai-gateway/src --include=*.ts \| grep -v test`（仅注释/别名键/别名目标/`FREE_PROVIDERS`）；`node -e "…resolveRetiredModelAlias"` 见 §11 |
+| 子智能体模型继承 | `subagent.ts` 恒把 `modelName` 设 `''` + **5 个调用点一个都没传父模型** → 强模型调子智能体**静默跑免费默认档**；内联 spawn 则原样继承**已下架**的 `agnes-2.0` | **已修**：`ToolContext.modelName`（`tool-registry.ts:58`）+ dispatch 注入（`agentai-loop.ts:6272`）+ `runSubagent(type,…,parentModel,parentModelName)`；`tools.ts` 6 处 + `team-orchestrator.ts` 全链路（5 层签名）传父模型；仅父模型**熔断**时换 provider 并清空父模型名 | `packages/agentai-gateway/src/subagent-model-inherit.test.ts`（24 项：10 行为 + 14 契约）；`grep -c "ctx?.modelName" packages/agentai-gateway/src/tools.ts` → 6 |
 | @ts-nocheck 文件 | - | **30 个** (22 源文件 + 8 测试文件, 2026-10-11 实测) | `grep -rl "@ts-nocheck" src/ \| wc -l` |
 | 中栏宽度 | "大屏居中 800px" | **`clamp(880px, 90%, 1600px)` 自适应**, 2 处消费 (原 token 零消费) | `grep -rn "var(--chat-max-width)" packages/agentai-gui/src/` |
 | 页面内可拖面板 | 写死不可拖 (420/380/320/240) | **4 处 `<PaneGrip>`**, 把手命中区 5/5px | `packages/agentai-gui/src/layout-panes.test.ts` |
@@ -849,9 +851,12 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 - 上下文注入点：`grep -c "role: 'system'" packages/agentai-gateway/src/agentai-loop.ts`
 - 核心文件规模：`wc -l packages/agentai-gateway/src/*.ts | sort -rn | head`
 - 测试基线：`cd packages/agentai-gateway && npx vitest run --reporter=dot`
-  （⚠️ **2026-10-12 更新：843 测试 / 2 失败**。原 `804 / 7 失败` 里的
+  （⚠️ **2026-10-12 更新：868 测试 / 2 失败**。原 `804 / 7 失败` 里的
   `context-fidelity 3 + ledger-wiring 2` **不是断言写错, 而是 `Test timed out in 10000ms`** ——
   循环无迭代上限导致空转（实测跑到 `iter=48`）；批次1 的 G4 迭代硬闸修好了它们。
   剩余 2 个**与本轮无关且改动前就在失败**：b1-security 1（断言 `tools.ts` 用 `execFile('git')`）、
   safety/code-runner 1（断言 `scanForbiddenPatterns` 拒绝 `fs` import）。）
+- 子智能体模型继承回归：`cd packages/agentai-gateway && npx vitest run src/subagent-model-inherit.test.ts --reporter=dot`（24 项）
+- 已下线模型名别名解析（行为级）：`cd packages/agentai-gateway && npx vitest run src/subagent-model-inherit.test.ts -t resolveRetiredModelAlias`
+- GUI 迁移函数：`cd packages/agentai-gui && npx vitest run src/store/modelStore.test.ts --reporter=dot`（15 项，含 5 项 v16 迁移）
 - 运行时守卫回归：`cd packages/agentai-gateway && npx vitest run src/runtime-guard.test.ts --reporter=dot`（38 项）

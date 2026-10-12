@@ -92,10 +92,17 @@ describe('classifier MODELS — 官方窗口/成本 (2026-09-05 校准)', () => 
     expect(m.costPer1kOutput).toBe(0.015);
   });
 
-  it('agnes-2.0-flash (主免费模型) = 256K / 免费', () => {
-    const m = classifier('agentai:agnes-2.0-flash');
-    expect(m.maxContext).toBe(256_000);
+  it('agnes-2.5-flash (主免费模型) = 512K / 免费', () => {
+    // 2026-10-12: 原 id `agentai:agnes-2.0-flash` 已官方下架(503) → 改名到 2.5-flash,
+    // 窗口同步 256K→512K (真实值, 见 model-capabilities.ts 与 routes/chat.ts MODEL_MAP)
+    const m = classifier('agentai:agnes-2.5-flash');
+    expect(m.maxContext).toBe(512_000);
     expect(m.isFree).toBe(true);
+  });
+
+  it('agnes-2.0-flash 旧 id 已从注册表移除 (不再有死模型条目)', () => {
+    expect(MODELS.find(x => x.subModel === 'agnes-2.0-flash')).toBeUndefined();
+    expect(MODELS.find(x => x.id === 'agentai:agnes-2.0-flash')).toBeUndefined();
   });
 });
 
@@ -152,6 +159,9 @@ describe('getModelContextWindow — subModel 精确命中 (死路径回归)', ()
     // 2026-10-11: pro 条目已删, 此断言现在走 LEGACY_MODEL_ALIASES (deepseek-v4-pro → deepseek-flash)
     // 的兜底路径 —— 正是「旧配置/旧会话残留 pro 引用不报错」的本地保证。
     expect(getModelContextWindow('deepseek-v4-pro')).toBe(1_048_576);
+    // 2026-10-12: agnes-2.0 条目已删, 同样走 LEGACY_MODEL_ALIASES → 2.5-flash 的 512K
+    expect(getModelContextWindow('agnes-2.0')).toBe(524_288);
+    expect(getModelContextWindow('agnes-2.0-flash')).toBe(524_288);
   });
 
   it('provider 级 id 仍可按原名命中', () => {

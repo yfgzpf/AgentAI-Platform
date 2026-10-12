@@ -1,9 +1,9 @@
 /**
  * modelStore 核心逻辑测试 —— 模型分层推荐安全网（阶段 0 / T0-1）
- * 覆盖：analyzeComplexity 评分分层、getModelIdsByType、getImageEditModelIds
+ * 覆盖：analyzeComplexity 评分分层、getModelIdsByType、getImageEditModelIds、persist 迁移
  */
 import { describe, it, expect } from 'vitest';
-import { analyzeComplexity, getModelIdsByType, getImageEditModelIds, useModelStore } from './modelStore';
+import { analyzeComplexity, getModelIdsByType, getImageEditModelIds, useModelStore, migrateModelStore } from './modelStore';
 
 describe('analyzeComplexity', () => {
   it('短消息 → 简单任务，无建议层级', () => {
@@ -96,5 +96,56 @@ describe('官方模型条目的 modelName 契约', () => {
       if (!m.isBuiltIn || !m.models?.length) continue;
       expect(m.models[0], `${m.id} 的 models[0] 疑似显示标签`).not.toMatch(/[\s()]/);
     }
+  });
+
+  it('agnes-2.0 别名条目的 models[0] 指向活的 2.5-flash, 不指向已下架模型', () => {
+    // 2026-10-12: agnes-2.0 / agnes-2.0-flash 官方下架 (实测 503)
+    const m = store().find(x => x.id === 'agnes-2.0');
+    expect(m, 'agnes-2.0 别名条目应保留 (旧持久化 activeModelId 需可解析)').toBeTruthy();
+    expect(m!.models?.[0]).toBe('agnes-2.5-flash');
+  });
+});
+
+/**
+ * persist 迁移回归
+ * -------------------------------------------------
+ * 2026-10-12: agnes-2.0 全系官方下架(503)。v16 块负责把残留的已下线/隐藏 id
+ * 从 activeModelId / autoModelCurrent / models[] 里清掉, 否则会被原样发给网关。
+ */
+describe('migrateModelStore — v16 已下架 agnes id 兜底', () => {
+  const live = (id?: string) => expect(id).toBe('agnes-2.5-flash');
+
+  it('activeModelId 是 agnes-2.0 / agnes-2.0-flash / agentai 时都转正', () => {
+    for (const dead of ['agnes-2.0', 'agnes-2.0-flash', 'agentai']) {
+      const out = migrateModelStore({ activeModelId: dead, models: [] }, 15);
+      live(out.activeModelId);
+    }
+  });
+
+  it('autoModelCurrent 同样转正', () => {
+    const out = migrateModelStore({ activeModelId: 'agnes-3.0-flash', autoModelCurrent: 'agnes-2.0-flash' }, 15);
+    expect(out.autoModelCurrent).toBe('agnes-2.5-flash');
+    // 未命中的 activeModelId 不被改写
+    expect(out.activeModelId).toBe('agnes-3.0-flash');
+  });
+
+  it('models[] 里 agnes-2.0 条目的 models[0] 被重写, 其他字段不动', () => {
+    const out = migrateModelStore(
+      { models: [{ id: 'agnes-2.0', isBuiltIn: true, models: ['agnes-2.0'], label: 'X', baseURL: 'https://custom' }] },
+      15,
+    );
+    expect(out.models[0].models).toEqual(['agnes-2.5-flash']);
+    expect(out.models[0].label).toBe('X');
+    expect(out.models[0].baseURL).toBe('https://custom');
+  });
+
+  it('version<15 的老用户行为不变 (先被 v15 块迁到 agnes-3.0-flash, v16 不再命中)', () => {
+    const out = migrateModelStore({ activeModelId: 'agnes-2.0', models: [] }, 12);
+    // v15 块把它改成 3.0-flash; v16 的候选集不含 3.0-flash → 保持
+    expect(out.activeModelId).toBe('agnes-3.0-flash');
+  });
+
+  it('commercialKeys 缺失时补空对象 (历史行为保持)', () => {
+    expect(migrateModelStore({ activeModelId: 'deepseek' }, 15).commercialKeys).toEqual({});
   });
 });

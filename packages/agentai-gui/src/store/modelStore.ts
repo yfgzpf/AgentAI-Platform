@@ -84,7 +84,9 @@ interface ModelState {
 const AGNES_MODELS: ModelConfig[] = [
   { id: 'agnes-3.0-flash', label: 'Agnes 3.0 Flash (最新 · 推荐)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#4F46E5', enabled: true, isDefault: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-3.0-flash'], contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
   { id: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (512K)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#6366F1', enabled: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-2.5-flash'], contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
-  { id: 'agnes-2.0', label: 'Agnes 2.0 (备用 · 256K)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#818CF8', enabled: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-2.0'], contextWindow: 256000, groupLabel: 'Agnes AI', modelType: 'chat' },
+  // 2026-10-12: 原 agnes-2.0 官方已下架(503) → 保留 id 做别名, models[0] 指向活的 2.5-flash。
+  // (内置 id 的请求体不采信前端 modelName, 网关 MODEL_MAP 也会同样改写; 这里改是为了 UI 文案不再指向死模型)
+  { id: 'agnes-2.0', label: 'Agnes 2.5 Flash (原 2.0 别名)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#818CF8', enabled: true, isBuiltIn: true, provider: 'agnes', models: ['agnes-2.5-flash'], contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
   // 兼容旧版 agentai id
   { id: 'agentai', label: 'Agnes AI (兼容)', baseURL: 'https://api.agnes-ai.cn/v1', apiKeyEnv: 'AGENTAI_API_KEY', color: '#A78BFA', enabled: false, isBuiltIn: true, provider: 'agnes', contextWindow: 512000, groupLabel: 'Agnes AI', modelType: 'chat' },
 ];
@@ -309,7 +311,9 @@ export const useModelStore = create<ModelState>()(
         set((s) => ({ models: [...s.models, { ...c, id, isBuiltIn: false }] }));
         return id;
       },
-      removeModel: (id) => set((s) => ({ models: s.models.filter(m => m.id !== id), activeModelId: s.activeModelId === id ? 'agentai' : s.activeModelId })),
+      // 2026-10-12: 原回退值是 'agentai' —— 一个 HIDDEN_MODEL_IDS 里的兼容 id,
+      // 会让选择器"无选中项", 且它可被直接发给网关。改为回退到活的免费档模型。
+      removeModel: (id) => set((s) => ({ models: s.models.filter(m => m.id !== id), activeModelId: s.activeModelId === id ? 'agnes-2.5-flash' : s.activeModelId })),
       toggleModel: (id, enabled) => set((s) => ({ models: s.models.map(m => m.id === id ? { ...m, enabled: enabled ?? !m.enabled } : m) })),
       setCommercialKey: (apiKeyEnv, apiKey) => set((s) => ({ commercialKeys: { ...s.commercialKeys, [apiKeyEnv]: apiKey } })),
       removeCommercialKey: (apiKeyEnv) => {
@@ -384,54 +388,80 @@ export const useModelStore = create<ModelState>()(
     }),
     {
       name: 'agentai-models',
-      version: 15,
-      migrate: (persisted: any, version: number) => {
-        // v15: Agnes 档位收敛 —— agnes-2.0 与旧兼容 id 'agentai' 不再出现在选择器。
-        //      这两个 id 仍保留在 models 里 (旧会话解析用), 但若用户当前正选中它们, 迁到 agnes-3.0-flash。
-        if (version < 15 && persisted) {
-          if (persisted.activeModelId === 'agnes-2.0' || persisted.activeModelId === 'agentai') {
-            persisted.activeModelId = 'agnes-3.0-flash';
-          }
-          if (persisted.autoModelCurrent === 'agentai') persisted.autoModelCurrent = 'agnes-3.0-flash';
-        }
-        // v14: DeepSeek V4.1-Flash 起 flash 档模型名改为 deepseek-flash。
-        //      原地重命名已持久化的旧 id (旧名官方仅"暂时"兼容路由, 不迁移会随官方下线而失效)。
-        //      注意: 只改 id/label, 不重建 models 数组, 避免覆盖用户自定义的 baseURL/apiKey。
-        if (version < 14 && Array.isArray(persisted?.models)) {
-          for (const m of persisted.models) {
-            if (m?.id === 'deepseek-v4-flash' && m?.isBuiltIn) {
-              m.id = 'deepseek-flash';
-              m.label = 'DeepSeek Flash (V4.1, 1M)';
-            }
-          }
-          if (persisted.activeModelId === 'deepseek-v4-flash') persisted.activeModelId = 'deepseek-flash';
-        }
-        // v13: 新增 agnes-3.0-flash, 强制用最新 DEFAULT_MODELS 覆盖内置模型
-        if (version < 13 && persisted?.models) {
-          const oldEnabled: string[] = (persisted.models || [])
-            .filter((m: any) => m.enabled).map((m: any) => m.id);
-          const userCustomModels = (persisted.models || []).filter((m: any) => !m.isBuiltIn);
-          persisted.models = [
-            ...DEFAULT_MODELS.map(m => ({ ...m, enabled: oldEnabled.includes(m.id) || m.enabled })),
-            ...userCustomModels,
-          ];
-          if (!persisted.chatMode) persisted.chatMode = 'chat';
-          // 旧 activeModelId 若不在新列表中, 回退到 agnes-3.0-flash (新首选)
-          const newIds = new Set(DEFAULT_MODELS.map((m: any) => m.id));
-          if (persisted.activeModelId && !newIds.has(persisted.activeModelId)) {
-            persisted.activeModelId = 'agnes-3.0-flash';
-          }
-          // 强制切换默认模型到 3.0
-          persisted.activeModelId = 'agnes-3.0-flash';
-        }
-        return {
-          ...persisted,
-          commercialKeys: persisted?.commercialKeys || {},
-        };
-      },
+      version: 16,
+      migrate: migrateModelStore,
     },
   ),
 );
+
+/**
+ * persist 迁移函数 (导出以便单测直接断言, 无需伪造 localStorage 重水合)。
+ *
+ * 执行顺序约定: 本函数内**新版块写在最前**, 但因为每个块都带 `version < N` 守卫,
+ * 对旧版本用户而言实际是 v16 → v15 → v14 → v13 依次命中 —— 即 v16 是最后写入者。
+ * 因此 v16 只需处理「v15 漏掉的情况」, 不必也不应改写 v15 的结论。
+ */
+export function migrateModelStore(persisted: any, version: number): any {
+  // v16: 已下线/隐藏 agnes id 兜底 —— 本块**放在所有历史块之后执行**, 只负责补漏:
+  //   ① `agnes-2.0` / `agnes-2.0-flash` 官方 2026-10-12 下架 (实测 503), 不能留在 activeModelId;
+  //   ② `agentai` 是 HIDDEN_MODEL_IDS 里的兼容 id, 历史上会被 removeModel 回写成 activeModelId
+  //      → 选择器无选中项, 且可被原样发给网关 (v15 只覆盖了 version<15 的用户, 已到 15 的漏网)。
+  //   目标统一取活着的**免费档** `agnes-2.5-flash` (被替换掉的也都是免费档, 保持成本预期)。
+  //   注意: version<15 的用户会先被下方 v15 块改成 agnes-3.0-flash, 本块不再命中 → 老用户行为不变。
+  if (version < 16 && persisted) {
+    const RETIRED_AGNES_IDS = new Set(['agnes-2.0', 'agnes-2.0-flash', 'agentai']);
+    if (RETIRED_AGNES_IDS.has(persisted.activeModelId)) persisted.activeModelId = 'agnes-2.5-flash';
+    if (RETIRED_AGNES_IDS.has(persisted.autoModelCurrent)) persisted.autoModelCurrent = 'agnes-2.5-flash';
+    // 同步 models 数组里残留的死模型名引用 (等价 v14 对 deepseek 的原地重写, 不重建数组)
+    if (Array.isArray(persisted.models)) {
+      for (const m of persisted.models) {
+        if (m?.id === 'agnes-2.0' && Array.isArray(m.models)) m.models = ['agnes-2.5-flash'];
+      }
+    }
+  }
+  // v15: Agnes 档位收敛 —— agnes-2.0 与旧兼容 id 'agentai' 不再出现在选择器。
+  //      这两个 id 仍保留在 models 里 (旧会话解析用), 但若用户当前正选中它们, 迁到 agnes-3.0-flash。
+  if (version < 15 && persisted) {
+    if (persisted.activeModelId === 'agnes-2.0' || persisted.activeModelId === 'agentai') {
+      persisted.activeModelId = 'agnes-3.0-flash';
+    }
+    if (persisted.autoModelCurrent === 'agentai') persisted.autoModelCurrent = 'agnes-3.0-flash';
+  }
+  // v14: DeepSeek V4.1-Flash 起 flash 档模型名改为 deepseek-flash。
+  //      原地重命名已持久化的旧 id (旧名官方仅"暂时"兼容路由, 不迁移会随官方下线而失效)。
+  //      注意: 只改 id/label, 不重建 models 数组, 避免覆盖用户自定义的 baseURL/apiKey。
+  if (version < 14 && Array.isArray(persisted?.models)) {
+    for (const m of persisted.models) {
+      if (m?.id === 'deepseek-v4-flash' && m?.isBuiltIn) {
+        m.id = 'deepseek-flash';
+        m.label = 'DeepSeek Flash (V4.1, 1M)';
+      }
+    }
+    if (persisted.activeModelId === 'deepseek-v4-flash') persisted.activeModelId = 'deepseek-flash';
+  }
+  // v13: 新增 agnes-3.0-flash, 强制用最新 DEFAULT_MODELS 覆盖内置模型
+  if (version < 13 && persisted?.models) {
+    const oldEnabled: string[] = (persisted.models || [])
+      .filter((m: any) => m.enabled).map((m: any) => m.id);
+    const userCustomModels = (persisted.models || []).filter((m: any) => !m.isBuiltIn);
+    persisted.models = [
+      ...DEFAULT_MODELS.map(m => ({ ...m, enabled: oldEnabled.includes(m.id) || m.enabled })),
+      ...userCustomModels,
+    ];
+    if (!persisted.chatMode) persisted.chatMode = 'chat';
+    // 旧 activeModelId 若不在新列表中, 回退到 agnes-3.0-flash (新首选)
+    const newIds = new Set(DEFAULT_MODELS.map((m: any) => m.id));
+    if (persisted.activeModelId && !newIds.has(persisted.activeModelId)) {
+      persisted.activeModelId = 'agnes-3.0-flash';
+    }
+    // 强制切换默认模型到 3.0
+    persisted.activeModelId = 'agnes-3.0-flash';
+  }
+  return {
+    ...persisted,
+    commercialKeys: persisted?.commercialKeys || {},
+  };
+}
 
 // ===== 自动初始化: 从后端同步 provider 状态 =====
 setTimeout(() => {

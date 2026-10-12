@@ -20,7 +20,8 @@ export interface ModelConfig {
 export const BUILTIN_MODELS: Record<string, ModelConfig> = {
   // Agnes AI 模型 (首选)
   'agnes-2.5-flash': { provider: 'agnes', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash' },
-  'agnes-2.0': { provider: 'agnes', subModel: 'agnes-2.0', label: 'Agnes 2.0' },
+  // 2026-10-12: agnes-2.0 官方已下架 (实测 503) → 保留 id 做别名, 指向活的 2.5-flash
+  'agnes-2.0': { provider: 'agnes', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (原 2.0 别名)' },
   // 兼容旧版
   'agentai': { provider: 'agnes', subModel: 'agnes-2.5-flash', label: 'Agnes AI' },
   'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },

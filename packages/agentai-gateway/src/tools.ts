@@ -1395,7 +1395,13 @@ function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
-export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
+// 2026-10-11 阶段2 轻档: 收紧到 ToolHandlerLike (强类型 ctx/返回值),
+// 之前 Record<string, (args: any, ctx?: any) => any> — args/ctx/返回值全 any,
+// 消费侧 (registry.dispatch / index.ts register) 拿到的是 any, 无类型保障。
+// 注意: 本文件仍 @ts-nocheck, 所以 51 个显式 `(args: any, ctx?: any)` handler
+// 签名里的 any 不会报错, 无需逐个修; 类型边界靠"消费侧 + 此声明行"生效。
+import type { ToolHandlerLike } from './types/tool-schema.js';
+export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   generate_image: async (args) => {
     try {
       const { prompt, size = '1024x1024', style, negative_prompt } = args;
@@ -1781,7 +1787,7 @@ export const EXTRA_HANDLERS: Record<string, (args: any, ctx?: any) => any> = {
       }
 
       // Step 2: 纯代码无法覆盖的复杂场景, 尝试 LLM 增强
-      let router = (ctx as any)?._router;
+      let router = ctx?._router;
       if (!router || typeof router.chat !== 'function') {
         try {
           const { getAgentAIRouter } = await import('./llm-router.js');
@@ -3069,8 +3075,8 @@ ${violations.map(v => `• ${v}`).join('\n')}
   spawn_subagent: async (args, ctx) => {
     try {
       const { type, task } = args;
-      const registry = (ctx as any)?._registry;
-      const router = (ctx as any)?._router;
+      const registry = ctx?._registry;
+      const router = ctx?._router;
       if (!router || !registry) return { success: false, output: 'Subagent unavailable (no router/registry)' };
 
       // Battle 模式: 多 Agent 竞争择优
@@ -3100,6 +3106,9 @@ ${violations.map(v => `• ${v}`).join('\n')}
               router, registry,
               (ctx as any)?.userId || 'default',
               ws(),
+              // 2026-10-12: 子智能体继承父模型 (provider + 精确模型名), 不再默认跑免费档
+              ctx?.model,
+              ctx?.modelName,
             );
             return {
               agentId: agent.id,
@@ -3142,21 +3151,25 @@ ${violations.map(v => `• ${v}`).join('\n')}
       }
 
       const { default: subagent } = await import('./subagent.js');
-      const result = await subagent.runSubagent(type, task, router, registry, (ctx as any)?.userId || 'default', ws());
+      // 2026-10-12: 传父模型 (provider + 精确模型名) → 子智能体用父模型自身
+      const result = await subagent.runSubagent(type, task, router, registry, (ctx as any)?.userId || 'default', ws(), ctx?.model, ctx?.modelName);
       return { success: true, output: result || '(subagent returned empty)' };
     } catch (e: any) { return { success: false, output: `Subagent error: ${e.message}` }; }
   },
   run_team: async (args, ctx) => {
     try {
       const { teamId, task } = args;
-      const router = (ctx as any)?._router;
-      const registry = (ctx as any)?._registry;
+      const router = ctx?._router;
+      const registry = ctx?._registry;
       if (!router || !registry) return { success: false, output: '团队编排不可用 (缺少 router/registry)' };
       const { runTeam } = await import('./team-orchestrator.js');
       const result = await runTeam(
         teamId, task, router, registry,
         (ctx as any)?.userId || 'default',
         ws(),
+        // 2026-10-12: 团队成员同样继承父模型 (provider + 精确模型名)
+        ctx?.model,
+        ctx?.modelName,
       );
       return { success: true, output: result.summary, data: result };
     } catch (e: any) { return { success: false, output: `团队执行失败: ${e.message}` }; }
@@ -3421,8 +3434,8 @@ const ws = getWs();
       const files: string[] = args.files || [];
       if (files.length === 0) return { success: false, output: 'files required' };
 
-      const router = (ctx as any)?._router;
-      const registry = (ctx as any)?._registry;
+      const router = ctx?._router;
+      const registry = ctx?._registry;
       if (!router || !registry) return { success: false, output: 'code_review: router/registry unavailable' };
 
       // 读文件内容
@@ -3452,15 +3465,15 @@ const ws = getWs();
       const userId = (ctx as any)?.userId || 'default';
       const [securityR, qualityR, testR] = await Promise.allSettled([
         wrapWithTimeout(
-          subagentMod.runSubagent('security-review', `Review for security vulnerabilities: SQL injection, XSS, hardcoded secrets, unsafe eval, path traversal, missing auth checks.${focus}\n\n${context}`, router, registry, userId, projectDir),
+          subagentMod.runSubagent('security-review', `Review for security vulnerabilities: SQL injection, XSS, hardcoded secrets, unsafe eval, path traversal, missing auth checks.${focus}\n\n${context}`, router, registry, userId, projectDir, ctx?.model, ctx?.modelName),
           'security-review'
         ),
         wrapWithTimeout(
-          subagentMod.runSubagent('review', `Review for code quality: readability, naming, duplication, error handling, architecture.${focus}\n\n${context}`, router, registry, userId, projectDir),
+          subagentMod.runSubagent('review', `Review for code quality: readability, naming, duplication, error handling, architecture.${focus}\n\n${context}`, router, registry, userId, projectDir, ctx?.model, ctx?.modelName),
           'quality-review'
         ),
         wrapWithTimeout(
-          subagentMod.runSubagent('review', `Review for testing: test coverage gaps, missing edge cases, testability issues.${focus}\n\n${context}`, router, registry, userId, projectDir),
+          subagentMod.runSubagent('review', `Review for testing: test coverage gaps, missing edge cases, testability issues.${focus}\n\n${context}`, router, registry, userId, projectDir, ctx?.model, ctx?.modelName),
           'test-review'
         ),
       ]);
@@ -4761,7 +4774,7 @@ const ws = getWs();
       const { description, industry = 'custom', name } = args;
       if (!description) return { success: false, output: 'description required' };
 
-      const router = (ctx as any)?._router;
+      const router = ctx?._router;
       if (!router || typeof router.chat !== 'function') {
         return { success: false, output: 'LLM router 不可用, 无法生成工作流模板' };
       }
@@ -5072,7 +5085,8 @@ Write-Output 'OK'`;
         const visionBaseUrl = visionModel === 'agentai'
           ? (process.env.AGENTAI_BASE_URL || 'https://api.agnes-ai.cn/v1')
           : (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
-        const visionSubModel = visionModel === 'agentai' ? 'agnes-2.0-flash' : 'deepseek-flash';
+        // 2026-10-12: agnes-2.0-flash 已下架(503) → 用活的 agnes-2.5-flash
+        const visionSubModel = visionModel === 'agentai' ? 'agnes-2.5-flash' : 'deepseek-flash';
 
         let visionAnalysis = '';
         try {
@@ -7449,7 +7463,7 @@ Write-Output 'OK'`;
       }
 
       // 获取 router 用于 AI 生成 PoC
-      let router = (ctx as any)?._router;
+      let router = ctx?._router;
       if (!router || typeof router.chat !== 'function') {
         try {
           const { getAgentAIRouter } = await import('./llm-router.js');

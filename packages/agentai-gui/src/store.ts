@@ -71,7 +71,9 @@ interface SettingsState {
   setHasKey: (b: boolean) => void;
 }
 
-const DEFAULT_PROVIDER = 'agentai:agnes-2.0-flash';
+// 2026-10-12: agnes-2.0-flash 官方已下架(503) → 该默认值同步到活的 2.5-flash。
+// (此字段仅供设置页展示, 不参与任何请求体 —— 真正发送的是 modelStore.activeModelId)
+const DEFAULT_PROVIDER = 'agentai:agnes-2.5-flash';
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({

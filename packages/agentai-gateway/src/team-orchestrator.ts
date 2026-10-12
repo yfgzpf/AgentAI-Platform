@@ -38,7 +38,8 @@ export interface TeamResult {
  * @param registry 工具注册表
  * @param userId 用户 ID
  * @param workspace 工作目录
- * @param parentModel 父模型 (可选, 默认用 agentai)
+ * @param parentModel 父模型 provider (可选, 默认用 agentai)
+ * @param parentModelName 父模型精确子模型名 (可选, 2026-10-12: 子智能体复刻父模型用)
  */
 export async function runTeam(
   teamId: string,
@@ -48,6 +49,7 @@ export async function runTeam(
   userId: string,
   workspace: string,
   parentModel?: string,
+  parentModelName?: string,
 ): Promise<TeamResult> {
   const team = getTeamPreset(teamId);
   if (!team) {
@@ -67,13 +69,13 @@ export async function runTeam(
 
   switch (team.workflow) {
     case 'parallel':
-      results = await runParallel(team, task, router, registry, userId, workspace, parentModel);
+      results = await runParallel(team, task, router, registry, userId, workspace, parentModel, parentModelName);
       break;
     case 'sequential':
-      results = await runSequential(team, task, router, registry, userId, workspace, parentModel);
+      results = await runSequential(team, task, router, registry, userId, workspace, parentModel, parentModelName);
       break;
     case 'review':
-      results = await runReview(team, task, router, registry, userId, workspace, parentModel);
+      results = await runReview(team, task, router, registry, userId, workspace, parentModel, parentModelName);
       break;
   }
 
@@ -100,9 +102,10 @@ async function runParallel(
   userId: string,
   workspace: string,
   parentModel?: string,
+  parentModelName?: string,
 ): Promise<MemberResult[]> {
   const promises = team.members.map(member =>
-    runMember(member, task, router, registry, userId, workspace, parentModel),
+    runMember(member, task, router, registry, userId, workspace, parentModel, parentModelName),
   );
   return Promise.all(promises);
 }
@@ -116,6 +119,7 @@ async function runSequential(
   userId: string,
   workspace: string,
   parentModel?: string,
+  parentModelName?: string,
 ): Promise<MemberResult[]> {
   const results: MemberResult[] = [];
   let accumulatedContext = task;
@@ -126,7 +130,7 @@ async function runSequential(
       ? `${accumulatedContext}\n\n--- 前序成员输出 (${results.map(r => r.name).join(' → ')}) ---\n${results.map(r => `[${r.name}]:\n${r.output.slice(0, 800)}`).join('\n\n')}\n--- 请基于以上内容继续 ---`
       : task;
 
-    const result = await runMember(member, memberTask, router, registry, userId, workspace, parentModel);
+    const result = await runMember(member, memberTask, router, registry, userId, workspace, parentModel, parentModelName);
     results.push(result);
     accumulatedContext = task;
   }
@@ -143,9 +147,10 @@ async function runReview(
   userId: string,
   workspace: string,
   parentModel?: string,
+  parentModelName?: string,
 ): Promise<MemberResult[]> {
   // 第一阶段: 并行执行
-  const parallelResults = await runParallel(team, task, router, registry, userId, workspace, parentModel);
+  const parallelResults = await runParallel(team, task, router, registry, userId, workspace, parentModel, parentModelName);
 
   // 第二阶段: 综合审查 (使用 review 角色)
   const synthesizer: TeamMember = {
@@ -156,7 +161,7 @@ async function runReview(
 
   const synthTask = `请综合以下团队成员的审查结果, 生成一份结构化报告:\n\n原始任务: ${task}\n\n${parallelResults.map(r => `=== ${r.name} ===\n${r.output.slice(0, 1000)}`).join('\n\n')}\n\n--- 请生成综合报告: 汇总关键发现 → 按优先级排序 → 给出行动建议 ---`;
 
-  const synthResult = await runMember(synthesizer, synthTask, router, registry, userId, workspace, parentModel);
+  const synthResult = await runMember(synthesizer, synthTask, router, registry, userId, workspace, parentModel, parentModelName);
 
   return [...parallelResults, synthResult];
 }
@@ -170,6 +175,7 @@ async function runMember(
   userId: string,
   workspace: string,
   parentModel?: string,
+  parentModelName?: string,
 ): Promise<MemberResult> {
   const startTime = Date.now();
   try {
@@ -181,6 +187,7 @@ async function runMember(
       userId,
       workspace,
       parentModel,
+      parentModelName,
     );
     return {
       role: member.role,

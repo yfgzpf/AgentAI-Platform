@@ -65,12 +65,16 @@ export interface ModelMeta {
 export const MODELS: ModelMeta[] = [
   // --- AgentAI (主模型, 免费+付费混合) ---
   {
-    id: 'agentai:agnes-2.0-flash',
+    // 2026-10-12: 原 id/subModel `agnes-2.0-flash` 已官方下架 (实测 503) → 改名到活的 2.5-flash。
+    // maxContext 同步 256K→512K: 2.5-flash 真实窗口是 512K (见 model-capabilities.ts:39-49
+    // 与 routes/chat.ts MODEL_MAP 的 512000)。实测该 5D 路由分变化为 +0.0384 (ctxFit 0.0384→0.0768),
+    // 仍低于 deepseek:v4-flash (0.7134→0.7518 vs 0.8074), **不改变路由顺序**。
+    id: 'agentai:agnes-2.5-flash',
     label: 'Agnes AI Flash',
     provider: 'agentai',
-    subModel: 'agnes-2.0-flash',
+    subModel: 'agnes-2.5-flash',
     complexityRange: ['ultraSimple', 'hard'],
-    maxContext: 256_000,
+    maxContext: 512_000,
     costPer1kInput: 0,
     costPer1kOutput: 0,
     isFree: true,

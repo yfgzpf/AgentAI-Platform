@@ -35,7 +35,7 @@ export interface ModelCapability {
  * 所有已知模型的能力定义（单源，更新此表即可）
  */
 export const MODEL_CAPABILITIES: ModelCapability[] = [
-  // ─── Agnes AI (同一套 API, 但 2.5 和 2.0 窗口不同) ───
+  // ─── Agnes AI (同一套 API; 2026-10-12 起 2.0 已下架, 只保留 2.5-flash) ───
   {
     id: 'agnes-2.5-flash',
     label: 'Agnes 2.5 Flash (512K)',
@@ -47,17 +47,9 @@ export const MODEL_CAPABILITIES: ModelCapability[] = [
     rateLimitTPM: 20_000,
     costPer1K: 0,
   },
-  {
-    id: 'agnes-2.0',
-    label: 'Agnes 2.0 (256K)',
-    provider: 'agnes',
-    subModel: 'agnes-2.0',
-    contextWindow: 262_144,    // 256K
-    isFree: true,
-    rateLimitRPM: 20,
-    rateLimitTPM: 20_000,
-    costPer1K: 0,
-  },
+  // 2026-10-12: 原 `agnes-2.0` (256K) 条目已删除 —— 该模型官方下架 (实测 503),
+  //   且它与上方 `agnes-2.5-flash` 指向同一活模型, 属重复条目 + 过期窗口值。
+  //   旧名由下方 LEGACY_MODEL_ALIASES 兜底解析到 2.5-flash 的 512K。
   {
     id: 'agentai',
     label: 'Agnes AI (默认 2.5)',
@@ -234,6 +226,9 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
   'deepseek-v4-flash-vision-exp': 'deepseek-flash',
   // 2026-10-11: V4 Pro 已下线, 官方声明请求全部路由到 V4.1 Flash, 本地做同样映射。
   'deepseek-v4-pro': 'deepseek-flash',
+  // 2026-10-12: Agnes 2.0 全系官方下架 (实测 HTTP 503「无可用渠道」) → 回退到活的 2.5-flash。
+  'agnes-2.0': 'agnes-2.5-flash',
+  'agnes-2.0-flash': 'agnes-2.5-flash',
 };
 
 /** model 名 → contextWindow (与 llm-router.ts PROVIDER_CONTEXT_WINDOW 等价，但按 model 粒度) */

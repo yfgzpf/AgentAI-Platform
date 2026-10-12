@@ -382,6 +382,7 @@ export async function runSubagent(
   userId: string,
   workspace: string,
   parentModel?: string,
+  parentModelName?: string,  // 2026-10-12: 父模型的精确子模型名 (如 'deepseek-flash'), 见下方继承策略
   industryId?: string,  // ★ 继承父级行业
 ): Promise<string> {
   if (!SUBAGENT_PROMPTS[type]) return `Unknown subagent type: ${type}`;
@@ -391,9 +392,13 @@ export async function runSubagent(
   const subRegistry = new ToolRegistry();
   for (const t of filtered) subRegistry.register(t);
 
-  // 子智能体模型策略: 所有模型同等对待, 使用父模型或默认模型
-  // 不再区分免费/商业模型, Agnes AI 等免费模型完全支持子智能体并行
+  // 子智能体模型策略 (2026-10-12 修正): 强模型调子智能体 = 使用**父模型自身**。
+  //   之前这里只接 parentModel (provider 名) 并恒把 modelName 设成 '', 导致:
+  //   ① 显式选了 DeepSeek 却让子智能体跑 provider 默认模型;
+  //   ② 父模型名残留 (如已下架的 agnes-2.0-flash) 会原样传给子智能体 → 上游 503。
+  //   现在 parentModel + parentModelName 成对传入, 完全复刻父模型。仅父模型**熔断**时才降级。
   let subModel = parentModel || 'agentai';
+  let subModelName = parentModelName || '';
 
   // 如果父模型已熔断, 按优先级尝试切换到其他可用模型
   const providerStats = (router as any)?.providers?.get(parentModel);
@@ -412,6 +417,7 @@ export async function runSubagent(
       const envKey = keyMap[alt];
       if (altStats && !altStats.tripped && envKey && process.env[envKey]) {
         subModel = alt;
+        subModelName = ''; // 换 provider 后父模型名不适用, 走该 provider 的默认/环境模型
         console.log(`[subagent] parent model ${parentModel} tripped, switching subagent to ${alt}`);
         break;
       }
@@ -423,7 +429,8 @@ export async function runSubagent(
     userId,
     workspace,
     model: subModel,
-    modelName: subModel === parentModel ? (parentModel === 'sensenova' ? 'sensenova-6.7-flash-lite' : '') : '',
+    // 2026-10-12: 优先用调用方传来的父模型精确名; 未传时保留 sensenova 的旧兜底 (行为兼容)。
+    modelName: subModelName || (subModel === parentModel && parentModel === 'sensenova' ? 'sensenova-6.7-flash-lite' : ''),
     industryId: industryId || '',  // ★ 继承父级行业
   });
 

@@ -33,7 +33,8 @@ const TEST_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
 /** 模型列表 (按 provider 测试) */
 const TEST_MODELS: { provider: string; model: string; label: string }[] = [
   // 免费优先
-  { provider: 'agentai', model: 'agnes-2.0-flash', label: 'Agnes AI Flash (主)' },
+  // 2026-10-12: agnes-2.0-flash 官方已下架 (实测 503) → 换成活的 2.5-flash
+  { provider: 'agentai', model: 'agnes-2.5-flash', label: 'Agnes AI Flash (主)' },
   // 备选
   { provider: 'deepseek', model: 'deepseek-flash', label: 'DeepSeek Flash (V4.1, 原生多模态)' },
   { provider: 'zhipu', model: 'glm-4v-flash', label: 'Zhipu GLM-4V Flash (4.0)' },

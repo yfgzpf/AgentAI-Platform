@@ -527,7 +527,9 @@ const sendEvent = (event: string, data: any) => {
         const MODEL_MAP: Record<string, { provider: string; subModel?: string; label: string; baseURL?: string; contextWindow?: number }> = {
           // ===== Agnes AI (首选) — provider 统一用 'agentai', 因为 providers Map 中注册的是 'agentai' =====
           'agnes-2.5-flash': { provider: 'agentai', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (首选)', contextWindow: 512000 },
-          'agnes-2.0': { provider: 'agentai', subModel: 'agnes-2.0', label: 'Agnes 2.0 (备用)', contextWindow: 256000 },
+          // 2026-10-12: agnes-2.0 官方已下架 (实测 HTTP 503「无可用渠道」) → 保留 id 做别名指向活的 2.5-flash。
+          // 沿用 deepseek-v4-pro 的处理方式: 老客户端/老持久化发这个 id 时静默降级, 不再 503。
+          'agnes-2.0': { provider: 'agentai', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (原 2.0 别名)', contextWindow: 512000 },
           // ===== 基础免费模型 =====
           'agentai': { provider: 'agentai', label: '岐枢 Free (Flash)', contextWindow: 512000 },
           'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash', contextWindow: 200000 },
@@ -1396,7 +1398,8 @@ req.on('close', () => {
       const nss_MODEL_MAP: Record<string, { provider: string; subModel?: string; label: string }> = {
         // ===== Agnes AI (首选) — provider 统一用 'agentai', 因为 providers Map 中注册的是 'agentai' =====
         'agnes-2.5-flash': { provider: 'agentai', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (首选)' },
-        'agnes-2.0': { provider: 'agentai', subModel: 'agnes-2.0', label: 'Agnes 2.0 (备用)' },
+        // 2026-10-12: agnes-2.0 已下架 → 别名指向活的 2.5-flash (同 MODEL_MAP)
+        'agnes-2.0': { provider: 'agentai', subModel: 'agnes-2.5-flash', label: 'Agnes 2.5 Flash (原 2.0 别名)' },
         // ===== 基础免费模型 =====
         'agentai': { provider: 'agentai', label: '岐枢 Free (Flash)' },
         'zhipu': { provider: 'zhipu', subModel: 'glm-4.7-flash', label: '智谱 GLM-4.7 Flash' },
