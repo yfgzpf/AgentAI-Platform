@@ -7,7 +7,7 @@
  *   - 会话列表更清晰
  */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Input, Tooltip, Popconfirm, Dropdown, Modal } from 'antd';
+import { Input, Tooltip, Popconfirm, Dropdown, Modal, App } from 'antd';
 import {
   MessageOutlined, FolderOpenOutlined,
   DeleteOutlined, EditOutlined, SearchOutlined, PlusOutlined,
@@ -15,15 +15,17 @@ import {
   PlayCircleOutlined, CheckCircleOutlined, RollbackOutlined,
   FolderOutlined, FolderAddOutlined, MoreOutlined,
   CalendarOutlined, ClockCircleOutlined, BookOutlined,
-  ThunderboltOutlined,
+  ThunderboltOutlined, AppstoreOutlined,
 } from '@ant-design/icons';
 import { useChatStore } from '../store/chatStore';
 import { useSessionStore, type Session } from '../store/sessionStore';
 import { useModelStore } from '../store/modelStore';
 import { useTaskStore, type TaskSession } from '../store/taskStore';
 import { useProfileStore } from '../store';
+import { switchWorkspace, workspaceLabel } from '../utils/workspace-switch';
+import WorkspacesPanel from './WorkspacesPanel';
 
-type TabKey = 'sessions' | 'files' | 'tasks';
+type TabKey = 'sessions' | 'workspaces' | 'files' | 'tasks';
 
 /** 文件夹类型 */
 interface SessionFolder {
@@ -239,8 +241,87 @@ const SessionsByDateGroup: React.FC<{
   );
 };
 
+/** 按日期把会话切片 (抽成纯函数 — WorkspaceGroup 内二级分组复用) */
+const groupByDate = (sessions: Session[]): Array<{ label: string; sessions: Session[] }> => {
+  const groups: Record<string, Session[]> = {};
+  sessions.forEach(s => {
+    const g = getDateGroup(s.updatedAt);
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(s);
+  });
+  return Object.entries(groups)
+    .sort(([a], [b]) => getGroupWeight(a) - getGroupWeight(b))
+    .map(([label, sess]) => ({ label, sessions: sess.sort((a, b) => b.updatedAt - a.updatedAt) }));
+};
+
+/**
+ * SessionsByWorkspace — 工作区分组 (2026-10-12, 对齐 WorkBuddy 的层级)
+ * 一级: 工作区 (可折叠, 当前工作区默认展开且置顶)
+ * 二级: 日期 (复用 SessionsByDateGroup)
+ */
+const SessionsByWorkspace: React.FC<{
+  label: string;
+  wsKey: string;
+  isCurrent: boolean;
+  sessions: Session[];
+  activeId: string | undefined;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+}> = ({ label, wsKey, isCurrent, sessions, activeId, onSelect, onDelete }) => {
+  // 当前工作区默认展开, 其余默认折叠 (避免历史工作区把当前会话挤出视野)
+  const [collapsed, setCollapsed] = useState(!isCurrent && wsKey !== '未分类');
+  const byDate = useMemo(() => groupByDate(sessions), [sessions]);
+
+  return (
+    <div style={{ marginBottom: 6 }}>
+      {/* 工作区标题 */}
+      <div
+        onClick={() => setCollapsed(!collapsed)}
+        title={wsKey === '未分类' ? '未绑定工作区的历史会话' : wsKey}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '7px 8px', cursor: 'pointer',
+          fontSize: 'var(--fs-sm)', fontWeight: 600,
+          color: isCurrent ? 'var(--accent)' : 'var(--fg-2)',
+          background: isCurrent ? 'var(--accent-soft)' : 'transparent',
+          borderRadius: 'var(--radius-md)',
+          userSelect: 'none',
+        }}
+      >
+        <span style={{
+          transition: 'transform 0.2s',
+          transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+          display: 'inline-flex',
+        }}>
+          <DownOutlined style={{ fontSize: 'var(--fs-micro)' }} />
+        </span>
+        <FolderOpenOutlined style={{ fontSize: 'var(--fs-micro)' }} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ color: 'var(--muted-2)', fontWeight: 400, flexShrink: 0 }}>({sessions.length})</span>
+      </div>
+
+      {/* 会话列表 — 工作区展开后按日期二级分组 */}
+      {!collapsed && (
+        <div style={{ paddingLeft: 8 }}>
+          {byDate.map(g => (
+            <SessionsByDateGroup
+              key={g.label}
+              groupLabel={g.label}
+              sessions={g.sessions}
+              activeId={activeId}
+              onSelect={onSelect}
+              onDelete={onDelete}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'sessions', label: '会话', icon: <MessageOutlined style={{ fontSize: 'var(--fs-sm)' }} /> },
+  { key: 'workspaces', label: '工作区', icon: <AppstoreOutlined style={{ fontSize: 'var(--fs-sm)' }} /> },
   { key: 'files', label: '文件', icon: <FolderOpenOutlined style={{ fontSize: 'var(--fs-sm)' }} /> },
   { key: 'tasks', label: '工作流', icon: <ThunderboltOutlined style={{ fontSize: 'var(--fs-sm)' }} /> },
 ];
@@ -544,11 +625,59 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
   const [newFolderName, setNewFolderName] = useState('');
   const { profile } = useProfileStore();
   const workspace = profile?.workspace || localStorage.getItem('agentai.workspace') || '';
+  // antd message API (点进历史会话切工作区时提示) — 需在 antd <App> 上下文内
+  const { message: messageApi } = App.useApp();
   // ★ 修复: 从 getState() 静态快照改为 hook 响应式订阅
   // 原代码用 getState() 只读一次渲染时的快照, store 变化后组件不重渲染,
   // 导致「删除会话后列表不消失」「点击会话不高亮激活」「新建会话不出现」。
   const { createSession, deleteSession, updateTitle, activeId } = useSessionStore();
-  const sessions = useSessionStore((s) => s.getMySessions());
+  const localSessions = useSessionStore((s) => s.getMySessions());
+
+  // 批次8: gateway 为主 + 本地缓存 — 拉 /api/sessions (每条已带 workspace),
+  // 与本地 sessionStore 按 id 合并 (gateway 优先, 本地未同步的补在后面)。
+  // gateway 不可达时静默降级为纯本地。
+  const [gatewaySessions, setGatewaySessions] = useState<Session[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${GW_HTTP}/api/sessions`);
+        if (!r.ok) return;
+        const json = await r.json();
+        const list: any[] = json?.sessions || [];
+        if (cancelled || !list.length) return;
+        const mapped: Session[] = list.map((g: any) => ({
+          id: g.sessionId,
+          title: g.name || `会话 ${g.sessionId?.slice(-4)}`,
+          messages: [],
+          createdAt: g.createdAt || 0,
+          updatedAt: g.updatedAt || 0,
+          workspace: g.workspace || undefined,
+          userId: g.userId || 'default',
+        }));
+        setGatewaySessions(mapped);
+      } catch { /* gateway 不可达 → 保持空, 纯本地 */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const sessions = useMemo(() => {
+    const byId = new Map<string, Session>();
+    // 本地优先写 (它带 messages), 再合并 gateway (补本地没有的 id)
+    for (const s of localSessions) byId.set(s.id, s);
+    for (const g of gatewaySessions) {
+      if (!byId.has(g.id)) byId.set(g.id, g);
+    }
+    // gateway 版里 updatedAt 比本地新的, 用 gateway 的 (权威)
+    for (const g of gatewaySessions) {
+      const local = byId.get(g.id);
+      if (local && (g.updatedAt || 0) > (local.updatedAt || 0)) {
+        byId.set(g.id, { ...g, messages: local.messages });
+      }
+    }
+    return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [localSessions, gatewaySessions]);
+
   const chatStore = useChatStore.getState();
 
   // 监听定位文件事件 → 自动切换到"文件"tab
@@ -566,27 +695,40 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
     return () => window.removeEventListener('agentai:sidebar-locate-file', handler);
   }, []);
   
-  // 按日期分组会话
-  const groupedSessions = useMemo(() => {
-    const filtered = sessions
-      .filter(s => !searchQuery || s.title.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    const groups: Record<string, Session[]> = {};
-    filtered.forEach(s => {
-      const group = getDateGroup(s.updatedAt);
-      if (!groups[group]) groups[group] = [];
-      groups[group].push(s);
-    });
-    
-    // 按日期排序
-    return Object.entries(groups)
-      .sort(([a], [b]) => getGroupWeight(a) - getGroupWeight(b))
-      .map(([label, sess]) => ({ label, sessions: sess.sort((a, b) => b.updatedAt - a.updatedAt) }));
+  // 按工作区分组会话 (2026-10-12 — 对齐 WorkBuddy: 工作区是一级容器, 会话是其子节点)
+  // 组内再按日期二级分组 (groupByDate 复用于 WorkspaceGroup, 无重复逻辑)
+  const filteredSessions = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return q ? sessions.filter(s => s.title.toLowerCase().includes(q)) : sessions;
   }, [sessions, searchQuery]);
+
+  const groupedByWorkspace = useMemo(() => {
+    const groups: Record<string, Session[]> = {};
+    filteredSessions.forEach(s => {
+      // 空 / 迁移默认值 '未指定工作区' 统一收进 '未分类' 桶 (一个空桶, 清爽)
+      const raw = (s.workspace || '').trim();
+      const key = (!raw || raw === '未指定工作区') ? '未分类' : raw;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(s);
+    });
+    // 当前工作区置顶, 其余按最近更新排序
+    const cur = workspace.replace(/[\\/]+$/, '');
+    return Object.entries(groups)
+      .map(([ws, sess]) => ({
+        ws,
+        label: workspaceLabel(ws, '未分类'),
+        isCurrent: !!cur && ws.replace(/[\\/]+$/, '') === cur,
+        sessions: sess.sort((a, b) => b.updatedAt - a.updatedAt),
+        lastAt: Math.max(...sess.map(s => s.updatedAt)),
+      }))
+      .sort((a, b) => (a.isCurrent === b.isCurrent ? b.lastAt - a.lastAt : a.isCurrent ? -1 : 1));
+  }, [filteredSessions, workspace]);
 
   const handleNewSession = (type: 'chat' | 'image' | 'video' = 'chat') => {
     const titles = { chat: '新对话', image: '生图任务', video: '生视频任务' };
-    createSession(titles[type], undefined, type);
+    // 2026-10-12: 新会话绑定当前工作区 — 否则侧栏按工作区分组时会全部落到"未分类",
+    // 且点进历史会话无法把工作区切回原处。
+    createSession(titles[type], undefined, type, workspace);
     chatStore.clearMessages();
   };
 
@@ -634,9 +776,9 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
               />
             </div>
             
-            {/* 会话列表 */}
+            {/* 会话列表 — 按工作区分组 (一级) → 日期 (二级) */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '0 4px' }}>
-              {groupedSessions.length === 0 ? (
+              {groupedByWorkspace.length === 0 ? (
                 <div style={{
                   padding: '20px 8px',
                   textAlign: 'center',
@@ -646,11 +788,13 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                   {searchQuery ? '未找到匹配的会话' : '暂无对话'}
                 </div>
               ) : (
-                groupedSessions.map(group => (
-                  <SessionsByDateGroup
-                    key={group.label}
-                    groupLabel={group.label}
-                    sessions={group.sessions}
+                groupedByWorkspace.map(g => (
+                  <SessionsByWorkspace
+                    key={g.ws}
+                    wsKey={g.ws}
+                    label={g.label}
+                    isCurrent={g.isCurrent}
+                    sessions={g.sessions}
                     activeId={activeId || undefined}
                     onSelect={id => {
                       // ★ 修复: 判断"被点击的会话"而非"当前激活会话"
@@ -660,6 +804,14 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                         useModelStore.getState().setChatMode('image_edit');
                         const imgModels = useModelStore.getState().models.filter(m => m.modelType === 'image' && m.enabled);
                         if (imgModels.length > 0) useModelStore.getState().setActive(imgModels[0].id);
+                      }
+                      // ★ 2026-10-12: 恢复该会话原本的工作区 ——
+                      //   此前只 setActive(id), 工作区停在"当前选中的"而非"会话所属的",
+                      //   导致进入旧会话后文件/工具全在错误目录下跑。
+                      if (session?.workspace) {
+                        if (switchWorkspace(session.workspace)) {
+                          messageApi.info(`已切换到工作区：${workspaceLabel(session.workspace)}`);
+                        }
                       }
                       useSessionStore.getState().setActive(id);
                     }}
@@ -683,13 +835,15 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
         );
       case 'files':
         return <FileTreePanel workspace={workspace} onFileOpen={onFileOpen} />;
+      case 'workspaces':
+        return <WorkspacesPanel />;
       case 'tasks':
         return <PresetWorkflowList />;
     }
   };
 
   return (
-    <div style={{
+    <div className="pf-panel-enter" style={{
       width, height: '100%', display: 'flex', flexDirection: 'column',
       background: 'var(--panel)', borderRight: '1px solid var(--border)',
     }}>
@@ -716,8 +870,8 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
         ))}
       </div>
       
-      {/* 内容区 */}
-      <div style={{ flex: 1, overflow: 'hidden', padding: '4px 6px', display: 'flex', flexDirection: 'column' }}>
+      {/* 内容区 — key 绑定 activeTab: tab 切换时重挂载播放 pf-fade-in 淡入 */}
+      <div key={activeTab} className="pf-fade-in" style={{ flex: 1, overflow: 'hidden', padding: '4px 6px', display: 'flex', flexDirection: 'column' }}>
         {renderContent()}
       </div>
       

@@ -57,6 +57,49 @@ interface SessionState {
   getMySessions: () => Session[];
   /** 获取所有用户的会话（管理用） */
   getAllSessions: () => Session[];
+  /** 批次8: 按时间 + 每工作区上限清理旧会话 (幂等, 也可外部手动调用) */
+  cleanupOldSessions: (maxPerWorkspace?: number, olderThanDays?: number) => void;
+}
+
+/**
+ * 批次8: 纯函数清理器 — 供测试直接调, 不依赖 store。
+ * 规则 (用户拍板: 历史按时间清理, 但保留每工作区最近 N 条):
+ *   ① 早于 olderThanDays 天的会话 → 删 (除非它在该工作区里排进最近 maxPerWorkspace 条)
+ *   ② 每个工作区只保留最近 maxPerWorkspace 条
+ *   ③ 全局上限 globalCap (默认 200), 超出按 updatedAt 最新保留
+ */
+export function cleanupSessionsList(
+  sessions: Session[],
+  opts: { maxPerWorkspace?: number; olderThanDays?: number; globalCap?: number; now?: number } = {},
+): Session[] {
+  const { maxPerWorkspace = 30, olderThanDays = 14, globalCap = 200 } = opts;
+  const now = opts.now ?? Date.now();
+  const cutoff = now - olderThanDays * 86_400_000;
+
+  // 按 workspace 分组 (无 workspace 的归 '__none__')
+  const byWs = new Map<string, Session[]>();
+  for (const s of sessions) {
+    const key = (s.workspace || '').trim() || '__none__';
+    const arr = byWs.get(key) || [];
+    arr.push(s);
+    byWs.set(key, arr);
+  }
+
+  const kept: Session[] = [];
+  for (const arr of byWs.values()) {
+    // 组内按更新时间倒序
+    const sorted = [...arr].sort((a, b) => b.updatedAt - a.updatedAt);
+    const recent = sorted.slice(0, maxPerWorkspace);
+    const recentIds = new Set(recent.map(s => s.id));
+    for (const s of recent) {
+      // 太旧且不在"每区最近 N"里 → 丢
+      if (s.updatedAt < cutoff && !recentIds.has(s.id)) continue;
+      kept.push(s);
+    }
+  }
+  // 全局上限: 按更新时间倒序取前 globalCap
+  kept.sort((a, b) => b.updatedAt - a.updatedAt);
+  return kept.slice(0, globalCap);
 }
 
 export const useSessionStore = create<SessionState>()(
@@ -67,7 +110,6 @@ export const useSessionStore = create<SessionState>()(
       currentUserId: 'default',
       setCurrentUserId: (userId) => set({ currentUserId: userId }),
       createSession: (title, userId, type = 'chat', workspace?: string) => {
-        // 使用传入的 userId，如果没有则用 currentUserId
         const uid = userId || get().currentUserId || 'default';
         const id = `sess-${Date.now()}`;
         const session: Session = {
@@ -80,14 +122,14 @@ export const useSessionStore = create<SessionState>()(
           type,
           workspace,
         };
-        // P1 修复: 同 workspace 只保留最新 session, 旧的全部删除
-        // 原因: 旧 session 的身份/任务背景过时, 沿用会导致 AI 引用几十天前的上下文
-        set((s) => {
-          const filtered = workspace
-            ? s.sessions.filter(x => x.workspace !== workspace)
-            : s.sessions;
-          return { sessions: [...filtered, session].slice(-50), activeId: id };
-        });
+        // ✅ 批次8 (2026-10-12): 保留同工作区历史会话, 不再每次删除。
+        //   旧逻辑 `filter(x => x.workspace !== workspace)` 会导致"对话历史随工作区保留"
+        //   永远做不到 — 每开新对话就把该工作区所有旧会话清掉了。
+        //   现在改为: 追加 + 按时间清理 (cleanupSessionsList), 既保留历史又不无限膨胀。
+        set((s) => ({
+          sessions: cleanupSessionsList([...s.sessions, session]),
+          activeId: id,
+        }));
         return id;
       },
       deleteSession: (id) => set((s) => ({ sessions: s.sessions.filter(x => x.id !== id), activeId: s.activeId === id ? null : s.activeId })),
@@ -117,6 +159,10 @@ export const useSessionStore = create<SessionState>()(
         return get().sessions.filter(s => s.userId === uid).sort((a, b) => b.updatedAt - a.updatedAt);
       },
       getAllSessions: () => get().sessions,
+      cleanupOldSessions: (maxPerWorkspace, olderThanDays) =>
+        set((s) => ({
+          sessions: cleanupSessionsList(s.sessions, { maxPerWorkspace, olderThanDays }),
+        })),
     }),
     { 
       name: 'agentai-sessions', 
@@ -129,6 +175,8 @@ export const useSessionStore = create<SessionState>()(
           persistedState.sessions = persistedState.sessions.map((s: any) => ({
             ...s,
             userId: s.userId || 'default',
+            // ✅ 批次8: 旧数据默认值统一为 '未指定工作区' → 与侧栏空桶判据保持一致
+            //   (PulseFlowSidebar 把 空/'' / '未指定工作区' 都归进"未分类"桶)
             workspace: s.workspace || '未指定工作区',
             messages: Array.isArray(s.messages)
               ? s.messages.map((m: any) => (
