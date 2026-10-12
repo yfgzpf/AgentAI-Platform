@@ -663,16 +663,17 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
 
   const sessions = useMemo(() => {
     const byId = new Map<string, Session>();
-    // 本地优先写 (它带 messages), 再合并 gateway (补本地没有的 id)
+    // ✅ 修复 (批次8.6): 只显示**本地已同步**的会话 (sessionStore 里有 id)。
+    //   gateway 侧栏只用来"补充 updatedAt 更权威的时间戳", 不把纯 gateway 的
+    //   checkpoint 灌进列表 —— 否则用户看到一堆"会话 xxx + N 条消息"的占位项,
+    //   而不是"摘要 + 真实标题", 且点这些项时工作区切不动 (见 onSelect)。
     for (const s of localSessions) byId.set(s.id, s);
+    // 仅对本地已有的 id 覆盖 updatedAt (gateway 是权威时间戳)
+    const localIds = new Set(localSessions.map(s => s.id));
     for (const g of gatewaySessions) {
-      if (!byId.has(g.id)) byId.set(g.id, g);
-    }
-    // gateway 版里 updatedAt 比本地新的, 用 gateway 的 (权威)
-    for (const g of gatewaySessions) {
-      const local = byId.get(g.id);
-      if (local && (g.updatedAt || 0) > (local.updatedAt || 0)) {
-        byId.set(g.id, { ...g, messages: local.messages });
+      if (localIds.has(g.id)) {
+        const local = byId.get(g.id)!;
+        byId.set(g.id, { ...local, updatedAt: Math.max(local.updatedAt || 0, g.updatedAt || 0) });
       }
     }
     return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -797,17 +798,18 @@ export const PulseFlowSidebar: React.FC<{ width?: number; onFileOpen?: (path: st
                     sessions={g.sessions}
                     activeId={activeId || undefined}
                     onSelect={id => {
-                      // ★ 修复: 判断"被点击的会话"而非"当前激活会话"
-                      const session = useSessionStore.getState().sessions.find(s => s.id === id);
+                      // ★ 修复 (批次8.6): 从**合并后的** sessions 里查 (含 gateway 补的 workspace),
+                      //   而不是只查本地 sessionStore —— 否则对"只在 gateway 里"的会话
+                      //   session=undefined, switchWorkspace 被跳过 → 点击不切工作区。
+                      const session = sessions.find(s => s.id === id)
+                        || useSessionStore.getState().sessions.find(s => s.id === id);
                       // 点击生图会话时自动切换到 image_edit 模式并选择生图模型
                       if (session?.type === 'image') {
                         useModelStore.getState().setChatMode('image_edit');
                         const imgModels = useModelStore.getState().models.filter(m => m.modelType === 'image' && m.enabled);
                         if (imgModels.length > 0) useModelStore.getState().setActive(imgModels[0].id);
                       }
-                      // ★ 2026-10-12: 恢复该会话原本的工作区 ——
-                      //   此前只 setActive(id), 工作区停在"当前选中的"而非"会话所属的",
-                      //   导致进入旧会话后文件/工具全在错误目录下跑。
+                      // ★ 恢复该会话原本的工作区 —— 进旧会话后文件/工具才在正确目录跑
                       if (session?.workspace) {
                         if (switchWorkspace(session.workspace)) {
                           messageApi.info(`已切换到工作区：${workspaceLabel(session.workspace)}`);
