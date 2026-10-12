@@ -677,6 +677,12 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 - 物理备份: write_file/multi_edit 修改前备份到 .agentai/backups/
 - undo_edit: 支持回滚最近一次修改
 - 重复失败检测: 同一工具连续失败 3 次 → 强制换方案
+- 死循环硬停: 同一轮内 5 条 tool 消息里 ≥4 条同签名 (工具名+args) → 硬停; 第 2 次硬停 → force break
+  ⚠️ **2026-10-12 修复 (批次3)**：此前该护栏在**新任务第 1 轮就误杀**，三个叠加缺陷：
+  1. 判据吃**整个会话**的 `appendOnlyLog` 的 tool 消息（它是会话级 append-only，跨任务存活）→ 上个任务残留的 4 条 `search_content::同参数` 直接让新任务第 1 轮凑出「4/5 相同」
+  2. 搜索类豁免是**全有全无**（`allExempt = last5.every(豁免)`）→ 5 条里混进 1 条非搜索工具（实测 `generate_diagram`），另 4 条同签名 `search_content` 立刻触发
+  3. `_hardStopCount` / `_toolCallHistory` 是**进程级、只写不清零** → 跑过 2 次硬停后，之后每一次误判都直接跳 force break
+  修法（`agentai-loop.ts`）：`_iterToolStartIdx` 水位线（dispatch 前打点，判据只切本轮）+ 豁免按签名剔除（`countedSigs`）+ 三者在 `run()` 开头归零
 - 工具风险等级: low/medium/high/critical 标记
 
 ---
@@ -787,8 +793,9 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 上下文注入 | 8 层 | **8 层是目标，实际 32 处字面量 / 49 处 `systemMsgs.push` / 14 个顶层 try-catch**（buildImmutablePrefix `:812-1927`）| `grep -c "systemMsgs.push(" src/agentai-loop.ts`；`awk 'NR>=812 && NR<=1927 && /^    try \{/' …` |
 | system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
 | 60K 上下文预算实际覆盖 | "硬闸门" | **只覆盖 7 条 soul 注入, 其中仅 priority=30 的 5 条可丢**；44 条注入不可触碰 | `grep -n "track('" src/agentai-loop.ts` → 7 |
-| 测试覆盖 | "无 E2E" | 68 文件 / **832 测试 / 2 失败**（2026-10-11 重测；原 804/7 中 5 个是循环无上限导致的超时） | vitest |
+| 测试覆盖 | "无 E2E" | 68 文件 / **838 测试 / 2 失败**（2026-10-12 重测；原 804/7 中 5 个是循环无上限导致的超时） | vitest |
 | 运行时守卫 | 无 | **4 个真缺口已补**（`_failTracker` / `repeat_write` / `TOOL_CALL_BUDGET=200` / 独立迭代硬闸），**对所有 tier 生效** | `packages/agentai-gateway/src/runtime-guard.test.ts` |
+| 死循环护栏误杀 | 判据吃**整个会话**的 tool 消息 + 搜索豁免全有全无 + `_hardStopCount`/`_toolCallHistory` 进程级只写不清零 → **新任务第 1 轮被强杀** | **已修**：`_iterToolStartIdx` 水位线（判据只切本轮）+ 豁免按签名剔除（`countedSigs`）+ 三者在 `run()` 开头归零 | `grep -n "_iterToolStartIdx" packages/agentai-gateway/src/agentai-loop.ts`；`npx vitest run src/runtime-guard.test.ts` → 33/33 |
 | 历史压缩吞 user 消息 | 压缩后 `appendOnlyLog` 里 **0 条 user** → router 注入"请继续完成之前的任务。" → 空回复 → 救援链 → 任务中断 | **修**: 被压掉的旧 user 原样搬回 `recent`（`carriedUsers` 上限 3 条）；摘要输入仍是整个 `head` | `grep -n "const carriedUsers" packages/agentai-gateway/src/agentai-loop.ts`；`npx vitest run src/context-fidelity.test.ts` → 9/9 |
 | 自动化抢用户任务 | cron tick 与用户任务并发 → 卡顿 | **修**: 用户任务期间跳过 cron tick（TTL 心跳 `runtime-activity.ts`，`USER_TASK_TTL_MS=300_000`），纯让路（不计数、不自动禁用）；`officecli` 的 `execSync` 改异步 exec | `grep -n "isUserTaskActive" packages/agentai-gateway/src/automation-engine.ts` |
 | deepseek-v4-pro | 强模型/救援目标/GUI 列表均有"pro" | **已下线**（官方 2026-09-14 已停）；provider 作用域别名兜底 `RETIRED_MODEL_ALIASES` | `grep -rn "v4-pro" packages/agentai-gateway/src/model-classifier.ts`（仅注释） |
@@ -827,9 +834,9 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 - 上下文注入点：`grep -c "role: 'system'" packages/agentai-gateway/src/agentai-loop.ts`
 - 核心文件规模：`wc -l packages/agentai-gateway/src/*.ts | sort -rn | head`
 - 测试基线：`cd packages/agentai-gateway && npx vitest run --reporter=dot`
-  （⚠️ **2026-10-11 更新：832 测试 / 2 失败**。原 `804 / 7 失败` 里的
+  （⚠️ **2026-10-12 更新：838 测试 / 2 失败**。原 `804 / 7 失败` 里的
   `context-fidelity 3 + ledger-wiring 2` **不是断言写错, 而是 `Test timed out in 10000ms`** ——
   循环无迭代上限导致空转（实测跑到 `iter=48`）；批次1 的 G4 迭代硬闸修好了它们。
   剩余 2 个**与本轮无关且改动前就在失败**：b1-security 1（断言 `tools.ts` 用 `execFile('git')`）、
   safety/code-runner 1（断言 `scanForbiddenPatterns` 拒绝 `fs` import）。）
-- 运行时守卫回归：`cd packages/agentai-gateway && npx vitest run src/runtime-guard.test.ts --reporter=dot`（27 项）
+- 运行时守卫回归：`cd packages/agentai-gateway && npx vitest run src/runtime-guard.test.ts --reporter=dot`（33 项）

@@ -278,6 +278,17 @@ private _hardStopCount = 0;     // v3.1 硬停次数: 超过 2 次直接 force b
 private _toolCallHistory = new Set<string>();
 
 /**
+ * 2026-10-12 修复: 本轮 dispatch 之前的 tool 消息数 (死循环判据的起点)
+ * ============================================================
+ * 原判据 `const toolMsgs = this.context.appendOnlyLog.filter(role==='tool')` 取的是
+ * **整个会话**的 tool 消息, 而 appendOnlyLog 是会话级 append-only (跨任务) ——
+ * 于是上一个任务遗留的 N 条 `search_content::同参数` 会和本轮混在一起,
+ * 让**新任务的第 1 轮**就凑出「连续 5 次相同」→ 误判死循环 → 硬停 → 任务被强杀。
+ * 现在按「本轮新增的 tool 消息」判定: 在 dispatchToolCalls 之前记录水位线。
+ */
+private _iterToolStartIdx = 0;
+
+/**
  * 2026-10-11 修复: 跨迭代「同一工具+同一参数」连续失败计数器
  * ============================================================
  * 原实现把 duplicateTracker 声明在每轮工具分支内 (`const duplicateTracker = new Map()`),
@@ -2044,6 +2055,15 @@ async run(userMessage: string | { content: MessageContent }): Promise<ChatRespon
   this._failTracker.clear();   // 2026-10-11: 失败计数按任务隔离 (不跨 run 累积)
   this._toolCallCount = 0;     // 2026-10-11: 工具调用预算按任务归零
   this._iterCapWarned = false; // 2026-10-11: 迭代上限软着陆标记按任务归零
+  // ═══ 2026-10-12: 死循环护栏的计数器必须按任务隔离 ═══
+  // _hardStopCount 原为进程级 (只 ++ 从不清零): 跑过 2 次硬停后, **之后每一次误判都直接
+  //   跳 force break** → 任务在第 1 轮被强杀 (用户实测日志两行连续出现即此)。
+  // _toolCallHistory 原为进程级 (只 add 从不清零): 上个任务调过的 `search_content::参数`
+  //   会在下个任务被当「重复调用」直接跳过, 反过来又给死循环统计喂料。
+  this._hardStopCount = 0;
+  this._hardStopNext = false;
+  this._toolCallHistory.clear();
+  this._iterToolStartIdx = 0;
   // 2026-10-11: 标记「用户任务开始」→ 自动化引擎的 cron:tick 期间让路 (runtime-activity.ts)
   touchUserTask();
   logger.debug(`[loop] task isolation: _taskType=${this._taskType}, _forceSkill cleared`);
@@ -4157,6 +4177,9 @@ if (isComplexTask) {
           toolNames: res.toolCalls.map((tc: any) => tc.name).join(', ')
         });
         
+        // 2026-10-12: 记录本轮 dispatch 前的 tool 消息水位线 —— 死循环判据只看本轮
+        // (见 _iterToolStartIdx 声明处的说明)
+        this._iterToolStartIdx = this.context.appendOnlyLog.filter(m => m.role === 'tool').length;
         const rawResults = await this.dispatchToolCalls(res.toolCalls);
         // ═══ 2026-10-11 工具调用总预算 (G3) ═══
         // 与 _capabilityTier 无关, 对所有 tier 生效。超限不硬 break —— 注入收尾指令
@@ -4846,70 +4869,80 @@ if (isComplexTask) {
             'web_fetch', 'read_file', 'list_directory', 'directory_tree',
             'find_references', 'get_outline', 'find_file', 'search_files',
           ]);
-          if (toolMsgs.length >= 5) {
-            const last5 = toolMsgs.slice(-5);
-            // 搜索类工具豁免 — 正常探索行为不应被封停
-            const lastToolNames = last5.map((m: any) => m.name || 'unknown');
-            const allExempt = lastToolNames.every((n: string) => LOOP_EXEMPT_TOOLS.has(n));
-            if (allExempt) {
-              // 豁免: 不做死循环检测, 让 AI 自由探索
-            } else {
-              const sig = (m: any) => {
-                const name = m.name || 'unknown';
-                // P0 修复: 用完整 args 生成签名, 而非 content.slice(0,60)
-                // content 是工具返回结果, 不同参数可能返回相似结果导致误判
-                const argsStr = JSON.stringify(m.args || {}).slice(0, 200);
-                return `${name}::${argsStr}`;
-              };
-              const sigs = last5.map(sig);
-              // 5 次中至少 4 次相同才触发 (允许 1 次不同)
-              const sigCounts = new Map<string, number>();
-              for (const s of sigs) sigCounts.set(s, (sigCounts.get(s) || 0) + 1);
-              const maxCount = Math.max(...sigCounts.values());
-                            if (maxCount >= 4) {
-                const repeatName = (last5[0] as any).name || 'unknown';
-                const errResults = last5.filter(m => typeof m.content === 'string' && (m.content.startsWith('[ERROR]') || m.content.includes('未启动') || m.content.includes('失败')));
-                const isErrorLoop = errResults.length >= 3;
+          // ═══ 2026-10-12 修复 A1: 判据只看【本轮】新增的 tool 消息 ═══
+          // 原实现用 toolMsgs (=整个会话 appendOnlyLog 里的 tool 消息)。appendOnlyLog 是
+          // 会话级 append-only (跨任务存活), 所以上一个任务遗留的 N 条 `search_content::同参数`
+          // 会和本轮混在一起 —— **新任务的第 1 轮**就能凑出「5 次里 4 次同签名」→ 误判死循环
+          // → 硬停 → 任务被强杀。改为从 dispatch 前记录的水位线切起。
+          const toolMsgsThisIter = this.context.appendOnlyLog
+            .filter(m => m.role === 'tool')
+            .slice(this._iterToolStartIdx);
+          if (toolMsgsThisIter.length >= 5) {
+            const last5 = toolMsgsThisIter.slice(-5);
+            const isExemptName = (n: string) => LOOP_EXEMPT_TOOLS.has(n);
+            const sig = (m: any) => {
+              const name = m.name || 'unknown';
+              // P0 修复: 用完整 args 生成签名, 而非 content.slice(0,60)
+              // content 是工具返回结果, 不同参数可能返回相似结果导致误判
+              const argsStr = JSON.stringify(m.args || {}).slice(0, 200);
+              return `${name}::${argsStr}`;
+            };
+            // ═══ 2026-10-12 修复 A2: 豁免改成【按签名】而非"全有全无" ═══
+            // 原 allExempt = last5.every(是豁免工具) → 最后 5 条里只要混进 1 条非搜索工具
+            // (实测日志里的 generate_diagram), 另外 4 条同签名的 search_content 就会触发
+            // maxCount>=4 → 越是"搜一下再画个图"这种正常操作越容易被判死循环。
+            // 现在把豁免工具产生的签名整组剔除, 只统计非豁免签名 ("5 次中至少 4 次相同")。
+            const sigs = last5.map(sig);
+            const countedSigs = sigs.filter(s => !isExemptName(s.split('::')[0] || ''));
+            const sigCounts = new Map<string, number>();
+            for (const s of countedSigs) sigCounts.set(s, (sigCounts.get(s) || 0) + 1);
+            const maxCount = countedSigs.length > 0 ? Math.max(...sigCounts.values()) : 0;
+            if (maxCount >= 4) {
+              // repeatName 取真正重复的那个签名 (原取 last5[0]: 一旦首条是豁免工具就会报错名字)
+              const repeatSig = [...sigCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+              const repeatName = repeatSig.split('::')[0] || 'unknown';
+              const errResults = last5.filter(m => typeof m.content === 'string' && (m.content.startsWith('[ERROR]') || m.content.includes('未启动') || m.content.includes('失败')));
+              const isErrorLoop = errResults.length >= 3;
 
-                logger.warn(`[loop] 🛑 死循环硬停: ${repeatName} 连续 5 次返回相同/错误结果, 强制终止`);
-                taskSnap?.appendLog('warn', 'dead-loop-hard-stop', { tool: repeatName, signatures: sigs, errLoop: isErrorLoop });
-                // 注入强引导 + 硬停
-                this.directives.add('dead_loop_stop',
-                  `[SYSTEM] ⚠️ 工具 "${repeatName}" 连续多次返回相同结果${isErrorLoop ? '且包含错误' : ''}。
+              logger.warn(`[loop] 🛑 死循环硬停: ${repeatName} 连续 5 次返回相同/错误结果, 强制终止`);
+              taskSnap?.appendLog('warn', 'dead-loop-hard-stop', { tool: repeatName, signatures: sigs, errLoop: isErrorLoop });
+              // 注入强引导 + 硬停
+              this.directives.add('dead_loop_stop',
+                `[SYSTEM] ⚠️ 工具 "${repeatName}" 连续多次返回相同结果${isErrorLoop ? '且包含错误' : ''}。
 不要再调用任何工具！请立即:
 1) 总结目前已知的信息
 2) 解释为什么这个工具没工作${isErrorLoop ? '（很可能是浏览器/服务未启动，提示用户检查）' : ''}
 3) 给出基于现有信息的最终答案`,
-                  'high'
-                );
+                'high'
+              );
 
-                // 标记硬停, 下一轮注入 SYSTEM 后立即退出
-                this._hardStopNext = true;
-                this._hardStopCount++;
-                // 如果已经硬停过 2 次, AI 仍在忽略 → 强制 force break
-                if (this._hardStopCount >= 2) {
-                  logger.warn(`[loop] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break`);
-                  taskSnap?.appendLog('warn', 'dead-loop-force-break', { tool: repeatName, hardStopCount: this._hardStopCount });
-                  this.directives.add('force_break',
-                    `[SYSTEM] ⚠️ 硬停失败, 强制退出循环。最终回答基于已知信息。`,
-                    'critical'
-                  );
-                  lastResponse = {
-                    content: this.context.appendOnlyLog
-                      .filter(m => m.role === 'tool')
-                      .slice(-3)
-                      .map(m => typeof m.content === 'string' ? m.content.slice(0, 200) : '')
-                      .join('\n---\n') || `[已强制退出循环] 工具 ${repeatName} 连续返回相同结果。`,
-                    provider: 'forced' as any,
-                    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
-                    durationMs: 0,  // v3.2 修复: ChatResponse 要求此字段
-                  };
-                  break;  // 直接跳出整个 while 循环
-                }
-                continue;
-              } // 关闭 if (maxCount >= 4)
-            } // 关闭 else (非豁免工具)
-          }  // 关闭 if (toolMsgs.length >= 5) — v3.3 修复: 阈值从 3 提高到 5
+              // 标记硬停, 下一轮注入 SYSTEM 后立即退出
+              this._hardStopNext = true;
+              this._hardStopCount++;
+              // 如果已经硬停过 2 次, AI 仍在忽略 → 强制 force break
+              // (注: _hardStopCount 已在 run() 开头按任务归零, 不再跨任务累积)
+              if (this._hardStopCount >= 2) {
+                logger.warn(`[loop] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break`);
+                taskSnap?.appendLog('warn', 'dead-loop-force-break', { tool: repeatName, hardStopCount: this._hardStopCount });
+                this.directives.add('force_break',
+                  `[SYSTEM] ⚠️ 硬停失败, 强制退出循环。最终回答基于已知信息。`,
+                  'critical'
+                );
+                lastResponse = {
+                  content: this.context.appendOnlyLog
+                    .filter(m => m.role === 'tool')
+                    .slice(-3)
+                    .map(m => typeof m.content === 'string' ? m.content.slice(0, 200) : '')
+                    .join('\n---\n') || `[已强制退出循环] 工具 ${repeatName} 连续返回相同结果。`,
+                  provider: 'forced' as any,
+                  usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+                  durationMs: 0,  // v3.2 修复: ChatResponse 要求此字段
+                };
+                break;  // 直接跳出整个 while 循环
+              }
+              continue;
+            } // 关闭 if (maxCount >= 4)
+          }  // 关闭 if (toolMsgsThisIter.length >= 5) — 2026-10-12: 判据改为「本轮」
         } catch (loopDetectErr: any) {
           // v3.2 防御: 即使死循环检测内部出错, 也不影响主循环
           logger.warn('[loop] ⚠️ 死循环检测块异常 (已吞掉, 不影响主流程):', loopDetectErr?.message);

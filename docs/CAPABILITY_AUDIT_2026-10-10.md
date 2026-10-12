@@ -592,3 +592,63 @@ grep -c "✓ L2 rescue" src/agentai-loop.ts          # 0
 - `docs/reports/REVOLUTIONARY_PROACTIVE_ENGINE_REPORT.md:319`（`model: 'deepseek-pro'`）与
   `docs/wechat-article-pulseflow.md:104` 仍提 V4 Pro —— 属**历史文档，有意不动**。
 - `packages/agentai-gui/src/utils/modelPicker.test.ts:130-132` 用合成 `deepseek-v4-pro` 夹具（能通过），按精准修改原则未动。
+
+---
+
+## 九、2026-10-12 批次3 addendum — 死循环护栏误杀
+
+### 9.1 现象（用户实机日志）
+
+```
+[gw] [tools-filter] iter=1 313 → 25 tools (msg: 为什么你在这里老是不能完成 长任务呢)
+[gw] [loop][WARN] 🛑 死循环硬停: search_content 连续 5 次返回相同/错误结果, 强制终止
+[gw] [loop][WARN] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break
+[gw] [supervisor] ✅ 任务完成 — 17秒 | +0 -0 (0 files)
+```
+
+任务在 **第 1 轮** 就被判死循环并强杀；且用户已显式选定 DeepSeek 4.1（`deepseek-flash`，
+能力 `tier=autonomous`，`maxIter=90`）—— **不是模型弱，是护栏误判**。
+
+### 9.2 三个叠加缺陷（全部实测定位）
+
+| # | 缺陷 | 位置 | 后果 |
+|---|------|------|------|
+| A1 | 判据取 `this.context.appendOnlyLog.filter(role==='tool')` | `agentai-loop.ts` 死循环块 | `appendOnlyLog` 是**会话级 append-only（跨任务存活）**，上个任务遗留的 4 条 `search_content::同参数` 让新任务第 1 轮即凑出「4/5 相同」 |
+| A2 | `const allExempt = lastToolNames.every(n => LOOP_EXEMPT_TOOLS.has(n))` | 同上 | 5 条里混进 1 条非搜索工具（实测 `generate_diagram`）→ `allExempt=false` → 另 4 条同签名 `search_content` 触发 `maxCount>=4`。**"搜一下再画个图"这种正常操作最容易中招** |
+| A3 | `_hardStopCount` / `_toolCallHistory` 只写不清零 | 字段声明处 + `run()` | 进程级累积：跑过 2 次硬停后**之后每一次误判都直接跳 force break**（日志两行连续出现即此）；`_toolCallHistory` 残留还会把上个任务的签名当「重复调用」跳过 |
+
+另有一处同源问题：`repeatName` 取 `last5[0].name`，首条若是豁免工具则**报错工具名**。
+
+### 9.3 修法（**只改 1 个文件**，`agentai-loop.ts`）
+
+1. 新增实例字段 `private _iterToolStartIdx = 0;`（本轮 dispatch 前的 tool 消息水位线）。
+2. `const rawResults = await this.dispatchToolCalls(...)` **之前**打点：
+   `this._iterToolStartIdx = this.context.appendOnlyLog.filter(m => m.role === 'tool').length;`
+3. 判据改为本轮切片：
+   `const toolMsgsThisIter = this.context.appendOnlyLog.filter(m => m.role === 'tool').slice(this._iterToolStartIdx);`
+4. 豁免按签名：`const countedSigs = sigs.filter(s => !isExemptName(s.split('::')[0] || ''));`
+   —— 豁免工具产生的签名**整组剔除**，只统计非豁免签名。空数组守卫 `countedSigs.length > 0 ? Math.max(...) : 0`
+   （否则 `Math.max(...[]) === -Infinity` 会意外通过）。
+5. `repeatName` 取真正重复的签名：`[...sigCounts.entries()].sort((a,b)=>b[1]-a[1])[0][0].split('::')[0]`。
+6. `run()` 开头归零：`this._hardStopCount = 0; this._hardStopNext = false; this._toolCallHistory.clear(); this._iterToolStartIdx = 0;`
+   （紧邻既有的 `_failTracker.clear()` / `_toolCallCount = 0` / `_iterCapWarned = false`）。
+
+`LOOP_EXEMPT_TOOLS` 名单**未改**（搜索类工具的正常探索行为仍需保护）；`_hardStopCount >= 2 → force break` 的
+**升级语义保留**（只在同一任务内累计）。
+
+### 9.4 本轮核验命令
+
+```bash
+cd packages/agentai-gateway
+npx tsc --noEmit                                          # 0 error
+npx vitest run src/runtime-guard.test.ts --reporter=basic # 33 passed (原 27 + 改-10 共 6)
+npx vitest run --reporter=dot                             # 838 / 2 failed (b1-security 1, code-runner 1 — 改动前既有)
+grep -n "_iterToolStartIdx" src/agentai-loop.ts           # 声明 + run() 归零 + dispatch 前打点
+grep -c "const allExempt = " src/agentai-loop.ts          # 0 (旧全有全无豁免已删)
+```
+
+### 9.5 如实披露
+
+- 行为级测试的 LLM 是**打桩的**，验证的是**循环控制流**（不产生 `dead_loop_stop` / `force_break`
+  directive 与 `loop:hard-stop` 事件），**不是**"真机上模型不再被误杀"。真机复现需用户重跑同一提示词。
+- 未改 `toolMsgs`（整个会话口径）—— 它仍被 `:4804` 的「操作感知提醒」使用，该提醒**有意**看全局，只修了死循环判据。

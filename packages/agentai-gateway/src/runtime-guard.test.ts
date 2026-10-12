@@ -14,6 +14,10 @@
  *   改-8  history-compress MAX_MSGS 比较对象修正 — user 消息不再被吞 (空回复根因)
  *   改-9  runtime-activity 用户任务期间 cron 让路 + officecli 不再同步阻塞事件循环
  *
+ * 批次3「死循环护栏误杀」(2026-10-12, 用户实机日志: 任务总在 iter=1 被强杀):
+ *   改-10 dead-loop      判据只看「本轮」tool 消息 + 豁免按签名 + 计数器按任务归零
+ *        (原判据吃整个会话的 appendOnlyLog; _hardStopCount/_toolCallHistory 永不清零)
+ *
  * ⚠️ 诚实边界: 这里的 LLM 是打桩的, 验证的是**循环控制流**, 不是"模型真的变聪明了"。
  *    无 LLM 环境下无法端到端证明"换方案", 故行为测试断言的是可观测的守卫出口
  *    (事件 / directive), 而非模型行为。
@@ -473,5 +477,132 @@ describe('改-9 自动化让路 + 不再同步阻塞事件循环', () => {
     expect(officeBody, 'execSync 会冻结整个 gateway (SSE 停推/其他会话卡死)').not.toMatch(/execSync\(/);
     expect(officeBody).toMatch(/exec\(cmd, \{/);
   });
+});
+
+/**
+ * 批次3 — 死循环护栏误杀 (2026-10-12)
+ * ==========================================================================
+ * 用户实机日志 (选 4.1, 任务 17 秒就"完成", 实际什么都没做):
+ *   [loop] 🛑 死循环硬停: search_content 连续 5 次返回相同/错误结果, 强制终止
+ *   [loop] 🛑🛑 多次硬停后 AI 仍调用同工具, 强制 force break
+ *
+ * 三个叠加缺陷 (都是「会话级/进程级状态」被当成「本轮状态」用):
+ *   A1 判据吃的是 `appendOnlyLog` 全部 tool 消息 (会话级 append-only, 跨任务),
+ *      上个任务的 search_content 会和新任务混在一起 → 新任务第 1 轮就"连续 5 次";
+ *   A2 豁免 `last5.every(豁免工具)` 是全有全无 —— 混进 1 条 generate_diagram 就失效,
+ *      另外 4 条同签名 search_content 触发 maxCount>=4;
+ *   A3 `_hardStopCount` / `_toolCallHistory` 只写不清零 → 跨任务累积,
+ *      第 2 次误判直接 force break (任务当场死)。
+ *
+ * ⚠️ 诚实边界: 这里是**源码契约级**验证 + 计数器的行为级验证。
+ *    完整"5 轮同签名真的会硬停 / 跨任务残留不再误停"需要一个能跑满 5 轮的
+ *    行为夹具 (单次 run 内模拟 6 轮 dispatch), 本轮未构造 → 明确标注为未覆盖。
+ */
+describe('改-10 死循环护栏误杀 (批次3)', () => {
+  it('A1 判据只看本轮 tool 消息: 水位线字段 + 按本轮切片', () => {
+    // 字段存在 (会话级 appendOnlyLog 需要一个"本轮起点"水位线)
+    expect(LOOP_SRC).toMatch(/private _iterToolStartIdx = 0;/);
+    // dispatch 之前打点
+    expect(LOOP_SRC).toMatch(/this\._iterToolStartIdx = this\.context\.appendOnlyLog\.filter\(m => m\.role === 'tool'\)\.length;/);
+    // 判据用切片, 而不是整个会话
+    expect(LOOP_SRC).toMatch(/const toolMsgsThisIter = this\.context\.appendOnlyLog/);
+    expect(LOOP_SRC).toMatch(/\.slice\(this\._iterToolStartIdx\)/);
+    expect(LOOP_SRC).toMatch(/if \(toolMsgsThisIter\.length >= 5\)/);
+    // 旧的 `toolMsgs.slice(-5)` 死循环判据必须消失
+    expect(LOOP_SRC).not.toMatch(/const last5 = toolMsgs\.slice\(-5\)/);
+  });
+
+  it('A2 豁免按签名, 不再是"全有全无"的 allExempt', () => {
+    expect(LOOP_SRC).toMatch(/const countedSigs = sigs\.filter\(s => !isExemptName\(s\.split\('::'\)\[0\] \|\| ''\)\)/);
+    expect(LOOP_SRC).toMatch(/const isExemptName = \(n: string\) => LOOP_EXEMPT_TOOLS\.has\(n\)/);
+    expect(LOOP_SRC).not.toMatch(/const allExempt = /);
+    // 空 countedSigs 不得让 Math.max(...[]) === -Infinity 意外通过
+    expect(LOOP_SRC).toMatch(/countedSigs\.length > 0 \? Math\.max\(\.\.\.sigCounts\.values\(\)\) : 0/);
+    // 豁免名单本身保留 (搜索类工具正常探索不能被封停)
+    expect(LOOP_SRC).toMatch(/'search_content', 'search_codebase', 'grep', 'glob', 'web_search'/);
+  });
+
+  it('A3 死循环计数器按任务归零 (原为进程级, 只写不清零)', () => {
+    // run() 开头必须清零这两个 + 上一轮的硬停标志/水位线
+    const resetIdx = LOOP_SRC.indexOf('this._failTracker.clear();');
+    expect(resetIdx).toBeGreaterThan(-1);
+    const resetBlock = LOOP_SRC.slice(resetIdx, resetIdx + 900);
+    expect(resetBlock, '_hardStopCount 跨任务累积 → 第2次误判直接 force break').toMatch(/this\._hardStopCount = 0;/);
+    expect(resetBlock, '_toolCallHistory 跨任务残留 → 旧签名被当重复跳过').toMatch(/this\._toolCallHistory\.clear\(\);/);
+    expect(resetBlock).toMatch(/this\._hardStopNext = false;/);
+    expect(resetBlock).toMatch(/this\._iterToolStartIdx = 0;/);
+  });
+
+  it('行为级: 5 条里 4 条同签名 search_content + 1 条 generate_diagram 不再被误判死循环', async () => {
+    // 这正是用户实机日志的场景: 搜了几次 + 画了个图。
+    // 旧实现 allExempt = last5.every(豁免工具) → generate_diagram 不是豁免工具 ⇒ allExempt=false
+    //   ⇒ 4 条同签名 search_content 命中 maxCount>=4 ⇒ 死循环硬停。
+    // 新实现按签名豁免 ⇒ search_content 的 4 条整组剔除, 只剩 generate_diagram(count=1) ⇒ 不触发。
+    const sameArgs = { pattern: 'death loop', path: 'src' };
+    const { loop } = makeLoop((round) => {
+      if (round > 1) return { content: '收尾', finishReason: 'stop' };
+      return {
+        content: '',
+        finishReason: 'tool_calls',
+        toolCalls: [
+          { id: 'c1', name: 'search_content', args: sameArgs },
+          { id: 'c2', name: 'search_content', args: sameArgs },
+          { id: 'c3', name: 'search_content', args: sameArgs },
+          { id: 'c4', name: 'search_content', args: sameArgs },
+          { id: 'c5', name: 'generate_diagram', args: { kind: 'flow' } },
+        ],
+      };
+    }, { maxIterations: 4 });
+
+    const events = watchEvents(loop);
+    const directives = watchDirectives(loop);
+    await loop.run('先搜一下再画个图');
+
+    expect(
+      directives.includes('dead_loop_stop') || directives.includes('force_break'),
+      `正常"搜索+画图"不能被判死循环; 实际 directives=${directives.join(',')}`,
+    ).toBe(false);
+    expect(events.includes('loop:hard-stop')).toBe(false);
+  }, 60000);
+
+  it('行为级: 上一次任务遗留的工具记录不参与本轮死循环判定', async () => {
+    // A1 的回归: 旧实现判据吃整个 appendOnlyLog (会话级 append-only),
+    // 于是"上个任务搜了 5 次"会让**新任务第 1 轮**就被判死循环。
+    const { loop } = makeLoop(() => ({ content: '收尾', finishReason: 'stop' }));
+    // 模拟上个任务遗留: 4 条同签名 + 1 条其它, 全是非豁免工具
+    for (let i = 0; i < 4; i++) {
+      (loop as any).context.appendOnlyLog.push({
+        role: 'tool', name: 'run_command', args: { command: 'same' }, content: 'ok',
+      });
+    }
+    (loop as any).context.appendOnlyLog.push({
+      role: 'tool', name: 'run_command', args: { command: 'other' }, content: 'ok',
+    });
+
+    const directives = watchDirectives(loop);
+    await loop.run('新任务');
+
+    expect(
+      directives.includes('dead_loop_stop') || directives.includes('force_break'),
+      `历史残留不得让新任务第一轮被强杀; 实际 directives=${directives.join(',')}`,
+    ).toBe(false);
+  }, 60000);
+
+  it('行为级: 同一 loop 实例跑两次 run, 第二次的计数器不得继承第一次', async () => {
+    // 直接读私有字段: 第一次 run 后人为置 2 (模拟"该实例历史上被硬停过"),
+    // 再跑一次 run, 断言它被 run 开头清回 0 —— 这正是"跨任务累积 → 第2次误判直接
+    // force break"的修复点 (原实现只 ++ 从不清零, 是进程级状态)。
+    const { loop } = makeLoop((round) =>
+      round > 1 ? { content: '收尾', finishReason: 'stop' } : { content: 'ok', finishReason: 'stop' },
+    );
+
+    await loop.run('第一次任务');
+    loop._hardStopCount = 2;                                       // 模拟历史累积
+    loop._toolCallHistory.add('search_content::{"pattern":"x"}');  // 模拟跨任务残留签名
+    await loop.run('第二次任务');
+
+    expect(loop._hardStopCount, 'run() 开头必须清零').toBe(0);
+    expect(loop._toolCallHistory.size, 'run() 开头必须清空').toBe(0);
+  }, 60000);
 });
 
