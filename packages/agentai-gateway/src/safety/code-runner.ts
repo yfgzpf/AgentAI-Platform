@@ -18,6 +18,17 @@ const FORBIDDEN_PATTERNS: { pattern: RegExp; reason: string }[] = [
   // D7 修复: fs 只拦截写操作, 允许只读 (existsSync/readFileSync/readdirSync/statSync 等)
   { pattern: /fs\.\s*(write|append|unlink|mkdir|rmdir|rm|rename|copy|truncate|chmod|chown)\w*\s*\(/i, reason: 'fs write operation' },
   { pattern: /require\s*\(\s*['"]fs['"]\s*\)\s*\.\s*(write|append|unlink|mkdir|rmdir|rm|rename|copy|truncate)\w*\s*\(/i, reason: 'fs write via require' },
+  // 2026-10-12 补: D7 放宽 fs 后留了个**绕过口子** —— 具名解构导入写函数后不带 `fs.` 前缀裸调,
+  //   上面两条都匹配不到: `import { writeFileSync } from 'fs'; writeFileSync(p, x)`。
+  //   `runSandboxedSkill` 用的是裸 `execSync(node script)`, **没有 OS 级隔离**, 静态扫描是唯一闸门。
+  //   只拦"从 fs 具名导入的**写**函数", 只读名 (readFileSync/statSync/openSync/promises…) 不受影响,
+  //   不会给 D7 想解决的那种"AI 频繁被拒"制造新的误伤。
+  //   ⚠️ 已知残留(未修): `import { promises as fsp } from 'fs'; fsp.writeFile(...)` 这种**别名**写法
+  //   仍然漏网 —— 正则无法把别名解析回 fs。真正彻底的修法是给子进程加 `node --permission`
+  //   (`--allow-fs-read=<tempDir>`), 那属于架构改动, 不在本轮范围。
+  { pattern: /\bimport\s*\{[^}]*\b(write|append|unlink|mkdir|rmdir|rm|rename|copy|truncate|ftruncate|chmod|chown)\w*\b[^}]*\}\s*from\s*['"]fs['"]/i, reason: 'fs write import (destructured)' },
+  { pattern: /\b(?:const|let|var)\s*\{[^}]*\b(write|append|unlink|mkdir|rmdir|rm|rename|copy|truncate|ftruncate|chmod|chown)\w*\b[^}]*\}\s*=\s*require\s*\(\s*['"]fs['"]\s*\)/i, reason: 'fs write via destructured require' },
+  { pattern: /require\s*\(\s*['"]fs['"]\s*\)\s*\.\s*promises\s*\.\s*(write|append|unlink|mkdir|rmdir|rm|rename|copy|truncate|ftruncate|chmod|chown)\w*\s*\(/i, reason: 'fs.promises write via require' },
   { pattern: /\bprocess\s*\.\s*kill\b/, reason: 'process.kill' },
   { pattern: /\beval\s*\(/, reason: 'eval' },
   { pattern: /\bnew\s+Function\s*\(/, reason: 'new Function' },

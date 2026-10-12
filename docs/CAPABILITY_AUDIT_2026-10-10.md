@@ -500,6 +500,9 @@ create_tool    → .agentai/custom-tools/ + registry.json
 > **测试基线因此更新**：`804 测试 / 7 失败` → **`815 测试 / 2 失败`**。
 > 剩余 2 个与本轮无关: `b1-security`（断言 `tools.ts` 用 `execFile('git')`）、`safety/code-runner`（断言 `scanForbiddenPatterns` 拒绝 `fs` import）——
 > 均为源码契约断言, 且改动前就在失败。
+>
+> ⚠️ **2026-10-12 补记**：上句的 2 个基线失败**已全部修复**，全仓现为 **0 失败**。
+> 两者都是**陈旧断言**（代码是对的、断言停在旧实现/旧策略上），详见 §12。
 
 ### 7.2 新增守卫对所有 tier 生效（用户决定）
 
@@ -859,13 +862,12 @@ cd packages/agentai-gui && npx vitest run src/store/modelStore.test.ts --reporte
 
 # 6) 类型 + 工具一致性 + 全量测试
 cd packages/agentai-gateway && npx tsc --noEmit && pnpm verify:tools
-cd packages/agentai-gateway && npx vitest run --reporter=dot   # 868 测试 / 2 既有基线失败
+cd packages/agentai-gateway && npx vitest run --reporter=dot   # 871 测试 (870 passed + 1 skipped) / 0 失败
 cd packages/agentai-gui && npx tsc --noEmit && npx vitest run --reporter=dot  # 258 全通
 ```
 
-**本轮实测结果**：网关 `tsc` 退出 0；网关 vitest **865 passed / 2 failed**（仅 `b1-security`、
-`safety/code-runner` 两个**改动前就在失败**的基线，无新增失败）；GUI `tsc` 退出 0 +
-**258/258 通过**；`pnpm verify:tools` **ERROR=0**（202 声明 / 203 实现）。
+**本轮实测结果**：网关 `tsc` 退出 0；网关 vitest **870 passed / 1 skipped / 0 failed**（869）；
+GUI `tsc` 退出 0 + **258/258 通过**；`pnpm verify:tools` **ERROR=0**（202 声明 / 203 实现）。
 
 ### 11.6 如实披露（必读）
 
@@ -891,6 +893,79 @@ cd packages/agentai-gui && npx tsc --noEmit && npx vitest run --reporter=dot  # 
 5. **`llm-router.ts:1591` 注释同步**：原文写「`agnes-2.0` → 256K」，该条目已删、旧名现在经
    `LEGACY_MODEL_ALIASES` 解析到 512K，注释已更正（纯注释，无行为变化）。
 
-6. **两个既有基线失败未修**：`b1-security`（断言 `tools.ts` 用 `execFile('git')`）、
-   `safety/code-runner`（断言 `scanForbiddenPatterns` 拒绝 `fs` import）。**与本轮无关、改动前即在失败**，
-   保持原样，未在本批次处理。
+6. ~~**两个既有基线失败未修**~~ → **2026-10-12 已修**：`b1-security`（断言 `tools.ts` 用
+   `execFile('git')`）、`safety/code-runner`（断言 `scanForbiddenPatterns` 拒绝 `fs` import）
+   在批次5 一并修掉，详见 §12。批次4 提交时它们的原状记录保留在上文，不重写历史。
+
+
+---
+
+## 十二、批次5：清零基线失败 + 补一个真实的沙箱绕过口子（2026-10-12）
+
+### 12.1 结论一句话
+
+**两个"既有基线失败"都不是代码 bug，是断言停在旧实现上**；但顺手检查同一条路径时
+**发现 `scanForbiddenPatterns` 有一个真实绕过口子**，已补。
+
+### 12.2 缺陷 D1 — `b1-security` 断言过时（非 bug）
+
+| 项 | 内容 |
+|---|---|
+| 断言 | `expect(s).toMatch(/execFile\('git',\s*args,/)` — 要求 `tools.ts` 里必须写 `execFile('git', args, …)` |
+| 实现现状 | `execFile(gitBin, args, …)`，`gitBin` 由 DEF-11 引入：Windows 上 `execFile('git')` 报 `ENOENT`，故先 `findGitBinary()` 探完整路径 |
+| 判定 | **代码是对的，断言是旧的**。若为迁就断言而回退 `gitBin`，等于把 DEF-11 修好的 Windows 缺陷重新引入 |
+| 修法 | 断言改为「经 `execFile` 传 argv 数组、不经 shell」`/execFile\(\s*(?:'git'|gitBin),\s*args,/`，**外加**一条约束 `gitBin` 来源（必须来自平台判断 + `findGitBinary()`，不能是被拼进 shell 的字符串）——保住真正的回归价值 |
+
+### 12.3 缺陷 D2 — `safety/code-runner` 断言过时 + 一个真实漏洞（真 bug）
+
+**过时部分**：原 `it('rejects fs import')` 断言的是**旧严格策略**（拦掉所有 `fs` 导入）。
+D7 已有意放宽为「**只拦写操作，允许只读**」（`existsSync/readFileSync/readdirSync/statSync` 等
+在技能脚本里很常见）。断言未跟上策略变更 → 红。
+
+**真 bug 部分**：现有 3 条 fs 正则在**解构导入**面前形同虚设：
+
+```js
+// 原策略能拦:
+fs.writeFileSync(p, d)              // ✅ 命中 /fs\.\s*(write|...)\w*\s*\(/
+require('fs').writeFileSync(p, d)   // ✅ 命中 /require\(\s*['"]fs['"]\s*\)\s*\.\s*(write|...)/
+
+// 原策略完全绕过:
+import { writeFile } from 'fs'; writeFile(p, d)                  // ❌ 漏
+const { rm } = require('fs'); rm(p, { recursive: true })        // ❌ 漏
+require('fs').promises.unlink(p)                                 // ❌ 漏
+```
+
+**为什么这条重要**：`runSandboxedSkill` 走的是裸 `execSync(node <script>)`，
+**没有任何 OS 级隔离**（无 `--permission`、无容器、无 seccomp）。正则黑名单是**唯一一道闸**，
+闸上有个洞 = 技能脚本可以任意写盘/删盘。
+
+**修法**：`safety/code-runner.ts` 第 20 条后补 3 条正则（解构 import / 解构 require / `fs.promises` via require）。
+**残留绕过（已在代码注释如实标注）**：
+
+```js
+import { promises as fsp } from 'fs'; fsp.writeFile(p, d)   // 别名重命名, 正则无法静态识别
+```
+
+结论：正则黑名单**本质上堵不完**。正解是给子进程上 OS 级闸门
+（`node --permission --allow-fs-read=<tempDir>`），已写入代码注释作为后续项，**本轮不做**
+（会改变所有技能脚本的运行契约，属独立批次）。
+
+### 12.4 修完后的基线
+
+```
+cd packages/agentai-gateway && npx tsc --noEmit                 # 退出 0
+cd packages/agentai-gateway && npx vitest run --reporter=dot    # 69 文件 / 870 passed + 1 skipped / 0 failed (871)
+cd packages/agentai-gui     && npx vitest run --reporter=dot    # 12 文件 / 258 passed
+```
+
+**相对批次4 的变化**：`865 passed / 2 failed` → `870 passed / 0 failed`
+（+1 是 `code-runner.test.ts` 拆出的新用例，+4 是新增的 fs 绕过用例，另 2 个红灯转绿）。
+
+### 12.5 如实披露
+
+1. **`safety` 测试只覆盖 `scanForbiddenPatterns` 的静态匹配，不覆盖 `runSandboxedSkill` 的真实执行**。
+   "补了 3 条正则"≠"技能脚本写盘被拦住了"——本轮**未做**真实逃逸尝试（沙箱真实拦截需在独立进程实测）。
+2. **D2 的"真 bug"判定基于正则可达性推演**，非线上事故复现。它没有被利用过的证据，
+   也没有 CVE；定性为"闸门上的洞"，不是"已发生的越权"。
+3. **`gitBin` 断言仍可能随平台演化再变**：本次只锁"传数组、不经 shell"+ 来源约束，
+   没有锁死具体探测实现，属有意留白。

@@ -807,7 +807,7 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 上下文注入 | 8 层 | **8 层是目标，实际 32 处字面量 / 49 处 `systemMsgs.push` / 14 个顶层 try-catch**（buildImmutablePrefix `:812-1927`）| `grep -c "systemMsgs.push(" src/agentai-loop.ts`；`awk 'NR>=812 && NR<=1927 && /^    try \{/' …` |
 | system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
 | 60K 上下文预算实际覆盖 | "硬闸门" | **只覆盖 7 条 soul 注入, 其中仅 priority=30 的 5 条可丢**；44 条注入不可触碰 | `grep -n "track('" src/agentai-loop.ts` → 7 |
-| 测试覆盖 | "无 E2E" | 69 文件 / **868 测试 / 2 失败**（2026-10-12 重测；原 804/7 中 5 个是循环无上限导致的超时） | vitest |
+| 测试覆盖 | "无 E2E" | 69 文件 / **871 测试 (870 passed + 1 skipped) / 0 失败**（2026-10-12 重测；原 804/7 里 5 个是循环无上限超时、2 个是陈旧断言，均已修） | vitest |
 | 运行时守卫 | 无 | **4 个真缺口已补**（`_failTracker` / `repeat_write` / `TOOL_CALL_BUDGET=200` / 独立迭代硬闸），**对所有 tier 生效** | `packages/agentai-gateway/src/runtime-guard.test.ts` |
 | 死循环护栏误杀 | 判据吃**整个会话**的 tool 消息 + 搜索豁免全有全无 + `_hardStopCount`/`_toolCallHistory` 进程级只写不清零 → **新任务第 1 轮被强杀** | **已修**：`_iterToolStartIdx` 水位线（判据只切本轮）+ 豁免按签名剔除（`countedSigs`）+ 三者在 `run()` 开头归零 | `grep -n "_iterToolStartIdx" packages/agentai-gateway/src/agentai-loop.ts`；`npx vitest run src/runtime-guard.test.ts` → 改-10 组 |
 | 迭代轮数上限 | 能力层算出 autonomous=90/guided=70/supervised=50 但 **只打印不写回**；实际上限是 `chat.ts` 写死的 **30**（普通对话 **10**） | **已修**：loop 侧 `min(能力层值, opts)` 写回；`chat.ts` 5 处写死值 → `MAX_ITERATION_CEILING=90`（语义降级为天花板） | `grep -n "Math.min(rt.maxIterations" packages/agentai-gateway/src/agentai-loop.ts`；`grep -c "MAX_ITERATION_CEILING" packages/agentai-gateway/src/routes/chat.ts` → 7（1 定义 + 4 直接用 + 1 经 autoMaxIters + 1 注释提及） |
@@ -822,7 +822,7 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 浏览器宿主 | 仅右侧浮层 Drawer | **右栏 信息/浏览器 双模式**, 事件中枢唯一 (`browser-host.ts` 6 监听 / Drawer 0) | `grep -c "addEventListener" packages/agentai-gui/src/services/browser-host.ts packages/agentai-gui/src/components/GlobalBrowserDrawer.tsx` |
 | 右栏浏览器宽度 | - | **`agentai.pane.browser.width` 默认 520** (320–900), 与信息栏 320 分轨 | `grep -n "agentai.pane.browser.width" packages/agentai-gui/src/App.tsx` |
 | 文件卡片查看 | 整行点击 → 跳 editor 页 | **行点击就地展开全文**, 仅「编辑器」按钮跳页 | `grep -n "PREVIEW_LINE_CAP\|label=\"编辑器\"" packages/agentai-gui/src/components/FileCard.tsx` |
-| GUI 测试基线 | 90 测试 / 6 文件 | **252 测试 / 12 文件** | `cd packages/agentai-gui && npx vitest run` |
+| GUI 测试基线 | 90 测试 / 6 文件 | **258 测试 / 12 文件**（2026-10-12 重测） | `cd packages/agentai-gui && npx vitest run` |
 | token 层 | 18 变量被消费但**从未定义** (调用点各带 fallback → 同语义 3–6 种色) | **已修**: 建 18 条语义别名 + 6 级 `--fs-*` 尺度; 死 fallback 39 → 0 | `grep -rEoh "var\(--(text-secondary\|bg-1\|hover) ?, ?(#\|rgba)" --include=*.tsx packages/agentai-gui/src \| wc -l` |
 | 字号尺度 | 23 种 fontSize (≤12px **1164 处**), 7/8/9/10 与 12/13/14/15 差 1px 无法分辨 | **已收敛**: 1429 处走 `var(--fs-*)`, 尺度 **11/12/13/16/20/28** 六档; ≥32px 图标/emoji 档 35 处有意保留 | `grep -rEoh "var\(--fs-[a-z]+\)" --include=*.tsx packages/agentai-gui/src \| sort \| uniq -c` |
 | 圆角尺度 | 19 种裸数字 (2/3/4/5 与 6/8/10 差 1–2px 不可辨); `--radius-lg` 零消费 | **已收敛**: 437 处走 `var(--radius-*)`, 尺度 **4/8/12/999 四档** (消费 md 218 / sm 185 / lg 40 / pill 5) | `grep -rEoh "var\(--radius[a-z-]*\)" --include=*.tsx --include=*.css packages/agentai-gui/src \| sort \| uniq -c` |
@@ -851,11 +851,20 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 - 上下文注入点：`grep -c "role: 'system'" packages/agentai-gateway/src/agentai-loop.ts`
 - 核心文件规模：`wc -l packages/agentai-gateway/src/*.ts | sort -rn | head`
 - 测试基线：`cd packages/agentai-gateway && npx vitest run --reporter=dot`
-  （⚠️ **2026-10-12 更新：868 测试 / 2 失败**。原 `804 / 7 失败` 里的
-  `context-fidelity 3 + ledger-wiring 2` **不是断言写错, 而是 `Test timed out in 10000ms`** ——
-  循环无迭代上限导致空转（实测跑到 `iter=48`）；批次1 的 G4 迭代硬闸修好了它们。
-  剩余 2 个**与本轮无关且改动前就在失败**：b1-security 1（断言 `tools.ts` 用 `execFile('git')`）、
-  safety/code-runner 1（断言 `scanForbiddenPatterns` 拒绝 `fs` import）。）
+  （⚠️ **2026-10-12 更新：69 文件 / 871 测试 (870 passed + 1 skipped) / 0 失败**。
+  原 `804 / 7 失败` 已全部清零：其中 `context-fidelity 3 + ledger-wiring 2`
+  **不是断言写错, 而是 `Test timed out in 10000ms`** —— 循环无迭代上限导致空转
+  （实测跑到 `iter=48`）；批次1 的 G4 迭代硬闸修好了它们。
+  剩余 2 个是**陈旧断言**（代码是对的、断言停在旧实现上），本轮一并修：
+  ① `b1-security` — `tools.ts` 的 git 调用已从 `execFile('git', args)` 改成
+     `execFile(gitBin, args)`（DEF-11 为修 Windows ENOENT 先探测 git 绝对路径）；
+     断言改为"经 execFile 传 argv 数组、不经 shell" + 保住 `gitBin` 的来源约束。
+  ② `safety/code-runner` — 原 `it('rejects fs import')` 断言的是**旧的严格策略**
+     （拦掉所有 fs）；D7 已有意放宽为"只拦写操作、允许只读"。
+     改为 4 个用例：允许只读 fs import / 拦默认与命名空间写 / 拦解构写 / 拦 `fs.promises` 写。
+     **同时补了 3 条真实漏洞正则**：原策略只认 `fs.writeX(` 和
+     `require('fs').writeX(`，`import { writeFile } from 'fs'` 这类**解构写完全绕过**。
+     唯一残留绕过（已在代码注释标注）：`import { promises as fsp } from 'fs'; fsp.writeFile(...)`。）
 - 子智能体模型继承回归：`cd packages/agentai-gateway && npx vitest run src/subagent-model-inherit.test.ts --reporter=dot`（24 项）
 - 已下线模型名别名解析（行为级）：`cd packages/agentai-gateway && npx vitest run src/subagent-model-inherit.test.ts -t resolveRetiredModelAlias`
 - GUI 迁移函数：`cd packages/agentai-gui && npx vitest run src/store/modelStore.test.ts --reporter=dot`（15 项，含 5 项 v16 迁移）

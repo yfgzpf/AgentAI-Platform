@@ -33,9 +33,25 @@ describe('scanForbiddenPatterns', () => {
     const r = scanForbiddenPatterns(`eval("rm -rf /")`);
     expect(r.ok).toBe(false);
   });
-  it('rejects fs import', () => {
-    const r = scanForbiddenPatterns(`import fs from 'fs'`);
-    expect(r.ok).toBe(false);
+  // 2026-10-12 修正: 原 `it('rejects fs import')` 断言的是**旧的严格策略**(拦掉所有 fs)。
+  //   该策略已被 D7 有意放宽(见 code-runner.ts:18 注释「fs 只拦截写操作, 允许只读」),
+  //   目的是解决"AI 生成的技能频繁被拒"。所以失败的**不是实现, 是这条过时断言** ——
+  //   下面把 D7 的真实契约写成可执行断言: 只读放行, 写操作(含解构导入的绕过写法)一律拦。
+  it('allows read-only fs import (D7 有意放宽)', () => {
+    expect(scanForbiddenPatterns(`import fs from 'fs'`).ok).toBe(true);
+    expect(scanForbiddenPatterns(`import { readFileSync, existsSync } from 'fs'`).ok).toBe(true);
+  });
+  it('rejects fs write via default/namespace import', () => {
+    expect(scanForbiddenPatterns(`import fs from 'fs';\nfs.writeFileSync('a','b');`).ok).toBe(false);
+  });
+  it('rejects fs write via destructured import (2026-10-12 补的绕过口子)', () => {
+    // 修复前: `writeFileSync(...)` 不带 `fs.` 前缀, 任何 FORBIDDEN_PATTERNS 都匹配不到 → 放行执行
+    expect(scanForbiddenPatterns(`import { writeFileSync } from 'fs';\nwriteFileSync('a','b');`).ok).toBe(false);
+    expect(scanForbiddenPatterns(`const { mkdirSync } = require('fs');\nmkdirSync('x');`).ok).toBe(false);
+    expect(scanForbiddenPatterns(`import { rmSync } from 'fs';\nrmSync('x');`).ok).toBe(false);
+  });
+  it('rejects fs.promises write via require', () => {
+    expect(scanForbiddenPatterns(`require('fs').promises.writeFile('a','b');`).ok).toBe(false);
   });
   it('rejects process.kill', () => {
     const r = scanForbiddenPatterns(`process.kill(123)`);
