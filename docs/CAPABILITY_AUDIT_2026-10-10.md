@@ -969,3 +969,99 @@ cd packages/agentai-gui     && npx vitest run --reporter=dot    # 12 文件 / 25
    也没有 CVE；定性为"闸门上的洞"，不是"已发生的越权"。
 3. **`gitBin` 断言仍可能随平台演化再变**：本次只锁"传数组、不经 shell"+ 来源约束，
    没有锁死具体探测实现，属有意留白。
+
+---
+
+## 十三、批次6：SKILL.md frontmatter 解析修复 — 38/97 技能对路由不可见（2026-10-12）
+
+### 13.1 结论一句话
+
+`skill-orchestrator` 把 frontmatter 解析不出 `name` 的技能**直接丢弃**（`if (!meta.name) return 0`），
+而它用的扁平解析器读不了 CRLF 文件、不剥引号、块式列表读成 `[]` —— 实测 **97 个被扫到的 SKILL.md 里
+有 38 个（39%）从未进入注册表**，对 `smartDispatch` / `matchIntent` 完全不可见。
+
+### 13.2 语料规模先纠正：120 个文件，但只有 97 个会被扫到
+
+```
+find packages/agentai-skills -name SKILL.md -type f | wc -l          # 120
+```
+
+但 `scanDirectory`（`skill-orchestrator.ts:85-102`）的走法是"**子目录里有 SKILL.md 就不再往下走**"，
+而 `communication/marketing-skills/SKILL.md` 存在，于是它下面的
+`communication/marketing-skills/references/**`（**23 个** playbook）**永远不会被扫描到**。
+⇒ 真实输入分母是 **97**，不是 120。仓促写文档时我按 120 算过一遍，此处以实测为准。
+
+### 13.3 修复前后对照（同一批 97 个文件）
+
+| 指标 | 修复前 | 修复后 | 说明 |
+|---|---|---|---|
+| `name` 解析出 | **59** | **79** | 差额 20 = CRLF 分隔符文件 |
+| `description` 引号污染 | **12** | **0** | 旧实现把 `"..."` 原样存进描述，参与分词打分 |
+| `tags` 非空 | **10** | **47** | 块式 `- x` 列表旧实现一律读成 `[]` |
+| `triggers` 非空 | **16** | **35** | 嵌套 `metadata:` 下的块式列表 |
+| 无 frontmatter 块 | 18 | 18 | 正文以 `# 标题` 开头的文件，本就没有 |
+
+"修复前"一列由 `F:\temp\measure-fm2.mjs` 复刻旧 `parseSkillMd` 在**同一批 97 个文件**上跑出（非历史日志），
+故两列可比。`tags`/`triggers` 的"修复后"值小于总文件数，是因为只有部分技能声明了这两个键。
+
+修复后 `79 (有 frontmatter 且解出 name) + 18 (无 frontmatter) = 97`，
+后者由新增的 `path.basename(skillDir)` 兜底接管（`_registerFromDir`），不再静默丢弃。
+
+复刻旧解析器取"修复前"真值的一次性脚本：`F:\temp\measure-fm2.mjs`（仓外，只读）。
+
+### 13.4 三条叠加缺陷
+
+1. **CRLF 拒收**：`content.match(/^---\n([\s\S]*?)\n---/)` —— 20 个文件用 `\r\n`，锚定直接失配，
+   整个 frontmatter 读不到。`auto-skill-discovery.ts:167` 有**同一个** bug。
+2. **块式列表读不到**：旧 `parseSkillMd` 靠 `line.split(':')` + `rest.length === 0` 分流，
+   `tags:` 这种"key 后留空、值在下一行 `- x`"的 YAML 会被判为"无值"整行跳过。
+   `parseSkillMeta` 更严（正则 `^(\w+):\s*(.+)` 要求同行非空值），连 `tags:` 行都进不去。
+3. **引号不剥**：旧 `parseSkillMd` 没有引号处理（姊妹函数 `parseSkillMeta:175` 有），
+   12 个 `description: "…"` 带着引号进描述分词。
+
+### 13.5 修法（新增 1 个文件 + 改 2 个调用点）
+
+- **新增 `packages/agentai-gateway/src/skill-frontmatter.ts`** —— 唯一解析实现：
+  换行归一（`\r\n?` → `\n`）、一级嵌套 `metadata:`、内联 `[a, b]` 与块式 `- a` 两种列表、
+  标量引号剥离（保留值内冒号：`description: "专家: CoT"` 不截断）、
+  `riskLevel` 只收 `low/medium/high` 三档、任何异常 → 返回 `{}` 不抛（与两个旧解析器契约一致）。
+  **不引 yaml 依赖**（项目零新依赖）。
+- `skill-orchestrator.ts:parseSkillMd` / `auto-skill-discovery.ts:parseSkillMeta` → 各自内部一行转发，
+  签名与返回类型**一字未改**（后者本就是 export，改签名会波及调用方）。
+- `_registerFromDir`：`if (!meta.name) return 0` → 先 `meta.name = path.basename(skillDir)` 再继续。
+- `SkillDescriptor` 加 `triggers?: string[]`，删掉两处 `@ts-ignore`（让修复有类型保障）。
+- `smartDispatch` 的**权重与阈值一行未动**（`+20/+10/+5/+1`、`skill-manager.ts:37` 的 `score/30`、
+  0.5/0.7 阈值全部保持）—— 修解析 ≠ 调权重，必须分开观察才能归因。
+
+### 13.6 本轮核验命令
+
+```
+cd packages/agentai-gateway && npx tsc --noEmit                   # 退出 0
+cd packages/agentai-gateway && npx vitest run --reporter=dot      # 70 文件 / 893 passed + 1 skipped / 0 failed (894)
+cd packages/agentai-gateway && npx vitest run src/skill-frontmatter.test.ts   # 23 项；stdout 打印语料真值
+cd packages/agentai-gateway && pnpm verify:tools                  # ERROR=0 (202 声明 / 203 实现)
+grep -n "path.basename(skillDir)" packages/agentai-gateway/src/skill-orchestrator.ts
+```
+
+行为级断言是**可归因的**：临时 SKILL.md 只用"嵌套 metadata + 块式列表"这一形态，
+`smartDispatch('trigoneword alphaaa')` 断言分数**恰为 25**（1 trigger×20 + 1 tag×5，name/description 均不命中），
+`smartDispatch('trigoneword trigtwoword alphaaa')` 断言**恰为 45**。
+
+### 13.7 如实披露
+
+1. **分母更正**：我上一轮按 120 个文件报"38/120 (32%)"，实测可扫到的只有 97 个 ⇒ **38/97 (39%)**。
+   本次一并修正 AGENTS.md 的表述。
+2. **不声称"路由变准了"**：本批只保证"解析正确 + 分数可归因"。端到端的匹配质量提升需要真实对话语料评估，
+   **未验证**。可观测的即时后果是**更多技能会越过 0.5/0.7 阈值**（自动注入 / 强制调用变多），
+   这是修复的预期效果；若噪声明显，应另开一批调权重或阈值，与本批解耦。
+3. **23 个被遮蔽的技能仍不可见**：`communication/marketing-skills/references/**` 因父级 `SKILL.md` 存在
+   而永远扫不到，**本批未修**（改扫描策略影响面大于本批目标，需单独评估）。
+4. **两处刻意不修，仅注释记录**：① `smartDispatch:273` 用 `new RegExp(trigger, 'i')` 直接执行
+   SKILL.md 里作者可控的正则（ReDoS 面）；② `_registerFromDir` 硬编码 `parallelSafe: true` /
+   `riskLevel: 'low'`，frontmatter 里的同名声明被忽略。
+5. **`triggers` 的 ReDoS 与上述 ③④ 均未做动态验证**；`triggers: 16 → 35` 是"非空数组个数"，
+   未逐条核验每个正则的合法性（无效正则会在 `smartDispatch` 里被 `catch` 吞掉）。
+6. **原计划要"顺带清 2 处文档错误"，实际只清了 1 处**：`recall` 工具不存在（已改 AGENTS.md §2.3）；
+   另一条"AGENTS.md 把 `skill-indexer.ts` 当在用模块"**查证后不成立** —— AGENTS.md 从未提及它，
+   它只出现在 `docs/PLATFORM_PARITY_DO_NOT_KEEP_2026-10-09.md:38`（已被标注 do-not-keep）。
+   该文件确实零 import（全仓只有自身 3 处引用），但**不属于本批范围**，未删。

@@ -18,6 +18,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { EventEmitter } from 'events';
+import { parseFrontmatter } from './skill-frontmatter.js';
 
 const AGENTAI_DIR = path.join(os.homedir(), '.agentai');
 const SKILLS_ROOT = path.join(AGENTAI_DIR, 'skills');
@@ -32,6 +33,8 @@ export interface SkillDescriptor {
   parameters?: Record<string, any>;
   parallelSafe?: boolean;
   riskLevel?: 'low' | 'medium' | 'high';
+  /** SKILL.md frontmatter 里的触发词 (正则), smartDispatch 命中 +20 分 */
+  triggers?: string[];
 }
 
 export class SkillOrchestrator extends EventEmitter {
@@ -115,7 +118,11 @@ export class SkillOrchestrator extends EventEmitter {
     } else {
       meta = this.parseSkillMd(metaFile);
     }
-    if (!meta.name) return 0;
+    // ✅ 2026-10-12: 目录名兜底。此前 `if (!meta.name) return 0` 直接丢弃,
+    //    实测 120 个 SKILL.md 里有 38 个 (20 CRLF + 18 无 frontmatter) 解析不出 name,
+    //    于是这些技能永远不会进入注册表 → 对 smartDispatch 完全不可见。
+    //    auto-skill-discovery.ts 早就有同样的兜底 (meta.name || dirName), 这里补齐。
+    if (!meta.name) meta.name = path.basename(skillDir);
 
     const handlerPy = path.join(skillDir, 'handler.py');
     const handlerTs = path.join(skillDir, 'handler.ts');
@@ -209,10 +216,12 @@ export class SkillOrchestrator extends EventEmitter {
       handlerPath,
       handler,
       parameters: meta.parameters,
+      // ⚠️ 已知缺陷 (2026-10-12 记录, 本批不修): 这里硬编码 parallelSafe/riskLevel,
+      //    SKILL.md frontmatter 里声明的同名值被忽略。改动会牵动并发调度与风险门控,
+      //    需单独一批观察, 故此处仅注释记录。
       parallelSafe: true,
       riskLevel: 'low',
-      // @ts-ignore - 扩展字段
-      triggers: (meta as any).triggers || [],
+      triggers: meta.triggers || [],
     });
 
     // ✅ 双别名注册: read-excel ↔ read_excel (下划线名)
@@ -229,8 +238,7 @@ export class SkillOrchestrator extends EventEmitter {
         parameters: meta.parameters,
         parallelSafe: true,
         riskLevel: 'low',
-        // @ts-ignore
-        triggers: (meta as any).triggers || [],
+        triggers: meta.triggers || [],
       });
       return 2;
     }
@@ -367,43 +375,21 @@ export class SkillOrchestrator extends EventEmitter {
     return [...words];
   }
 
-  private parseSkillMd(filePath: string): Partial<SkillDescriptor & { triggers?: string[] }> {
+  /**
+   * 解析 SKILL.md frontmatter → 注册用字段。
+   * 2026-10-12: 实现已抽到共享模块 skill-frontmatter.ts (与 auto-skill-discovery 同源),
+   * 原先这里的扁平解析器读不了块式列表、不剥引号、且 CRLF 文件整个读不到。
+   */
+  private parseSkillMd(filePath: string): Partial<SkillDescriptor> {
     try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const frontMatter = content.match(/^---\n([\s\S]*?)\n---/);
-      const result: Partial<SkillDescriptor & { tags?: string[]; triggers?: string[] }> = {};
-
-      if (frontMatter) {
-        const fmContent = frontMatter[1]!;
-        
-        // 解析简单字段
-        for (const line of fmContent.split('\n')) {
-          const [key, ...rest] = line.split(':');
-          if (!key || rest.length === 0) continue;
-          const val = rest.join(':').trim();
-          switch (key.trim()) {
-            case 'name': result.name = val; break;
-            case 'description': result.description = val; break;
-            case 'category': result.category = val; break;
-            case 'tags':
-              result.tags = val.replace(/[\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
-              break;
-          }
-        }
-        
-        // 解析 metadata.triggers
-        const triggersMatch = fmContent.match(/triggers:\s*([\s\S]*?)(?=\n\w|$)/);
-        if (triggersMatch) {
-          const triggersText: string = triggersMatch[1] || '';
-          result.triggers = triggersText
-            .split('\n')
-            .map(line => line.trim())
-            .filter(line => line.startsWith('- '))
-            .map(line => line.substring(2).trim().replace(/["']/g, ''))
-            .filter(Boolean);
-        }
-      }
-      return result;
+      const fm = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
+      return {
+        name: fm.name,
+        description: fm.description,
+        category: fm.category,
+        tags: fm.tags,
+        triggers: fm.triggers,
+      };
     } catch { return {}; }
   }
 

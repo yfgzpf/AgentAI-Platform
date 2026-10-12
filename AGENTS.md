@@ -219,6 +219,7 @@ this.opts.maxIterations = Math.min(rt.maxIterations, this.opts.maxIterations)   
 
 **一致性校验（2026-10-10 新增，构建期 fail-fast）**
 ```bash
+cd packages/agentai-gateway
 pnpm verify:tools          # 常规：ERROR 阻塞，WARN 提示
 pnpm verify:tools:strict   # 严格：WARN 也阻塞
 ```
@@ -267,7 +268,7 @@ AI 写文件 → auto_verify(tsc --noEmit) →
 | update_plan | 更新子任务进度 (前端实时显示) |
 | evolve_prompt | **AI 自我修改行为规则** (存 .agentai/evolved-rules.json) |
 | create_tool | **AI 运行时自创工具** (存 .agentai/custom-tools/) |
-| remember / forget / recall | 记忆管理 (项目级 vs 全局) |
+| remember / forget / recall_memory / recall_project | 记忆管理 (项目级 vs 全局)。⚠️ 2026-10-12 实测更正：**不存在名为 `recall` 的工具**，读取工具是 `recall_memory`(按名读) 与 `recall_project`(读跨会话项目记忆)，核验 `grep -n "name: 'recall" packages/agentai-gateway/src/tools.ts` |
 | spawn_subagent | 子智能体并行 (商业模型) |
 
 ### 三、智能决策层
@@ -798,7 +799,9 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 指标 | 原文档 | 实际 | 核验方式 |
 |------|--------|------|---------|
 | LLM Provider | 4 | 8 | llm-router.ts |
-| 工具数量 | 57+ | **202 声明 / 203 实现** (2026-10-11 重测: `node scripts/verify-tool-consistency.mjs`) | `pnpm verify:tools`（AST） |
+| 工具数量 | 57+ | **202 声明 / 203 实现** (2026-10-11 重测: `node scripts/verify-tool-consistency.mjs`) | `pnpm --filter @agentai/gateway verify:tools`（AST；⚠️ 该脚本只存在于 gateway 包，在仓库根直接跑 `pnpm verify:tools` 会报 "Command not found"） |
+| 技能 frontmatter 解析 | 两个近同构的扁平解析器（`skill-orchestrator:parseSkillMd` 喂路由打分 / `auto-skill-discovery:parseSkillMeta` 喂技能索引），块式 `- x` 列表读成 `[]`、不剥引号、CRLF 文件整块读不到 | **已统一**为 `skill-frontmatter.ts`（CRLF 归一 + 一级嵌套 `metadata:` + 内联/块式两种列表 + 引号剥离 + 目录名兜底）；`SkillDescriptor` 加 `triggers?: string[]` | `npx vitest run src/skill-frontmatter.test.ts`（语料级 + 行为级 + 边界） |
+| 技能路由可见性 | "智能路由自动选技能" | `scanDirectory` 实际扫到 **97 个** SKILL.md（`packages/agentai-skills` 下共 120 个，`communication/marketing-skills/SKILL.md` 遮蔽了 `references/` 里 23 个）。修复前仅 **59/97** 解析出 `name`，其余 **38 个（39%）** 被 `if (!meta.name) return 0` **静默丢弃 → 对 `smartDispatch` 完全不可见**；修复后 **79/97**（余 18 个无 frontmatter 的由目录名兜底）。另：tags 非空 10 → **47**，triggers 非空 16 → **35**，description 引号污染 12 → **0** | `npx vitest run src/skill-frontmatter.test.ts`（stdout 打印真值）；`grep -n "path.basename(skillDir)" packages/agentai-gateway/src/skill-orchestrator.ts` |
 | 评分维度 | 3D | 5D | model-classifier.ts:511-515 |
 | MAX_AUTO_RESUME | 5 | 10 | agentai-loop.ts:2601 |
 | 绝对超时 | 3 分钟 | 60 分钟 | agentai-loop.ts:1963 |
@@ -807,7 +810,7 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 | 上下文注入 | 8 层 | **8 层是目标，实际 32 处字面量 / 49 处 `systemMsgs.push` / 14 个顶层 try-catch**（buildImmutablePrefix `:812-1927`）| `grep -c "systemMsgs.push(" src/agentai-loop.ts`；`awk 'NR>=812 && NR<=1927 && /^    try \{/' …` |
 | system-prompt.ts | ~250 行 | **643 行 / 38,999 字符** | wc -c |
 | 60K 上下文预算实际覆盖 | "硬闸门" | **只覆盖 7 条 soul 注入, 其中仅 priority=30 的 5 条可丢**；44 条注入不可触碰 | `grep -n "track('" src/agentai-loop.ts` → 7 |
-| 测试覆盖 | "无 E2E" | 69 文件 / **871 测试 (870 passed + 1 skipped) / 0 失败**（2026-10-12 重测；原 804/7 里 5 个是循环无上限超时、2 个是陈旧断言，均已修） | vitest |
+| 测试覆盖 | "无 E2E" | 70 文件 / **894 测试 (893 passed + 1 skipped) / 0 失败**（2026-10-12 重测；原 804/7 里 5 个是循环无上限超时、2 个是陈旧断言，均已修；+23 来自批次6 的 `skill-frontmatter.test.ts`） | vitest |
 | 运行时守卫 | 无 | **4 个真缺口已补**（`_failTracker` / `repeat_write` / `TOOL_CALL_BUDGET=200` / 独立迭代硬闸），**对所有 tier 生效** | `packages/agentai-gateway/src/runtime-guard.test.ts` |
 | 死循环护栏误杀 | 判据吃**整个会话**的 tool 消息 + 搜索豁免全有全无 + `_hardStopCount`/`_toolCallHistory` 进程级只写不清零 → **新任务第 1 轮被强杀** | **已修**：`_iterToolStartIdx` 水位线（判据只切本轮）+ 豁免按签名剔除（`countedSigs`）+ 三者在 `run()` 开头归零 | `grep -n "_iterToolStartIdx" packages/agentai-gateway/src/agentai-loop.ts`；`npx vitest run src/runtime-guard.test.ts` → 改-10 组 |
 | 迭代轮数上限 | 能力层算出 autonomous=90/guided=70/supervised=50 但 **只打印不写回**；实际上限是 `chat.ts` 写死的 **30**（普通对话 **10**） | **已修**：loop 侧 `min(能力层值, opts)` 写回；`chat.ts` 5 处写死值 → `MAX_ITERATION_CEILING=90`（语义降级为天花板） | `grep -n "Math.min(rt.maxIterations" packages/agentai-gateway/src/agentai-loop.ts`；`grep -c "MAX_ITERATION_CEILING" packages/agentai-gateway/src/routes/chat.ts` → 7（1 定义 + 4 直接用 + 1 经 autoMaxIters + 1 注释提及） |
@@ -847,11 +850,13 @@ dev-server 实发模块经 `curl 127.0.0.1:5173/...` 核对（`App.tsx` 出 `Bra
 4. 新增架构机制时，同步更新本节「框架能力实际数据」表。
 
 **核验脚本**（可复用）：
-- 工具一致性：`pnpm verify:tools`（AST 版，已接入 build 前置）
+- 工具一致性：`pnpm --filter @agentai/gateway verify:tools`（AST 版，已接入 build 前置；⚠️ 根目录没有这个 script）
+- 技能 frontmatter 解析：`cd packages/agentai-gateway && npx vitest run src/skill-frontmatter.test.ts --reporter=verbose`（23 项，stdout 打印语料真值）
 - 上下文注入点：`grep -c "role: 'system'" packages/agentai-gateway/src/agentai-loop.ts`
 - 核心文件规模：`wc -l packages/agentai-gateway/src/*.ts | sort -rn | head`
 - 测试基线：`cd packages/agentai-gateway && npx vitest run --reporter=dot`
-  （⚠️ **2026-10-12 更新：69 文件 / 871 测试 (870 passed + 1 skipped) / 0 失败**。
+  （⚠️ **2026-10-12 更新：70 文件 / 894 测试 (893 passed + 1 skipped) / 0 失败**，+23 来自
+  批次6 的 `skill-frontmatter.test.ts`。
   原 `804 / 7 失败` 已全部清零：其中 `context-fidelity 3 + ledger-wiring 2`
   **不是断言写错, 而是 `Test timed out in 10000ms`** —— 循环无迭代上限导致空转
   （实测跑到 `iter=48`）；批次1 的 G4 迭代硬闸修好了它们。

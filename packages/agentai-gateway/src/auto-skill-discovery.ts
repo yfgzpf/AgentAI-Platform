@@ -11,6 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
+import { parseFrontmatter } from './skill-frontmatter.js';
 
 export interface DiscoveredSkill {
   /** 技能名称 (来自 SKILL.md frontmatter name 或目录名) */
@@ -163,31 +164,15 @@ export function parseSkillMeta(filePath: string): {
   version?: string;
 } {
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (match) {
-      const lines = match[1]!.split('\n');
-      const meta: Record<string, any> = {};
-      for (const line of lines) {
-        const kv = line.match(/^(\w+):\s*(.+)/);
-        if (!kv) continue;
-        const key = kv[1]!;
-        const val = kv[2]!.trim().replace(/^"(.*)"$/, '$1');
-        if (key === 'tags') {
-          meta['tags'] = val.replace(/[\[\]]/g, '').split(',').map((s: string) => s.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
-        } else {
-          meta[key] = val;
-        }
-      }
-      return {
-        name: meta['name'],
-        description: meta['description'],
-        category: meta['category'],
-        tags: meta['tags'],
-        riskLevel: meta['riskLevel'],
-        version: meta['version'],
-      };
-    }
+    const fm = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
+    return {
+      name: fm.name,
+      description: fm.description,
+      category: fm.category,
+      tags: fm.tags,
+      riskLevel: fm.riskLevel,
+      version: fm.version,
+    };
   } catch {}
   return {};
 }
