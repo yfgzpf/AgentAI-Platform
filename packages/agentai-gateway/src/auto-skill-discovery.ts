@@ -194,8 +194,10 @@ function listMarkdownDocs(dir: string): string[] {
 export function readSkillBody(skillFile: string): string {
   try {
     const content = fs.readFileSync(skillFile, 'utf-8');
-    // 去掉 frontmatter
-    return content.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
+    // ✅ 2026-10-12 (批次7): 先归一换行再剥 frontmatter。
+    //    原 `/^---\n[\s\S]*?\n---\n?/` 在 CRLF 文件上永远不匹配,
+    //    frontmatter 会原样泄漏进给 LLM 看的正文 (与批次6 修掉的解析器同源 bug)。
+    return content.replace(/\r\n?/g, '\n').replace(/^---\n[\s\S]*?\n---[ \t]*(?:\n|$)/, '').trim();
   } catch { return ''; }
 }
 

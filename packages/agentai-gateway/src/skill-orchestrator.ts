@@ -18,7 +18,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { EventEmitter } from 'events';
-import { parseFrontmatter } from './skill-frontmatter.js';
+import { parseFrontmatter, scorableText, tokenizeScorable } from './skill-frontmatter.js';
 
 const AGENTAI_DIR = path.join(os.homedir(), '.agentai');
 const SKILLS_ROOT = path.join(AGENTAI_DIR, 'skills');
@@ -35,6 +35,13 @@ export interface SkillDescriptor {
   riskLevel?: 'low' | 'medium' | 'high';
   /** SKILL.md frontmatter 里的触发词 (正则), smartDispatch 命中 +20 分 */
   triggers?: string[];
+  /**
+   * frontmatter 的 `description_zh` (中文描述)。
+   * 2026-10-12 (批次7) 新增: 实测 66 个 SKILL.md 带这个键, 但此前**全仓零读取**,
+   * 中文元数据从来没参与过任何打分器。它只喂打分 (scorableText), **不替换**
+   * `description` —— 后者被 GET /v1/skills 与 GUI 技能库直接展示。
+   */
+  descriptionZh?: string;
 }
 
 export class SkillOrchestrator extends EventEmitter {
@@ -84,7 +91,8 @@ export class SkillOrchestrator extends EventEmitter {
     if (!fs.existsSync(dir)) return 0;
     let count = 0;
     try {
-      // 递归扫描 (最多 3 层): skills/<category>/<skill>/SKILL.md|skill.json
+      // 递归扫描 (最多 3 层): dir 下第一层是类别目录, 每个类别目录下才是 <skill>/SKILL.md
+      // (SKILL.md 与类别目录同层的平铺布局不认 —— 与生产调用方传入的 skills/ 目录约定一致)
       const walk = (currentDir: string, depth: number) => {
         if (depth > 3) return;
         for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
@@ -104,8 +112,8 @@ export class SkillOrchestrator extends EventEmitter {
         }
       };
       walk(dir, 0);
+      if (count > 0) console.log(`[orchestrator] scanned ${count} skills from ${dir}`);
     } catch {}
-    if (count > 0) console.log(`[orchestrator] scanned ${count} skills from ${dir}`);
     return count;
   }
 
@@ -119,7 +127,7 @@ export class SkillOrchestrator extends EventEmitter {
       meta = this.parseSkillMd(metaFile);
     }
     // ✅ 2026-10-12: 目录名兜底。此前 `if (!meta.name) return 0` 直接丢弃,
-    //    实测 120 个 SKILL.md 里有 38 个 (20 CRLF + 18 无 frontmatter) 解析不出 name,
+    //    实测 97 个可达 SKILL.md 里有 38 个 (20 CRLF + 18 无 frontmatter) 解析不出 name,
     //    于是这些技能永远不会进入注册表 → 对 smartDispatch 完全不可见。
     //    auto-skill-discovery.ts 早就有同样的兜底 (meta.name || dirName), 这里补齐。
     if (!meta.name) meta.name = path.basename(skillDir);
@@ -222,6 +230,7 @@ export class SkillOrchestrator extends EventEmitter {
       parallelSafe: true,
       riskLevel: 'low',
       triggers: meta.triggers || [],
+      descriptionZh: meta.descriptionZh,
     });
 
     // ✅ 双别名注册: read-excel ↔ read_excel (下划线名)
@@ -239,6 +248,7 @@ export class SkillOrchestrator extends EventEmitter {
         parallelSafe: true,
         riskLevel: 'low',
         triggers: meta.triggers || [],
+        descriptionZh: meta.descriptionZh,
       });
       return 2;
     }
@@ -302,11 +312,11 @@ export class SkillOrchestrator extends EventEmitter {
       }
 
       // 4. 描述关键词匹配
-      const descWords = skill.description.toLowerCase().split(/[\s,，、]+/);
-      for (const w of descWords) {
-        if (w.length >= 2 && lower.includes(w)) {
-          score += 1;
-        }
+      // ✅ 2026-10-12 (批次7): 输入从只有 description 扩到 scorableText (description + description_zh),
+      //    分词走共享的 tokenizeScorable (与 agentai-loop 内联打分器同一口径)。
+      //    权重与阈值未改: 描述词仍每个 +1, 0.5/0.7 阈值原样。
+      for (const w of tokenizeScorable(scorableText(skill))) {
+        if (lower.includes(w)) score += 1;
       }
 
       if (score > 0) {
@@ -389,6 +399,7 @@ export class SkillOrchestrator extends EventEmitter {
         category: fm.category,
         tags: fm.tags,
         triggers: fm.triggers,
+        descriptionZh: fm.descriptionZh,
       };
     } catch { return {}; }
   }

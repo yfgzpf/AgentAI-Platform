@@ -1065,3 +1065,60 @@ grep -n "path.basename(skillDir)" packages/agentai-gateway/src/skill-orchestrato
    另一条"AGENTS.md 把 `skill-indexer.ts` 当在用模块"**查证后不成立** —— AGENTS.md 从未提及它，
    它只出现在 `docs/PLATFORM_PARITY_DO_NOT_KEEP_2026-10-09.md:38`（已被标注 do-not-keep）。
    该文件确实零 import（全仓只有自身 3 处引用），但**不属于本批范围**，未删。
+
+---
+
+## 十四、批次7：让已存在的中文元数据真正参与技能路由（2026-10-12）
+
+### 14.1 结论一句话
+
+批次6 修好了"技能读不读得到"，本批修"读到的中文元数据**参不参与打分**"。
+实测 97 个可达 SKILL.md 里 **66 个带 `description_zh`、33 个带 `display_name`**，
+但全仓 `.ts/.tsx` 里 `grep -rn description_zh` **零匹配** —— 这批中文元数据从来没进过任何打分器。
+本批让它进 `smartDispatch` 的"描述关键词 +1"通道，并给 18 个无 frontmatter 文件补上正文描述兜底。
+**权重 `+20/+10/+5/+1` 与阈值 `0.5/0.7` 一行未动。**
+
+### 14.2 先量后改（Step 0）—— 24 条消息前后对照
+
+用 commit `890f059` 的基线（`.tmp-score-probe.ts` 实测）对照本批实现后的 T1 口径。
+
+| 口径 | 定义 | 0 分消息 | ≥15 (0.5 阈值) | 排序重排 |
+|---|---|---|---|---|
+| V0 基线 | 旧解析器 + 旧分词 | 10/24 | 2 | — |
+| V1 (采用) | 新解析器 + `description+description_zh` + 旧分词 | **9/24** | **2** | 无 |
+| V2 (否决) | V1 + 中文 2 字滑窗 (bigram) | 3/24 | **3** | **有错配** |
+
+**为什么否决 V2 (bigram)：** `libtv-skill` 的 `description` 是一大段中文，bigram 会让它在
+**6 条消息**上夺走 top1（包括 `生成一个 PPT` → `libtv-skill/10` 的明显错配，`data-analyst/1` 被反超），
+并把 `把这个视频转成音频` 顶到 **15 分，越过 0.5 注入阈值**且是**错误技能**。
+这正是预登记披露里"若采用 T2 必须报告阈值误触发"的情形 —— 实测发生，故不采用。
+
+**为什么改的是 V1 而不动 agentai-loop 内联打分器：** 该内联打分器（`agentai-loop.ts:912`）
+要求 `word.length > 3`，**中文 bigram 长度 2 会被整个过滤掉**，且其 top1 在 V0≡V1≡V2 三种口径下
+**全部相同**（实测 24/24）。改它零收益，故不碰那个 6400 行零覆盖文件。
+
+### 14.3 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `skill-frontmatter.ts` | 加 `descriptionZh`/`descriptionEn`/`title` 字段；新增 `extractBodyMeta`（正文兜底：`# H1` 之后取首个非标题/引用/列表/围栏/`**`/水平线行，最多前探 40 行）；`description` 回退链 `description → description_en → 正文 → H1`；导出 `scorableText` / `tokenizeScorable`（唯一打分口径，分词与旧 `smartDispatch` 完全一致：`[\s,，、]+`，len≥2） |
+| `skill-orchestrator.ts` | `SkillDescriptor` 加 `descriptionZh?: string`；`_registerFromDir` 3 处 `register` 带上它；`parseSkillMd` 透传；`smartDispatch` 描述词那步改 `tokenizeScorable(scorableText(skill))`；注释 120→97；`scanDirectory` 的 `return count` 移出 `catch`（修 TS2366） |
+| `auto-skill-discovery.ts` | `readSkillBody` 先归一换行再剥 frontmatter（修 CRLF 文件 frontmatter 原样泄漏给 LLM 的 bug，与批次6 同源） |
+| `agentai-loop.ts` | **未改**（见 14.2） |
+
+### 14.4 如实披露
+
+1. **不声称"路由变准了"。** 本批只保证"中文元数据从零引用变为参与打分，且分数可归因"。
+   24 条消息是**我自己编的**，不是真实用户语料，不能替代线上评估。
+2. **收益有限且可预期**：T1 只把 10→9 条 0 分消息提到 1 分（`帮我定价`、`写文案` 从 0 到 1），
+   **不改变 0.5/0.7 注入阈值**，**不改变 top1 排序**。因为 `description` 通道每个词只 +1，
+   描述词满打满算也叠不过 tag 的 +5 / trigger 的 +20。
+3. **根因比本批更大**：现有分词按空白/标点切，对中文天然不利（`提示工程专家:` 这种 token 永远
+   匹配不到用户说的"提示工程"）。真正的中文分词（滑窗/词表）属于**更大改造**，本批刻意不做，
+   且 Step 0 已证明 naive bigram 会引入错配。若未来要做，必须配 IDF 或按描述长度归一，
+   否则长描述刷分。
+4. **18 个文件的正文兜底是启发式**，其中 `meta/brand-design`（正文 `## 技能概述` 之后才是描述）
+   经 `extractBodyMeta` 跳过小标题后**能**拿到描述 —— 实测 18/18 全部拿到，比预登记担心的"可能拿不到"乐观。
+5. `description_zh` 解析数 = **66**（全部可达、全部非空），`description_en` 同为 66；
+   与 `.tmp-zhcount.ts` 独立核验一致。
+6. 本批未动 `routes/skills.ts` 的 JSON 白名单，`descriptionZh` 暂不进 API / GUI —— 记为后续。
