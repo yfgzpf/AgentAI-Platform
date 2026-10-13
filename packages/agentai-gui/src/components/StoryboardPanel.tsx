@@ -13,7 +13,7 @@
  */
 
 import React, { useState } from 'react';
-import { Button, Input, InputNumber, Select, Card, Space, Tag, Tooltip, message, Spin, Progress, Collapse, Checkbox, Upload, Modal, Alert, Popover } from 'antd';
+import { Button, Input, InputNumber, Select, Card, Space, Tag, Tooltip, message, Spin, Progress, Collapse, Checkbox, Upload, Modal, Alert, Popover, Switch } from 'antd';
 import {
   ThunderboltOutlined, DeleteOutlined, VideoCameraOutlined,
   PictureOutlined, PlusOutlined, UserOutlined, CameraOutlined, EditOutlined,
@@ -62,6 +62,11 @@ export interface Shot {
    * `videoUrl` 始终指向其中被选用的那一版。全部候选按剧集归组展示, 供对比/选用/删除。
    */
   videoVersions?: ShotVideoVersion[];
+  /**
+   * 2026-10-14: 本镜生成时**没有接上上一镜尾帧** (上一镜未生成/尾帧提取失败, 用户选择了跳过)。
+   * 仅用于在镜卡上打 ⚠ 提示, 让人知道这段是"独立生成、可能接不上戏"。
+   */
+  noContinuity?: boolean;
   error?: string;
   selected?: boolean;
 }
@@ -206,6 +211,17 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
     scenes: number[]; chars: string[]; resolve: (r: { proceed: boolean; extra?: RefExtras }) => void;
   }>(null);
   const [completingRefs, setCompletingRefs] = useState(false); // 「先补全再生成」进行中
+
+  // ===== 2026-10-14: 尾帧衔接 (接戏) =====
+  // 场景图/角色图只保证"同人同景" (像), 保证不了动作接续 (顺)。
+  // 每镜生成时把**上一镜的尾帧**作为本镜的第一个参考图发下去, 让画面能接着上一镜。
+  // 默认开; 换场/换景/蒙太奇时可关。
+  const [continuity, setContinuity] = useState(true);
+  // 上一镜没有可用尾帧(未生成/提取失败)时的弹窗 — 问是否先补上一镜
+  const [continuityPrompt, setContinuityPrompt] = useState<null | {
+    epIdx: number; prevShotId: number; reason: 'missing' | 'extract-failed';
+    resolve: (v: 'fill' | 'skip' | 'cancel') => void;
+  }>(null);
 
   // ===== 多剧本持久化 =====
   // localStorage 结构: agentai-storyboards = { list: [{id,title,updatedAt}], activeId }
@@ -780,9 +796,13 @@ High detail, professional quality, 16:9 aspect ratio.`;
   // 收集当前镜头相关的参考图 — 角色定妆图 + 九宫格 + 场景图
   // 2026-10-13: 加 extra 参数 —— 「缺图守卫」一键补全时, 新生成的图还没进 state,
   //   直接通过 extra 并入, 避免 stale closure 导致"补了图但没带上"。
-  const collectRefImages = (epIdx: number, shot: Shot, extra?: RefExtras): string[] => {
+  // 2026-10-14: 加 tail 参数 —— 上一镜尾帧作为**第一张**参考图 (折中衔接模式:
+  //   既保留"同人同景", 又给出"接着上一镜"的引导)。引擎上限 5 张, 尾帧优先占位。
+  const collectRefImages = (epIdx: number, shot: Shot, extra?: RefExtras, tail?: string): string[] => {
     if (!storyboard) return [];
     const refs: string[] = [];
+    // 0. 上一镜尾帧 (衔接用) — 放在最前
+    if (tail) refs.push(tail);
     // 1. 场景图 (extra 优先 — 刚生成的)
     const ep = storyboard.episodes[epIdx];
     const sceneUrl = extra?.scenes[epIdx] || ep?.scene?.imageUrl;
@@ -814,6 +834,54 @@ High detail, professional quality, 16:9 aspect ratio.`;
       }
     }
     return refs.slice(0, 5); // Agnes Flash 最多5张
+  };
+
+  // 2026-10-14: 从视频里抽尾帧 (后端 ffmpeg)。用于上一镜有视频但没带 API 尾帧时的兜底。
+  const extractTail = async (videoUrl: string): Promise<string | undefined> => {
+    try {
+      const resp = await fetch(`${httpUrl}/v1/video/extract-tail`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoUrl }),
+      });
+      const data = await resp.json();
+      return data.tailFrameUrl || undefined;
+    } catch { return undefined; }
+  };
+
+  // 上一镜没有可用尾帧 → 弹窗问"先补上一镜 / 跳过直接生成 / 取消"
+  const askPrevNotReady = (epIdx: number, prevShotId: number, reason: 'missing' | 'extract-failed'): Promise<{ proceed: boolean; tail?: string; skipped?: boolean }> =>
+    new Promise(resolve => {
+      setContinuityPrompt({
+        epIdx, prevShotId, reason,
+        resolve: (v) => {
+          if (v === 'cancel') return resolve({ proceed: false });
+          if (v === 'skip') return resolve({ proceed: true, skipped: true });
+          // fill: 先把上一镜补生成, 本镜本次不生成 (完成后用户再点本镜即可接上)
+          resolve({ proceed: false });
+          generateSingleShot(epIdx, prevShotId);
+          message.info(`已开始生成第${prevShotId}镜, 完成后请再点本镜以接戏`);
+        },
+      });
+    });
+
+  // 2026-10-14: 尾帧衔接守卫 (仅在"尾帧衔接"开关打开且本镜不是集内首镜时生效)
+  const guardContinuity = async (epIdx: number, shot: Shot): Promise<{ proceed: boolean; tail?: string; skipped?: boolean }> => {
+    if (!continuity || !storyboard) return { proceed: true };
+    const ep = storyboard.episodes[epIdx];
+    if (!ep) return { proceed: true };
+    const idx = ep.shots.findIndex(s => s.id === shot.id);
+    const prevShot = idx > 0 ? ep.shots[idx - 1] : undefined;
+    if (!prevShot) return { proceed: true }; // 集内首镜: 没有上一镜可接, 不算断链
+    // ① 有 API 尾帧 → 直接用 (生成时已 return_last_frame:true)
+    if (prevShot.lastFrameUrl) return { proceed: true, tail: prevShot.lastFrameUrl };
+    // ② 有视频无尾帧 → 现场抽一帧
+    if (prevShot.videoUrl) {
+      const tail = await extractTail(prevShot.videoUrl);
+      if (tail) return { proceed: true, tail };
+      return askPrevNotReady(epIdx, prevShot.id, 'extract-failed');
+    }
+    // ③ 上一镜根本没生成 → 询问
+    return askPrevNotReady(epIdx, prevShot.id, 'missing');
   };
 
   /** 2026-10-13: 找出某镜头缺失的参考图 (该集场景图 / 该镜角色的定妆图+九宫格) */
@@ -878,11 +946,16 @@ High detail, professional quality, 16:9 aspect ratio.`;
     if (!guard.proceed) return;
     if (sbTokenRef.current !== token) return; // 弹窗期间切了剧本 → 放弃本次
 
-    sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'generating', error: undefined } : s); return { ...prev, episodes: eps }; });
+    // 2026-10-14 尾帧衔接守卫 — 取上一镜尾帧作为本镜首个参考图; 上一镜没生成时弹窗询问
+    const cont = await guardContinuity(epIdx, shot);
+    if (!cont.proceed) return;
+    if (sbTokenRef.current !== token) return;
+
+    sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'generating', error: undefined, noContinuity: !!cont.skipped } : s); return { ...prev, episodes: eps }; });
 
     try {
-      // 收集角色定妆图+场景图作为参考 (guard.extra = 刚补全的图)
-      const refImages = collectRefImages(epIdx, shot, guard.extra);
+      // 收集角色定妆图+场景图作为参考 (guard.extra = 刚补全的图; cont.tail = 上一镜尾帧)
+      const refImages = collectRefImages(epIdx, shot, guard.extra, cont.tail);
       // 2026-10-13: prompt 走 buildSubmitPrompt — 把 dialogue/monologue 内联, 不再只发 shot.prompt;
       // 分辨率/宽高比改用面板上的选择 (原写死 720P / 16:9)。
       const body: any = { prompt: buildSubmitPrompt(shot), model, duration: `${shot.duration}s`, size: videoSize, aspect_ratio: videoAspect };
@@ -941,6 +1014,9 @@ High detail, professional quality, 16:9 aspect ratio.`;
     let completed = 0;
     let succeeded = 0;
     let failed = 0;
+    // 2026-10-14 尾帧衔接: 批量里逐镜推进, 用本地表记录"刚生成的尾帧",
+    //   供下一镜作首个参考图 —— 保证同一次批量内镜与镜能接上 (不依赖 state 刷新)。
+    const tailByShot = new Map<number, string | undefined>();
 
     for (let epIdx = 0; epIdx < storyboard.episodes.length; epIdx++) {
       const ep = storyboard.episodes[epIdx];
@@ -951,15 +1027,27 @@ High detail, professional quality, 16:9 aspect ratio.`;
         // ★ 2026-10-14: 用户切换剧本 → 立即中止, 不再继续烧额度
         if (sbTokenRef.current !== token) break;
 
+        // 2026-10-14: 上一镜尾帧 (批量内优先用刚生成的, 其次用已存的) — 不弹窗, 拿不到就无衔接并打标
+        let tail: string | undefined;
+        let noCont = false;
+        if (continuity) {
+          const shotIdx = ep.shots.findIndex(s => s.id === shot.id);
+          const prevShot = shotIdx > 0 ? ep.shots[shotIdx - 1] : undefined;
+          if (prevShot) {
+            tail = tailByShot.get(prevShot.id) ?? prevShot.lastFrameUrl;
+            if (!tail) noCont = true;
+          }
+        }
+
         sbWrite(token, prev => {
           const eps = [...prev.episodes];
-          eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'generating' } : s);
+          eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'generating', noContinuity: noCont } : s);
           return { ...prev, episodes: eps };
         });
 
           try {
-            // 收集角色定妆图+场景图作为参考 (guard.extra = 刚补全的图)
-            const refImages = collectRefImages(epIdx, shot, guard.extra);
+            // 收集角色定妆图+场景图作为参考 (guard.extra = 刚补全的图; tail = 上一镜尾帧)
+            const refImages = collectRefImages(epIdx, shot, guard.extra, tail);
             // 2026-10-13: 对白/独白内联 + 面板分辨率/宽高比 (原写死 720P/16:9)
             const body: any = { prompt: buildSubmitPrompt(shot), model, duration: `${shot.duration}s`, size: videoSize, aspect_ratio: videoAspect };
             if (refImages.length > 0) {
@@ -975,6 +1063,7 @@ High detail, professional quality, 16:9 aspect ratio.`;
               const videoResult = await pollVideo(result.taskId, result.provider || model);
               if (videoResult) {
                 succeeded++;
+                tailByShot.set(shot.id, videoResult.lastFrameUrl); // 2026-10-14: 供下一镜接戏
                 // ★ 2026-10-14: 同样追加候选版本 (与单镜一致, 重新生成不丢旧版)
                 sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? withNewVersion(s, videoResult) : s); return { ...prev, episodes: eps }; });
               } else {
@@ -1145,6 +1234,12 @@ return (
               <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>宽高比:</span>
               <Select size="small" value={videoAspect} onChange={v => setVideoAspect(v)} style={{ width: 90 }}
                 options={[{ value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }, { value: '1:1', label: '1:1' }]} />
+              {/* 2026-10-14: 尾帧衔接开关 — 上一镜尾帧作本镜首个参考图, 让镜头接上戏 */}
+              <Tooltip title="把上一镜的尾帧作为本镜的第一个参考图, 让镜头能接着上一镜 (换场/换景/蒙太奇时可关)">
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
+                  尾帧衔接 <Switch size="small" checked={continuity} onChange={setContinuity} />
+                </span>
+              </Tooltip>
               <div style={{ flex: 1 }} />
               <Button type="primary" icon={<ThunderboltOutlined />} loading={generating} onClick={generateStoryboard}>
                 {generating ? '生成中...' : '生成剧本'}
@@ -1357,6 +1452,12 @@ return (
                             <Tag color="blue" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>
                               {shot.videoVersions!.length} 版
                             </Tag>
+                          )}
+                          {/* 2026-10-14: 未接上上一镜尾帧的提示 (本段独立生成, 可能接不上戏) */}
+                          {shot.noContinuity && (
+                            <Tooltip title="本镜生成时没有接上上一镜的尾帧 (上一镜未生成或尾帧提取失败) — 与上一镜可能接不上戏">
+                              <Tag color="warning" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>⚠ 无衔接</Tag>
+                            </Tooltip>
                           )}
                           <Tooltip title="删除"><Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => deleteShot(epIdx, shot.id)} /></Tooltip>
                         </div>
@@ -1623,6 +1724,33 @@ return (
           )}
           <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
             「先补全再生成」会用免费生图模型补齐缺失项 (消耗生图额度)，完成后自动继续生成视频。
+          </div>
+        </div>
+      </Modal>
+
+      {/* 2026-10-14: 尾帧衔接 — 上一镜无可用尾帧时的询问 (先补上一镜 / 跳过直接生成 / 取消) */}
+      <Modal
+        open={!!continuityPrompt}
+        title="接不上上一镜"
+        width={460}
+        onCancel={() => { continuityPrompt?.resolve('cancel'); setContinuityPrompt(null); }}
+        footer={[
+          <Button key="fill" type="primary" onClick={() => { continuityPrompt?.resolve('fill'); setContinuityPrompt(null); }}>
+            先补上一镜 (推荐)
+          </Button>,
+          <Button key="skip" onClick={() => { continuityPrompt?.resolve('skip'); setContinuityPrompt(null); }}>
+            跳过直接生成
+          </Button>,
+          <Button key="cancel" onClick={() => { continuityPrompt?.resolve('cancel'); setContinuityPrompt(null); }}>取消</Button>,
+        ]}
+      >
+        <div style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.7 }}>
+          {continuityPrompt?.reason === 'extract-failed'
+            ? <>第 <b>{continuityPrompt?.prevShotId}</b> 镜已有视频, 但<b>尾帧提取失败</b>, 本镜接不上它。</>
+            : <>第 <b>{continuityPrompt?.prevShotId}</b> 镜<b>还没生成</b>, 本镜没有尾帧可接。</>}
+          <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
+            「先补上一镜」会先生成上一镜 (完成后请再点本镜), 这样本镜就能接上戏;<br />
+            「跳过直接生成」则本镜只靠场景图/角色图生成 (会标 ⚠ 无衔接, 动作可能接不上)。
           </div>
         </div>
       </Modal>

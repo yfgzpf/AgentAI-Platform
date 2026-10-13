@@ -133,7 +133,7 @@ describe('分镜: 缺图守卫 (未生成场景/角色图就生成视频)', () =
 
   it('★ 提供「先补全再生成」并能把新图并入提交 (guard.extra)', () => {
     expect(code).toContain('先补全再生成');
-    expect(code).toMatch(/collectRefImages\(epIdx, shot, guard\.extra\)/);
+    expect(code).toMatch(/collectRefImages\(epIdx, shot, guard\.extra,/);
     expect(code).toMatch(/const completeMissingRefs = /);
   });
 });
@@ -420,6 +420,84 @@ describe('分镜: 单镜多版本候选 (生成不满意可继续生成)', () =>
 
   it('★ 候选版本持久化时清洗 URL (blob:/data: 落盘失效)', () => {
     expect(code).toContain('videoVersions: s.videoVersions?.filter(v => v.url?.startsWith(\'http\')');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// 分镜: 尾帧衔接 — 上一镜尾帧当本镜首张参考图 + 跳镜询问 (2026-10-14)
+// ════════════════════════════════════════════════════════════════════
+
+describe('分镜: 尾帧衔接 (上一镜尾帧随参考图发送)', () => {
+  const code = stripComments(src('components/StoryboardPanel.tsx'));
+
+  it('★ Shot 携带 noContinuity 标记 + 面板有「尾帧衔接」开关 (默认开)', () => {
+    expect(code).toContain('noContinuity?: boolean');
+    expect(code).toContain('const [continuity, setContinuity] = useState(true)');
+    expect(code).toContain('checked={continuity} onChange={setContinuity}');
+  });
+
+  it('★ 尾帧作为「第一张」参考图 (折中模式: 场景/角色图仍保留)', () => {
+    // collectRefImages 新增 tail 参数
+    expect(code).toContain('const collectRefImages = (epIdx: number, shot: Shot, extra?: RefExtras, tail?: string): string[] =>');
+    // tail 必须**先于**场景图 push —— 引擎只取前 5 张, 尾帧要占住第一个位置
+    expect(code).toContain('if (tail) refs.push(tail)');
+    // ★ tail 在场景图之前: 断言顺序 (先 push(tail) 再 push(sceneUrl))
+    //   注意源码是 CRLF, 不能用跨行 indexOf — 用单行锚点
+    const iTail = code.indexOf('if (tail) refs.push(tail)');
+    const iScene = code.indexOf('refs.push(sceneUrl)');
+    expect(iTail).toBeGreaterThan(-1);
+    expect(iScene).toBeGreaterThan(iTail);
+  });
+
+  it('★ guardContinuity: 上一镜有尾帧直接用; 集内首镜放行 (不算断链)', () => {
+    expect(code).toContain('const guardContinuity = async (epIdx: number, shot: Shot)');
+    // ① 已存尾帧 → 直接用, 不抽帧不弹窗
+    expect(code).toContain('if (prevShot.lastFrameUrl) return { proceed: true, tail: prevShot.lastFrameUrl }');
+    // 集内首镜 (idx<=0) → 没有上一镜可接 → 放行
+    expect(code).toContain('if (!prevShot) return { proceed: true }');
+  });
+
+  it('★ 有视频无尾帧 → 现场抽帧 (POST /v1/video/extract-tail), 抽不到才弹窗', () => {
+    expect(code).toContain('const extractTail = async (videoUrl: string)');
+    expect(code).toContain('${httpUrl}/v1/video/extract-tail');
+    // 抽帧失败 → 走弹窗 (reason='extract-failed')
+    expect(code).toContain("return askPrevNotReady(epIdx, prevShot.id, 'extract-failed')");
+    // 上一镜根本没生成 → 弹窗 (reason='missing')
+    expect(code).toContain("return askPrevNotReady(epIdx, prevShot.id, 'missing')");
+  });
+
+  it('★ 跳镜询问弹窗: 先补上一镜 / 跳过直接生成 / 取消 三选项', () => {
+    expect(code).toContain('const askPrevNotReady = (epIdx: number, prevShotId: number');
+    expect(code).toContain('先补上一镜 (推荐)');
+    expect(code).toContain('跳过直接生成');
+    // 「先补上一镜」→ 先把上一镜补生成, 本镜本次不生成 (完成后用户再点本镜接戏)
+    expect(code).toContain('generateSingleShot(epIdx, prevShotId)');
+    // 「跳过」→ 本镜照常生成但打 noContinuity 标
+    expect(code).toContain('if (v === \'skip\') return resolve({ proceed: true, skipped: true })');
+  });
+
+  it('★ 单镜生成: 接上守卫 + 把尾帧并入参考图 + 跳过时打标', () => {
+    expect(code).toContain('const cont = await guardContinuity(epIdx, shot)');
+    expect(code).toContain('collectRefImages(epIdx, shot, guard.extra, cont.tail)');
+    expect(code).toContain('noContinuity: !!cont.skipped');
+    // 旧的三参调用必须清零 (否则尾帧根本没带进提交)
+    expect(code).not.toContain('collectRefImages(epIdx, shot, guard.extra)');
+  });
+
+  it('★ 批量生成: 用 tailByShot 传「刚生成的尾帧」接戏, 无尾帧打标不弹窗', () => {
+    expect(code).toContain('const tailByShot = new Map<number, string | undefined>()');
+    // 批量内优先用本批刚生成的尾帧, 其次用已存的
+    expect(code).toContain('tail = tailByShot.get(prevShot.id) ?? prevShot.lastFrameUrl');
+    expect(code).toContain('collectRefImages(epIdx, shot, guard.extra, tail)');
+    // 成功后把本镜尾帧存进 map, 供下一镜用
+    expect(code).toContain('tailByShot.set(shot.id, videoResult.lastFrameUrl)');
+    // 拿不到尾帧 → 打 noContinuity 标 (批量不弹窗, 避免几十镜逐个打断)
+    expect(code).toContain('noContinuity: noCont');
+  });
+
+  it('★ 镜次行渲染「⚠ 无衔接」标记 (跳镜/抽帧失败时)', () => {
+    expect(code).toContain('{shot.noContinuity && (');
+    expect(code).toContain('⚠ 无衔接');
   });
 });
 
