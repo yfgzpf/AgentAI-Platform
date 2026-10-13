@@ -26,6 +26,9 @@ import { exec } from 'child_process';
 // 同时缺失 ffmpeg 时给出可执行的提示，而不是笼统的'请手动截图'。
 import { runFfmpeg, hasFfmpeg, explainFfmpegError, FFMPEG_MISSING } from '../ffmpeg.js';
 import { SUBMODEL_TO_GROUP_ENV } from '../factory-registry.js';
+// 2026-10-13: 剧本生成改为「跟随所选对话模型」—— 走 llm-router (它知道每个 provider
+// 的 baseURL / keyEnv / 模型名, 且自带重试/熔断)。原实现写死 agnes-2.5-flash 直连。
+import { getAgentAIRouter } from '../llm-router.js';
 import { promisify } from 'util';
 import multer from 'multer';
 
@@ -172,6 +175,85 @@ function parseByokCredentials(body: any): ByokCredentials | null {
 /** 日志脱敏: 只说"用了自定义凭证", 绝不打 Key */
 function logByokUse(baseUrl: string, hasKey: boolean) {
   console.log(`[video] ${hasKey ? '使用请求内自定义凭证' : '未收到自定义凭证, 回退服务端 env'} (baseUrl=${baseUrl})`);
+}
+
+/**
+ * 剧本生成的 LLM 调用 —— 2026-10-13 新增「跟随所选模型」。
+ *
+ * 背景: /v1/video/storyboard 与 /v1/video/next-episode 原来写死 `agnes-2.5-flash`
+ * + AGENTAI_API_KEY 直连 (见 git 历史), 用户无法用自己选的强模型生成剧本/对白。
+ *
+ * 现在: 前端把 GUI modelStore 里选中的对话模型以 `scriptProvider`(provider 名,
+ * 如 agnes/deepseek/alrc) + `scriptModel`(子模型名, 如 agnes-3.0-flash) 传过来,
+ * 交给 llm-router —— 它负责解析 baseURL / keyEnv / 模型名, 并带重试与熔断。
+ * `modelLocked: true` 保证失败**不跨 provider 换模型**(用户选什么就用什么)。
+ *
+ * 未指定 scriptProvider(或旧客户端) → **保留原有 agnes-2.5-flash 直连** 作回落, 行为不变。
+ *
+ * @returns ok=true 时 content 是模型原始文本 (可能含 markdown 包裹), 由调用方清理/解析
+ */
+async function callScriptLLM(
+  scriptProvider: string | undefined,
+  scriptModel: string | undefined,
+  systemPrompt: string,
+  userContent: any,
+  maxTokens: number,
+  temperature: number,
+): Promise<{ ok: boolean; content?: string; model?: string; status?: number; error?: string }> {
+  const messages: any[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userContent },
+  ];
+
+  // ---- 分支 A: 前端指定了模型 → 走 llm-router ----
+  if (scriptProvider) {
+    try {
+      const router = getAgentAIRouter();
+      const resp: any = await router.chat({
+        model: scriptProvider,
+        subModel: scriptModel,
+        messages,
+        maxTokens,
+        temperature,
+        modelLocked: true,
+      } as any);
+      const content = resp?.content;
+      if (!content || typeof content !== 'string') {
+        return { ok: false, status: 502, error: `剧本模型 ${scriptProvider}${scriptModel ? ':' + scriptModel : ''} 返回空内容` };
+      }
+      console.log(`[storyboard] 使用所选模型生成剧本: ${scriptProvider}${scriptModel ? ':' + scriptModel : ''}`);
+      return { ok: true, content, model: `${scriptProvider}${scriptModel ? ':' + scriptModel : ''}` };
+    } catch (e: any) {
+      return { ok: false, status: 500, error: `剧本模型调用失败: ${e.message}` };
+    }
+  }
+
+  // ---- 分支 B: 未指定模型 → 原 agnes-2.5-flash 直连 (向后兼容) ----
+  const apiKey = process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY'];
+  if (!apiKey) {
+    return { ok: false, status: 400, error: '需要 AGENTAI_API_KEY 才能生成剧本 (或在前端指定 scriptProvider)' };
+  }
+  const postStoryboard = () => fetch('https://api.agnes-ai.cn/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'agnes-2.5-flash', messages, max_tokens: maxTokens, temperature }),
+    signal: AbortSignal.timeout(60000),
+  });
+  // 429/503 = 速率限制/队列满: 指数退避重试 (2s/4s/8s), 最多 3 次
+  let resp = await postStoryboard();
+  for (let attempt = 0; (resp.status === 503 || resp.status === 429) && attempt < 3; attempt++) {
+    const waitMs = Math.min(2000 * Math.pow(2, attempt), 8000);
+    console.warn(`[storyboard] LLM ${resp.status} (429=速率限制/503=队列满), 第${attempt + 1}次重试, 等待 ${waitMs / 1000}s`);
+    await new Promise((r) => setTimeout(r, waitMs));
+    resp = await postStoryboard();
+  }
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    return { ok: false, status: resp.status, error: `LLM 生成剧本失败: HTTP ${resp.status}: ${errText.slice(0, 200)}` };
+  }
+  const data: any = await resp.json();
+  const content = data.choices?.[0]?.message?.content || '';
+  return { ok: true, content, model: 'agnes-2.5-flash' };
 }
 
 export function createVideoRouter(io?: any) {
@@ -707,7 +789,7 @@ export function createVideoRouter(io?: any) {
   // 流程: 提取尾帧 → 调用多模态 LLM 分析画面+生成新剧本 → 返回 tailFrameUrl + newPrompt
   router.post('/v1/video/next-episode', async (req, res) => {
     try {
-      const { videoUrl, originalPrompt, episodeIndex = 2, characters, storyContext, apiLastFrame } = req.body;
+      const { videoUrl, originalPrompt, episodeIndex = 2, characters, storyContext, apiLastFrame, scriptProvider, scriptModel } = req.body;
       if (!videoUrl && !req.body.videoPath) {
         return res.status(400).json({ error: 'videoUrl or videoPath required' });
       }
@@ -754,8 +836,8 @@ export function createVideoRouter(io?: any) {
 
       // Step 2: 调用 LLM 生成续集剧本
       const apiKey = process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY'];
-      if (!apiKey) {
-        // 无 API key — 降级: 简单续集提示词
+      if (!apiKey && !scriptProvider) {
+        // 无 API key 且未指定模型 — 降级: 简单续集提示词
         return res.json({
           tailFrameUrl: tailFrameDataUri,
           newPrompt: `续集 第${episodeIndex}集: ${originalPrompt.slice(0, 80)}...\n请延续上一段视频的内容和风格, 生成后续画面。`,
@@ -786,7 +868,12 @@ export function createVideoRouter(io?: any) {
 4. 跨集角色必须一致 — 复用已知角色的外貌描述
 5. 每镜的 prompt 必须是可直接发给视频模型的描述 (80-120字中文)
 6. 第一镜要从尾帧画面自然过渡
-7. 每镜标注 type(WS/MS/CU)、camera_motion、mood、characters、dialogue
+7. 每镜标注 type(WS/MS/CU)、camera_motion、mood、characters、dialogue、monologue
+
+【对白要求 — 必须充分输出】
+- dialogue 字段填角色说出口的台词, 用双引号包裹 (如: 角色名: "台词")
+- 有角色的镜头默认都要写对白 (纯环境空镜除外); 无对白填空字符串
+- monologue 字段填内心独白/旁白 (不出声的心声), 用双引号包裹; 无则空字符串
 
 【角色一致性】
 - 已知角色必须复用其外貌描述, 保证跨集一致
@@ -811,7 +898,8 @@ export function createVideoRouter(io?: any) {
         "mood": "mysterious",
         "prompt": "具体的视频生成提示词(80-120字中文)",
         "characters": ["角色名1"],
-        "dialogue": ""
+        "dialogue": "角色名: \"台词内容\"",
+        "monologue": "\"内心独白/旁白, 无则空字符串\""
       }
     ]
   }
@@ -846,56 +934,30 @@ ${originalPrompt}${storyInfo}${characterInfo}
 
 只输出JSON。`;
 
-      const buildMessages = (frame: string | null): any[] => {
-        const msgs: any[] = [{ role: 'system', content: systemPrompt }];
-        if (frame) {
-          msgs.push({ role: 'user', content: [
-            { type: 'text', text: framePrompt },
-            { type: 'image_url', image_url: { url: frame } },
-          ] });
-        } else {
-          msgs.push({ role: 'user', content: textPrompt });
-        }
-        return msgs;
-      };
-
-      // 429/503 = 速率限制/队列满回退策略: 指数退避 (2s/4s) 重试, 最多 2 次
-      // 修复: 之前只重试 503, Agnes 免费 key 的 429 直接失败
-      const callLlm = async (messages: any[]): Promise<Response> => {
-        const post = () => fetch('https://api.agnes-ai.cn/v1/chat/completions', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'agnes-2.5-flash',
-            messages,
-            max_tokens: 800,
-            temperature: 0.8,
-          }),
-          signal: AbortSignal.timeout(30000),
-        });
-        let resp = await post();
-        for (let attempt = 0; (resp.status === 503 || resp.status === 429) && attempt < 2; attempt++) {
-          const waitMs = Math.min(2000 * Math.pow(2, attempt), 4000);
-          console.warn(`[next-episode] LLM ${resp.status}, 第${attempt + 1}次重试, 等待 ${waitMs / 1000}s`);
-          await new Promise((r) => setTimeout(r, waitMs));
-          resp = await post();
-        }
-        return resp;
-      };
+      // 2026-10-13: 续集剧本同样「跟随所选模型」。callScriptLLM 内部:
+      //   scriptProvider 有值 → 走 llm-router; 否则回落 agnes-2.5-flash 直连
+      //   (后者已内含 429/503 指数退避重试, 与原来 callLlm 的行为一致)。
+      const callEpisodeLlm = (frame: string | null) =>
+        callScriptLLM(
+          scriptProvider, scriptModel, systemPrompt,
+          frame
+            ? [{ type: 'text', text: framePrompt }, { type: 'image_url', image_url: { url: frame } }]
+            : textPrompt,
+          800, 0.8,
+        );
 
       let effectiveFrame = tailFrameDataUri;
-      let llmResp: Response | null = await callLlm(buildMessages(effectiveFrame));
-      if (llmResp && !llmResp.ok && (llmResp.status === 503 || llmResp.status === 429) && effectiveFrame) {
+      let llmResult = await callEpisodeLlm(effectiveFrame);
+      if (!llmResult.ok && (llmResult.status === 503 || llmResult.status === 429) && effectiveFrame) {
         // 429/503 重试耗尽 → 降级为纯文本模式(跳过尾帧), 不阻断流程
-        console.warn(`[next-episode] ${llmResp.status} 重试耗尽, 降级为纯文本模式(跳过尾帧)`);
+        console.warn(`[next-episode] ${llmResult.status} 重试耗尽, 降级为纯文本模式(跳过尾帧)`);
         effectiveFrame = null;
-        llmResp = await callLlm(buildMessages(null));
+        llmResult = await callEpisodeLlm(null);
       }
 
       let episodeData: any = null;
-      if (llmResp && llmResp.ok) {
-        const llmData: any = await llmResp.json();
-        let content = llmData.choices?.[0]?.message?.content || '';
+      if (llmResult.ok) {
+        let content = llmResult.content || '';
         content = content.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
         try {
           episodeData = JSON.parse(content);
@@ -954,18 +1016,14 @@ ${originalPrompt}${storyInfo}${characterInfo}
 
   // ════════════════════════════════════════════════════════════════════════
   // POST /v1/video/storyboard — 剧本分镜生成
-  // 输入: { prompt, episodeCount, durationPerShot, refImages?, model? }
+  // 输入: { prompt, episodeCount, durationPerShot, refImages?,
+  //         scriptProvider?, scriptModel? } — 后两者=跟随 GUI 所选对话模型
   // 输出: { title, episodes: [{ index, title, shots: [{ id, duration, prompt, ... }] }] }
   // ════════════════════════════════════════════════════════════════════════
   router.post('/v1/video/storyboard', async (req, res) => {
     try {
-      const { prompt, episodeCount = 1, durationPerShot = '5', refImages = [] } = req.body;
+      const { prompt, episodeCount = 1, durationPerShot = '5', refImages = [], scriptProvider, scriptModel } = req.body;
       if (!prompt) return res.status(400).json({ error: 'prompt required' });
-
-      const apiKey = process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY'];
-      if (!apiKey) {
-        return res.status(400).json({ error: '需要 AGENTAI_API_KEY 才能生成剧本' });
-      }
 
       // 计算每集镜数: 总时长 / 单镜时长
       const shotDuration = parseInt(String(durationPerShot), 10) || 5;
@@ -977,12 +1035,12 @@ ${originalPrompt}${storyInfo}${characterInfo}
       const systemPrompt = `你是一位专业的AI视频编剧导演。你需要根据用户的创意生成分集分镜剧本。
 
 【剧本铁律 — 参考漫剧系统验证过的规范】
-1. 视觉优先: 每镜描述具体的可拍摄动作, 避免抽象内心独白
+1. 视觉优先: 每镜描述具体的可拍摄动作 (如"走向窗边"而非"感到悲伤"); 内心活动**必须**写进 monologue 字段, 不要混进 prompt
 2. 角色限制: 单镜最多3个角色同时出现
 3. 动作可执行: 角色动作必须具体、可被视频模型理解 (如"走向窗边"而非"感到悲伤")
 4. 对白精炼: 每句台词控制在15字以内, 对白要推动剧情而非闲聊
 5. 环境具体化: 明确描述光线方向、色温、空间布局、关键道具
-6. 情绪外化: 用表情和肢体动作传达情绪, 不要写"内心感到..."
+6. 情绪外化: 用表情和肢体动作传达情绪; 需要"内心戏"时写进 monologue 字段 (旁白/独白), 不要在 prompt 里写"内心感到..."
 7. 每镜时长固定 ${shotDuration} 秒, 每集 ${shotsPerEpisode} 镜, 共 ${episodeCount} 集
 8. 每镜 prompt 必须是可直接发给视频模型的描述 (80-120字中文)
 9. 跨集剧情要连贯: 上一集结尾自然过渡到下一集开头, 每集有起承转合
@@ -1004,11 +1062,17 @@ ${originalPrompt}${storyInfo}${characterInfo}
 - 最后集: 冲突解决或升级, 结局留有余味
 - 每集内部也要有起承转合, 不是平铺直叙
 
-【对白要求】
-- dialogue 字段填入该镜中的对白 (如有)
-- 对白要自然、口语化, 符合角色性格
-- 每句不超过15字, 一镜最多2-3句对白
+【对白要求 — 必须充分输出, 这是音画同步的关键】
+- dialogue 字段填入该镜中角色说出口的台词, **用双引号包裹内容** (如: 锦衣卫: "站住！")
+- **凡是镜头里有角色的 (characters 非空), 默认就要写对白** —— 只有纯环境空镜 (无角色) 才允许留空
+- 对白要自然、口语化, 符合角色性格, 推动剧情而非闲聊
+- 每句不超过15字, 一镜最多2-3句对白; 多句用换行分隔
 - 无对白的镜头填空字符串
+
+【内心独白 / 旁白】
+- monologue 字段填入该镜的内心独白或旁白 (角色未出声的心声, 或第三人称旁白)
+- 用于表达人物的心理活动、悬念铺垫; **不要**与 dialogue 重复同一句话
+- 同样用双引号包裹; 没有则填空字符串
 
 【镜头语言】
 - type: WS(远景/全景)/MS(中景)/CU(特写)/ECU(大特写)
@@ -1035,7 +1099,8 @@ ${originalPrompt}${storyInfo}${characterInfo}
           "mood": "mysterious",
           "prompt": "具体的视频生成提示词(80-120字中文), 包含场景环境+角色动作+光线氛围+镜头运动",
           "characters": ["角色名1"],
-          "dialogue": "角色名: 台词内容"
+          "dialogue": "角色名: \"台词内容\"",
+          "monologue": "\"内心独白或旁白, 无则空字符串\""
         }
       ]
     }
@@ -1058,37 +1123,14 @@ ${originalPrompt}${storyInfo}${characterInfo}
         }
       }
 
-      const postStoryboard = () => fetch('https://api.agnes-ai.cn/v1/chat/completions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'agnes-2.5-flash',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent },
-          ],
-          max_tokens: 4000,
-          temperature: 0.8,
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
-      // 429/503 = 速率限制/队列满: 指数退避重试 (2s/4s/8s), 最多 3 次
-      // 修复: 之前只重试 503, Agnes 免费 key 的 429 (免费额度耗尽) 直接失败
-      let llmResp = await postStoryboard();
-      for (let attempt = 0; (llmResp.status === 503 || llmResp.status === 429) && attempt < 3; attempt++) {
-        const waitMs = Math.min(2000 * Math.pow(2, attempt), 8000);
-        console.warn(`[storyboard] LLM ${llmResp.status} (429=速率限制/503=队列满), 第${attempt + 1}次重试, 等待 ${waitMs / 1000}s`);
-        await new Promise((r) => setTimeout(r, waitMs));
-        llmResp = await postStoryboard();
+      // 2026-10-13: 剧本生成改为「跟随所选模型」——见 callScriptLLM 注释。
+      // 未传 scriptProvider 时行为与原实现完全一致 (agnes-2.5-flash 直连 + 429/503 重试)。
+      const llmResult = await callScriptLLM(scriptProvider, scriptModel, systemPrompt, userContent, 4000, 0.8);
+      if (!llmResult.ok) {
+        return res.status(llmResult.status || 500).json({ error: llmResult.error });
       }
 
-      if (!llmResp.ok) {
-        const errText = await llmResp.text().catch(() => '');
-        return res.status(llmResp.status).json({ error: `LLM 生成剧本失败: HTTP ${llmResp.status}: ${errText.slice(0, 200)}` });
-      }
-
-      const llmData: any = await llmResp.json();
-      let content = llmData.choices?.[0]?.message?.content || '';
+      let content = llmResult.content || '';
       // 清理 markdown 标记
       content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 

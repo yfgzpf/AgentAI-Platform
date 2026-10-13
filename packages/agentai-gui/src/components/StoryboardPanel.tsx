@@ -25,6 +25,8 @@ import { useResizable } from '../hooks/useResizable';
 import { PaneGrip } from './PaneGrip';
 // [BYOK] 自定义模型凭证 —— 与 VideoGen 共用同一份定义 (见文件头说明)
 import { resolveByokCredential } from '../services/customVideoModels';
+// 2026-10-13: 剧本生成跟随「对话所选模型」—— 读 modelStore 的 activeModelId
+import { useModelStore } from '../store/modelStore';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -38,6 +40,8 @@ export interface Shot {
   prompt: string;
   characters: string[];
   dialogue: string;
+  /** 2026-10-13 新增: 内心独白/旁白 (角色未出声的心声) — 与 dialogue 一起内联进视频 prompt 做音画同步 */
+  monologue?: string;
   status?: 'pending' | 'generating' | 'completed' | 'failed';
   videoUrl?: string;
   /** API 返回的尾帧 (return_last_frame) — 续集功能用它跳过 ffmpeg 抽帧 */
@@ -108,9 +112,40 @@ function saveToCharLibrary(char: StoryboardCharacter) {
   } catch {}
 }
 
+/**
+ * 2026-10-13: 把镜头组装成最终提交给视频模型的 prompt。
+ *
+ * 【为什么需要】原实现提交体只有 `prompt: shot.prompt`, **shot.dialogue 生成后
+ * 从不进请求** —— 用户在分镜页看到「台词: "…"」, 视频里却没有任何对白/口型。
+ * 参考 F:/漫剧系统 里验证过的做法 (complete_ming_drama.py:92 / ming_dynasty_agnes.py:247):
+ * 用带标签的文本驱动模型做音画同步 —— 台词进 [Dialogue ...], 并显式要求对口型。
+ *
+ * @param shot 分镜镜头
+ * @returns 拼接后的完整 prompt (含对白/独白/运镜/氛围)
+ */
+export function buildSubmitPrompt(shot: Shot): string {
+  const parts = [(shot.prompt || '').trim()];
+  if (shot.camera_motion) parts.push(`[Camera motion] ${shot.camera_motion}`);
+  if (shot.mood) parts.push(`[Mood] ${shot.mood}`);
+  const dialogue = (shot.dialogue || '').trim();
+  const monologue = (shot.monologue || '').trim();
+  if (dialogue) parts.push(`[Dialogue in Chinese, character speaks: "${dialogue}"]`);
+  if (monologue) parts.push(`[Inner monologue / voiceover in Chinese: "${monologue}"]`);
+  if (dialogue || monologue) {
+    // 音画同步指令 —— 与漫剧系统一致, 明确要求口型匹配
+    parts.push('Generate synchronized audio: the spoken lines must match the on-screen character lip movement and natural voice tone.');
+  }
+  return parts.filter(Boolean).join('\n');
+}
+
+/** 一键补全时新生成的参考图 (按场景集号 / 角色名索引), 直接并入提交, 不依赖 setState 时序 */
+export interface RefExtras {
+  scenes: Record<number, string>;
+  chars: Record<string, string>;
+}
+
 // 右侧折叠面板的 CSS — 折叠时只显示 header, 展开时自动填充
-const RIGHT_COLLAPSE_CSS = `
-.storyboard-right-collapse .ant-collapse-content {
+const RIGHT_COLLAPSE_CSS = `.storyboard-right-collapse .ant-collapse-content {
   flex: 1;
   overflow: hidden;
   display: flex;
@@ -130,6 +165,28 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
   const [episodeCount, setEpisodeCount] = useState(3);
   const [shotDuration, setShotDuration] = useState(5);
   const [generating, setGenerating] = useState(false);
+
+  // ===== 2026-10-13: 视频生成参数 (与单次生成页对齐) =====
+  // 原实现提交体写死 size:'720P' / aspect_ratio:'16:9', 页面上没有任何分辨率控件。
+  const [videoSize, setVideoSize] = useState('720P');
+  const [videoAspect, setVideoAspect] = useState('16:9');
+
+  // ===== 2026-10-13: 剧本模型跟随「对话所选模型」=====
+  // 原来 gateway 写死 agnes-2.5-flash (免费档, 对白稀疏)。现在把用户在聊天页选的
+  // 模型 (modelStore.activeModelId) 的 provider + 子模型名传给 /v1/video/storyboard,
+  // 由 gateway 的 llm-router 解析 baseURL/keyEnv。未选到配置时回落到免费模型。
+  const activeModelId = useModelStore(s => s.activeModelId);
+  const modelStoreModels = useModelStore(s => s.models);
+  const scriptModelCfg = modelStoreModels.find(m => m.id === activeModelId);
+  const scriptProvider = scriptModelCfg?.provider;
+  const scriptModelName = scriptModelCfg?.models?.[0] || activeModelId || undefined;
+
+  // ===== 2026-10-13: 缺图守卫 =====
+  // 未生成场景图/角色定妆图就生成视频时, 一致性参考图会缺失 → 白生成。弹窗提示 + 一键补全。
+  const [missingPrompt, setMissingPrompt] = useState<null | {
+    scenes: number[]; chars: string[]; resolve: (r: { proceed: boolean; extra?: RefExtras }) => void;
+  }>(null);
+  const [completingRefs, setCompletingRefs] = useState(false); // 「先补全再生成」进行中
 
   // ===== 多剧本持久化 =====
   // localStorage 结构: agentai-storyboards = { list: [{id,title,updatedAt}], activeId }
@@ -345,7 +402,7 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
       const resp = await fetch(`${httpUrl}/v1/video/storyboard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, episodeCount, durationPerShot: String(shotDuration), refImages }),
+        body: JSON.stringify({ prompt, episodeCount, durationPerShot: String(shotDuration), refImages, scriptProvider, scriptModel: scriptModelName }),
       });
       const data = await resp.json();
       if (data.error) { message.error('剧本生成失败: ' + data.error); return; }
@@ -362,7 +419,8 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
   };
 
   // AI 生成角色图 — 同时生成定妆图(白底单人照, 用于精编抠图) + 九宫格(多角度参考, 用于AI理解角色)
-  const generatePortrait = async (charName: string) => {
+  // 2026-10-13: 返回值 = 本次生成的图 URL (供「缺图守卫」一键补全时直接并入提交, 不依赖 state 时序)
+  const generatePortrait = async (charName: string): Promise<{ portraitUrl?: string; sheetUrl?: string } | undefined> => {
     if (!storyboard) return;
     const char = storyboard.characters.find(c => c.name === charName);
     if (!char) return;
@@ -424,7 +482,8 @@ White background, character sheet reference, concept art style, high detail, pro
       } else {
         message.success(`✅ ${charName} 角色图已生成 (${okCount}/2 成功${portraitUrl ? ' · 定妆图' : ''}${sheetUrl ? ' · 九宫格' : ''})`);
       }
-    } catch (e: any) { message.error('角色图生成失败: ' + e.message); }
+      return { portraitUrl: portraitUrl || undefined, sheetUrl: sheetUrl || undefined };
+    } catch (e: any) { message.error('角色图生成失败: ' + e.message); return undefined; }
     finally { setGeneratingPortrait(null); }
   };
 
@@ -442,10 +501,11 @@ White background, character sheet reference, concept art style, high detail, pro
   };
 
   // AI 生成场景图 — 每集一个场景, 保证跨集场景一致
-  const generateSceneImage = async (epIdx: number) => {
-    if (!storyboard) return;
+  // 2026-10-13: 返回值 = 生成的场景图 URL (供缺图守卫一键补全直接并入提交)
+  const generateSceneImage = async (epIdx: number): Promise<string | undefined> => {
+    if (!storyboard) return undefined;
     const ep = storyboard.episodes[epIdx];
-    if (!ep || !ep.scene) return;
+    if (!ep || !ep.scene) return undefined;
     setGeneratingScene(epIdx);
     try {
       const scenePrompt = `Photorealistic scene background ONLY: ${ep.scene.description}. 
@@ -459,7 +519,7 @@ High detail, professional quality, 16:9 aspect ratio.`;
         body: JSON.stringify({ prompt: scenePrompt, model: 'agnes', mode: 'text2img', size: '2K' }),
       });
       const data = await resp.json();
-      if (data.error) { message.error(`场景图生成失败: ${data.error}`); return; }
+      if (data.error) { message.error(`场景图生成失败: ${data.error}`); return undefined; }
       const url = data.url?.startsWith('/') ? httpUrl + data.url : data.url;
       setStoryboard(prev => {
         if (!prev) return prev;
@@ -468,7 +528,8 @@ High detail, professional quality, 16:9 aspect ratio.`;
         return { ...prev, episodes: eps };
       });
       message.success(`✅ 第${epIdx + 1}集场景图已生成`);
-    } catch (e: any) { message.error('场景图生成失败: ' + e.message); }
+      return url || undefined;
+    } catch (e: any) { message.error('场景图生成失败: ' + e.message); return undefined; }
     finally { setGeneratingScene(null); }
   };
 
@@ -495,6 +556,7 @@ High detail, professional quality, 16:9 aspect ratio.`;
           characters: storyboard.characters.map(c => ({ name: c.name, description: c.description })),
           storyContext: `剧名: ${storyboard.title}, 已完成 ${fromEpIdx + 1} 集`,
           apiLastFrame,
+          scriptProvider, scriptModel: scriptModelName,
         }),
       });
       const data = await resp.json();
@@ -540,6 +602,16 @@ High detail, professional quality, 16:9 aspect ratio.`;
       if (!prev) return prev;
       const eps = [...prev.episodes];
       eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, prompt: newPrompt } : s);
+      return { ...prev, episodes: eps };
+    });
+  };
+
+  // 2026-10-13: 台词/独白可编辑 — 生成后常需微调, 且它俩会内联进提交给视频模型的 prompt
+  const updateShotField = (epIdx: number, shotId: number, field: 'dialogue' | 'monologue', value: string) => {
+    setStoryboard(prev => {
+      if (!prev) return prev;
+      const eps = [...prev.episodes];
+      eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, [field]: value } : s);
       return { ...prev, episodes: eps };
     });
   };
@@ -615,20 +687,24 @@ High detail, professional quality, 16:9 aspect ratio.`;
   };
 
   // 收集当前镜头相关的参考图 — 角色定妆图 + 九宫格 + 场景图
-  const collectRefImages = (epIdx: number, shot: Shot): string[] => {
+  // 2026-10-13: 加 extra 参数 —— 「缺图守卫」一键补全时, 新生成的图还没进 state,
+  //   直接通过 extra 并入, 避免 stale closure 导致"补了图但没带上"。
+  const collectRefImages = (epIdx: number, shot: Shot, extra?: RefExtras): string[] => {
     if (!storyboard) return [];
     const refs: string[] = [];
-    // 1. 场景图
+    // 1. 场景图 (extra 优先 — 刚生成的)
     const ep = storyboard.episodes[epIdx];
-    if (ep?.scene?.imageUrl) {
-      refs.push(ep.scene.imageUrl);
+    const sceneUrl = extra?.scenes[epIdx] || ep?.scene?.imageUrl;
+    if (sceneUrl) {
+      refs.push(sceneUrl);
     }
     // 2. 角色定妆图 + 九宫格 — 只传该镜头涉及的角色
     if (shot.characters && shot.characters.length > 0) {
       for (const charName of shot.characters) {
         const char = storyboard.characters.find(c => c.name === charName);
-        if (char?.portraitUrl) {
-          refs.push(char.portraitUrl);
+        const portraitUrl = extra?.chars[charName] || char?.portraitUrl;
+        if (portraitUrl) {
+          refs.push(portraitUrl);
         }
         // 九宫格也作为参考传给视频AI, 帮助它从不同角度理解角色
         if (char?.sheetUrl && refs.length < 5) {
@@ -639,13 +715,60 @@ High detail, professional quality, 16:9 aspect ratio.`;
     // 3. 如果没有特定角色, 传所有角色定妆图 (最多5张, Agnes Flash 限制)
     if (refs.length === 0) {
       for (const char of storyboard.characters) {
-        if (char.portraitUrl) {
-          refs.push(char.portraitUrl);
+        const portraitUrl = extra?.chars[char.name] || char.portraitUrl;
+        if (portraitUrl) {
+          refs.push(portraitUrl);
           if (refs.length >= 5) break;
         }
       }
     }
     return refs.slice(0, 5); // Agnes Flash 最多5张
+  };
+
+  /** 2026-10-13: 找出某镜头缺失的参考图 (该集场景图 / 该镜角色的定妆图+九宫格) */
+  const findMissingRefs = (epIdx: number, shot: Shot): { scene: boolean; chars: string[] } => {
+    if (!storyboard) return { scene: false, chars: [] };
+    const ep = storyboard.episodes[epIdx];
+    const scene = !!ep?.scene && !ep.scene.imageUrl;
+    const chars = (shot.characters || []).filter(name => {
+      const c = storyboard.characters.find(x => x.name === name);
+      return !!c && !c.portraitUrl && !c.sheetUrl;
+    });
+    return { scene, chars };
+  };
+
+  /**
+   * 2026-10-13 缺图守卫: 提交视频前检查参考图是否齐备。
+   * 有缺失 → 弹窗 (先补全 / 仍然生成 / 取消); 无缺失 → 直接放行。
+   * @returns proceed=是否继续生成; extra=「先补全」路径新生成的图 (直接并入提交)
+   */
+  const guardMissingRefs = (targets: { epIdx: number; shot: Shot }[]): Promise<{ proceed: boolean; extra?: RefExtras }> => {
+    if (!storyboard) return Promise.resolve({ proceed: true });
+    const sceneSet = new Set<number>();
+    const charSet = new Set<string>();
+    for (const { epIdx, shot } of targets) {
+      const m = findMissingRefs(epIdx, shot);
+      if (m.scene) sceneSet.add(epIdx);
+      m.chars.forEach(c => charSet.add(c));
+    }
+    if (sceneSet.size === 0 && charSet.size === 0) return Promise.resolve({ proceed: true });
+    return new Promise(resolve => {
+      setMissingPrompt({ scenes: [...sceneSet], chars: [...charSet], resolve });
+    });
+  };
+
+  /** 「先补全再生成」— 生成缺失的场景图 + 角色图, 返回刚生成的 URL 供直接并入提交 */
+  const completeMissingRefs = async (scenes: number[], chars: string[]): Promise<RefExtras> => {
+    const extra: RefExtras = { scenes: {}, chars: {} };
+    for (const epIdx of scenes) {
+      const url = await generateSceneImage(epIdx);
+      if (url) extra.scenes[epIdx] = url;
+    }
+    for (const name of chars) {
+      const r = await generatePortrait(name);
+      if (r?.portraitUrl) extra.chars[name] = r.portraitUrl;
+    }
+    return extra;
   };
 
   // 单镜生成 — 用户逐个点击, 适合 Flash 免费模型 (有速率限制)
@@ -656,12 +779,18 @@ High detail, professional quality, 16:9 aspect ratio.`;
     if (!shot) return;
     if (shot.status === 'generating') return;
 
+    // 2026-10-13 缺图守卫 — 场景图/角色图缺失时先提示 (可一键补全)
+    const guard = await guardMissingRefs([{ epIdx, shot }]);
+    if (!guard.proceed) return;
+
     setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'generating', error: undefined } : s); return { ...prev, episodes: eps }; });
 
     try {
-      // 收集角色定妆图+场景图作为参考
-      const refImages = collectRefImages(epIdx, shot);
-      const body: any = { prompt: shot.prompt, model, duration: `${shot.duration}s`, size: '720P', aspect_ratio: '16:9' };
+      // 收集角色定妆图+场景图作为参考 (guard.extra = 刚补全的图)
+      const refImages = collectRefImages(epIdx, shot, guard.extra);
+      // 2026-10-13: prompt 走 buildSubmitPrompt — 把 dialogue/monologue 内联, 不再只发 shot.prompt;
+      // 分辨率/宽高比改用面板上的选择 (原写死 720P / 16:9)。
+      const body: any = { prompt: buildSubmitPrompt(shot), model, duration: `${shot.duration}s`, size: videoSize, aspect_ratio: videoAspect };
       // 有参考图时用 reference 模式
       if (refImages.length > 0) {
         body.images = refImages;
@@ -691,6 +820,15 @@ High detail, professional quality, 16:9 aspect ratio.`;
     if (!storyboard) return;
     const allShots = storyboard.episodes.flatMap(ep => ep.shots.filter(s => s.selected && s.status !== 'completed'));
     if (allShots.length === 0) { message.warning('没有需要生成的镜头'); return; }
+
+    // 2026-10-13 缺图守卫 — 汇总所有待生成镜头缺失的场景/角色图, 只弹一次窗
+    const targets: { epIdx: number; shot: Shot }[] = [];
+    storyboard.episodes.forEach((ep, epIdx) => {
+      ep.shots.forEach(s => { if (s.selected && s.status !== 'completed') targets.push({ epIdx, shot: s }); });
+    });
+    const guard = await guardMissingRefs(targets);
+    if (!guard.proceed) return;
+
     // Flash 模型警告
     if (isFlashModel && allShots.length > 3) {
       message.warning(`Flash 免费模型有速率限制, ${allShots.length} 镜将逐个生成 (每镜间隔 10s), 预计耗时较长`);
@@ -717,9 +855,10 @@ High detail, professional quality, 16:9 aspect ratio.`;
         });
 
           try {
-            // 收集角色定妆图+场景图作为参考
-            const refImages = collectRefImages(epIdx, shot);
-            const body: any = { prompt: shot.prompt, model, duration: `${shot.duration}s`, size: '720P', aspect_ratio: '16:9' };
+            // 收集角色定妆图+场景图作为参考 (guard.extra = 刚补全的图)
+            const refImages = collectRefImages(epIdx, shot, guard.extra);
+            // 2026-10-13: 对白/独白内联 + 面板分辨率/宽高比 (原写死 720P/16:9)
+            const body: any = { prompt: buildSubmitPrompt(shot), model, duration: `${shot.duration}s`, size: videoSize, aspect_ratio: videoAspect };
             if (refImages.length > 0) {
               body.images = refImages;
             }
@@ -881,18 +1020,26 @@ return (
             <TextArea value={prompt} onChange={e => setPrompt(e.target.value)}
               placeholder="描述你的创意, 例: 一个建筑从地基到完工的生长动画, 5集"
               autoSize={{ minRows: 2, maxRows: 6 }} />
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>集数:</span>
               <InputNumber min={1} max={20} value={episodeCount} onChange={v => setEpisodeCount(v || 1)} size="small" style={{ width: 60 }} />
               <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>单镜时长:</span>
               <Select size="small" value={shotDuration} onChange={v => setShotDuration(v)} style={{ width: 80 }}
                 options={[{ value: 4, label: '4s' }, { value: 5, label: '5s' }, { value: 8, label: '8s' }, { value: 10, label: '10s' }]} />
+              {/* 2026-10-13: 视频生成参数 — 与单次生成页对齐 (原写死 720P / 16:9) */}
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>分辨率:</span>
+              <Select size="small" value={videoSize} onChange={v => setVideoSize(v)} style={{ width: 90 }}
+                options={[{ value: '720P', label: '720P' }, { value: '1080P', label: '1080P' }]} />
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>宽高比:</span>
+              <Select size="small" value={videoAspect} onChange={v => setVideoAspect(v)} style={{ width: 90 }}
+                options={[{ value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }, { value: '1:1', label: '1:1' }]} />
               <div style={{ flex: 1 }} />
               <Button type="primary" icon={<ThunderboltOutlined />} loading={generating} onClick={generateStoryboard}>
                 {generating ? '生成中...' : '生成剧本'}
               </Button>
             </div>
             {refImages.length > 0 && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}><PictureOutlined /> 已上传 {refImages.length} 张参考图</div>}
+            {scriptProvider && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>剧本模型: {activeModelId} (跟随对话所选)</div>}
           </div>
         </Card>
 
@@ -1106,7 +1253,20 @@ return (
                         )}
                         <TextArea value={shot.prompt} onChange={e => updateShotPrompt(epIdx, shot.id, e.target.value)}
                           autoSize={{ minRows: 2, maxRows: 6 }} style={{ fontSize: 'var(--fs-sm)' }} disabled={shot.status === 'generating'} />
-                        {shot.dialogue && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 4 }}>台词: "{shot.dialogue}"</div>}
+                        {/* 2026-10-13: 台词/独白改为可编辑 — 提交时会内联进视频 prompt 做音画同步,
+                            用户看到 AI 生成的对白后可直接微调再生成。 */}
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, marginTop: 4 }}>
+                          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: '22px', flexShrink: 0 }}>💬 台词</span>
+                          <TextArea value={shot.dialogue || ''} onChange={e => updateShotField(epIdx, shot.id, 'dialogue', e.target.value)}
+                            placeholder='角色说出口的台词 (将驱动音画同步)'
+                            autoSize={{ minRows: 1, maxRows: 3 }} style={{ fontSize: 'var(--fs-sm)' }} disabled={shot.status === 'generating'} />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, marginTop: 4 }}>
+                          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: '22px', flexShrink: 0 }}>💭 独白</span>
+                          <TextArea value={shot.monologue || ''} onChange={e => updateShotField(epIdx, shot.id, 'monologue', e.target.value)}
+                            placeholder='内心独白/旁白 (可空)'
+                            autoSize={{ minRows: 1, maxRows: 3 }} style={{ fontSize: 'var(--fs-sm)' }} disabled={shot.status === 'generating'} />
+                        </div>
                         {shot.error && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)', marginTop: 4 }}>{shot.error}</div>}
                       </div>
                   ))}
@@ -1265,6 +1425,53 @@ return (
         {zoomScene && (
           <img src={zoomScene.url} alt={zoomScene.name} style={{ width: '100%', borderRadius: 'var(--radius-md)' }} />
         )}
+      </Modal>
+
+      {/* 2026-10-13 缺图守卫 Modal — 未生成场景/角色图就生成视频时拦截 */}
+      <Modal
+        open={!!missingPrompt}
+        title="⚠️ 缺少场景 / 角色参考图"
+        maskClosable={false}
+        closable={false}
+        footer={[
+          <Button key="cancel" onClick={() => { missingPrompt?.resolve({ proceed: false }); setMissingPrompt(null); }}>
+            取消
+          </Button>,
+          <Button key="skip" onClick={() => { missingPrompt?.resolve({ proceed: true }); setMissingPrompt(null); }}>
+            仍然生成
+          </Button>,
+          <Button key="complete" type="primary" loading={completingRefs}
+            onClick={async () => {
+              if (!missingPrompt) return;
+              setCompletingRefs(true);
+              try {
+                const extra = await completeMissingRefs(missingPrompt.scenes, missingPrompt.chars);
+                missingPrompt.resolve({ proceed: true, extra });
+              } finally {
+                setCompletingRefs(false);
+                setMissingPrompt(null);
+              }
+            }}>
+            先补全再生成
+          </Button>,
+        ]}
+      >
+        <div style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.7 }}>
+          直接生成会缺少一致性参考图，可能导致角色/场景与设定不符 (白生成)。建议先补齐：
+          {missingPrompt && missingPrompt.scenes.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              🎬 <b>缺场景图</b>: {missingPrompt.scenes.map(i => `第${i + 1}集`).join('、')}
+            </div>
+          )}
+          {missingPrompt && missingPrompt.chars.length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              👤 <b>缺角色定妆图</b>: {missingPrompt.chars.join('、')}
+            </div>
+          )}
+          <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
+            「先补全再生成」会用免费生图模型补齐缺失项 (消耗生图额度)，完成后自动继续生成视频。
+          </div>
+        </div>
       </Modal>
 
       {/* 场景精编器 — 全屏 */}

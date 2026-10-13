@@ -74,6 +74,92 @@ describe('分镜: 续集尾帧', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════
+// 分镜: 对白/独白送达 + 视频参数 + 缺图守卫 (2026-10-13)
+// ════════════════════════════════════════════════════════════════════════
+//
+// 缺陷: 提交体是 { prompt: shot.prompt, ... }, shot.dialogue 生成后**从不进请求**,
+// 用户看到台词却没有对应视频语音。参考 F:/漫剧系统 的 [Dialogue ...] 内联做法修复。
+
+describe('分镜: 对白/独白内联进视频 prompt', () => {
+  const code = stripComments(src('components/StoryboardPanel.tsx'));
+
+  it('★ 必须有 buildSubmitPrompt, 把 dialogue/monologue 拼成带标签的文本', () => {
+    expect(code).toMatch(/function buildSubmitPrompt\(shot: Shot\)/);
+    expect(code).toContain('[Dialogue in Chinese');
+    expect(code).toContain('[Inner monologue');
+    // 音画同步指令 (与漫剧系统一致)
+    expect(code).toContain('synchronized audio');
+  });
+
+  it('★ 提交体不得再直接发 shot.prompt (那条路径丢了台词)', () => {
+    expect(code).not.toMatch(/prompt:\s*shot\.prompt,/);
+    const used = code.match(/prompt:\s*buildSubmitPrompt\(shot\)/g) || [];
+    expect(used.length, '单镜 + 批量两条提交路径都要用').toBeGreaterThanOrEqual(2);
+  });
+
+  it('★ monologue 是 Shot 的一等字段, 且可在镜卡里编辑', () => {
+    expect(code).toMatch(/monologue\?:\s*string/);
+    expect(code).toMatch(/updateShotField\([^)]*'monologue'/);
+  });
+});
+
+describe('分镜: 视频参数不再写死', () => {
+  const code = stripComments(src('components/StoryboardPanel.tsx'));
+
+  it('★ 分辨率/宽高比改为受控状态, 提交时套用', () => {
+    expect(code).toMatch(/useState\('720P'\)/);
+    expect(code).toMatch(/const \[videoAspect, setVideoAspect\]/);
+    expect(code).toMatch(/size:\s*videoSize, aspect_ratio:\s*videoAspect/);
+  });
+
+  it('★ 分镜提交路径不得再硬编码 720P / 16:9', () => {
+    expect(code).not.toMatch(/size:\s*'720P'/);
+    expect(code).not.toMatch(/aspect_ratio:\s*'16:9'/);
+  });
+});
+
+describe('分镜: 缺图守卫 (未生成场景/角色图就生成视频)', () => {
+  const code = stripComments(src('components/StoryboardPanel.tsx'));
+
+  it('★ 有 findMissingRefs + guardMissingRefs, 单镜与批量都要过这道门', () => {
+    expect(code).toMatch(/const findMissingRefs = /);
+    expect(code).toMatch(/const guardMissingRefs = /);
+    const guards = code.match(/await guardMissingRefs\(/g) || [];
+    expect(guards.length, '单镜 + 批量两处').toBeGreaterThanOrEqual(2);
+  });
+
+  it('★ 提供「先补全再生成」并能把新图并入提交 (guard.extra)', () => {
+    expect(code).toContain('先补全再生成');
+    expect(code).toMatch(/collectRefImages\(epIdx, shot, guard\.extra\)/);
+    expect(code).toMatch(/const completeMissingRefs = /);
+  });
+});
+
+describe('分镜: 剧本模型跟随所选', () => {
+  const code = stripComments(src('components/StoryboardPanel.tsx'));
+  const gw = stripComments(gwSrc('routes/video.ts'));
+
+  it('★ 前端把所选对话模型的 provider/子模型名发给 gateway', () => {
+    expect(code).toContain('useModelStore');
+    expect(code).toMatch(/scriptProvider, scriptModel: scriptModelName/);
+  });
+
+  it('★ gateway 两条剧本路径都接受 scriptProvider 并走 llm-router', () => {
+    expect(gw).toContain('callScriptLLM');
+    expect(gw).toContain('getAgentAIRouter');
+    expect(gw).toMatch(/scriptProvider, scriptModel, systemPrompt/);
+    // storyboard + next-episode 都取该参数
+    const destructs = gw.match(/scriptProvider, scriptModel \} = req\.body/g) || [];
+    expect(destructs.length, 'storyboard + next-episode 两处解构').toBeGreaterThanOrEqual(2);
+  });
+
+  it('★ 剧本提示词要求充分输出对白, 并含 monologue 字段', () => {
+    expect(gw).toMatch(/"monologue":/);
+    expect(gw).toContain('monologue 字段');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
 // 生图 (ImageStudio) — 请求体契约
 // ════════════════════════════════════════════════════════════════════════
 
