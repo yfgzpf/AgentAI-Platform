@@ -87,6 +87,12 @@ export const ALRC_MODELS: Record<string, AlrcModelEntry> = {
   // 2026-10-13 补录 seedance 2.5: GUI 侧 (modelStore.ts:138 / VideoGen.tsx:129) 与
   // video 路由都在用 2.5, 而原手写分组映射表只到 2.0 ⇒ 工厂视频密钥配了也命不中。
   'alrc-seedance-2.5': { provider: 'alrc', subModel: 'doubao-seedance-2.5', label: 'Seedance 2.5', groupEnv: 'FACTORY_VIDEO_KEY' },
+  // ✅ 批次9 (2026-10-13): 补齐 Alrc 中转平台的 Seedance 2 系列 3 个变体。
+  // 用户截图 (Alrc「字节跳动」分组) 实测这 4 个都存在, 但原注册表只有 2.5 一条,
+  // 于是 doubao-seedance-2 / -fast / -mini 配了 FACTORY_VIDEO_KEY 也命不中。
+  'alrc-seedance-2': { provider: 'alrc', subModel: 'doubao-seedance-2', label: 'Seedance 2', groupEnv: 'FACTORY_VIDEO_KEY' },
+  'alrc-seedance-2-fast': { provider: 'alrc', subModel: 'doubao-seedance-2-fast', label: 'Seedance 2 Fast', groupEnv: 'FACTORY_VIDEO_KEY' },
+  'alrc-seedance-2-mini': { provider: 'alrc', subModel: 'doubao-seedance-2-mini', label: 'Seedance 2 Mini', groupEnv: 'FACTORY_VIDEO_KEY' },
   'alrc-seedance-1.0-lite': { provider: 'alrc', subModel: 'seedance-1.0-lite', label: 'Seedance 1.0 Lite', groupEnv: 'FACTORY_VIDEO_KEY' },
   'alrc-seedance-1.0-pro': { provider: 'alrc', subModel: 'seedance-1.0-pro', label: 'Seedance 1.0 Pro', groupEnv: 'FACTORY_VIDEO_KEY' },
   'alrc-seedance-2.0': { provider: 'alrc', subModel: 'seedance-2.0', label: 'Seedance 2.0', groupEnv: 'FACTORY_VIDEO_KEY' },

@@ -18,8 +18,13 @@ import {
   ThunderboltOutlined, DeleteOutlined, VideoCameraOutlined,
   PictureOutlined, PlusOutlined, UserOutlined, CameraOutlined, EditOutlined,
   FolderOutlined, FolderOpenOutlined, FileOutlined,
+  EyeOutlined, ExportOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { SceneEditor } from './SceneEditor';
+import { useResizable } from '../hooks/useResizable';
+import { PaneGrip } from './PaneGrip';
+// [BYOK] 自定义模型凭证 —— 与 VideoGen 共用同一份定义 (见文件头说明)
+import { resolveByokCredential } from '../services/customVideoModels';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -160,6 +165,18 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
                   }
                 }
               }
+              // ★ 2026-10-12 P0 修复: 持久化时 shot.status 原样存了 'generating',
+              //   恢复时不重置 → L954 按钮 disabled={status==='generating'} 永久锁死,
+              //   该镜头刷新后再也点不动。对齐 imageTaskManager.ts L80-87 的恢复重置逻辑。
+              if (Array.isArray(data?.episodes)) {
+                for (const ep of data.episodes) {
+                  if (Array.isArray(ep?.shots)) {
+                    for (const s of ep.shots) {
+                      if (s.status === 'generating' || s.status === 'queued') s.status = 'pending';
+                    }
+                  }
+                }
+              }
               return data;
             }
           }
@@ -235,12 +252,37 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
             }
           }
         }
+        // ★ 2026-10-12 P0 修复: 与 useState 初始化同一套重置 —— 切换剧本同样会
+        //    读到 'generating' 状态的镜头, 不重置则按钮永久锁死
+        if (Array.isArray(data?.episodes)) {
+          for (const ep of data.episodes) {
+            if (Array.isArray(ep?.shots)) {
+              for (const s of ep.shots) {
+                if (s.status === 'generating' || s.status === 'queued') s.status = 'pending';
+              }
+            }
+          }
+        }
         setActiveId(id);
         setStoryboard(data);
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ list: storyboardList, activeId: id }));
         message.success(`已切换到: ${data.title}`);
       }
     } catch { message.error('切换失败'); }
+  };
+
+  // 2026-10-12 B-4: 一键重试所有失败镜头 — 串行复用单镜生成, 不碰 batchGenerate 状态机
+  const retryFailedShots = async () => {
+    if (!storyboard) return;
+    const failed = storyboard.episodes.flatMap((ep, epIdx) =>
+      ep.shots.filter(s => s.status === 'failed').map(s => ({ epIdx, shotId: s.id })));
+    if (failed.length === 0) return;
+    message.info(`开始重试 ${failed.length} 个失败镜头 (串行)...`);
+    for (const f of failed) {
+      await generateSingleShot(f.epIdx, f.shotId);
+      // 镜间留 1s, 避免连续打满触发限流
+      await new Promise(r => setTimeout(r, 1000));
+    }
   };
 
   // 删除剧本
@@ -276,14 +318,24 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
   };
   const [batchGenerating, setBatchGenerating] = useState(false);
   const [batchProgress, setBatchProgress] = useState(0);
+  // 2026-10-12: 批量取消标志 (原循环无出口, 只能等完或刷新)
+  const [batchCancelled, setBatchCancelled] = useState(false);
   const [generatingPortrait, setGeneratingPortrait] = useState<string | null>(null);
   const [generatingScene, setGeneratingScene] = useState<number | null>(null); // epIdx
   const [zoomPortrait, setZoomPortrait] = useState<{ url: string; name: string } | null>(null);
 const [zoomScene, setZoomScene] = useState<{ url: string; name: string } | null>(null);
 const [generatingSequel, setGeneratingSequel] = useState<number | null>(null); // 正在生成续集的集号
 const [editingScene, setEditingScene] = useState<number | null>(null); // 正在精编的集号
-// 右侧面板折叠状态 — 默认折叠, 编辑时更清爽
-const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>([]); // ['preview'] / ['export'] / 两者
+// 右侧面板折叠状态 — ✅ 批次9: 默认展开预览 (原默认 [] 折叠 → 左栏 620px 固定,
+// 右栏 display:none, 剩下全黑 = "半屏黑洞"回归)。现在默认 preview, 编辑区窄一点但不再黑洞。
+const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview']); // ['preview'] / ['export'] / 两者
+  // 2026-10-12 C 批次: 左栏宽度可拖拽 + localStorage 记忆
+  // 原为 width: '55%' | '100%' 写死跳变 — 不能拖、不记忆、无窄屏兜底。
+  // 右栏展开时左栏宽度不变 (只是右栏从 flex 剩余空间里挤进来), 符合"展开预览不压缩编辑区"的直觉。
+  const sbLeftPane = useResizable({
+    storageKey: 'agentai.storyboard.leftW',
+    defaultWidth: 620, minWidth: 380, maxWidth: 900, side: 'right',
+  });
 
   // 生成剧本
   const generateStoryboard = async () => {
@@ -529,9 +581,16 @@ High detail, professional quality, 16:9 aspect ratio.`;
   // 提交视频任务 — 自动处理 503 video_queue_full / 429 速率限制 (最多重试 5 次)
   // 返回 provider 是必须的: 查询任务要靠它区分 agnes / agnes-video-2.5 / cogvideo /
   // seedance 四套查询接口, 前端自己猜 (曾硬编码 'agnes') 会查错引擎。
+  //
+  // 2026-10-13 BYOK: 本面板**自己**实现了提交与轮询, 不经过 videoTaskManager ——
+  //   上一轮只给 videoTaskManager 那条路径接上了 byok, 于是分镜模式下 Key 依旧不下发,
+  //   同一个自定义模型两种模式行为不一致。现在两条路径共用 resolveByokCredential。
   const submitVideoTask = async (body: any, onRetry?: (retry: number, msg: string) => void): Promise<{ taskId: string; provider?: string } | { error: string }> => {
+    const byok = resolveByokCredential(model);
+    // 提交时带上凭证 (body 副本, 不污染调用方持有的对象)
+    const bodyWithKey = byok ? { ...body, apiKey: byok.apiKey, baseUrl: byok.baseUrl } : body;
     for (let retry = 0; retry < 5; retry++) {
-      const resp = await fetch(`${httpUrl}/v1/video`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const resp = await fetch(`${httpUrl}/v1/video`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyWithKey) });
       const data = await resp.json();
       if (data.taskId) return { taskId: data.taskId, provider: data.provider };
       // 检测队列已满 — 503 + video_queue_full
@@ -638,6 +697,7 @@ High detail, professional quality, 16:9 aspect ratio.`;
     }
     setBatchGenerating(true);
     setBatchProgress(0);
+    setBatchCancelled(false);
     let completed = 0;
     let succeeded = 0;
     let failed = 0;
@@ -646,6 +706,8 @@ High detail, professional quality, 16:9 aspect ratio.`;
       const ep = storyboard.episodes[epIdx];
       for (const shot of ep.shots) {
         if (!shot.selected || shot.status === 'completed') continue;
+        // 2026-10-12: 取消检查点 — 每镜开跑前看一眼, 已取消则收尾退出
+        if (batchCancelled) break;
 
         setStoryboard(prev => {
           if (!prev) return prev;
@@ -691,10 +753,19 @@ High detail, professional quality, 16:9 aspect ratio.`;
     }
     setBatchGenerating(false);
     const failMsg = failed > 0 ? `, ${failed} 镜失败` : '';
-    message.info(`批量生成完成: ${succeeded} 镜成功${failMsg}`, 5);
+    const cancelMsg = batchCancelled ? ` (已取消, 剩 ${allShots.length - completed} 镜未跑)` : '';
+    message.info(`批量生成${batchCancelled ? '已取消' : '完成'}: ${succeeded} 镜成功${failMsg}${cancelMsg}`, 5);
   };
 
   const pollVideo = (taskId: string, provider: string): Promise<{ videoUrl: string; lastFrameUrl?: string } | null> => {
+    // 2026-10-13 BYOK: 自定义模型的任务查询也必须带同一份凭证, 否则提交成功却永远查不到结果。
+    // Key 走请求头而非 query (会进浏览器历史/访问日志)。与 videoTaskManager 一致。
+    const byok = resolveByokCredential(model);
+    const pollHeaders: Record<string, string> = {};
+    if (byok?.apiKey) {
+      pollHeaders['X-Video-Api-Key'] = byok.apiKey;
+      if (byok.baseUrl) pollHeaders['X-Video-Base-Url'] = byok.baseUrl;
+    }
     return new Promise((resolve) => {
       let attempts = 0;
       let consecutiveErrors = 0;
@@ -709,7 +780,7 @@ High detail, professional quality, 16:9 aspect ratio.`;
           //    每一镜都在 3 次失败 (15s) 后变成「轮询超时或任务失败」——视频其实
           //    在上游生成成功了, 只是 URL 永远拿不回来。
           const queryUrl = `${httpUrl}/v1/video/${encodeURIComponent(taskId)}?provider=${encodeURIComponent(provider)}`;
-          const resp = await fetch(queryUrl);
+          const resp = await fetch(queryUrl, { headers: pollHeaders });
           if (!resp.ok) {
             if (++consecutiveErrors >= 3) { clearInterval(interval); resolve(null); return; }
             return;
@@ -736,8 +807,19 @@ High detail, professional quality, 16:9 aspect ratio.`;
 return (
 <div style={{ display: 'flex', gap: 12, height: '100%' }}>
 <style>{RIGHT_COLLAPSE_CSS}</style>
-{/* 左侧: 输入 + 角色卡 + 分镜列表 — 右侧折叠时自动扩展到 100% */}
-      <div style={{ width: rightPanelExpanded.length > 0 ? '55%' : '100%', transition: 'width 0.3s ease', display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', paddingRight: 4 }}>
+      {/* 左侧: 输入 + 角色卡 + 分镜列表 — 右侧折叠时自动扩展到 100% (批次9 修) */}
+      {/* 2026-10-12 C 批次: 宽度改由 useResizable 管 (可拖拽/双击复位/方向键/记忆/窄屏兜底)
+          side:'right' → 把手在左栏右缘, 即两栏交界处
+          ✅ 批次9: 右栏折叠 (rightPanelExpanded 空) 时左栏 flex:1 撑满剩余空间,
+          否则 620px 固定 + 右栏 display:none = 右边一大块黑 (用户报的"布局有问题") */}
+      <div ref={sbLeftPane.paneRef} className="page-pane page-pane--left"
+        style={{
+          ...(rightPanelExpanded.length === 0
+            ? { flex: 1, minWidth: 0, width: 'auto' }   // 折叠: 左栏撑满
+            : { width: sbLeftPane.width, flexShrink: 0 }), // 展开: 固定可拖宽度
+          display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', paddingRight: 4,
+        }}>
+        <PaneGrip resizable={sbLeftPane} min={380} max={900} label="调整剧本编辑区宽度" />
         {/* 输入区 */}
         <Card size="small" title={
           <Space>
@@ -755,6 +837,28 @@ return (
               {storyboard && <Tag color="blue">{totalShots}镜</Tag>}
               {storyboard && <Tag color="green">{completedShots}完成</Tag>}
               {storyboard && <Tag color="orange">{selectedShots}待生成</Tag>}
+              {/* ★ 2026-10-12 P0 修复: 右栏原本没有任何展开入口 ——
+                  setRightPanelExpanded 只有 Collapse 自己的 onChange 一处,
+                  而 Collapse 位于 display:none 的右栏内部 → 用户永远打不开
+                  「分镜预览/剧集成品」。这里补两个显式开关, 默认展开预览。 */}
+              {storyboard && (
+                <>
+                  <Tooltip title="分镜预览（右侧）">
+                    <Button size="small" type={rightPanelExpanded.includes('preview') ? 'primary' : 'default'}
+                      icon={<EyeOutlined />}
+                      onClick={() => setRightPanelExpanded(prev =>
+                        prev.includes('preview') ? prev.filter(k => k !== 'preview') : [...prev, 'preview']
+                      )} />
+                  </Tooltip>
+                  <Tooltip title="剧集成品与导出（右侧）">
+                    <Button size="small" type={rightPanelExpanded.includes('export') ? 'primary' : 'default'}
+                      icon={<ExportOutlined />}
+                      onClick={() => setRightPanelExpanded(prev =>
+                        prev.includes('export') ? prev.filter(k => k !== 'export') : [...prev, 'export']
+                      )} />
+                  </Tooltip>
+                </>
+              )}
               <Tooltip title="新建剧本 (当前剧本已自动保存)">
                 <Button size="small" icon={<PlusOutlined />} onClick={newStoryboard} />
               </Tooltip>
@@ -868,9 +972,18 @@ return (
           </Card>
         )}
 
-        {/* 批量生成进度 */}
+        {/* 批量生成进度 — 2026-10-12 补「取消」: 原来循环无 cancel flag,
+            10 镜串行一旦开始只能等完或刷新页面 */}
         {batchGenerating && (
-          <Card size="small"><Progress percent={batchProgress} status="active" /><div style={{ textAlign: 'center', fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>批量生成中... {batchProgress}%</div></Card>
+          <Card size="small">
+            <Progress percent={batchProgress} status="active" />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>
+              <span>批量生成中... {batchProgress}%</span>
+              <Button size="small" danger onClick={() => { setBatchCancelled(true); message.info('已取消, 正在收尾当前镜头...'); }}>
+                取消批量
+              </Button>
+            </div>
+          </Card>
         )}
 
         {/* 批量生成按钮 — 仅商业模型显示, Flash 免费模型由用户逐镜生成 */}
@@ -880,15 +993,36 @@ return (
             批量生成 ({selectedShots} 镜)
           </Button>
         )}
+
+        {/* 2026-10-12 B-4: 失败重试入口 — 原来批量跑完有失败镜头只能
+            一集一集展开、一个一个点「重试」。这里汇总成一键重跑。 */}
+        {storyboard && !batchGenerating && (() => {
+          const failed = storyboard.episodes.flatMap((ep, epIdx) =>
+            ep.shots.filter(s => s.status === 'failed').map(s => ({ epIdx, shotId: s.id })));
+          if (failed.length === 0) return null;
+          return (
+            <Alert type="warning" showIcon
+              message={`${failed.length} 个镜头生成失败`}
+              description="失败通常是限流或超时。可一键重试所有失败镜头 (串行执行)。"
+              action={
+                <Button size="small" danger icon={<ReloadOutlined />} onClick={() => retryFailedShots()}>
+                  重试失败项
+                </Button>
+              }
+            />
+          );
+        })()}
         {storyboard && isFlashModel && (
           <Alert type="info" showIcon style={{ fontSize: 'var(--fs-micro)' }}
             message="当前为 Flash 免费模型, 有速率限制"
             description="请逐镜点击「生成」按钮, 一个一个生成。切换到商业模型可批量生成。" />
         )}
 
-        {/* 分集列表 */}
+        {/* 分集列表 — 2026-10-12 布局简化: 默认只展开第一集。
+            原为全部展开 (episodes.map), 10 集剧本一屏放不下, 用户要先滚很久
+            才能看到别的 —— 信息过载是"不简洁明了"的主因。 */}
         {storyboard && (
-          <Collapse defaultActiveKey={storyboard.episodes.map(e => String(e.index))}>
+          <Collapse defaultActiveKey={storyboard.episodes.length > 0 ? [String(storyboard.episodes[0].index)] : []}>
             {storyboard.episodes.map((ep, epIdx) => (
               <Panel key={ep.index} header={
                 <Space>
@@ -937,31 +1071,44 @@ return (
                       </div>
                     </div>
                   )}
-                  {ep.shots.map((shot) => (
+                  {ep.shots.map((shot, shotIdx) => (
                     <div key={shot.id} style={{
                       padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)',
-                      border: `1px solid ${shot.status === 'completed' ? 'var(--success)' : shot.status === 'failed' ? 'var(--danger)' : shot.status === 'generating' ? '#faad14' : 'var(--border)'}`,
+                      // 2026-10-12 布局简化: 左侧 3px 状态色条替代"边框变色 + Tag + Spin"三重表达。
+                      // 原设计把 completed→绿Tag / failed→红Tag / generating→Spin 全挤在头部,
+                      // 同一个状态有三处视觉重复。现在状态只由色条 + 按钮文字两处承担。
+                      border: '1px solid var(--border)',
+                      borderLeft: `3px solid ${shot.status === 'completed' ? 'var(--success)' : shot.status === 'failed' ? 'var(--danger)' : shot.status === 'generating' ? 'var(--warning)' : 'var(--border)'}`,
                     }}>
+                        {/* 头部一行: 镜号 · 类型 · 时长 · 状态 · 操作 — 元信息下沉第二行 */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                           <Checkbox checked={shot.selected} onChange={() => toggleShot(epIdx, shot.id)} />
-                          <Tag>{shot.type}</Tag><Tag color="blue">{shot.duration}s</Tag>
-                          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{shot.camera_motion} · {shot.mood}</span>
+                          <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, flexShrink: 0 }}>镜 {shotIdx + 1}</span>
+                          <Tag style={{ fontSize: 'var(--fs-micro)' }}>{shot.type}</Tag>
+                          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', flexShrink: 0 }}>{shot.duration}s</span>
                           <div style={{ flex: 1 }} />
-                          {shot.characters?.map((c, i) => <Tag key={i} color="purple" style={{ fontSize: 'var(--fs-micro)' }}>{c}</Tag>)}
-                          {shot.status === 'completed' && <Tag color="green">✓</Tag>}
                           {shot.status === 'generating' && <Spin size="small" />}
-                          {shot.status === 'failed' && <Tag color="red">失败</Tag>}
-                          <Button size="small" type="primary" loading={shot.status === 'generating'} disabled={shot.status === 'generating' || shot.status === 'completed'}
+                          <Button size="small" type={shot.status === 'completed' ? 'default' : 'primary'}
+                            loading={shot.status === 'generating'} disabled={shot.status === 'generating' || shot.status === 'completed'}
                             onClick={() => generateSingleShot(epIdx, shot.id)} style={{ fontSize: 'var(--fs-micro)', padding: '0 6px' }}>
                             {shot.status === 'generating' ? '生成中' : shot.status === 'failed' ? '重试' : shot.status === 'completed' ? '已生成' : '生成'}
                           </Button>
                           <Tooltip title="删除"><Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => deleteShot(epIdx, shot.id)} /></Tooltip>
                         </div>
-                      <TextArea value={shot.prompt} onChange={e => updateShotPrompt(epIdx, shot.id, e.target.value)}
-                        autoSize={{ minRows: 2, maxRows: 6 }} style={{ fontSize: 'var(--fs-sm)' }} disabled={shot.status === 'generating'} />
-                      {shot.dialogue && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 4 }}>台词: "{shot.dialogue}"</div>}
-                      {shot.error && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)', marginTop: 4 }}>{shot.error}</div>}
-                    </div>
+                        {/* 第二行: 元信息 — 运镜/氛围/角色, 次要信息不再抢首行焦点 */}
+                        {(shot.camera_motion || shot.mood || (shot.characters && shot.characters.length > 0)) && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4, fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>
+                            {shot.camera_motion && <span>{shot.camera_motion}</span>}
+                            {shot.camera_motion && shot.mood && <span>·</span>}
+                            {shot.mood && <span>{shot.mood}</span>}
+                            {shot.characters?.map((c, i) => <Tag key={i} color="purple" style={{ fontSize: 'var(--fs-micro)' }}>{c}</Tag>)}
+                          </div>
+                        )}
+                        <TextArea value={shot.prompt} onChange={e => updateShotPrompt(epIdx, shot.id, e.target.value)}
+                          autoSize={{ minRows: 2, maxRows: 6 }} style={{ fontSize: 'var(--fs-sm)' }} disabled={shot.status === 'generating'} />
+                        {shot.dialogue && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 4 }}>台词: "{shot.dialogue}"</div>}
+                        {shot.error && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--danger)', marginTop: 4 }}>{shot.error}</div>}
+                      </div>
                   ))}
                 </div>
               </Panel>

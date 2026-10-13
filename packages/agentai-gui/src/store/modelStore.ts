@@ -137,7 +137,6 @@ const OFFICIAL_VIDEO_MODELS: ModelConfig[] = [
 // P1: 只保留 Seedance 2.5, 移除 2.0 系列
 { id: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎·1080p)', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', apiKeyEnv: 'VOLCANO_API_KEY', color: '#6D28D9', enabled: false, isBuiltIn: true, provider: 'doubao', models: ['doubao-seedance-2.5'], contextWindow: 128000, isCommercial: true, groupLabel: '豆包Seedance(视频)', modelType: 'video' },
   // 第三方视频
-  { id: 'runway-gen3', label: 'Runway Gen-3 (专业级)', baseURL: 'https://api.runwayml.com/v1', apiKeyEnv: 'RUNWAY_API_KEY', color: '#00D4FF', enabled: false, isBuiltIn: true, provider: 'runway', modelType: 'video', isCommercial: true, groupLabel: '第三方(视频)' },
   { id: 'pika-labs', label: 'Pika Labs (AI视频新秀)', baseURL: 'https://api.pika.art/v1', apiKeyEnv: 'PIKA_API_KEY', color: '#A855F7', enabled: false, isBuiltIn: true, provider: 'pika', modelType: 'video', isCommercial: true, groupLabel: '第三方(视频)' },
 ];
 
@@ -198,6 +197,18 @@ const FACTORY_IMAGE_MODELS: ModelConfig[] = [
   { id: 'factory-gpt-image-2-vip', label: 'GPT Image 2 VIP', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_IMAGE_KEY', color: '#1D4ED8', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['gpt-image-2-vip'], modelType: 'image', isCommercial: true, groupLabel: '模型工厂·生图' },
 ];
 
+// ✅ 批次9 (2026-10-13): 模型工厂视频模型 — 此前 GUI 没有工厂视频条目,
+// 用户在中转平台看到 4 个 Seedance (doubao-seedance-2 / -fast / -mini / 2.5) 却选不到。
+// 与 factory-registry.ts 的 4 条视频分组严格 1:1 (subModel 完全一致),
+// 走 FACTORY_VIDEO_KEY 分组密钥, provider='alrc' (经 chat 路由的工厂分支 +
+// video 路由的 seedance 工厂分支消费)。
+const FACTORY_VIDEO_MODELS: ModelConfig[] = [
+  { id: 'factory-seedance-2.5', label: 'Seedance 2.5', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#7C3AED', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2.5'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
+  { id: 'factory-seedance-2', label: 'Seedance 2', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#8B5CF6', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
+  { id: 'factory-seedance-2-fast', label: 'Seedance 2 Fast', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#A78BFA', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2-fast'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
+  { id: 'factory-seedance-2-mini', label: 'Seedance 2 Mini', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#C4B5FD', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2-mini'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
+];
+
 // ===== 第三方免费聚合 (SenseNova/LongCat) =====
 const SENSENOVA_BASE = 'https://token.sensenova.cn/v1';
 const SENSENOVA_MODELS: ModelConfig[] = [
@@ -220,6 +231,7 @@ const DEFAULT_MODELS = [
   ...THIRD_PARTY_IMAGE_MODELS,
   ...FACTORY_CHAT_MODELS,
   ...FACTORY_IMAGE_MODELS,
+  ...FACTORY_VIDEO_MODELS,
   ...SUPERAPI_MODELS,
   ...SENSENOVA_MODELS,
   ...LONGCAT_MODELS,

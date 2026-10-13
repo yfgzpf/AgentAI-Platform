@@ -25,6 +25,7 @@ import { exec } from 'child_process';
 // Windows cmd.exe 下 `&` `|` `%VAR%` 都是分隔符，双引号挡不住（命令注入面）。
 // 同时缺失 ffmpeg 时给出可执行的提示，而不是笼统的'请手动截图'。
 import { runFfmpeg, hasFfmpeg, explainFfmpegError, FFMPEG_MISSING } from '../ffmpeg.js';
+import { SUBMODEL_TO_GROUP_ENV } from '../factory-registry.js';
 import { promisify } from 'util';
 import multer from 'multer';
 
@@ -311,13 +312,24 @@ export function createVideoRouter(io?: any) {
         return await submitCogVideo(res, key, prompt, image, end_frame);
       }
 
-      // ---- Seedance (火山引擎) ----
+      // ---- Seedance (火山引擎 / Alrc 工厂 二选一) ----
       if (requested.startsWith('seedance')) {
+        // ✅ 批次9: 4 个 seedance subModel 都支持走 Alrc 工厂 (FACTORY_VIDEO_KEY)。
+        // GUI 的 modelStore.ts 工厂视频条目 models[0] 与本路由的 requested 完全一致
+        // (doubao-seedance-2 / -fast / -mini / 2.5), 所以"命中 SUBMODEL_TO_GROUP_ENV
+        // 且配了 FACTORY_VIDEO_KEY" = 用户选了工厂视频密钥 → 走工厂; 否则回退火山直连。
+        const subModel = requested.replace(/^seedance-/, 'doubao-seedance-').replace(/^doubao-seedance-2\.$/, 'doubao-seedance-2');
+        const isFactoryVideo = !!process.env['FACTORY_VIDEO_KEY'] && !!SUBMODEL_TO_GROUP_ENV[subModel];
+        if (isFactoryVideo) {
+          const fKey = process.env['FACTORY_VIDEO_KEY']!.trim();
+          console.log(`[video] 走 Alrc 工厂 seedance (${subModel}) — FACTORY_VIDEO_KEY`);
+          return await submitSeedanceViaFactory(res, fKey, subModel, prompt, image);
+        }
         const key = process.env['VOLCANO_API_KEY'];
         if (!key) {
           return res.status(400).json({
-            error: '所选模型「Seedance 2.5」需要 VOLCANO_API_KEY，但未配置。',
-            requiredEnv: 'VOLCANO_API_KEY',
+            error: `所选模型「${subModel}」需要 FACTORY_VIDEO_KEY (Alrc 工厂) 或 VOLCANO_API_KEY (火山直连)，但未配置。`,
+            requiredEnv: ['FACTORY_VIDEO_KEY', 'VOLCANO_API_KEY'],
             requestedModel: requested,
           });
         }
@@ -1176,14 +1188,47 @@ ${originalPrompt}${storyInfo}${characterInfo}
 
 /** CogVideoX-Flash（智谱免费） */
 
-/** Seedance 2.5（火山引擎） */
+/**
+ * Seedance 2.5 (火山引擎直连) — 历史行为, 保持向后兼容。
+ * ✅ 批次9 (2026-10-13): 新增 submitSeedanceViaFactory, 走 Alrc 工厂 (FACTORY_VIDEO_KEY),
+ * 支持 4 个 subModel 变体 (doubao-seedance-2 / -fast / -mini / 2.5)。
+ * 用户在中转平台用哪种 subModel, 就发哪个; 不再硬编码 2.5。
+ */
 async function submitSeedance(
   res: any,
   key: string,
   prompt: string,
   image?: string,
+) {
+  return submitSeedanceVariant(res, key, 'doubao-seedance-2.5', prompt, image,
+    'https://ark.cn-beijing.volces.com/api/v3', 'VOLCANO_API_KEY');
+}
+
+/** 走 Alrc 工厂的中转 (FACTORY_VIDEO_KEY) — 批次9 新增。 */
+async function submitSeedanceViaFactory(
+  res: any,
+  key: string,
+  subModel: string,
+  prompt: string,
+  image?: string,
+) {
+  // 工厂中转 (Alrc) 兼容火山 seedance 任务的提交/查询协议:
+  // 提交 POST /contents/generations/tasks, 查询 GET /contents/generations/tasks/:id
+  // (Alrc 对火山视频任务做了透明代理, 任务 id 由火山返回, 查询走同一 base + key)
+  const base = (process.env['ALRC_VIDEO_BASE_URL'] || 'https://api.alrc.io/v1').replace(/\/+$/, '');
+  return submitSeedanceVariant(res, key, subModel, prompt, image, base, 'FACTORY_VIDEO_KEY');
+}
+
+/** Seedance 提交/查询的共用实现 (参数化 subModel + 上游 base + 密钥来源, 避免 4 份重复) */
+async function submitSeedanceVariant(
+  res: any,
+  key: string,
+  volModel: string,
+  prompt: string,
+  image: string | undefined,
+  upstreamBase: string,
+  keyLabel: string,
 ): Promise<void> {
-  const volModel = 'doubao-seedance-2.5';
   const volBody: any = {
     model: volModel,
     content: [{ type: 'text', text: prompt }],
@@ -1193,7 +1238,7 @@ async function submitSeedance(
     volBody.content.push({ type: 'image_url', image_url: { url: imgData } });
   }
   try {
-    const resp = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
+    const resp = await fetch(`${upstreamBase}/contents/generations/tasks`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(volBody),
@@ -1209,7 +1254,7 @@ async function submitSeedance(
     }
     const errText = await resp.text().catch(() => '');
     res.status(resp.status || 502).json({
-      error: `火山引擎返回 HTTP ${resp.status}: ${errText.slice(0, 200)}`,
+      error: `${keyLabel} 视频引擎返回 HTTP ${resp.status}: ${errText.slice(0, 200)}`,
     });
   } catch (e: any) {
     res.status(500).json({ error: `Seedance 请求失败: ${e.message}` });

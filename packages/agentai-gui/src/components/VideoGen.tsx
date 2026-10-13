@@ -128,6 +128,13 @@ const MODELS = [
     // 正式版同样限流 ⇒ 默认值一进来就大概率失败。现默认改为 cogvideo (智谱免费, 实测最稳)。
     { value: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', desc: '实测最稳, 免费, 需 ZHIPU_API_KEY', priority: 10 },
     { value: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', desc: '1080p 画质最好, 需 VOLCANO_API_KEY', priority: 20 },
+    // ✅ 批次9 (2026-10-13): Alrc 工厂 Seedance 系列 4 个变体 (走 FACTORY_VIDEO_KEY)。
+    // modelStore.ts 的 FACTORY_VIDEO_MODELS 已注册同 4 条; 这里加到 MODELS 是为了
+    // "按引擎"选的入口也能直接看到 (videoModels filter 只挑 enabled 的, 默认全关)。
+    { value: 'doubao-seedance-2.5', label: 'Seedance 2.5 (工厂)', desc: 'Alrc 中转 · 按秒计费, 需 FACTORY_VIDEO_KEY', priority: 21 },
+    { value: 'doubao-seedance-2', label: 'Seedance 2 (工厂)', desc: 'Alrc 中转 · 1080p×5.1, 需 FACTORY_VIDEO_KEY', priority: 22 },
+    { value: 'doubao-seedance-2-fast', label: 'Seedance 2 Fast (工厂)', desc: 'Alrc 中转 · 720p 快速, 需 FACTORY_VIDEO_KEY', priority: 23 },
+    { value: 'doubao-seedance-2-mini', label: 'Seedance 2 Mini (工厂)', desc: 'Alrc 中转 · 480p 最省, 需 FACTORY_VIDEO_KEY', priority: 24 },
     { value: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', desc: '免费档, 易 429 限流', priority: 30 },
     { value: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版', desc: '支持图生视频/首尾帧/参考, 需 AGNES_VIDEO_API_KEY', priority: 40 },
 ];
@@ -135,24 +142,15 @@ const MODELS = [
 /** 默认引擎 (2026-10-13): 智谱 cogvideo —— 免费且实测无 429 */
 const DEFAULT_VIDEO_MODEL = 'cogvideo';
 
-/** 自定义模型配置 */
-interface CustomModel {
-    id: string;
-    name: string;
-    apiKey: string;
-    baseUrl: string;
-}
-
-const getCustomModels = (): CustomModel[] => {
-    try {
-        const raw = localStorage.getItem('agentai-custom-video-models');
-        return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-};
-
-const saveCustomModels = (models: CustomModel[]) => {
-    localStorage.setItem('agentai-custom-video-models', JSON.stringify(models));
-};
+/** 自定义模型配置 —— 定义与存取已抽到 services/customVideoModels (2026-10-13)
+ *  抽出来的原因见该文件头: VideoGen 与 StoryboardPanel 各写一份提交逻辑,
+ *  只改一处会导致分镜模式下 BYOK 静默失效。 */
+import {
+  type CustomVideoModel,
+  getCustomModels,
+  saveCustomModels,
+  resolveByokCredential,
+} from '../services/customVideoModels';
 
 /**
  * 2026-10-05: 删除本地 `HistoryItem` 接口，统一使用 `VideoTask`
@@ -210,9 +208,9 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
   const videoUploadRef = useRef<HTMLInputElement>(null); // 视频原型上传
 
   // 自定义模型状态
-  const [customModels, setCustomModels] = useState<CustomModel[]>(getCustomModels());
+  const [customModels, setCustomModels] = useState<CustomVideoModel[]>(getCustomModels());
   const [showAddModel, setShowAddModel] = useState(false);
-  const [newModel, setNewModel] = useState<Partial<CustomModel>>({});
+  const [newModel, setNewModel] = useState<Partial<CustomVideoModel>>({});
   const [editingModelId, setEditingModelId] = useState<string | null>(null); // P1: 编辑模式
   const [testingModel, setTestingModel] = useState<string | null>(null); // P1: 测试中
 
@@ -312,7 +310,7 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
       message.success(`已更新模型: ${newModel.name}`);
     } else {
       // 新增模式
-      const model: CustomModel = {
+      const model: CustomVideoModel = {
         id: `custom-${Date.now()}`,
         name: newModel.name!,
         apiKey: newModel.apiKey!,
@@ -521,8 +519,9 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
     // 2026-10-13 BYOK 真打通: 自定义模型的 Key 在这里随任务提交。
     // 原实现只在"测试连接"时用到 apiKey, 真实生成请求里根本没有它 ——
     // 于是用户在下面填的 Key 收集了、验证通过了, 生成时却从未参与。
-    const customId = model.startsWith('custom:') ? model.slice('custom:'.length) : '';
-    const customModel = customId ? customModels.find(m => m.id === customId) : undefined;
+    // 凭证解析走 services/customVideoModels (与 StoryboardPanel 共用同一份定义,
+    // 避免只修一条提交路径、另一条静默失效)。
+    const byok = resolveByokCredential(model);
     videoTaskManager.submitTask({
       prompt: fullPrompt,
       image: img || undefined,
@@ -533,7 +532,7 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
       model,
       size: videoSize,
       aspect_ratio: aspectRatio,
-      ...(customModel?.apiKey ? { byok: { apiKey: customModel.apiKey, baseUrl: customModel.baseUrl || undefined } } : {}),
+      ...(byok ? { byok } : {}),
     });
     message.info(`📨 任务已提交, 可继续操作其他内容, 完成后会通知`);
     // 清空输入 (保留提示词方便用户编辑)
