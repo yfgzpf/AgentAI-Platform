@@ -128,10 +128,14 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [handleKeyDown]);
 
   // ===== 启动时恢复上次使用的模式 =====
+  // ✅ 批次8.8 (2026-10-12): 不再自动恢复 "browser" 模式。
+  //   原逻辑读到 lastMode='browser' 就自动 setMode('browser') → 每次开应用
+  //   中心区就弹浏览器面板, 用户没主动触发也挡视线。
+  //   现在: 只恢复 editor / preview; browser 一律要手动 Ctrl+2 / 点 Tab 才进。
   useEffect(() => {
     try {
       const lastMode = localStorage.getItem('agentai.workspace.lastMode') as WorkspaceMode | null;
-      if (lastMode && ['editor', 'browser', 'preview'].includes(lastMode)) {
+      if (lastMode && ['editor', 'preview'].includes(lastMode)) {
         const currentMode = useWorkspaceStore.getState().mode;
         if (currentMode === 'auto') {
           useWorkspaceStore.getState().setMode(lastMode);

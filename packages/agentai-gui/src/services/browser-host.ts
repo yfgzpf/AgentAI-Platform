@@ -91,12 +91,22 @@ class BrowserHostImpl {
     this.update({ visible: true, intent: 'auto', url: url || this.state.url, openSeq: this.state.openSeq + 1 });
   }
 
-  /** AI 触发唤起 (标记 aiOpened, 抽屉宿主据此在任务结束后自动收起) */
+  /**
+   * AI 触发 → **只亮 ⚡ 徽标 + 记录 URL**, 不自动弹面板 (批次8.8, 2026-10-12)。
+   *
+   * 原行为 (visible: true) 是"AI 调 browser_* 工具就无条件弹浏览器", 每次 AI 跑
+   * 任务用户都看到浏览器跳出来挡视线。现在: AI 操作时只亮 ⚡ 徽标 (aiActive),
+   * 面板要用户**手动** Ctrl+B / Ctrl+2 / 点"浏览器" Tab 才开。
+   * url 仍记录 (aiEnd 时自动收起逻辑依赖 intent==='drawer'), 但不设 visible。
+   */
   openByAi(url?: string): void {
     this.update({
-      visible: true, intent: 'auto', aiOpened: true,
+      aiActive: true, aiOpened: true,
       url: url || this.state.url, openSeq: this.state.openSeq + 1,
     });
+    // 与 aiStart() 同语义: 30s 兜底让 ⚡ 徽标自动灭 (工具链断了也不永久亮)
+    if (this.aiTimer) clearTimeout(this.aiTimer);
+    this.aiTimer = setTimeout(() => this.update({ aiActive: false }), 30_000);
   }
 
   /** 打开并导航 (URL 一定更新) */

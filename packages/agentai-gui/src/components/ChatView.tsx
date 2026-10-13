@@ -1,253 +1,3 @@
-/**
- * ChatView — 主对话视图 (重构版)
- *   - 集成 Thread 卡片式消息渲染
- *   - 集成 Composer 智能输入区
- *   - 流式 SSE 通信
- *   - 上下文压缩: 达到阈值自动摘要+开新对话
- */
-
-/**
- * AutoHideTaskBar - 自动隐藏的任务提示条包装器
- * 用户未操作时自动收起，避免常驻遮挡视线
- */
-function AutoHideTaskBar({ children, visible, delay = 8000, onHidden }: { 
-  children: React.ReactNode; visible: boolean; delay?: number; onHidden?: () => void;
-}) {
-  const [show, setShow] = useState(visible);
-  
-  useEffect(() => {
-    if (!visible) { setShow(false); return; }
-    setShow(true);
-    const timer = setTimeout(() => {
-      setShow(false);
-      onHidden?.();
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [visible, delay]);
-  
-  if (!show) return null;
-  return <>{children}</>;
-}
-
-/** 自动生成对话摘要 (前端本地压缩, 不调LLM) */
-function generateConversationSummary(messages: any[]): string {
-  const userMsgs = messages.filter(m => m.role === 'user');
-  const assistantMsgs = messages.filter(m => m.role === 'assistant');
-  const toolCalls = messages.flatMap(m => m.segments?.filter((s: any) => s.kind === 'tool') || []);
-
-  // 提取用户需求
-  const userNeeds = userMsgs.map(m =>
-    m.segments?.filter((s: any) => s.kind === 'text').map((s: any) => s.text).join('').slice(0, 100)
-  ).filter(Boolean);
-
-  // 提取AI完成的关键操作
-  const toolNames = [...new Set(toolCalls.map((t: any) => t.name))];
-  const completedOps = toolNames.length > 0
-    ? `已执行操作: ${toolNames.join(', ')}`
-    : '';
-
-  // 提取AI回复摘要
-  const assistantSummaries = assistantMsgs.slice(-3).map(m => {
-    const text = m.segments?.filter((s: any) => s.kind === 'text').map((s: any) => s.text).join('').slice(0, 150);
-    return text;
-  }).filter(Boolean);
-
-  const lines = [
-    '📋 **上一轮对话摘要** (自动生成)',
-    '',
-    `**用户需求**: ${(userNeeds || []).slice(-3).join(' → ')}`,
-  ];
-  if (completedOps) lines.push(`**${completedOps}**`);
-  if (assistantSummaries.length > 0) {
-    lines.push('');
-    lines.push('**最近回复要点**:');
-    assistantSummaries.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
-  }
-  lines.push('');
-  lines.push('---');
-  lines.push('*以上为上下文压缩摘要, AI 可基于此继续对话*');
-
-  return lines.join('\n');
-}
-
-/**
- * 检测工具结果中的图片数据并插入 image segment
- * 支持: imageBase64 / imageUrl / screenshot_data
- */
-function detectAndInsertImage(
-  botId: string,
-  toolName: string,
-  result: string | undefined,
-  updateMessage: (id: string, fn: (m: any) => any) => void,
-  onImageDetected?: (url: string, alt: string, filePath?: string) => void,
-) {
-  if (!result) return;
-  // 黑名单: 以下工具永远不会产生图片, 跳过检测
-  const NON_IMAGE_TOOLS = new Set(['run_background', 'run_command', 'run_code', 'read_file', 'write_file', 'edit_file', 'execute_command', 'Bash', 'PowerShell', 'list_directory', 'directory_tree', 'search_content', 'search_files', 'glob', 'get_file_info', 'find_references', 'get_outline', 'get_symbols', 'search_codebase']);
-  if (NON_IMAGE_TOOLS.has(toolName)) return;
-  try {
-    const parsed = typeof result === 'string' ? JSON.parse(result) : result;
-
-    // ═══ 提取待插入的图片候选 (url/base64) ═══
-    let candidateUrl: string | undefined;
-    let candidateBase64: string | undefined;
-    let candidateAlt: string | undefined;
-    let candidateFilePath: string | undefined;
-
-    // 1. 桌面截图: desktop_automate screenshot 返回 screenshot_data
-    if (toolName === 'desktop_automate' && parsed.screenshot_data?.base64) {
-      candidateBase64 = parsed.screenshot_data.base64;
-      candidateAlt = parsed.screenshot_data.alt || '桌面截图';
-      candidateFilePath = parsed.screenshot_data.path;
-    }
-
-    // 2. 浏览器截图: browser_screenshot 返回 imageBase64
-    else if ((toolName === 'browser_screenshot' || toolName === 'browser_screenshot_full') && parsed.imageBase64) {
-      candidateBase64 = parsed.imageBase64;
-      candidateAlt = '浏览器截图';
-    }
-
-    // 3. 图片生成: generate_image 优先使用 localPath
-    else if (toolName === 'generate_image') {
-      if (parsed.localPath) {
-        const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
-        candidateUrl = `${gatewayHttp}/api/files/download?path=${encodeURIComponent(parsed.localPath)}`;
-        candidateAlt = parsed.prompt || 'AI 生成图片';
-        candidateFilePath = parsed.localPath;
-      } else if (parsed.imageUrl || parsed.url) {
-        candidateUrl = parsed.imageUrl || parsed.url;
-        candidateAlt = parsed.prompt || 'AI图片';
-      }
-    }
-
-    // 4. 通用检测: 只要有 imageUrl/imageBase64 字段
-    else if (parsed.imageUrl || parsed.imageBase64) {
-      candidateUrl = parsed.imageUrl;
-      candidateBase64 = parsed.imageBase64;
-      candidateAlt = parsed.alt || toolName;
-    }
-
-    // ═══ 图片去重: 已有相同 url 或 base64 的 image segment 则跳过 ═══
-    if (candidateUrl || candidateBase64) {
-      candidateAlt = candidateAlt || '图片';
-      updateMessage(botId, (m: any) => {
-        const existing = m.segments?.find((s: any) => {
-          if (s.kind !== 'image') return false;
-          if (candidateUrl && s.url === candidateUrl) return true;
-          if (candidateBase64 && s.base64 === candidateBase64) return true;
-          return false;
-        });
-        if (existing) return m; // 重复, 不插入
-        return {
-          ...m,
-          segments: [...m.segments, {
-            kind: 'image',
-            url: candidateUrl,
-            base64: candidateBase64,
-            alt: candidateAlt,
-            filePath: candidateFilePath,
-          }],
-        };
-      });
-      if (candidateUrl || candidateFilePath) {
-        const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
-        const imgDataUrl = candidateFilePath
-          ? `${gatewayHttp}/api/files/download?path=${encodeURIComponent(candidateFilePath)}`
-          : candidateUrl;
-        onImageDetected?.(imgDataUrl || '', candidateAlt!, candidateFilePath);
-      }
-      return;
-    }
-  } catch {
-    // result 不是 JSON — 检查是否包含图片 URL 或文件路径
-    const text = String(result);
-
-    // 0. 优先检测本地文件路径 (格式: "FILE: /path/to/img.png") — 无 CORS 问题
-    const fileMatch = text.match(/FILE:\s*([^\s\n]+)/i);
-    if (fileMatch) {
-      const filePath = fileMatch[1];
-      const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
-      const imgUrl = `${gatewayHttp}/api/files/download?path=${encodeURIComponent(filePath)}`;
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'image',
-          url: imgUrl,
-          alt: 'AI 生成图片',
-          filePath,
-        }],
-      }));
-      return;
-    }
-
-    // 1. 从 output 字符串中提取 URL (格式: "URL: https://...")
-    const urlMatch = text.match(/URL:\s*(https?:\/\/[^\s\n]+)/i);
-    if (urlMatch) {
-      const imageUrl = urlMatch[1];
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'image',
-          url: imageUrl,
-          alt: 'AI 生成图片',
-        }],
-      }));
-      return;
-    }
-
-    // 2. 从 Markdown 链接中提取 URL (格式: ![alt](url) 或 [text](url))
-    const mdImageMatch = text.match(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/i);
-    if (mdImageMatch) {
-      const imageUrl = mdImageMatch[2];
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'image',
-          url: imageUrl,
-          alt: mdImageMatch[1] || 'AI 生成图片',
-        }],
-      }));
-      return;
-    }
-
-    // 3. 从 Markdown 链接中提取 URL (格式: [text](url)，排除 agentai:// 协议)
-    const mdLinkMatch = text.match(/\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/i);
-    if (mdLinkMatch && !mdLinkMatch[2].startsWith('agentai://')) {
-      const imageUrl = mdLinkMatch[2];
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'image',
-          url: imageUrl,
-          alt: mdLinkMatch[1] || 'AI 生成图片',
-        }],
-      }));
-      return;
-    }
-
-    // 4. 检查是否包含图片文件路径 (排除 file:/// 协议路径和系统路径)
-    const textClean = text.replace(/file:\/\/\/?/gi, '');
-    if (textClean !== text) return; // 含 file:// 协议的不是图片
-    const nonImageSystemPaths = /\\windows\\|\/windows\/|system32|cmd\.exe|powershell\.exe|Program\s*Files|favicon\.svg|icon\.png|logo\.jpg/i;
-    if (nonImageSystemPaths.test(text)) return;
-    const imgMatch = text.match(/([^\s`'"]+\.(png|jpg|jpeg|gif|webp|bmp))/i);
-    if (imgMatch && !/^\//.test(imgMatch[1])) {
-      // SVG 文件通常不是生成的图片，跳过
-      if (imgMatch[2] === 'svg') return;
-      const imgPath = imgMatch[1];
-      const imgName = imgPath.split(/[\\/]/).pop() || imgPath;
-      // 通过 gateway API 加载图片
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'text',
-          text: `\n\n> 🖼️ **已生成图片**: [${imgName}](agentai://open?path=${encodeURIComponent(imgPath)})\n\n![${imgName}](/api/files/download?path=${encodeURIComponent(imgPath)})\n`,
-        }],
-      }));
-      return;
-    }
-  }
-}
 
 /**
  * ChatView — 主对话视图 (重构版)
@@ -256,6 +6,12 @@ function detectAndInsertImage(
  *   - 流式 SSE 通信
  *   - 会话管理
  */
+import { MessageList } from './chat/MessageList';
+import { JumpToBar } from './chat/JumpToBar';
+import { PulseLine } from './chat/PulseLine';
+import type { RowBinds, StreamProgress } from './chat/types';
+import { AutoHideTaskBar } from './chat/AutoHideTaskBar';
+import { generateConversationSummary, detectAndInsertImage } from './chat/chat-utils';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Alert, Button, Select, Space, Spin, Tag, App } from 'antd';
 import { SyncOutlined, CloseOutlined } from '@ant-design/icons';
@@ -268,12 +24,10 @@ import { useProfileStore } from '../store';
 import { useSessionStore } from '../store/sessionStore';
 import type { AppMode } from '../store/modeStore';
 import { Composer, type SlashCmd, type ComposerHandle } from './Composer';
-import { UserMsg, AssistantMsg, TurnDivider } from './Thread';
 import { WorkspaceSummaryBar } from './WorkspaceSummaryBar';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { countTokens, formatTokens } from '../services/tokenCounter';
 import { Scene3DViewer, type Scene3DData } from './Scene3DViewer';
-import { EmotionIndicator } from './EmotionIndicator';
 import { analyzeEmotionQuick, type EmotionResult } from '../services/emotion';
 import { apiStream, makeChatHandlers, apiApproveFileChange, apiApprovePlan, suggestMode, apiWriteMemory } from '../services/api';
 import { MemoryEngine } from '../services/MemoryEngine';
@@ -311,24 +65,11 @@ function guessImgMimetype(name: string): string {
 }
 
 /* ═══ SSE 帧级渲染优化: 消息行 React.memo (2026-09-05) ═══
- * ChatView 因 updateMessage (rAF ~60fps) 每帧重渲染; 行内闭包回调每次重建会导致
- * React.memo 浅比较失败 → 所有历史消息行全量重建 (含折叠卡片/图片/Markdown 解析)。
- * 方案: 1) 这里对 UserMsg/AssistantMsg 包 React.memo;
- *       2) ChatView 内按"msg 对象引用"缓存每行的绑定回调 (见 getRowBinds),
- *          未变化消息行 props 引用稳定 → 直接跳过渲染, 只剩流式的那一条在动。
+ * RowBinds 类型与 UserMsgRow/AssistantMsgRow 的 memo 包装已于 2026-10-12
+ * 随消息列表搬至 ./chat/MessageList + ./chat/types, 此处仅留索引注释。
+ * 机制未变: ChatView 内 getRowBinds 按"msg 对象引用"缓存行绑定回调,
+ * 未变化消息行 props 引用稳定 → React.memo 直接跳过重渲染。
  */
-type RowBinds = {
-  onResend?: () => void;
-  onEdit?: () => void;
-  onDelete?: () => void;
-  onBookmark?: () => void;
-  onRegenerate?: () => void;
-  onFeedback?: (kind: 'up' | 'down') => void;
-  /** 合并 durationMs 后的 usage (原每次渲染新建对象, 破坏 memo) */
-  usage?: any;
-};
-const UserMsgRow = React.memo(UserMsg);
-const AssistantMsgRow = React.memo(AssistantMsg);
 
 export const ChatView: React.FC = () => {
   const { messages, appendMessage, updateMessage, clearMessages, removeMessages, setMessages } = useChatStore();
@@ -861,7 +602,7 @@ const [loading, setLoading] = useState(false);
     // Ensure session
     let sessionId = activeId;
     if (!sessionId) {
-      sessionId = createSession('新对话');
+      sessionId = createSession('新对话', undefined, 'chat', profileWs);
     }
     // 保存当前 sessionId 供审批回调使用
     setPlanSessionId(sessionId || 'default');
@@ -1352,7 +1093,7 @@ const [loading, setLoading] = useState(false);
           const lastMsg = messages[messages.length - 1];
           const seg = lastMsg?.segments?.[0];
           const lastText = seg && 'text' in seg ? seg.text : '';
-          const id = createSession("续: " + (lastText || '上一轮对话').slice(0, 30));
+          const id = createSession("续: " + (lastText || '上一轮对话').slice(0, 30), undefined, 'chat', profileWs);
           setActive(id);
         } catch { /* rollover best-effort */ }
       },
@@ -1668,7 +1409,7 @@ await apiStream(base + '/v1/chat', {
   const slashCommands: SlashCmd[] = [
     { cmd: '/clear', desc: '清空当前对话', run: () => { smartClear(); } },
     { cmd: '/new', desc: '新建对话', run: () => {
-      const id = createSession('新对话');
+      const id = createSession('新对话', undefined, 'chat', profileWs);
       smartClear();
     }},
     { cmd: '/abort', desc: '中断当前回复', run: () => handleStop() },
@@ -2059,116 +1800,31 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           </div>
         )}
 
-        {/* Message list */}
-        {/* 对话摘要栏: 超过 8 条消息时显示, 帮助用户导航长对话 */}
-        {messages.length > 8 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '4px 12px', margin: '4px 0',
-            background: 'var(--panel)', borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--border)',
-            fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
-            overflowX: 'auto', whiteSpace: 'nowrap',
-          }}>
-            <span style={{ flexShrink: 0, fontWeight: 600, color: 'var(--muted)' }}>📑 对话摘要</span>
-            {messages.filter(m => m.role === 'user').slice(-5).map((m, idx) => {
-              const text = m.segments?.filter((s: any) => s.kind === 'text').map((s: any) => s.text).join('') || '';
-              const short = text.slice(0, 30) + (text.length > 30 ? '...' : '');
-              return (
-                <span key={idx} style={{
-                  flexShrink: 0, padding: '1px 6px',
-                  background: 'var(--bg-2)', borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer',
-                }} onClick={() => {
-                  const el = msgRefs.current[m.id];
-                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }}>
-                  {short}
-                </span>
-              );
-            })}
-            <span style={{ flexShrink: 0, opacity: 0.5 }}>{messages.length} 条消息</span>
-          </div>
+        {/* Message list — 2026-10-12 第二批拆至 ./chat/MessageList (原 :1803-1906) */}
+        <MessageList
+          messages={messages}
+          emotionMap={emotionMap}
+          progress={progress}
+          msgRefs={msgRefs}
+          getRowBinds={getRowBinds}
+          onNavigate={handleNavigateToMsg}
+          onOpenFile={openFileInEditor}
+          onDone={scrollToTopOnDone}
+        />
+
+        {/* 批次8.8: 对话区悬浮"跳到时间线"按钮组 — 长对话不用从头翻 */}
+        {messages.length > 0 && (
+          <JumpToBar messages={messages} msgRefs={msgRefs} onNavigate={handleNavigateToMsg} />
         )}
-        {messages.map((msg, i) => {
-          if (msg.role === 'user') {
-            const textSegs = msg.segments.filter(s => s.kind === 'text');
-            const text = textSegs[0]?.text || '';
-            const emotion = emotionMap[msg.id];
-            const profile = useProfileStore.getState()?.profile;
-            // 2026-09-05: 绑定回调走缓存 + React.memo 行 — msg 未变 → 直接跳过重渲染
-            const binds = getRowBinds(msg);
-            return (
-              <div key={msg.id} ref={el => { msgRefs.current[msg.id] = el; }}>
-                <UserMsgRow
-                  text={text}
-                  segments={msg.segments}
-                  status={msg.status}
-                  messageId={msg.id}
-                  onNavigate={handleNavigateToMsg}
-                  userName={profile?.name || '你'}
-                  userAvatar={undefined}
-                  onResend={binds.onResend}
-                  onEdit={binds.onEdit}
-                  onDelete={binds.onDelete}
-                  onBookmark={binds.onBookmark}
-                />
-                {emotion && (
-                  <div style={{ padding: '0 16px 4px', display: 'flex', justifyContent: 'flex-end' }}>
-                    <EmotionIndicator {...emotion} compact />
-                  </div>
-                )}
-              </div>
-            );
-          }
-          if (msg.role === 'assistant') {
-            const binds = getRowBinds(msg);
-            return (
-              <div key={msg.id} ref={el => { msgRefs.current[msg.id] = el; }}>
-                <AssistantMsgRow
-                  segments={msg.segments}
-                  pending={!!msg.streaming}
-                  model={msg.provider}
-                  usage={binds.usage}
-                  status={msg.status}
-                  messageId={msg.id}
-                  onNavigate={handleNavigateToMsg}
-                  onRegenerate={binds.onRegenerate}
-                  onFeedback={binds.onFeedback}
-                  onBookmark={binds.onBookmark}
-                  onOpenFile={openFileInEditor}
-                  onEdit={binds.onEdit}
-                  onDone={scrollToTopOnDone}
-                  progress={msg.streaming ? progress : null}
-                />
-              </div>
-            );
-          }
-          if (msg.role === 'system') {
-            // 系统内部指令 ([SYSTEM]/[工具故障报告]等) 不作为独立气泡显示
-            // 这些是给 AI 的内部指令, 显示给用户只会造成干扰
-            const sysText = msg.segments?.filter(s => s.kind === 'text').map(s => (s as any).text || '').join('') || '';
-            const isInternalDirective = sysText.startsWith('[SYSTEM]')
-              || sysText.startsWith('[工具故障报告]')
-              || sysText.startsWith('[上下文折叠摘要')
-              || sysText.startsWith('# 对话历史摘要')
-              || sysText.startsWith('[历史摘要');
-            if (isInternalDirective) return null; // 静默跳过, 不渲染
-            // 用户可见的 system 消息 (如欢迎信息) 正常显示
-            return (
-              <div key={msg.id} style={{ padding: '8px 16px' }}>
-                <AssistantMsg segments={msg.segments} pending={false} />
-              </div>
-            );
-          }
-          return null;
-        })}
 
         {/* 3D 可交互场景 (AI 调用 generate_3d_scene 生成) */}
         {scene3D && <Scene3DViewer scene={scene3D} />}
 
         {/* 子智能体状态实时显示 (P2-9) — 2026-10-11: 折叠摘要改造, 全部终态后自动清空消失 */}
         {subagents.length > 0 && <SubagentStatus agents={subagents} pending={subagents.some(a => a.status === 'running')} onAllFinished={() => setSubagents([])} />}
+
+        {/* 脉象波形 — AI 生成中浮现 (望闻问切之「切」) */}
+        <PulseLine active={loading} />
 
         {/* Bottom padding */}
         <div style={{ height: 8 }} />
@@ -2343,7 +1999,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
               onClick={() => {
                 const summary = generateConversationSummary(messages);
                 smartClear();
-                const id = createSession('新对话 (续)');
+                const id = createSession('新对话 (续)', undefined, 'chat', profileWs);
                 setTimeout(() => {
                   appendMessage({
                     id: `summary-${Date.now()}`,
