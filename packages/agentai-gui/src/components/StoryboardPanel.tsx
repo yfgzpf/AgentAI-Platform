@@ -13,7 +13,7 @@
  */
 
 import React, { useState } from 'react';
-import { Button, Input, InputNumber, Select, Card, Space, Tag, Tooltip, message, Spin, Progress, Collapse, Checkbox, Upload, Modal, Alert } from 'antd';
+import { Button, Input, InputNumber, Select, Card, Space, Tag, Tooltip, message, Spin, Progress, Collapse, Checkbox, Upload, Modal, Alert, Popover } from 'antd';
 import {
   ThunderboltOutlined, DeleteOutlined, VideoCameraOutlined,
   PictureOutlined, PlusOutlined, UserOutlined, CameraOutlined, EditOutlined,
@@ -31,6 +31,16 @@ import { useModelStore } from '../store/modelStore';
 const { TextArea } = Input;
 const { Panel } = Collapse;
 
+/** 2026-10-14: 单镜的一次生成结果 (候选版本) — 同一镜头可反复生成, 每版都留档归到当前剧集下 */
+export interface ShotVideoVersion {
+  url: string;
+  /** API 返回的尾帧 — 续集功能用它跳过 ffmpeg 抽帧 */
+  lastFrameUrl?: string;
+  /** 生成时用的模型名 (便于回看哪版是什么模型出的) */
+  model?: string;
+  createdAt: number;
+}
+
 export interface Shot {
   id: number;
   type: string;
@@ -43,9 +53,15 @@ export interface Shot {
   /** 2026-10-13 新增: 内心独白/旁白 (角色未出声的心声) — 与 dialogue 一起内联进视频 prompt 做音画同步 */
   monologue?: string;
   status?: 'pending' | 'generating' | 'completed' | 'failed';
+  /** 当前选用的版本 (拼接/导出/预览都用它, 语义未变) */
   videoUrl?: string;
   /** API 返回的尾帧 (return_last_frame) — 续集功能用它跳过 ffmpeg 抽帧 */
   lastFrameUrl?: string;
+  /**
+   * 2026-10-14: 候选版本历史 — 单镜生成不满意可「重新生成」, 每次结果追加到这里 (不覆盖旧的),
+   * `videoUrl` 始终指向其中被选用的那一版。全部候选按剧集归组展示, 供对比/选用/删除。
+   */
+  videoVersions?: ShotVideoVersion[];
   error?: string;
   selected?: boolean;
 }
@@ -85,6 +101,9 @@ export interface StoryboardPanelProps {
 
 // ===== 角色库 (跨剧本复用) =====
 const CHAR_LIBRARY_KEY = 'agentai-character-library';
+
+// 2026-10-14: 单镜候选版本上限 — 反复重生成时只保留最近 N 版, 防 localStorage 膨胀
+const MAX_SHOT_VERSIONS = 6;
 interface CharLibEntry {
   name: string;
   description: string;
@@ -253,7 +272,12 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
       characters: storyboard.characters.map(c => ({ ...c, portraitUrl: c.portraitUrl?.startsWith('data:') ? undefined : c.portraitUrl })),
       episodes: storyboard.episodes.map(ep => ({
         ...ep,
-        shots: ep.shots.map(s => ({ ...s, videoUrl: s.videoUrl?.startsWith('http') || s.videoUrl?.startsWith('/api/') ? s.videoUrl : undefined })),
+        shots: ep.shots.map(s => ({
+          ...s,
+          videoUrl: s.videoUrl?.startsWith('http') || s.videoUrl?.startsWith('/api/') ? s.videoUrl : undefined,
+          // 2026-10-14: 候选版本同样只留可用 URL (blob:/data: 之类落盘后失效)
+          videoVersions: s.videoVersions?.filter(v => v.url?.startsWith('http') || v.url?.startsWith('/api/')),
+        })),
         scene: ep.scene ? { ...ep.scene, imageUrl: ep.scene.imageUrl?.startsWith('http') || ep.scene.imageUrl?.startsWith('/api/') ? ep.scene.imageUrl : undefined } : undefined,
       })),
     };
@@ -266,7 +290,7 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
           characters: storyboard.characters.map(c => ({ name: c.name, description: c.description })),
           episodes: storyboard.episodes.map(ep => ({
             index: ep.index, title: ep.title,
-            shots: ep.shots.map(s => ({ ...s, videoUrl: s.videoUrl?.startsWith('http') ? s.videoUrl : undefined })),
+            shots: ep.shots.map(s => ({ ...s, videoUrl: s.videoUrl?.startsWith('http') ? s.videoUrl : undefined, videoVersions: undefined })),
           })),
         };
         localStorage.setItem(`${STORAGE_KEY}-${id}`, JSON.stringify(minimal));
@@ -652,6 +676,55 @@ High detail, professional quality, 16:9 aspect ratio.`;
     });
   };
 
+  // 2026-10-14: 生成成功 → 把本次结果**追加**为候选版本 (不覆盖旧版),
+  // 并让 videoUrl 指向最新一版 (即"刚生成的那版"默认选用)。超过上限则丢弃最旧的。
+  const withNewVersion = (s: Shot, vr: { videoUrl: string; lastFrameUrl?: string }): Shot => ({
+    ...s,
+    status: 'completed',
+    videoUrl: vr.videoUrl,
+    lastFrameUrl: vr.lastFrameUrl,
+    error: undefined,
+    videoVersions: [
+      ...(s.videoVersions || []),
+      { url: vr.videoUrl, lastFrameUrl: vr.lastFrameUrl, model, createdAt: Date.now() } as ShotVideoVersion,
+    ].slice(-MAX_SHOT_VERSIONS),
+  });
+
+  // 选用某一版候选作为该镜头的当前版本 (拼接/导出/预览随之更新)
+  const selectShotVersion = (epIdx: number, shotId: number, url: string) => {
+    sbWrite(sbTokenRef.current, prev => {
+      const eps = [...prev.episodes];
+      eps[epIdx].shots = eps[epIdx].shots.map(s => {
+        if (s.id !== shotId) return s;
+        const ver = (s.videoVersions || []).find(v => v.url === url);
+        return { ...s, videoUrl: url, lastFrameUrl: ver?.lastFrameUrl, status: 'completed', error: undefined };
+      });
+      return { ...prev, episodes: eps };
+    });
+  };
+
+  // 删除某一版候选; 若删的正是当前选用版, 自动顺延到剩下的最后一版
+  const removeShotVersion = (epIdx: number, shotId: number, url: string) => {
+    sbWrite(sbTokenRef.current, prev => {
+      const eps = [...prev.episodes];
+      eps[epIdx].shots = eps[epIdx].shots.map(s => {
+        if (s.id !== shotId) return s;
+        const next = (s.videoVersions || []).filter(v => v.url !== url);
+        if (s.videoUrl !== url) return { ...s, videoVersions: next };
+        const lastVer = next[next.length - 1];
+        return {
+          ...s,
+          videoVersions: next,
+          videoUrl: lastVer?.url,
+          lastFrameUrl: lastVer?.lastFrameUrl,
+          status: lastVer ? 'completed' : 'pending',
+          error: undefined,
+        };
+      });
+      return { ...prev, episodes: eps };
+    });
+  };
+
   // 拖拽镜头到另一集 — 用户手动归类续集视频
   const [dragShot, setDragShot] = useState<{ epIdx: number; shotId: number } | null>(null);
   const moveShotToEpisode = (fromEpIdx: number, shotId: number, toEpIdx: number) => {
@@ -826,8 +899,13 @@ High detail, professional quality, 16:9 aspect ratio.`;
       }
       const videoResult = await pollVideo(result.taskId, result.provider || model);
       if (videoResult) {
-        sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
-        if (sbTokenRef.current === token) message.success(`第${epIdx + 1}集-${shotId}镜 生成完成`);
+        // ★ 2026-10-14: 追加候选版本 — 重新生成不再覆盖旧版, 每次结果都归到 (当前剧本的) 本镜下
+        sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? withNewVersion(s, videoResult) : s); return { ...prev, episodes: eps }; });
+        if (sbTokenRef.current === token) {
+          // 之前已有版本 → 这是"再生成", 提示用户去右侧对比选用 (计数交给预览面板展示)
+          const hadVersion = !!storyboard.episodes[epIdx]?.shots.find(s => s.id === shotId)?.videoUrl;
+          message.success(`第${epIdx + 1}集-${shotId}镜 生成完成${hadVersion ? ' (新增一版候选, 可在右侧预览对比选用)' : ''}`);
+        }
       } else {
         sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: '轮询超时或任务失败' } : s); return { ...prev, episodes: eps }; });
       }
@@ -897,7 +975,8 @@ High detail, professional quality, 16:9 aspect ratio.`;
               const videoResult = await pollVideo(result.taskId, result.provider || model);
               if (videoResult) {
                 succeeded++;
-                sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
+                // ★ 2026-10-14: 同样追加候选版本 (与单镜一致, 重新生成不丢旧版)
+                sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? withNewVersion(s, videoResult) : s); return { ...prev, episodes: eps }; });
               } else {
                 failed++;
                 sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: '轮询超时或任务失败' } : s); return { ...prev, episodes: eps }; });
@@ -1268,11 +1347,17 @@ return (
                           <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', flexShrink: 0 }}>{shot.duration}s</span>
                           <div style={{ flex: 1 }} />
                           {shot.status === 'generating' && <Spin size="small" />}
+                          {/* 2026-10-14: 已生成不再是终点 — 解禁按钮支持"重新生成", 结果作为新候选版本累加 */}
                           <Button size="small" type={shot.status === 'completed' ? 'default' : 'primary'}
-                            loading={shot.status === 'generating'} disabled={shot.status === 'generating' || shot.status === 'completed'}
+                            loading={shot.status === 'generating'} disabled={shot.status === 'generating'}
                             onClick={() => generateSingleShot(epIdx, shot.id)} style={{ fontSize: 'var(--fs-micro)', padding: '0 6px' }}>
-                            {shot.status === 'generating' ? '生成中' : shot.status === 'failed' ? '重试' : shot.status === 'completed' ? '已生成' : '生成'}
+                            {shot.status === 'generating' ? '生成中' : shot.status === 'failed' ? '重试' : shot.status === 'completed' ? '重新生成' : '生成'}
                           </Button>
+                          {(shot.videoVersions?.length || 0) > 1 && (
+                            <Tag color="blue" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>
+                              {shot.videoVersions!.length} 版
+                            </Tag>
+                          )}
                           <Tooltip title="删除"><Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => deleteShot(epIdx, shot.id)} /></Tooltip>
                         </div>
                         {/* 第二行: 元信息 — 运镜/氛围/角色, 次要信息不再抢首行焦点 */}
@@ -1328,7 +1413,8 @@ return (
                   <VideoCameraOutlined />
                   <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>分镜预览</span>
                   <Tag style={{ fontSize: 'var(--fs-micro)' }}>
-                    {storyboard.episodes.reduce((sum, ep) => sum + ep.shots.filter(s => s.videoUrl).length, 0)} 个视频
+                    {/* 2026-10-14: 计"视频总数" = 各镜候选版本数之和 (含历史版), 旧数据无 versions 时按单版算 */}
+                    {storyboard.episodes.reduce((sum, ep) => sum + ep.shots.reduce((a, s) => a + (s.videoVersions?.length || (s.videoUrl ? 1 : 0)), 0), 0)} 个视频
                   </Tag>
                 </Space>
               }
@@ -1356,6 +1442,39 @@ return (
                             <div style={{ position: 'absolute', top: 4, left: 4, background: 'rgba(0,0,0,0.7)', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-micro)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
                               {ep.index}-{shot.id} · {shot.type}
                             </div>
+                            {/* 2026-10-14: 多版本候选 — 每版都是本镜在本剧集下的生成结果, 可对比/选用/删除 */}
+                            {(shot.videoVersions?.length || 0) > 1 && (
+                              <Popover
+                                trigger="click"
+                                placement="bottomRight"
+                                title={`镜 ${shot.id} · 当前 ${shot.videoVersions!.findIndex(v => v.url === shot.videoUrl) + 1}/${shot.videoVersions!.length} 版`}
+                                content={
+                                  <div style={{ width: 320, maxHeight: 360, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    {shot.videoVersions!.map((ver, vi) => {
+                                      const isCur = ver.url === shot.videoUrl;
+                                      return (
+                                        <div key={ver.url} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 4, borderRadius: 'var(--radius-sm)', background: isCur ? 'var(--accent-soft)' : 'transparent', border: `1px solid ${isCur ? 'var(--accent)' : 'var(--border)'}` }}>
+                                          <video src={ver.url} muted preload="metadata" style={{ width: 96, height: 56, objectFit: 'cover', borderRadius: 'var(--radius-sm)', background: '#000', flexShrink: 0 }} />
+                                          <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: 'var(--fs-micro)', fontWeight: isCur ? 700 : 400 }}>
+                                              第 {vi + 1} 版 {isCur && <Tag color="green" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>当前</Tag>}
+                                            </div>
+                                            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
+                                              {new Date(ver.createdAt).toLocaleString()}{ver.model ? ` · ${ver.model}` : ''}
+                                            </div>
+                                          </div>
+                                          {!isCur && <Button size="small" type="primary" style={{ fontSize: 'var(--fs-micro)' }} onClick={() => selectShotVersion(ep.index - 1, shot.id, ver.url)}>选用</Button>}
+                                          <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeShotVersion(ep.index - 1, shot.id, ver.url)} />
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                }>
+                                <Button size="small" style={{ position: 'absolute', top: 4, right: 4, fontSize: 'var(--fs-micro)', padding: '0 6px' }}>
+                                  {shot.videoVersions!.length} 版
+                                </Button>
+                              </Popover>
+                            )}
                           </div>
                         ))}
                       </div>

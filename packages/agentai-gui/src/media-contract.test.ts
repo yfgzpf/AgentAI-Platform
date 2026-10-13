@@ -68,8 +68,11 @@ describe('分镜: 续集尾帧', () => {
 
   it('Shot 携带 lastFrameUrl, 且轮询结果写回镜次', () => {
     expect(code).toMatch(/lastFrameUrl\?:\s*string/);
-    const writes = code.match(/lastFrameUrl: videoResult\.lastFrameUrl/g) || [];
+    // 2026-10-14: 写回逻辑收敛进 withNewVersion (单镜/批量共用同一条追加版本的路径),
+    // 断言从"两处内联写字段"改为"两条路径都调 withNewVersion, 且它写 lastFrameUrl"。
+    const writes = code.match(/withNewVersion\(s, videoResult\)/g) || [];
     expect(writes.length, '单镜 + 批量两条路径都要写回').toBeGreaterThanOrEqual(2);
+    expect(code).toContain('lastFrameUrl: vr.lastFrameUrl');
   });
 });
 
@@ -371,3 +374,52 @@ describe('分镜: 左右栏可拖拽 + 底部不被裁 (2026-10-14)', () => {
     expect(code).not.toContain("flexDirection: 'column', gap: 8, overflow: 'auto', paddingRight: 4");
   });
 });
+
+// ════════════════════════════════════════════════════════════════════
+// 分镜: 单镜可反复生成, 结果作为候选版本归到当前剧集下 (2026-10-14)
+// ════════════════════════════════════════════════════════════════════
+
+describe('分镜: 单镜多版本候选 (生成不满意可继续生成)', () => {
+  const code = stripComments(src('components/StoryboardPanel.tsx'));
+  const count = (s: string, sub: string) => s.split(sub).length - 1;
+
+  it('★ Shot 带 videoVersions 候选历史; videoUrl 仍是"当前选用版"', () => {
+    expect(code).toContain('export interface ShotVideoVersion');
+    expect(code).toContain('videoVersions?: ShotVideoVersion[]');
+    // 兼容语义: videoUrl 未删 (拼接/导出/预览都靠它取当前选用版)
+    expect(code).toMatch(/videoUrl\?: string;/);
+  });
+
+  it('★ 生成成功 → 追加候选版本而不是覆盖 (单镜 + 批量各一处)', () => {
+    expect(code).toContain('const withNewVersion = (s: Shot');
+    expect(code).toContain('.slice(-MAX_SHOT_VERSIONS)');
+    // 两条成功写入都必须走 withNewVersion
+    expect(count(code, 'withNewVersion(s, videoResult)')).toBeGreaterThanOrEqual(2);
+    // 旧的"覆盖式"写入必须清零
+    expect(code).not.toContain("status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl");
+  });
+
+  it('★ 已生成镜头按钮解禁 → 可"重新生成" (不再 disabled)', () => {
+    // 按钮 disabled 只由 generating 决定
+    expect(code).toContain("loading={shot.status === 'generating'} disabled={shot.status === 'generating'}");
+    // 旧的"已生成即锁死"必须消失
+    expect(code).not.toContain("shot.status === 'generating' || shot.status === 'completed'");
+    // 标签改为可再次点击的"重新生成"
+    expect(code).toContain("? '重新生成' : '生成'");
+    expect(code).not.toContain("'已生成'");
+  });
+
+  it('★ 候选版本可按剧集对比/选用/删除 (归到当前剧集下)', () => {
+    expect(code).toContain('const selectShotVersion = (epIdx: number, shotId: number, url: string)');
+    expect(code).toContain('const removeShotVersion = (epIdx: number, shotId: number, url: string)');
+    // 预览面板里每个镜头卡片带版本切换 (调用点在剧集内)
+    expect(code).toContain('selectShotVersion(ep.index - 1, shot.id, ver.url)');
+    // 删除当前选用版 → 自动顺延到剩余最后一版 (不能留下悬空 videoUrl)
+    expect(code).toContain('const lastVer = next[next.length - 1]');
+  });
+
+  it('★ 候选版本持久化时清洗 URL (blob:/data: 落盘失效)', () => {
+    expect(code).toContain('videoVersions: s.videoVersions?.filter(v => v.url?.startsWith(\'http\')');
+  });
+});
+
