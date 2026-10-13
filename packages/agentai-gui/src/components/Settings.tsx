@@ -343,7 +343,16 @@ export const Settings: React.FC = () => {
   const [testingCustom, setTestingCustom] = useState(false);
   
   // ALRC 聚合平台
-  const [factoryKeys, setFactoryKeys] = useState<Record<string, string>>({});
+  // 2026-10-13 修复「填入密钥不会缓存」: factoryKeys 原是 useState({}) 纯内存态,
+  //   组件卸载/刷新即丢。现在挂载时从三处已落盘来源回填 (优先级 本地 secureKeyStorage
+  //   > modelStore 持久层 > 空), 保存时 saveApiKeyToGateway 会写回这三处 (见 :464), 闭环成立。
+  const [factoryKeys, setFactoryKeys] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const g of FACTORY_KEY_GROUPS) {
+      init[g.envVar] = getApiKey(g.envVar) || commercialKeys[g.envVar] || '';
+    }
+    return init;
+  });
   const [testingKey, setTestingKey] = useState<string | null>(null);
   const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>({});
   const [alrcExpanded, setAlrcExpanded] = useState(false); // ALRC 子模型列表折叠状态
@@ -913,7 +922,9 @@ return (
                                   const key = factoryKeys[group.envVar]?.trim();
                                   if (!key) { message.warning('请输入密钥'); return; }
                                   setTestingKey(group.envVar);
-                                  const testModel = group.id === 'chat' ? 'deepseek-v4-flash' : group.id === 'image' ? 'nano-banana' : group.id === 'video' ? 'seedance-1.0-lite' : group.id;
+                                  // 2026-10-13: video 测试模型由 seedance-1.0-lite (已不存在于 Alrc Seedance 分组)
+                                  // 改为真实的 doubao-seedance-2.5, 否则「验证」恒报 model_not_found。
+                                  const testModel = group.id === 'chat' ? 'deepseek-v4-flash' : group.id === 'image' ? 'nano-banana' : group.id === 'video' ? 'doubao-seedance-2.5' : group.id;
                                   const ok = await testConnection('https://alro.huazhiweilai.com/v1', key, testModel, `factory-${group.id}`);
                                   setTestingKey(null);
                                   if (ok) {

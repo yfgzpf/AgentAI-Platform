@@ -25,7 +25,11 @@ const SENSITIVE_KEYS = new Set([
 
 function isSensitive(envVar: string): boolean {
   return SENSITIVE_KEYS.has(envVar) ||
-    /_API_KEY$|_SECRET$|_TOKEN$|_PASSWORD$/i.test(envVar);
+    /_API_KEY$|_SECRET$|_TOKEN$|_PASSWORD$/i.test(envVar) ||
+    // 2026-10-13: 模型工厂分组密钥 (FACTORY_CHAT_KEY / FACTORY_VIDEO_KEY 等,
+    // 见 modelStore.ts FACTORY_KEY_GROUPS) 以 _KEY 结尾而非 _API_KEY,
+    // 原正则漏判导致 saveApiKey 抛错/getApiKey 恒 null ⇒ 工厂密钥本地缓存彻底失效。
+    /^FACTORY_[A-Z]+_KEY$/i.test(envVar);
 }
 
 export function saveApiKey(envVar: string, value: string): void {
