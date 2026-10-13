@@ -15,6 +15,17 @@ const ENV_KEY_MAP: Record<string, string> = {
   zhipu: 'ZHIPU_API_KEY',
   superapi: 'SUPERAPI_API_KEY',
   alrc: 'ALRC_API_KEY',
+  // ===== 模型工厂分组密钥 (2026-10-13修复) =====
+  // 症状: Settings.tsx 调用 saveApiKeyToGateway('factory', key), 但本表没有 'factory' 键
+  //   → 回落到 `FACTORY_API_KEY`, 而全项目**没有任何一处读它** ⇒ 用户填的工厂密钥永远不生效。
+  //   同时 6 个分组全传同一个 'factory', 互相覆盖 ⇒ 只剩最后一个分组有效。
+  // 现在: 每个分组映射到各自真实被 router 消费的 envVar (与 modelStore.ts FACTORY_KEY_GROUPS 一致)。
+  'factory-chat': 'FACTORY_CHAT_KEY',
+  'factory-gpt': 'FACTORY_GPT_KEY',
+  'factory-claude': 'FACTORY_CLAUDE_KEY',
+  'factory-grok': 'FACTORY_GROK_KEY',
+  'factory-image': 'FACTORY_IMAGE_KEY',
+  'factory-video': 'FACTORY_VIDEO_KEY',
   sensenova: 'SENSENOVA_API_KEY',
   longcat: 'LONGCAT_API_KEY',
   // nvidia: 'NVIDIA_API_KEY', 已移除

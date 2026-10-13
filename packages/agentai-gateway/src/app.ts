@@ -94,6 +94,16 @@ app.use(cors({
       }
     },
     credentials: true,
+    // 2026-10-13: 显式允许自定义请求头。
+    // 背景: 生视频页的 BYOK(自定义模型) 把用户自己的 Key 放在 `X-Video-Api-Key` /
+    //   `X-Video-Base-Url` 头发给网关 (刻意不用 query string —— 会进浏览器历史与访问日志)。
+    // 自定义头会触发 CORS 预检。cors 中间件默认会反射请求头从而放行, 但依赖库的隐式
+    //   行为太脆弱(升级/改配置即断), 且这两个头是本轮新增能力, 应显式声明。
+    allowedHeaders: [
+      'Content-Type', 'Authorization', 'X-Requested-With',
+      'X-Video-Api-Key', 'X-Video-Base-Url',
+    ],
+    exposedHeaders: ['Content-Type'],
   }));
   // ===== 中间件顺序（2026-10-06 调整）=====
   // 原顺序: express.json({limit:`50mb`}) → authMiddleware

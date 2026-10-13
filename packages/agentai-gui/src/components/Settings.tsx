@@ -277,7 +277,11 @@ interface ALRCModel {
 // 与 ALRO 平台 (https://alro.huazhiweilai.com) 实际可用模型保持同步
 const FACTORY_MODEL_LIST: ALRCModel[] = [
   // DeepSeek
-  { id: 'deepseek-flash', label: 'DeepSeek Flash (V4.1) ⭐', color: 'var(--success)', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
+  // 2026-10-13 修正: 原写 `deepseek-flash`, 但 modelStore 工厂条目是
+  //   factory-deepseek-v4-flash → models:['deepseek-v4-flash']。
+  //   id 对不上会导致下面的"启用"按钮查不到条目(改为按 models[] 反查后,
+  //   反查也必须用同一个真实模型名)。ALRO 聚合侧仍接受 v4-flash 这个名字。
+  { id: 'deepseek-v4-flash', label: 'DeepSeek Flash (V4.1) ⭐', color: 'var(--success)', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
   // 2026-10-11: deepseek-v4-pro 已下线, 从计费列表移除
   // 智谱 GLM
   { id: 'glm-4.7', label: 'GLM 4.7', color: '#3B82F6', priceIn: '$0.103', priceOut: '$0.31', level: '智谱' },
@@ -290,6 +294,7 @@ const FACTORY_MODEL_LIST: ALRCModel[] = [
   { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code', color: '#4338CA', priceIn: '$0.207', priceOut: '$0.62', level: '代码专用' },
   { id: 'kimi-k3', label: 'Kimi K3', color: '#3730A3', priceIn: '$0.345', priceOut: '$1.04', level: '最新旗舰' },
   // MiniMax
+  // 2026-10-13 修正: 与 modelStore 的 models[] 对齐(store 用 MiniMax-M2.5 / MiniMax-M2.7 / MiniMax/MiniMax-M3)
   { id: 'MiniMax-M2.5', label: 'MiniMax M2.5', color: '#8B5CF6', priceIn: '$0.103', priceOut: '$0.31', level: 'MiniMax' },
   { id: 'MiniMax-M2.7', label: 'MiniMax M2.7', color: '#7C3AED', priceIn: '$0.207', priceOut: '$0.62', level: 'MiniMax' },
   { id: 'MiniMax/MiniMax-M3', label: 'MiniMax M3', color: '#6D28D9', priceIn: '$0.345', priceOut: '$1.04', level: 'MiniMax最新' },
@@ -912,7 +917,11 @@ return (
                                   const ok = await testConnection('https://alro.huazhiweilai.com/v1', key, testModel, `factory-${group.id}`);
                                   setTestingKey(null);
                                   if (ok) {
-                                    await saveApiKeyToGateway('factory', key);
+                                    // 2026-10-13 修复: 原代码硬编码 saveApiKeyToGateway('factory', key)
+                                    //   ⇒ 6 个分组全写同一个 envVar (回落成 FACTORY_API_KEY, 而无人读它),
+                                    //     后填的分组覆盖先填的, 且 router 侧 FACTORY_*_KEY 永远是空。
+                                    // 现在按分组传各自的 provider, 并显式传 envVarOverride 让本地缓存对齐。
+                                    await saveApiKeyToGateway(`factory-${group.id}`, key, group.envVar);
                                     (useSubscriptionStore as any).getState().activateWithKey();
                                     message.success(`${group.label} 验证成功`);
                                   }
@@ -935,7 +944,16 @@ return (
                                 {isExpanded && (
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
                                     {groupModels.map((m: any) => {
-                                      const modelInStore = models.find(x => x.id === `factory-${m.id}`);
+                                      // 2026-10-13 修复: 原代码 `models.find(x => x.id === \`factory-${m.id}\`)`。
+                                      // 但本清单的 id 是**裸模型名**(deepseek-flash / MiniMax-M2.5),
+                                      // 而 modelStore 里的 id 是 **factory- 前缀 + 小写化**(factory-minimax-m2.5),
+                                      // 两者拼法对不上 ⇒ isEnabled 恒false、toggleModel('factory-MiniMax-M2.5')
+                                      // 命中不存在的 id ⇒ "启用"按钮点了完全没反应。
+                                      // 现在改为按 models[] 里的真实 API 模型名反查 —— 那个字段才是发给上游的,
+                                      // 与 id 的大小写/分隔符写法无关(不能靠 groupLabel 判, 对话组叫"国内·DeepSeek")。
+                                      const modelInStore = models.find(
+                                        (x) => x.provider === 'alrc' && x.models?.includes(m.id)
+                                      );
                                       const isEnabled = modelInStore?.enabled ?? false;
                                       return (
                                         <div key={m.id} style={{
@@ -959,7 +977,7 @@ return (
                                             type={isEnabled ? 'primary' : 'default'}
                                             icon={isEnabled ? <CheckOutlined /> : <ApiOutlined />}
                                             disabled={!hasKey}
-                                            onClick={() => useModelStore.getState().toggleModel(`factory-${m.id}`, !isEnabled)}
+                                            onClick={() => modelInStore && useModelStore.getState().toggleModel(modelInStore.id, !isEnabled)}
                                             style={{ fontSize: 'var(--fs-micro)' }}
                                           >
                                             {isEnabled ? '已启用' : '启用'}

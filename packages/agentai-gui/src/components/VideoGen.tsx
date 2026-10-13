@@ -32,8 +32,6 @@ const PRESETS = [
   { label: '运动', prompt: 'sports action, dynamic motion, slow motion, athletic performance, dramatic lighting', category: '人文' },
 ];
 
-const PRESET_CATEGORIES = ['全部', '自然', '人文'];
-
 const DURATIONS = [
   { value: '4s', label: '4秒' },
   { value: '5s', label: '5秒' },
@@ -125,11 +123,17 @@ const getModelCaps = (model: string): ModelCapabilities => {
 };
 
 const MODELS = [
-    { value: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版 ⭐', desc: '支持图生视频/首尾帧/参考, 需 AGNES_VIDEO_API_KEY' },
-    { value: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', desc: 'Flash 免费版, 需 AGENTAI_API_KEY' },
-    { value: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', desc: '智谱免费, 同 ZHIPU_API_KEY' },
-    { value: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', desc: '1080p, 需 VOLCANO_API_KEY' },
+    // 2026-10-13 顺序调整: 与 gateway VIDEO_ENGINES 的 priority 保持一致。
+    // 原顺序把「Agnes Video 2.5 正式版」排第一并设为默认, 但实测 agnes 免费档易 429,
+    // 正式版同样限流 ⇒ 默认值一进来就大概率失败。现默认改为 cogvideo (智谱免费, 实测最稳)。
+    { value: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', desc: '实测最稳, 免费, 需 ZHIPU_API_KEY', priority: 10 },
+    { value: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', desc: '1080p 画质最好, 需 VOLCANO_API_KEY', priority: 20 },
+    { value: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', desc: '免费档, 易 429 限流', priority: 30 },
+    { value: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版', desc: '支持图生视频/首尾帧/参考, 需 AGNES_VIDEO_API_KEY', priority: 40 },
 ];
+
+/** 默认引擎 (2026-10-13): 智谱 cogvideo —— 免费且实测无 429 */
+const DEFAULT_VIDEO_MODEL = 'cogvideo';
 
 /** 自定义模型配置 */
 interface CustomModel {
@@ -181,10 +185,9 @@ export const VideoGen: React.FC = () => {
   const [duration, setDuration] = useState('5s');
   const [videoSize, setVideoSize] = useState('720P');
   const [aspectRatio, setAspectRatio] = useState('16:9');
-  const [model, setModel] = useState('agnes'); // 默认 Flash (免费), 不是正式版 (需要独立 key)
+  const [model, setModel] = useState(DEFAULT_VIDEO_MODEL); // 2026-10-13: 默认改 cogvideo (实测最稳), 原为 agnes 免费档 (易 429)
   const [busy, setBusy] = useState(false);
 const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
-  const [presetCategory, setPresetCategory] = useState('全部');
   // ★ 四维润色
   const [dimensions, setDimensions] = useState<string[]>(['action', 'atmosphere', 'quality']);
   const [optimizing, setOptimizing] = useState(false);
@@ -515,6 +518,11 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
     const img = imageUrl || firstFrame;
     const modeLabel = lastFrame ? '[首尾帧]' : img ? '[图生视频]' : '';
     const fullPrompt = modeLabel ? `${modeLabel} ${prompt}` : prompt;
+    // 2026-10-13 BYOK 真打通: 自定义模型的 Key 在这里随任务提交。
+    // 原实现只在"测试连接"时用到 apiKey, 真实生成请求里根本没有它 ——
+    // 于是用户在下面填的 Key 收集了、验证通过了, 生成时却从未参与。
+    const customId = model.startsWith('custom:') ? model.slice('custom:'.length) : '';
+    const customModel = customId ? customModels.find(m => m.id === customId) : undefined;
     videoTaskManager.submitTask({
       prompt: fullPrompt,
       image: img || undefined,
@@ -525,6 +533,7 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
       model,
       size: videoSize,
       aspect_ratio: aspectRatio,
+      ...(customModel?.apiKey ? { byok: { apiKey: customModel.apiKey, baseUrl: customModel.baseUrl || undefined } } : {}),
     });
     message.info(`📨 任务已提交, 可继续操作其他内容, 完成后会通知`);
     // 清空输入 (保留提示词方便用户编辑)
@@ -611,19 +620,34 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
 //  (直接父级是 .app-content 或 FeatureGuide 的 flex:1 体), 无需再猜 chrome 高度。
 return (
 <div style={{ display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--fg)' }}>
-{/* 顶部 Tab 切换 */}
+{/* 顶部 Tab 切换 — 2026-10-12 布局简化: 原为两个完全重复的内联 button
+    (200 字符样式抄两遍 + 硬编码 #6366f1)。改为 map + .media-tab class。 */}
 <div style={{ display: 'flex', gap: 0, flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-  <button onClick={() => setViewMode('single')} style={{ padding: '8px 20px', fontSize: 'var(--fs-md)', cursor: 'pointer', background: viewMode === 'single' ? 'rgba(99,102,241,0.1)' : 'transparent', border: 'none', borderBottom: viewMode === 'single' ? '2px solid #6366f1' : '2px solid transparent', color: viewMode === 'single' ? '#6366f1' : 'var(--muted)', fontWeight: 600 }}>
-    <VideoCameraOutlined /> 单次生成
-  </button>
-  <button onClick={() => setViewMode('storyboard')} style={{ padding: '8px 20px', fontSize: 'var(--fs-md)', cursor: 'pointer', background: viewMode === 'storyboard' ? 'rgba(99,102,241,0.1)' : 'transparent', border: 'none', borderBottom: viewMode === 'storyboard' ? '2px solid #6366f1' : '2px solid transparent', color: viewMode === 'storyboard' ? '#6366f1' : 'var(--muted)', fontWeight: 600 }}>
-    <BulbOutlined /> 剧本分镜
-  </button>
+  {([
+    { key: 'single', label: '单次生成', icon: <VideoCameraOutlined /> },
+    { key: 'storyboard', label: '剧本分镜', icon: <BulbOutlined /> },
+  ] as const).map(t => (
+    <button key={t.key} onClick={() => setViewMode(t.key)}
+      className={`media-tab${viewMode === t.key ? ' active' : ''}`}>
+      {t.icon} {t.label}
+    </button>
+  ))}
 </div>
 
 {viewMode === 'storyboard' ? (
-  /* 剧本分镜模式 — 全宽布局 */
-  <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+  /* 剧本分镜模式 — 全宽布局
+     2026-10-12 修双层滚动容器: 外层原为 overflow:auto, 而 StoryboardPanel
+     自身 height:100% + 内部 overflow:auto → 一屏两条滚动条。
+     改为 hidden, 滚动完全交给 Panel 内部。
+     2026-10-12 B-3: 补模型切换入口 — 原来该模式下左栏不可见, model 是 prop,
+     用户想换模型必须切回 single tab 再切回来, 分镜状态虽在但操作断裂。 */
+  <div style={{ flex: 1, overflow: 'hidden', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+      <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)' }}>生成模型</span>
+      <Select size="small" value={model} onChange={handleModelChange} style={{ width: 220 }}
+        popupMatchSelectWidth={false} getPopupContainer={() => document.body} options={allModelOptions} />
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>分镜的所有镜头都用这个模型生成</span>
+    </div>
     <StoryboardPanel httpUrl={httpUrl} refImages={refImages} model={model} />
   </div>
 ) : (
@@ -920,7 +944,10 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
               >
                 <div style={{ aspectRatio: '16/9', position: 'relative' }} onClick={() => setCurrent(item)}>
                   {item.videoUrl ? (
-                    <video src={item.videoUrl} controls muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    // 2026-10-12 性能修复: 历史缩略图加 preload="metadata"
+                    // 此前默认 preload="auto", 一屏 30 个 <video> 会并发解码 → 浏览器卡死
+                    <video src={item.videoUrl} controls muted preload="metadata"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted)', flexDirection: 'column', gap: 4 }}>
                       {item.status === 'queued' ? <Tag color="orange">排队中</Tag> : <Spin size="small" />}
@@ -1125,7 +1152,15 @@ autoSize={{ minRows: 4, maxRows: 20 }} disabled={busy} style={{ flex: 1 }} />
               onChange={e => setNewModel(prev => ({ ...prev, baseUrl: e.target.value }))}
             />
           </div>
-          <Alert type="info" message="API Key 将安全存储在本地浏览器中，不会上传到服务器。" showIcon style={{ fontSize: 'var(--fs-micro)' }} />
+          {/* 2026-10-13: 原文案"不会上传到服务器"在 BYOK 真打通后已不准确 ——
+              Key 现在会随请求发给本地 gateway (否则无法调用你自己的上游)。
+              仍然成立的部分要说清楚: 不写入 .env、不进服务端配置、不随任务历史落盘。 */}
+          <Alert
+            type="info"
+            message="API Key 保存在本地浏览器，并随生成请求发送给你本机的 gateway（仅用于调用你填写的上游地址，不写入服务端 .env、不随任务历史落盘）。"
+            showIcon
+            style={{ fontSize: 'var(--fs-micro)' }}
+          />
         </Space>
       </Modal>
       </div>

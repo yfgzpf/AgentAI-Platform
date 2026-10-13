@@ -39,6 +39,30 @@ const PROVIDER_ENV_KEY: Record<string, string> = {
   doubao: 'VOLCANO_API_KEY',
 };
 
+/**
+ * 模型工厂分组密钥 (2026-10-13)
+ * 设置页 6 个分组各自写入 FACTORY_*_KEY, ALRC_API_KEY 可能始终为空。
+ * 没有这段时, 只配了分组密钥的用户在模型下拉框里**看不到任何工厂模型**。
+ */
+const FACTORY_GROUP_ENV_KEYS = [
+  'FACTORY_CHAT_KEY', 'FACTORY_GPT_KEY', 'FACTORY_CLAUDE_KEY',
+  'FACTORY_GROK_KEY', 'FACTORY_IMAGE_KEY', 'FACTORY_VIDEO_KEY',
+];
+
+/** provider → 全部候选 envVar (主密钥 + 模型工厂分组密钥) */
+function candidateEnvKeys(provider: string): string[] {
+  const primary = PROVIDER_ENV_KEY[provider] || `${provider.toUpperCase()}_API_KEY`;
+  if (provider === 'alrc' || provider === 'factory') {
+    return [primary, ...FACTORY_GROUP_ENV_KEYS];
+  }
+  return [primary];
+}
+
+/** provider 是否配了任一候选密钥 */
+function providerHasAnyKey(provider: string): boolean {
+  return candidateEnvKeys(provider).some(hasApiKey);
+}
+
 export interface ProviderStatusResponse {
   hasKey: boolean;
   tripped: boolean;
@@ -63,8 +87,7 @@ export function getAllProvidersStatus(router?: any): Map<string, ProviderStatusR
       }
       const entry = result.get(providerId)!;
       entry.tripped = (stats as any).tripped === true;
-      const envKey = PROVIDER_ENV_KEY[providerId];
-      if (envKey) entry.hasKey = hasApiKey(envKey);
+      entry.hasKey = providerHasAnyKey(providerId);
     }
   }
   for (const model of MODELS) {
@@ -80,8 +103,7 @@ export function getAllProvidersStatus(router?: any): Map<string, ProviderStatusR
     }
     const entry = result.get(pid)!;
     if (!entry.hasKey) {
-      const envKey = PROVIDER_ENV_KEY[pid];
-      if (envKey) entry.hasKey = hasApiKey(envKey);
+      entry.hasKey = providerHasAnyKey(pid);
     }
     entry.models.push({ id: model.id, label: model.label, subModel: model.subModel, isFree: model.isFree });
     if (!model.isFree) entry.isPaid = true;
@@ -92,8 +114,7 @@ export function getAllProvidersStatus(router?: any): Map<string, ProviderStatusR
       entry.bestAvailableModel = sorted[0].id;
     }
     if (!entry.hasKey) {
-      const envKey = PROVIDER_ENV_KEY[pid];
-      if (envKey) entry.hasKey = hasApiKey(envKey);
+      entry.hasKey = providerHasAnyKey(pid);
     }
   }
   return result;
@@ -101,8 +122,8 @@ export function getAllProvidersStatus(router?: any): Map<string, ProviderStatusR
 
 function getReason(providerId: string, status: ProviderStatusResponse): string {
   if (!status.hasKey) {
-    const envKey = PROVIDER_ENV_KEY[providerId] || (providerId.toUpperCase() + '_API_KEY');
-    return 'Missing API Key (' + envKey + ')';
+    // 2026-10-13: 模型工厂可能配在 6 个分组变量之一, 如实列出候选而不是只报 ALRC_API_KEY
+    return 'Missing API Key (' + candidateEnvKeys(providerId).join(' / ') + ')';
   }
   if (status.tripped) return 'Circuit Breaker Tripped';
   if (status.models.length === 0) return 'No known models';
@@ -136,10 +157,13 @@ export function createModelsRouter(router?: any): Router {
         models: Array<{ id: string; label: string; subModel?: string; isFree: boolean }>;
       }> = []; 
       for (const [name, status] of Array.from(all.entries())) {
-        const envKey = PROVIDER_ENV_KEY[name] || (name.toUpperCase() + '_API_KEY');
+        const envCandidates = candidateEnvKeys(name);
+        // 2026-10-13: 主密钥可能为空而分组密钥有值 —— 掩码必须取**实际生效的那个**,
+        //   否则列表里 alrc 显示"有 Key"却不显示任何掩码片段, 与 hasKey 自相矛盾。
+        const activeEnv = envCandidates.find((k) => hasApiKey(k)) || envCandidates[0];
         let maskedKey = '';
         if (status.hasKey) {
-          const raw = process.env[envKey] || '';
+          const raw = process.env[activeEnv] || '';
           maskedKey = raw.length > 8 ? raw.slice(0, 4) + '****' + raw.slice(-4) : '';
         }
         items.push({
@@ -147,7 +171,7 @@ export function createModelsRouter(router?: any): Router {
           name: maskedKey ? name + ' (' + maskedKey + ')' : name,
           modelCount: status.models.length, hasKey: status.hasKey,
           tripped: status.tripped, bestAvailableModel: status.bestAvailableModel,
-          isPaid: status.isPaid, apiKeyEnv: envKey, reason: getReason(name, status),
+          isPaid: status.isPaid, apiKeyEnv: activeEnv, reason: getReason(name, status),
           models: status.models,
         });
       }

@@ -41,6 +41,22 @@ export interface VideoTask {
   chainId?: string;              // 剧集链 ID (同一故事线的续集共享)
 }
 
+/**
+ * BYOK 凭证 (2026-10-13)
+ * ==================================================================
+ * 用户在生视频页填的自定义模型 Key, 只存在内存里, **不进 VideoTask**。
+ * 原因: VideoTask 整个对象会被 JSON.stringify 写进 localStorage
+ *   (saveToStorage, key='agentai-video-history')。凭证一旦放进 params,
+ *   用户的付费 Key 就会随历史记录长期落盘, 且删除自定义模型时极易漏清。
+ *
+ * 代价 (刻意接受): 刷新页面后内存清空, 恢复轮询的自定义任务会退回服务端 env 或明确报错。
+ *   这是"Key 不落盘"的必然结果, 不该为了省一次报错把凭证写进磁盘。
+ */
+export interface ByokCredential {
+  apiKey: string;
+  baseUrl?: string;
+}
+
 /** 剧集角色 — 跨集一致性 */
 export interface EpisodeCharacter {
   name: string;
@@ -80,6 +96,12 @@ class VideoTaskManager {
   private pollTimers: Map<string, ReturnType<typeof setInterval>> = new Map(); // 每个任务独立的定时器
   private pollCounts: Map<string, number> = new Map(); // 每个任务独立的轮询计数
   private listeners: Set<Listener> = new Set();
+  /**
+   * BYOK 凭证表: taskId →凭证 (2026-10-13)
+   * 刻意**不存进 VideoTask**, 因为 VideoTask 会被写进 localStorage。见 ByokCredential 注释。
+   * 用 Map 而非挂在 task 上, 是为了让"哪些字段会被序列化"这件事在类型层面就分得开。
+   */
+  private byokCreds: Map<string, ByokCredential> = new Map();
   private httpUrl = '';
   private wsSocket: Socket | null = null;
 
@@ -222,17 +244,26 @@ class VideoTaskManager {
 
   /** 添加任务到队列 (用户点击生成) */
 submitTask(params: {
-prompt: string;
-image?: string;
-end_frame?: string;
-images?: string[];
-audios?: string[];
-duration?: string;
-model?: string;
-size?: string;
-aspect_ratio?: string;
+  prompt: string;
+  image?: string;
+  end_frame?: string;
+  images?: string[];
+  audios?: string[];
+  duration?: string;
+  model?: string;
+  size?: string;
+  aspect_ratio?: string;
+  /**
+   * 自定义模型凭证 (2026-10-13)。
+   * 传了才会随请求下发; 不传则该任务走服务端 env (行为与修复前一致)。
+   * 不会被写进 VideoTask.params, 因此不会进 localStorage。
+   */
+  byok?: ByokCredential;
 }): string {
     const id = `vt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    if (params.byok?.apiKey) {
+      this.byokCreds.set(id, { apiKey: params.byok.apiKey, baseUrl: params.byok.baseUrl });
+    }
     const task: VideoTask = {
       id,
       prompt: params.prompt,
@@ -283,6 +314,17 @@ aspect_ratio?: string;
       if (next.params?.size) body.size = next.params.size;
       if (next.params?.aspect_ratio) body.aspect_ratio = next.params.aspect_ratio;
 
+      // 2026-10-13 BYOK 真打通: 自定义模型的 Key 在此随请求下发。
+      // 原实现 body 里**没有任何 key 字段** ⇒ 后端 custom: 分支只能读服务端
+      // AGNES_VIDEO_API_KEY ⇒ 用户填的 Key 收集了但从未参与生成。
+      // 非自定义模型不受影响 (不下发任何凭证, 行为不变)。
+      const byok = this.byokCreds.get(next.id);
+      const isCustom = String(next.params?.model || '').startsWith('custom:');
+      if (isCustom && byok?.apiKey) {
+        body.apiKey = byok.apiKey;
+        if (byok.baseUrl) body.baseUrl = byok.baseUrl;
+      }
+
       const resp = await fetch(`${this.httpUrl}/v1/video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -315,6 +357,7 @@ aspect_ratio?: string;
           }
           // 重试耗尽 — 明确失败并给出可执行的替代方案
           next.status = 'failed';
+          this.byokCreds.delete(next.id);
           next.error = `${data.error}${data.hint ? '\n' + data.hint : ''}`
             + `\n已重试 ${MAX_THROTTLE_RETRIES} 次仍被限流。建议改用「CogVideoX-Flash (智谱免费)」，`
             + '或在设置页配置 AGNES_VIDEO_API_KEY 以解锁独立额度。';
@@ -324,6 +367,7 @@ aspect_ratio?: string;
           return;
         }
         next.status = 'failed';
+        this.byokCreds.delete(next.id);
         next.error = data.hint ? `${data.error}\n${data.hint}` : data.error;
         this.activePollIds.delete(next.id);
         this.notify();
@@ -336,6 +380,7 @@ aspect_ratio?: string;
       // 提交成功检查: taskId 必须有效
       if (!next.taskId) {
         next.status = 'failed';
+        this.byokCreds.delete(next.id);
         this.activePollIds.delete(next.id);
         this.notify();
         this.processQueue();
@@ -346,6 +391,8 @@ aspect_ratio?: string;
       this.startPolling(next);
     } catch (e) {
       next.status = 'failed';
+      // 提交阶段就失败 ⇒ 不会进入轮询, stopPolling 不会被调用, 凭证需在此显式清理
+      this.byokCreds.delete(next.id);
       this.activePollIds.delete(next.id);
       this.notify();
       this.processQueue();
@@ -367,8 +414,17 @@ aspect_ratio?: string;
         return;
       }
 
-      try {
-        const resp = await fetch(`${this.httpUrl}/v1/video/${task.taskId}?provider=${encodeURIComponent(task.provider || '')}`);
+try {
+          // BYOK: Key 走请求头而非 query string (2026-10-13)
+          // query 会进浏览器历史 / 访问日志 / Referer, 凭证不该出现在那里。
+          // 后端对 provider='custom:*' 的查询也只从请求头取 (见 routes/video.ts)。
+          const byok = this.byokCreds.get(task.id);
+          const pollHeaders: Record<string, string> = {};
+          if (byok?.apiKey) {
+            pollHeaders['X-Video-Api-Key'] = byok.apiKey;
+            if (byok.baseUrl) pollHeaders['X-Video-Base-Url'] = byok.baseUrl;
+          }
+          const resp = await fetch(`${this.httpUrl}/v1/video/${task.taskId}?provider=${encodeURIComponent(task.provider || '')}`, { headers: pollHeaders });
         const data = await resp.json();
 
         if (data.error) {
@@ -433,11 +489,16 @@ aspect_ratio?: string;
       const timer = this.pollTimers.get(taskId);
       if (timer) { clearInterval(timer); this.pollTimers.delete(taskId); }
       this.pollCounts.delete(taskId);
+      // 2026-10-13: 停止轮询即任务终结 ⇒ 顺手丢弃 BYOK 凭证。
+      // 放在这里而不是逐个失败分支, 是因为完成/失败/超时/取消四条路径都必经本函数,
+      // 逐个加 delete 迟早会漏一条, 漏了就是凭证长期驻留内存。
+      this.byokCreds.delete(taskId);
     } else {
       // 停止所有
       for (const timer of this.pollTimers.values()) clearInterval(timer);
       this.pollTimers.clear();
       this.pollCounts.clear();
+      this.byokCreds.clear();
     }
   }
 

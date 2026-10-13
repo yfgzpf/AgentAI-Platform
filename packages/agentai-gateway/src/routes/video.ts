@@ -79,16 +79,88 @@ function updateStoredTask(taskId: string, updates: Partial<StoredVideoTask>) {
 // 拿到 400, 观感就是"生成不成功", 却无从判断是自己选错还是系统坏了。
 // 实测 (2026-10-11): AGNES_VIDEO_API_KEY / VOLCANO_API_KEY 均未配置 ——
 // 4 个引擎里 2 个恒 400, 只有 cogvideo 与 agnes(免费档, 受 429 限流)可用。
-const VIDEO_ENGINES: Array<{ name: string; label: string; env: string[] }> = [
-  { name: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版', env: ['AGNES_VIDEO_API_KEY'] },
-  { name: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', env: ['AGENTAI_API_KEY', 'AGNES_API_KEY'] },
-  { name: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', env: ['VOLCANO_API_KEY'] },
-  { name: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', env: ['ZHIPU_API_KEY'] },
+const VIDEO_ENGINES: Array<{ name: string; label: string; env: string[]; priority: number }> = [
+  // priority 越小越优先 —— 用于"未指定模型时"的自动选择 (2026-10-13)
+  //
+  // 为什么排这个顺序 (依据 2026-10-11 实测):
+  //   cogvideo (智谱免费) 最稳 —— 实测 4 个引擎里只有它不带限流问题, 且复用已有的 ZHIPU_API_KEY。
+  //   seedance 2.5 画质最好 (1080p), 但要独立的 VOLCANO_API_KEY。
+  //   agnes 免费档易 429 (免费用户速率限制), 重试也救不回来 ⇒ 排在能用付费引擎之后。
+  //   agnes-video-2.5 正式版功能最全 (图生视频/首尾帧/参考), 但同样限流, 排最后。
+  { name: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', env: ['ZHIPU_API_KEY'], priority: 10 },
+  { name: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', env: ['VOLCANO_API_KEY'], priority: 20 },
+  { name: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', env: ['AGENTAI_API_KEY', 'AGNES_API_KEY'], priority: 30 },
+  { name: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版', env: ['AGNES_VIDEO_API_KEY'], priority: 40 },
 ];
+
+/** 已配置 Key 的引擎, 按 priority 升序 (即"当前最该用的那个") */
+function availableEnginesByPriority(): typeof VIDEO_ENGINES {
+  return VIDEO_ENGINES.filter(engineAvailable).sort((a, b) => a.priority - b.priority);
+}
 
 /** 引擎是否已具备可用 Key (env 列表中任一为真即可) */
 function engineAvailable(e: { env: string[] }): boolean {
   return e.env.some((k) => !!process.env[k]);
+}
+
+/**
+ * 自定义模型 (BYOK) 凭证解析 —— 2026-10-13
+ * ==================================================================
+ * 修复前的断裂 (用户实机反馈"自定义模型填了 Key 却从不生效"):
+ *   VideoGen.tsx 收集 apiKey → 存 localStorage → 唯一用它是浏览器内"测试连接";
+ *   真实生成请求 videoTaskManager.ts 构造的 body 里**没有任何 key 字段**;
+ *   后端把 `custom:` 前缀并入 agnes 分支, 只读 process.env.AGNES_VIDEO_API_KEY。
+ *   ⇒ 收集了、验证通过了, 真正生成时用户的自定义 Key 从未参与过。
+ *
+ * 设计约束 (刻意为之, 别"优化"掉):
+ *   ① Key **只存在于请求生命周期内**: 不写 .env、不进 config.json、不落任务存储文件。
+ *      写盘就等于把用户自己的付费凭证复制到另一个文件, 且删除自定义模型时容易漏清。
+ *   ② 响应与日志里一律不回显 Key。日志只打"用哪个 baseUrl / 有没有 key"。
+ *   ③ baseUrl 必须显式校验协议与形态 —— 这是个由用户输入驱动的出网请求,
+ *      不校验等于给本地服务开了任意 URL 探测的口子。
+ *   ④ 回退到服务端 env: 用户没传 key 时行为与修复前完全一致 (读 AGNES_VIDEO_API_KEY),
+ *      不因为新增分支而让原有可用路径失效。
+ */
+interface ByokCredentials {
+  apiKey: string;
+  /** 去掉末尾斜杠后的 baseUrl, 形如 https://host/v1 */
+  baseUrl: string;
+}
+
+/** 允许的协议: 只放行 http/https, 挡掉 file:/gopher:/data: 等本地文件读取协议 */
+function isAllowedUpstreamUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && !!u.hostname;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 从请求体解析 BYOK 凭证。
+ * @returns 解析成功返回凭证; 未提供 key 时返回 null (调用方回退到 env);
+ *          提供了但非法则抛错, 由上层转 400。
+ */
+function parseByokCredentials(body: any): ByokCredentials | null {
+  const rawKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : '';
+  if (!rawKey) return null;
+  if (rawKey.length > 512) {
+    throw new Error('API Key 长度异常');
+  }
+  // baseUrl 缺省时沿用前端测试连接时的同一默认端点 (VideoGen.tsx:340)
+  const rawBase = typeof body?.baseUrl === 'string' && body.baseUrl.trim()
+    ? body.baseUrl.trim()
+    : 'https://apihub.agnes-ai.cn/v1';
+  if (!isAllowedUpstreamUrl(rawBase)) {
+    throw new Error(`自定义模型的 baseUrl 非法 (只允许 http/https): ${rawBase.slice(0, 80)}`);
+  }
+  return { apiKey: rawKey, baseUrl: rawBase.replace(/\/+$/, '') };
+}
+
+/** 日志脱敏: 只说"用了自定义凭证", 绝不打 Key */
+function logByokUse(baseUrl: string, hasKey: boolean) {
+  console.log(`[video] ${hasKey ? '使用请求内自定义凭证' : '未收到自定义凭证, 回退服务端 env'} (baseUrl=${baseUrl})`);
 }
 
 export function createVideoRouter(io?: any) {
@@ -169,7 +241,38 @@ export function createVideoRouter(io?: any) {
       const requested = String(reqModel || '').trim();
 
       // ---- Agnes Video 2.5 正式版 ----
-      if (requested === 'agnes-video-2.5' || requested.startsWith('custom:')) {
+      // 2026-10-13: `custom:` 自定义模型分支拆出来, 真正使用请求内下发的 BYOK 凭证。
+      //   原实现把 custom: 并入本分支, 无条件读 process.env.AGNES_VIDEO_API_KEY ——
+      //   于是用户在 VideoGen 填的 Key 永远不参与生成 (前端也从未把它发过来, 见 parseByokCredentials 注释)。
+      if (requested.startsWith('custom:')) {
+        let byok: ByokCredentials | null = null;
+        try {
+          byok = parseByokCredentials(req.body);
+        } catch (e: any) {
+          return res.status(400).json({
+            error: `自定义模型配置无效: ${e.message}`,
+            requestedModel: requested,
+          });
+        }
+        logByokUse(byok?.baseUrl || '(未提供)', !!byok);
+        // 优先级: 请求内凭证 → 服务端 AGNES_VIDEO_API_KEY (行为与修复前一致)
+        const key = byok?.apiKey || process.env['AGNES_VIDEO_API_KEY'];
+        if (!key) {
+          return res.status(400).json({
+            error: '自定义模型未提供 API Key, 且服务端也未配置 AGNES_VIDEO_API_KEY 作为回退。'
+              + '请在生视频页的「自定义模型」里填写 Key。',
+            requiredEnv: 'AGNES_VIDEO_API_KEY',
+            requestedModel: requested,
+          });
+        }
+        const baseUrl = byok?.baseUrl || 'https://apihub.agnes-ai.cn/v1';
+        return await submitAgnesVideo25(
+          res, key, prompt, seconds, agnesSize, aspectRatio,
+          image, end_frame, reqImages, reqAudios, baseUrl, !!byok,
+        );
+      }
+
+      if (requested === 'agnes-video-2.5') {
         const key = process.env['AGNES_VIDEO_API_KEY'];
         if (!key) {
           return res.status(400).json({
@@ -221,27 +324,38 @@ export function createVideoRouter(io?: any) {
         return await submitSeedance(res, key, prompt, image);
       }
 
-      // ---- 未指定 model: 只在唯一可用引擎时自动选，避免多义----
+      // ---- 未指定 model: 按优先级自动选, 并如实告知用了哪个 ----
       if (!requested) {
         // 复用模块级 VIDEO_ENGINES —— 与 GET /v1/video/engines 同源, 避免两处漂移
-        const available = VIDEO_ENGINES.filter(engineAvailable);
-        if (available.length === 1) {
-          // 唯一可用引擎 → 直接按它分发（而不是"提醒"了事，否则用户永远拿不到 taskId）
-          const only = available[0].name;
-          if (only === 'agnes-video-2.5') {
+        //
+        // 2026-10-13 行为变更: 原实现是"只有唯一可用引擎才自动选, 否则报 400 让用户去选"。
+        // 那样只要配了 2 个以上 Key 就永远拿不到 taskId, 而前端默认走 agnes 免费档又常撞 429,
+        // 于是"不选模型"这个入口基本不可用。现在改成按优先级选最稳的那个, 并在响应头
+        // 回传实际引擎名 —— "不静默换引擎"是底线, 但也不能因为选择困难就不给结果。
+        const ranked = availableEnginesByPriority();
+        const only = ranked[0];
+        if (only) {
+          console.log(`[video] 未指定模型 → 自动选择「${only.name}」(共 ${ranked.length} 个可用, 按优先级)`);
+          res.setHeader('X-Video-Engine', only.name);
+          if (only.name === 'agnes-video-2.5') {
             return await submitAgnesVideo25(res, process.env['AGNES_VIDEO_API_KEY']!, prompt, seconds, agnesSize, aspectRatio, image, end_frame, reqImages, reqAudios);
           }
-          if (only === 'agnes') {
+          if (only.name === 'agnes') {
             return await submitAgnesFlash(res, process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY']!, prompt, seconds, aspectRatio, image, end_frame, reqImages, reqAudios);
           }
-          if (only === 'cogvideo') {
+          if (only.name === 'cogvideo') {
             return await submitCogVideo(res, process.env['ZHIPU_API_KEY']!, prompt, image, end_frame);
+          }
+          if (only.name === 'seedance-2.5') {
+            return await submitSeedance(res, process.env['VOLCANO_API_KEY']!, prompt, image);
           }
         }
         return res.status(400).json({
-          error: '未指定视频模型，且检测到多个可用引擎，无法自动选择。'
-            + '可用: ' + available.map((c) => c.name).join(' / '),
-          available: available.map((c) => c.name),
+          error: '未指定视频模型，且未检测到任何已配置 Key 的引擎。'
+            + '请在设置页配置 ZHIPU_API_KEY(推荐, 免费稳定) / VOLCANO_API_KEY / AGENTAI_API_KEY 之一，'
+            + '或在生视频页选用自定义模型并填写 Key。',
+          requiredEnv: VIDEO_ENGINES.map((e) => e.env[0]),
+          available: [],
         });
       }
 
@@ -278,6 +392,26 @@ export function createVideoRouter(io?: any) {
     try {
       const { taskId } = req.params;
       const provider = req.query.provider as string || '';
+
+      // ---- 自定义模型 (BYOK) 查询 ----
+      // 2026-10-13: 提交时用的 Key 必须同样能用于查询, 否则任务提交成功却永远查不到结果。
+      // Key 走 **请求头** 而非 query: query 会进浏览器历史 / 网关访问日志 / Referer 泄漏。
+      // 同样只在本次请求内存活, 不落盘。
+      if (provider.startsWith('custom:')) {
+        const headerKey = (req.headers['x-video-api-key'] as string | undefined)?.trim() || '';
+        const headerBase = (req.headers['x-video-base-url'] as string | undefined)?.trim() || '';
+        const fallbackKey = process.env['AGNES_VIDEO_API_KEY'] || '';
+        const key = headerKey || fallbackKey;
+        if (!key) {
+          return res.status(400).json({
+            error: '自定义模型查询缺少 API Key (请通过 X-Video-Api-Key 请求头下发)。',
+            requestedModel: provider,
+          });
+        }
+        const baseUrl = (headerBase || 'https://apihub.agnes-ai.cn/v1').replace(/\/+$/, '');
+        logByokUse(baseUrl, !!headerKey);
+        return await queryAgnesVideo25(res, key, taskId, baseUrl);
+      }
 
       // Agnes Video 2.5 正式版查询
       if (provider.startsWith('agnes-video-2.5') && !provider.includes('flash')) {
@@ -1086,6 +1220,9 @@ async function submitSeedance(
 async function submitAgnesVideo25(
   res: any, apiKey: string, prompt: string, seconds: string, size: string, aspectRatio: string,
   image?: string, endFrame?: string, images?: string[], audios?: string[],
+  baseUrl: string = 'https://apihub.agnes-ai.cn/v1',
+  /** 自定义(BYOK)模型: 不允许降级到服务端 Flash —— 用户的 Key 只对自己的上游有效 */
+  isByok: boolean = false,
 ) {
   // 按官方文档构造请求体
   const body: any = {
@@ -1121,7 +1258,7 @@ return_last_frame: true,
   }
 
   try {
-    const resp = await fetch('https://apihub.agnes-ai.cn/v1/videos', {
+    const resp = await fetch(`${baseUrl.replace(/\/+$/, '')}/videos`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1129,6 +1266,16 @@ return_last_frame: true,
     });
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
+      // BYOK: 用户给的是他自己上游的 Key, 服务端 Flash 的 Key 对那个上游无效,
+      //   降级只会把"Key 无效"变成"看起来生成了别的东西", 必须如实报错。
+      if (isByok) {
+        console.warn(`[video][byok] 上游返回 ${resp.status}, 不降级 (BYOK 凭证不属于服务端引擎)`);
+        return res.status(resp.status).json({
+          error: `自定义模型上游返回 HTTP ${resp.status}: ${errText.slice(0, 300)}`,
+          hint: '请在生视频页「自定义模型」里确认 baseUrl 与 Key 是否匹配该供应商。',
+          requestedModel: 'custom',
+        });
+      }
       // 2.5 正式版失败 → 降级到 Flash
       console.warn('[agnes-video-2.5] failed:', resp.status, 'trying flash fallback');
       const flashKey = process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY'];
@@ -1147,6 +1294,14 @@ return_last_frame: true,
       prompt,
     });
   } catch (e: any) {
+    if (isByok) {
+      // 同上: BYOK 不降级, 网络错误如实上报
+      return res.status(502).json({
+        error: `自定义模型请求失败: ${e.message}`,
+        hint: '请确认 baseUrl 可达、网络通畅。',
+        requestedModel: 'custom',
+      });
+    }
     // 网络错误 → 降级到 Flash
     const flashKey = process.env['AGENTAI_API_KEY'] || process.env['AGNES_API_KEY'];
     if (flashKey) {
@@ -1156,10 +1311,15 @@ return_last_frame: true,
   }
 }
 
-async function queryAgnesVideo25(res: any, apiKey: string, videoId: string) {
+async function queryAgnesVideo25(
+  res: any, apiKey: string, videoId: string,
+  baseUrl: string = 'https://apihub.agnes-ai.cn/v1',
+) {
   try {
-    const resp = await fetch(`https://apihub.agnes-ai.cn/agnesapi?video_id=${videoId}&model_name=agnes-video-2.5`, {
+    const root = baseUrl.replace(/\/+$/, '');
+    const resp = await fetch(`${root}/agnesapi?video_id=${videoId}&model_name=agnes-video-2.5`, {
       headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(30000),
     });
     if (!resp.ok) return res.status(resp.status).json({ error: `HTTP ${resp.status}` });
     const data: any = await resp.json();

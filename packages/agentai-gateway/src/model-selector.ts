@@ -7,6 +7,8 @@
 
 import { userModel } from './user-model.js';
 import type { AgentAIRouter } from './llm-router.js';
+// [模型工厂] 单一真源 — 与 chat.ts 共用, 避免两份 alrc-* 清单零重叠
+import { ALRC_MODELS, FACTORY_MODEL_ENTRIES } from './factory-registry.js';
 
 /** 模型配置项 */
 export interface ModelConfig {
@@ -52,27 +54,9 @@ export const BUILTIN_MODELS: Record<string, ModelConfig> = {
   'doubao-1.5-thinking': { provider: 'doubao', subModel: 'doubao-1.5-thinking-vision-pro', label: '豆包 1.5 视觉深度思考' },
   'yi': { provider: 'yi', label: '零一万物 Yi' },
   'baichuan': { provider: 'baichuan', label: '百川智能' },
-  // ALRC 聚合平台模型 (https://alro.huazhiweilai.com/v1)
-  'alrc-gpt-5.4': { provider: 'alrc', subModel: 'gpt-5.4', label: 'ALRC · GPT-5.4' },
-  'alrc-gpt-5.4-mini': { provider: 'alrc', subModel: 'gpt-5.4-mini', label: 'ALRC · GPT-5.4 Mini' },
-  'alrc-gpt-5.5': { provider: 'alrc', subModel: 'gpt-5.5', label: 'ALRC · GPT-5.5' },
-  'alrc-gpt-5.5-compact': { provider: 'alrc', subModel: 'gpt-5.5-openai-compact', label: 'ALRC · GPT-5.5 Compact' },
-  'alrc-gpt-5.6-luna': { provider: 'alrc', subModel: 'gpt-5.6-luna', label: 'ALRC · GPT-5.6 Luna' },
-  'alrc-gpt-5.6-sol': { provider: 'alrc', subModel: 'gpt-5.6-sol', label: 'ALRC · GPT-5.6 Sol' },
-  'alrc-gpt-5.6-terra': { provider: 'alrc', subModel: 'gpt-5.6-terra', label: 'ALRC · GPT-5.6 Terra' },
-  'alrc-claude-fable-5': { provider: 'alrc', subModel: 'claude-fable-5', label: 'ALRC · Claude Fable 5' },
-  'alrc-claude-haiku-4-5': { provider: 'alrc', subModel: 'claude-haiku-4-5-20250101', label: 'ALRC · Claude Haiku 4.5' },
-  'alrc-claude-opus-4-6': { provider: 'alrc', subModel: 'claude-opus-4-6', label: 'ALRC · Claude Opus 4.6' },
-  'alrc-grok-4.5': { provider: 'alrc', subModel: 'grok-4.5', label: 'ALRC · Grok 4.5' },
-  'alrc-grok-composer-2.5': { provider: 'alrc', subModel: 'grok-composer-2.5-fast', label: 'ALRC · Grok Composer 2.5' },
-  'alrc-lingyan-3.5': { provider: 'alrc', subModel: 'lingyan-3.5', label: 'ALRC · 灵岩 3.5' },
-  'alrc-doubao-seed-2-0-pro': { provider: 'alrc', subModel: 'doubao-seed-2-0-pro-260215', label: 'ALRC · 豆包 Seed 2.0 Pro' },
-  // ALRC 生图模型
-  'alrc-nano-banana': { provider: 'alrc', subModel: 'nano-banana', label: 'ALRC · Nano Banana' },
-  'alrc-nano-banana-2': { provider: 'alrc', subModel: 'nano-banana-2', label: 'ALRC · Nano Banana 2' },
-  'alrc-nano-banana-pro': { provider: 'alrc', subModel: 'nano-banana-pro', label: 'ALRC · Nano Banana Pro' },
-  'alrc-gpt-image-2': { provider: 'alrc', subModel: 'gpt-image-2', label: 'ALRC · GPT Image 2' },
-  'alrc-gpt-image-2-vip': { provider: 'alrc', subModel: 'gpt-image-2-vip', label: 'ALRC · GPT Image 2 VIP' },
+  // ===== ALRC / 模型工厂模型 =====
+  // 原先此处有 20 行手写 alrc-* 条目, 已全部移到 factory-registry.ts (与 chat.ts 共用单一真源)。
+  // 见下方 Object.assign(BUILTIN_MODELS, FACTORY_MODEL_ENTRIES)。
   // 商汤 SenseNova (免费额度)
   'sensenova-6.7-flash-lite': { provider: 'sensenova', subModel: 'sensenova-6.7-flash-lite', label: 'SenseNova 6.7 Flash-Lite' },
   'sensenova-u1-fast': { provider: 'sensenova', subModel: 'sensenova-u1-fast', label: 'SenseNova U1 Fast' },
@@ -82,6 +66,32 @@ export const BUILTIN_MODELS: Record<string, ModelConfig> = {
   'longcat-2.0': { provider: 'longcat', subModel: 'LongCat-2.0', label: 'LongCat-2.0' },
   // NVIDIA NIM 模型已移除 (2026-07-25)
 };
+
+// ===== 模型工厂条目注入 (2026-10-13) =====
+// 原有 20 行手写 alrc-* (gpt/claude/grok/nano-banana 系), 与 chat.ts MODEL_MAP 里的
+// alrc-* (glm/kimi/minimax/deepseek 系) **零重叠** —— 走老逻辑/灰度逻辑看到的工厂模型不一样。
+// 现在两边都从 factory-registry.ts 的单一真源派生, 含 alrc-* / alrc:* / factory-* 三种 id。
+Object.assign(BUILTIN_MODELS, FACTORY_MODEL_ENTRIES);
+
+/**
+ * 模型工厂分组密钥 (2026-10-13)
+ * ------------------------------------------------------------
+ * 设置页 6 个分组各自写入 FACTORY_*_KEY, 而 ALRC_API_KEY 可能始终为空。
+ * 原实现只认 ALRC_API_KEY ⇒ 只配了分组密钥时 hasKey=false ⇒ 无声降级免费档。
+ */
+const FACTORY_GROUP_ENV_KEYS = Object.values(
+  Object.fromEntries(Object.values(ALRC_MODELS).map((e) => [e.groupEnv, e.groupEnv])),
+);
+
+/** provider 是否具备可用密钥 (含模型工厂分组密钥) */
+function providerHasKey(provider: string): boolean {
+  if (provider === 'alrc' || provider === 'factory') {
+    if (process.env['ALRC_API_KEY']) return true;
+    return FACTORY_GROUP_ENV_KEYS.some((k) => !!process.env[k]);
+  }
+  const envKey = PROVIDER_ENV_KEY[provider] || `${provider.toUpperCase()}_API_KEY`;
+  return !!process.env[envKey];
+}
 
 /** Provider → 环境变量 Key 映射 */
 const PROVIDER_ENV_KEY: Record<string, string> = {
@@ -117,7 +127,9 @@ export function registerCustomModel(id: string, config: ModelConfig): void {
  */
 export function autoRegisterModels(): void {
   for (const [provider, envKey] of Object.entries(PROVIDER_ENV_KEY)) {
-    if (!process.env[envKey]) continue; // 没有密钥，跳过
+    // 2026-10-13: 用 providerHasKey 而非只看主 envVar —— 模型工厂可能只配了分组密钥
+    //   (FACTORY_*_KEY), ALRC_API_KEY 为空, 旧逻辑会让 alrc 的模型全部不被自动注册。
+    if (!providerHasKey(provider)) continue; // 没有密钥，跳过
     
     // 检查是否已定义
     const alreadyDefined = Object.entries(BUILTIN_MODELS).some(
@@ -169,8 +181,7 @@ export function selectAvailableModel(
   const id = requestedModel || 'agentai';
   const config = getModelConfig(id) || BUILTIN_MODELS['agentai']!;
   
-  const envKey = PROVIDER_ENV_KEY[config.provider] || `${config.provider.toUpperCase()}_API_KEY`;
-  const hasKey = !!process.env[envKey];
+  const hasKey = providerHasKey(config.provider);
   const providerStats = (router as any)?.['providers']?.get(config.provider);
   const isTripped = providerStats?.tripped === true;
   
@@ -185,8 +196,7 @@ export function selectAvailableModel(
     const fbConfig = BUILTIN_MODELS[fbId];
     if (!fbConfig || fbId === id) continue;
     
-    const fbEnvKey = PROVIDER_ENV_KEY[fbConfig.provider] || `${fbConfig.provider.toUpperCase()}_API_KEY`;
-    const fbHasKey = !!process.env[fbEnvKey];
+    const fbHasKey = providerHasKey(fbConfig.provider);
     const fbTripped = (router as any)?.['providers']?.get(fbConfig.provider)?.tripped === true;
     
     if (fbHasKey && !fbTripped) {

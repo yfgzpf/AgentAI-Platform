@@ -28,6 +28,8 @@ import { routeByScore, getSubModel } from './model-classifier.js';
 import { getModelContextWindow, getDefaultContextWindow, getCapability } from './model-capabilities.js';
 import { modelMetrics } from './model-metrics-service.js';
 import { sanitizeToolMessages } from './message-utils.js';
+// [模型工厂] 单一真源 — subModel → 分组密钥映射 (含此前漏掉的 seedance 2.5)
+import { SUBMODEL_TO_GROUP_ENV } from './factory-registry.js';
 
 // 免费模型池: 这些可以互相切换 (sensenova/longcat 有免费额度, 也加入)
 // ★ 2026-10-10: 提取为模块级导出, 消除三处名单不统一 (见下)。
@@ -1513,20 +1515,10 @@ factory: 'FACTORY_CHAT_KEY',
       // 模型工厂: 按 subModel 类型从对应分组密钥中查找
       // 如果主密钥没找到, 尝试从分组密钥中查找
       if (!apiKey && (id === 'alrc' || id === 'factory') && subModel) {
-        const FACTORY_GROUP_KEYS: Record<string, string> = {
-          // 对话模型
-          'deepseek-v4-flash': 'FACTORY_CHAT_KEY', 'deepseek-v4-pro': 'FACTORY_CHAT_KEY',
-          'glm-4.7': 'FACTORY_CHAT_KEY', 'glm-5': 'FACTORY_CHAT_KEY', 'glm-5.1': 'FACTORY_CHAT_KEY', 'glm-5.2': 'FACTORY_CHAT_KEY',
-          'kimi-k2.5': 'FACTORY_CHAT_KEY', 'kimi-k2.6': 'FACTORY_CHAT_KEY', 'kimi-k2.7-code': 'FACTORY_CHAT_KEY', 'kimi-k3': 'FACTORY_CHAT_KEY',
-          'MiniMax-M2.5': 'FACTORY_CHAT_KEY', 'MiniMax-M2.7': 'FACTORY_CHAT_KEY', 'MiniMax/MiniMax-M3': 'FACTORY_CHAT_KEY',
-          'hy3': 'FACTORY_CHAT_KEY',
-          // 生图模型
-          'nano-banana': 'FACTORY_IMAGE_KEY', 'nano-banana-2': 'FACTORY_IMAGE_KEY', 'nano-banana-pro': 'FACTORY_IMAGE_KEY',
-          'gpt-image-2': 'FACTORY_IMAGE_KEY', 'gpt-image-2-vip': 'FACTORY_IMAGE_KEY',
-          // 视频
-          'seedance-1.0-lite': 'FACTORY_VIDEO_KEY', 'seedance-1.0-pro': 'FACTORY_VIDEO_KEY', 'seedance-2.0': 'FACTORY_VIDEO_KEY',
-        };
-        const groupKey = FACTORY_GROUP_KEYS[subModel];
+        // 2026-10-13: 改为从 factory-registry.ts 的单一真源派生, 不再手写映射表。
+        // 原手写表只有 3 个 seedance 版本, 缺 2.5 —— 而 GUI (modelStore.ts:138 /
+        // VideoGen.tsx:129) 和 video 路由都在用 seedance 2.5 ⇒ 工厂视频密钥配了也命不中。
+        const groupKey = SUBMODEL_TO_GROUP_ENV[subModel];
         if (groupKey) {
           apiKey = process.env[groupKey];
           if (apiKey) {

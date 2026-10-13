@@ -21,6 +21,8 @@ import * as modelSelector from '../model-selector.js';
 import { FEATURE_FLAGS, shouldUseNewModelSelector } from '../feature-flags.js';
 // [诊断优先] PulseFlow Xuanji 认知框架
 import { Xuanji } from '../xuanji/index.js';
+// [模型工厂] 单一真源: alrc-* / alrc:* / factory-* 三种 id 形态全从这里派生
+import { FACTORY_MODEL_ENTRIES } from '../factory-registry.js';
 import { getCostTracker, CostTracker } from '../cost/index.js';
 import { analyzeGaps } from '../diagnosis/gap-analyzer-llm.js';
 
@@ -565,45 +567,18 @@ const sendEvent = (event: string, data: any) => {
           'sensenova-glm-5.2': { provider: 'sensenova', subModel: 'glm-5.2', label: 'GLM-5.2 (SenseNova)' },
           // 美团 LongCat (免费额度)
           'longcat-2.0': { provider: 'longcat', subModel: 'LongCat-2.0', label: 'LongCat-2.0' },
-          // ALRC 聚合平台 (https://alro.huazhiweilai.com/v1) — 实际可用模型 (2026-08-15 同步)
-          // DeepSeek
-          'alrc-deepseek-v4-flash': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash' },
-          // 2026-10-11: V4 Pro 已下线 → 别名指向 flash (旧持久化数据静默降级)
-          'alrc-deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash (原 Pro 别名)' },
-          // 智谱 GLM
-          'alrc-glm-4.7': { provider: 'alrc', subModel: 'glm-4.7', label: 'ALRC · GLM 4.7' },
-          'alrc-glm-5': { provider: 'alrc', subModel: 'glm-5', label: 'ALRC · GLM 5' },
-          'alrc-glm-5.1': { provider: 'alrc', subModel: 'glm-5.1', label: 'ALRC · GLM 5.1' },
-          'alrc-glm-5.2': { provider: 'alrc', subModel: 'glm-5.2', label: 'ALRC · GLM 5.2' },
-          // Kimi
-          'alrc-kimi-k2.5': { provider: 'alrc', subModel: 'kimi-k2.5', label: 'ALRC · Kimi K2.5' },
-          'alrc-kimi-k2.6': { provider: 'alrc', subModel: 'kimi-k2.6', label: 'ALRC · Kimi K2.6' },
-          'alrc-kimi-k2.7-code': { provider: 'alrc', subModel: 'kimi-k2.7-code', label: 'ALRC · Kimi K2.7 Code' },
-          'alrc-kimi-k3': { provider: 'alrc', subModel: 'kimi-k3', label: 'ALRC · Kimi K3' },
-          // MiniMax
-          'alrc-minimax-m2.5': { provider: 'alrc', subModel: 'MiniMax-M2.5', label: 'ALRC · MiniMax M2.5' },
-          'alrc-minimax-m2.7': { provider: 'alrc', subModel: 'MiniMax-M2.7', label: 'ALRC · MiniMax M2.7' },
-          'alrc-minimax-m3': { provider: 'alrc', subModel: 'MiniMax/MiniMax-M3', label: 'ALRC · MiniMax M3' },
-          // 其他
-          'alrc-hy3': { provider: 'alrc', subModel: 'hy3', label: 'ALRC · HY3' },
-          // 兼容旧格式: alrc:model-name
-          'alrc:deepseek-v4-flash': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash' },
-          // 2026-10-11: V4 Pro 已下线 → 别名指向 flash
-          'alrc:deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'ALRC · DeepSeek V4 Flash (原 Pro 别名)' },
-          'alrc:glm-4.7': { provider: 'alrc', subModel: 'glm-4.7', label: 'ALRC · GLM 4.7' },
-          'alrc:glm-5': { provider: 'alrc', subModel: 'glm-5', label: 'ALRC · GLM 5' },
-          'alrc:glm-5.1': { provider: 'alrc', subModel: 'glm-5.1', label: 'ALRC · GLM 5.1' },
-          'alrc:glm-5.2': { provider: 'alrc', subModel: 'glm-5.2', label: 'ALRC · GLM 5.2' },
-          'alrc:kimi-k2.5': { provider: 'alrc', subModel: 'kimi-k2.5', label: 'ALRC · Kimi K2.5' },
-          'alrc:kimi-k2.6': { provider: 'alrc', subModel: 'kimi-k2.6', label: 'ALRC · Kimi K2.6' },
-          'alrc:kimi-k2.7-code': { provider: 'alrc', subModel: 'kimi-k2.7-code', label: 'ALRC · Kimi K2.7 Code' },
-          'alrc:kimi-k3': { provider: 'alrc', subModel: 'kimi-k3', label: 'ALRC · Kimi K3' },
-          'alrc:minimax-m2.5': { provider: 'alrc', subModel: 'MiniMax-M2.5', label: 'ALRC · MiniMax M2.5' },
-          'alrc:minimax-m2.7': { provider: 'alrc', subModel: 'MiniMax-M2.7', label: 'ALRC · MiniMax M2.7' },
-          'alrc:minimax-m3': { provider: 'alrc', subModel: 'MiniMax/MiniMax-M3', label: 'ALRC · MiniMax M3' },
-          'alrc:hy3': { provider: 'alrc', subModel: 'hy3', label: 'ALRC · HY3' },
           // NVIDIA NIM 模型已移除 (2026-07-25): 需自建 GPU Docker + 端点不稳定 + 中国大陆不可达
         };
+
+        // ===== 模型工厂条目注入 (2026-10-13) =====
+        //
+        // 原先这里手写了 40 行 alrc-* 条目 (含重复的 `alrc:` 冒号格式), 而
+        // model-selector.ts 里另有一份**完全不重叠**的 alrc-* 清单 (那份是 gpt/claude/grok/nano-banana)。
+        // 后果: 走老逻辑认识工厂国内模型, 走灰度新逻辑认识工厂 GPT 系 ——
+        //        同一个网关, 工厂模型"时好时坏", 取决于命中哪条路径。
+        // 现在统一从 factory-registry.ts 派生: 单一真源, 三种 id 形态 (alrc-* / alrc:* / factory-*) 全生成。
+        // 新增工厂模型只改 factory-registry.ts 一处。
+        Object.assign(MODEL_MAP, FACTORY_MODEL_ENTRIES);
 
         // 内置 id 快照 —— 必须在下方动态注册之前捕获:
         // 注册后 MODEL_MAP 会混入前端自定义模型, 就再也分不清"内置"和"自定义"了
@@ -671,11 +646,23 @@ const sendEvent = (event: string, data: any) => {
             doubao: 'VOLCANO_API_KEY',
           };
           const envKey = keyMap[mapped.provider] || `${mapped.provider.toUpperCase()}_API_KEY`;
-          const hasKey = !!process.env[envKey];
+          // 2026-10-13 修复: alrc/factory 系列除了 ALRC_API_KEY, 还可能只配了**分组密钥**
+          //   (Settings.tsx 的 6 个分组各自写入 FACTORY_CHAT_KEY / FACTORY_IMAGE_KEY / ...)。
+          //   原实现只看 ALRC_API_KEY ⇒ 用户明明填了工厂密钥, 这里判定 hasKey=false
+          //   ⇒ 无声降级到免费档, 症状是"选了商用模型却在用免费模型"。
+          //   与 llm-router.ts:1515-1542 的分组密钥查找保持同一套变量名。
+          const FACTORY_GROUP_ENVS = [
+            'FACTORY_CHAT_KEY', 'FACTORY_GPT_KEY', 'FACTORY_CLAUDE_KEY',
+            'FACTORY_GROK_KEY', 'FACTORY_IMAGE_KEY', 'FACTORY_VIDEO_KEY',
+          ];
+          const isFactoryProvider = mapped.provider === 'alrc' || mapped.provider === 'factory';
+          const hasFactoryGroupKey = isFactoryProvider
+            && FACTORY_GROUP_ENVS.some((k) => !!process.env[k]);
+          const hasKey = !!process.env[envKey] || hasFactoryGroupKey;
           const providerStats = router['providers']?.get(mapped.provider);
           const isTripped = providerStats?.tripped === true;
 
-          console.log(`[chat] model check: provider=${mapped.provider}, envKey=${envKey}, hasKey=${hasKey}, tripped=${isTripped}`);
+          console.log(`[chat] model check: provider=${mapped.provider}, envKey=${envKey}, hasKey=${hasKey}, factoryGroupKey=${hasFactoryGroupKey}, tripped=${isTripped}`);
 
           if (hasKey && !isTripped) {
             return { ...mapped, fallback: false };
