@@ -90,6 +90,16 @@ const VIDEO_ENGINES: Array<{ name: string; label: string; env: string[]; priorit
   //   agnes-video-2.5 正式版功能最全 (图生视频/首尾帧/参考), 但同样限流, 排最后。
   { name: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', env: ['ZHIPU_API_KEY'], priority: 10 },
   { name: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', env: ['VOLCANO_API_KEY'], priority: 20 },
+  // ✅ 批次9.1 (2026-10-13): 工厂 Seedance 4 个变体入 engines 目录。
+  // 之前 engines 只列 4 个内置引擎, 前端 VideoGen allModelOptions 查 engineStatus[m.value]
+  // (m.value = doubao-seedance-*) 永远 undefined → 工厂条目永不禁用 → 没配 FACTORY_VIDEO_KEY
+  // 也能点, 点了才 400。入列后 engineAvailable 自动按 env 判定, 前端灰显逻辑对齐内置引擎。
+  // priority 21-24 排在火山 seedance (20) 之后、agnes (30) 之前 —— 工厂 = 火山同族但走中转,
+  // 只有单独配了 FACTORY_VIDEO_KEY 时才可用, 不抢火山直连的顺序。
+  { name: 'doubao-seedance-2.5', label: 'Seedance 2.5 (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 21 },
+  { name: 'doubao-seedance-2', label: 'Seedance 2 (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 22 },
+  { name: 'doubao-seedance-2-fast', label: 'Seedance 2 Fast (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 23 },
+  { name: 'doubao-seedance-2-mini', label: 'Seedance 2 Mini (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 24 },
   { name: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', env: ['AGENTAI_API_KEY', 'AGNES_API_KEY'], priority: 30 },
   { name: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版', env: ['AGNES_VIDEO_API_KEY'], priority: 40 },
 ];
@@ -361,6 +371,13 @@ export function createVideoRouter(io?: any) {
           if (only.name === 'seedance-2.5') {
             return await submitSeedance(res, process.env['VOLCANO_API_KEY']!, prompt, image);
           }
+          // ✅ 批次9.1: 工厂 seedance 自动选中 — 4 个变体 name 都以 'doubao-seedance-' 开头,
+          // 与 submitSeedanceViaFactory 的 subModel 参数 (requested 侧同名) 一致。
+          // 只有配了 FACTORY_VIDEO_KEY 才会被 engineAvailable 选到这里 (env 判定), 所以 ! 断言安全。
+          if (only.name.startsWith('doubao-seedance')) {
+            const fKey = process.env['FACTORY_VIDEO_KEY']!.trim();
+            return await submitSeedanceViaFactory(res, fKey, only.name, prompt, image);
+          }
         }
         return res.status(400).json({
           error: '未指定视频模型，且未检测到任何已配置 Key 的引擎。'
@@ -433,25 +450,40 @@ export function createVideoRouter(io?: any) {
         }
       }
 
-      // ✅ 批次9: Alrc 工厂 Seedance 任务查询 — 提交走 {ALRC_BASE_URL}/chat/completions,
-      // 查询走同 base 的火山 tasks 路径 (Alrc 对火山视频任务做透明代理)。
+      // ✅ 批次9.1 (2026-10-13): Alrc 工厂 Seedance 任务查询 — 双端点兜底。
+      // 提交走 {ALRC_BASE_URL}/chat/completions (batch9 已确认), 但 Alrc 官方未公开
+      // "视频任务查询"的准确端点契约。源码推演两个候选:
+      //   ① {base}/contents/generations/tasks/:id — 火山原生路径, 若 Alrc 做透明代理最可能命中;
+      //   ② {base}/videos/:id — OpenAI 风格视频任务路径, 若 Alrc 走独立视频命名空间则在此。
+      // 两个都查, 哪个先返回 200 且能解出 videoUrl 用哪个; 都失败才回落火山直连 (历史任务兼容)。
+      // 不静默: 两个候选都 4xx/5xx 时打日志, 方便日后人工核对 Alrc 真实契约。
       if ((provider.startsWith('doubao-seedance') || provider.startsWith('seedance'))
         && process.env['FACTORY_VIDEO_KEY']) {
         const base = (process.env['ALRC_BASE_URL'] || 'https://alro.huazhiweilai.com/v1').replace(/\/+$/, '');
         const fKey = process.env['FACTORY_VIDEO_KEY'].trim();
-        try {
-          const resp = await fetch(`${base}/contents/generations/tasks/${encodeURIComponent(taskId)}`, {
-            headers: { Authorization: `Bearer ${fKey}` },
-          });
-          if (resp.ok) {
-            const data: any = await resp.json();
-            const status = data.status || data.state || 'processing';
-            const videoUrl = data.content?.video?.url || data.video_url || data.url || data.data?.url || null;
-            const coverUrl = data.content?.video?.cover_image_url || data.cover_url || null;
-            return res.json({ status, videoUrl, coverUrl, raw: JSON.stringify(data) });
-          }
-        } catch {}
-        // 工厂查询失败, 不拦截, 继续走下面的火山直连兜底
+        const candidates = [
+          `${base}/contents/generations/tasks/${encodeURIComponent(taskId)}`,
+          `${base}/videos/${encodeURIComponent(taskId)}`,
+        ];
+        for (const url of candidates) {
+          try {
+            const resp = await fetch(url, {
+              headers: { Authorization: `Bearer ${fKey}` },
+              signal: AbortSignal.timeout(15000),
+            });
+            if (resp.ok) {
+              const data: any = await resp.json();
+              const status = data.status || data.state || 'processing';
+              const videoUrl = data.content?.video?.url || data.video_url || data.url || data.data?.url || data.output?.url || null;
+              const coverUrl = data.content?.video?.cover_image_url || data.cover_url || null;
+              // 能解出 url 或明确任务状态 → 命中, 直接返回
+              if (videoUrl || status !== 'processing') {
+                return res.json({ status, videoUrl, coverUrl, raw: JSON.stringify(data) });
+              }
+            }
+          } catch {}
+        }
+        // 工厂两端点都没查到 → 不拦截, 继续走下面的火山直连兜底
       }
 
       // Seedance/火山引擎任务查询

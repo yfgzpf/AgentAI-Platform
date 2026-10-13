@@ -309,6 +309,18 @@ const FACTORY_IMAGE_MODEL_LIST: { id: string; label: string; color: string; pric
   { id: 'gpt-image-2', label: 'GPT Image 2 ⭐', color: '#3B82F6', price: '$0.014/次', desc: 'OpenAI · 标准版 · 超值' },
   { id: 'gpt-image-2-vip', label: 'GPT Image 2 VIP', color: '#1D4ED8', price: '$0.045/次', desc: 'OpenAI · 高清版' },
 ];
+// ✅ 批次9.1 (2026-10-13): 模型工厂生视频模型 (Alrc 中转 Seedance 2 系列, 按秒计费)。
+// 与 modelStore.ts FACTORY_VIDEO_MODELS / factory-registry.ts 的 4 条严格 1:1
+// (id 都是上游真实模型名 doubao-seedance-*), 走 FACTORY_VIDEO_KEY。
+// 之前视频分组 groupModels 是 [] (显示占位"服务端尚未分配模型"), 导致 Settings 里
+// "对应支持模型名"这一环断了 —— 用户填了视频密钥也不知道到底解锁了哪些模型。
+// ⚠️ 价格数字来自 Alrc 截图口径 (按秒计费, 各分辨率不同), 官方价目表未核 —— 只用于 UI 展示。
+const FACTORY_VIDEO_MODEL_LIST: { id: string; label: string; color: string; price: string; desc: string }[] = [
+  { id: 'doubao-seedance-2.5', label: 'Seedance 2.5', color: '#7C3AED', price: '按秒计费', desc: 'Alrc 中转 · 旗舰画质' },
+  { id: 'doubao-seedance-2', label: 'Seedance 2', color: '#8B5CF6', price: '按秒计费', desc: 'Alrc 中转 · 1080p 标准' },
+  { id: 'doubao-seedance-2-fast', label: 'Seedance 2 Fast', color: '#A78BFA', price: '按秒计费 · 更省', desc: 'Alrc 中转 · 720p 快速' },
+  { id: 'doubao-seedance-2-mini', label: 'Seedance 2 Mini', color: '#C4B5FD', price: '按秒计费 · 最省', desc: 'Alrc 中转 · 480p 轻量' },
+];
 
 // ===== 免费模型内置列表 =====
 const FREE_MODELS = [
@@ -896,7 +908,8 @@ return (
                         // 获取该分组的模型列表
                         const groupModels = group.id === 'chat' ? FACTORY_MODEL_LIST
                           : group.id === 'image' ? FACTORY_IMAGE_MODEL_LIST
-                          : []; // GPT/Claude/Grok/Video 分组: 服务端尚未分配模型, 显示占位
+                          : group.id === 'video' ? FACTORY_VIDEO_MODEL_LIST
+                          : []; // GPT/Claude/Grok 分组: 服务端尚未分配模型, 显示占位
                         const hasKey = !!factoryKeys[group.envVar]?.trim();
                         const isExpanded = !!groupExpanded[group.id];
                         return (
