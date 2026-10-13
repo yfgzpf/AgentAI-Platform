@@ -93,9 +93,6 @@ export const ALRC_MODELS: Record<string, AlrcModelEntry> = {
   'alrc-seedance-2': { provider: 'alrc', subModel: 'doubao-seedance-2', label: 'Seedance 2', groupEnv: 'FACTORY_VIDEO_KEY' },
   'alrc-seedance-2-fast': { provider: 'alrc', subModel: 'doubao-seedance-2-fast', label: 'Seedance 2 Fast', groupEnv: 'FACTORY_VIDEO_KEY' },
   'alrc-seedance-2-mini': { provider: 'alrc', subModel: 'doubao-seedance-2-mini', label: 'Seedance 2 Mini', groupEnv: 'FACTORY_VIDEO_KEY' },
-  'alrc-seedance-1.0-lite': { provider: 'alrc', subModel: 'seedance-1.0-lite', label: 'Seedance 1.0 Lite', groupEnv: 'FACTORY_VIDEO_KEY' },
-  'alrc-seedance-1.0-pro': { provider: 'alrc', subModel: 'seedance-1.0-pro', label: 'Seedance 1.0 Pro', groupEnv: 'FACTORY_VIDEO_KEY' },
-  'alrc-seedance-2.0': { provider: 'alrc', subModel: 'seedance-2.0', label: 'Seedance 2.0', groupEnv: 'FACTORY_VIDEO_KEY' },
 };
 
 /** 工厂模型 ID 前缀 (gateway 侧) */

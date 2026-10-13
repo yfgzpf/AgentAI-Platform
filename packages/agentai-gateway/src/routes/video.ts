@@ -433,6 +433,27 @@ export function createVideoRouter(io?: any) {
         }
       }
 
+      // ✅ 批次9: Alrc 工厂 Seedance 任务查询 — 提交走 {ALRC_BASE_URL}/chat/completions,
+      // 查询走同 base 的火山 tasks 路径 (Alrc 对火山视频任务做透明代理)。
+      if ((provider.startsWith('doubao-seedance') || provider.startsWith('seedance'))
+        && process.env['FACTORY_VIDEO_KEY']) {
+        const base = (process.env['ALRC_BASE_URL'] || 'https://alro.huazhiweilai.com/v1').replace(/\/+$/, '');
+        const fKey = process.env['FACTORY_VIDEO_KEY'].trim();
+        try {
+          const resp = await fetch(`${base}/contents/generations/tasks/${encodeURIComponent(taskId)}`, {
+            headers: { Authorization: `Bearer ${fKey}` },
+          });
+          if (resp.ok) {
+            const data: any = await resp.json();
+            const status = data.status || data.state || 'processing';
+            const videoUrl = data.content?.video?.url || data.video_url || data.url || data.data?.url || null;
+            const coverUrl = data.content?.video?.cover_image_url || data.cover_url || null;
+            return res.json({ status, videoUrl, coverUrl, raw: JSON.stringify(data) });
+          }
+        } catch {}
+        // 工厂查询失败, 不拦截, 继续走下面的火山直连兜底
+      }
+
       // Seedance/火山引擎任务查询
       if (provider.startsWith('doubao-seedance') || provider.startsWith('seedance')) {
         const volcanoKey = process.env['VOLCANO_API_KEY'];
@@ -1204,7 +1225,17 @@ async function submitSeedance(
     'https://ark.cn-beijing.volces.com/api/v3', 'VOLCANO_API_KEY');
 }
 
-/** 走 Alrc 工厂的中转 (FACTORY_VIDEO_KEY) — 批次9 新增。 */
+/** 走 Alrc 工厂的中转 (FACTORY_VIDEO_KEY) — 批次9。
+ *  2026-10-13 三次修正: 用户实测报错 model_not_found 暴露两点:
+ *   1. Alrc 视频**和文本模型走同一个 /chat/completions 端点** (Base URL =
+ *      ALRC_BASE_URL, 缺省 https://alro.huazhiweilai.com/v1), 不是独立 /videos。
+ *      之前 POST {base}/videos 命不中 → 改为发 {base}/chat/completions,
+ *      body 用火山 Seedance 的 content:[{type:'text'},{type:'image_url'}] 结构,
+ *      模型名直接发工厂模型名 (doubao-seedance-2 / -fast / -mini / 2.5)。
+ *   2. Alrc 的 Seedance 分组只开放了 4 个 (2 / -fast / -mini / 2.5),
+ *      旧的 1.0-lite / 1.0-pro / 2.0 不在组里 → factory-registry 已删这 3 条。
+ *  提交后任务式轮询: 用同一 key+base 查 {base}/contents/generations/tasks/:id
+ *  (Alrc 对火山视频任务做了透明代理, 任务 id 由火山返回)。 */
 async function submitSeedanceViaFactory(
   res: any,
   key: string,
@@ -1212,11 +1243,42 @@ async function submitSeedanceViaFactory(
   prompt: string,
   image?: string,
 ) {
-  // 工厂中转 (Alrc) 兼容火山 seedance 任务的提交/查询协议:
-  // 提交 POST /contents/generations/tasks, 查询 GET /contents/generations/tasks/:id
-  // (Alrc 对火山视频任务做了透明代理, 任务 id 由火山返回, 查询走同一 base + key)
-  const base = (process.env['ALRC_VIDEO_BASE_URL'] || 'https://api.alrc.io/v1').replace(/\/+$/, '');
-  return submitSeedanceVariant(res, key, subModel, prompt, image, base, 'FACTORY_VIDEO_KEY');
+  const base = (process.env['ALRC_BASE_URL'] || 'https://alro.huazhiweilai.com/v1').replace(/\/+$/, '');
+  // 火山 Seedance 内容结构 (与直连火山 submitSeedance 完全一致), 只换上游 base+key。
+  const volBody: any = {
+    model: subModel,
+    content: [{ type: 'text', text: prompt }],
+  };
+  if (image) {
+    const imgData = await urlToBase64(image);
+    volBody.content.push({ type: 'image_url', image_url: { url: imgData } });
+  }
+  try {
+    const resp = await fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(volBody),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data: any = await resp.json().catch(() => ({}));
+    if (resp.ok) {
+      // 火山视频任务响应可能直接给 taskId / video_url, 两种都接
+      const taskId = data.id || data.task_id || data.video_id;
+      const videoUrl = data.data?.url || data.output?.url || data.video_url || data.url || null;
+      if (taskId && !videoUrl) {
+        res.json({ taskId, status: 'queued', provider: subModel, prompt, factory: true });
+        return;
+      }
+      res.json({ taskId: taskId || null, status: videoUrl ? 'completed' : 'queued', videoUrl, provider: subModel, prompt, factory: true });
+      return;
+    }
+    const errText = await resp.text().catch(() => '');
+    res.status(resp.status || 502).json({
+      error: `Alrc 工厂视频返回 HTTP ${resp.status}: ${errText.slice(0, 200)}`,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: `Alrc 工厂视频请求失败: ${e.message}` });
+  }
 }
 
 /** Seedance 提交/查询的共用实现 (参数化 subModel + 上游 base + 密钥来源, 避免 4 份重复) */
