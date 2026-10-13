@@ -313,3 +313,61 @@ describe('生视频: 死代码 pollTask 不得复活', () => {
     expect(gen).toContain("from '../services/videoTaskManager'");
   });
 });
+
+// ════════════════════════════════════════════════════════════════════
+// 分镜: 跨剧本串味防护 + 左右栏拖拽 + 底部裁切 (2026-10-14)
+// ════════════════════════════════════════════════════════════════════
+
+describe('分镜: 异步生成结果不得串到别的剧本 (跨剧本 token 守卫)', () => {
+  const code = stripComments(src('components/StoryboardPanel.tsx'));
+  const count = (s: string, sub: string) => s.split(sub).length - 1;
+
+  it('★ 存在会话 token 基建 (sbTokenRef / bumpSbToken / sbWrite)', () => {
+    expect(code).toContain('const sbTokenRef = React.useRef(0)');
+    expect(code).toContain('const bumpSbToken = () => { sbTokenRef.current += 1; }');
+    // sbWrite: 写入前比对 token —— token 不匹配 (已切剧本) 则**丢弃**, 绝不写进新剧本
+    expect(code).toContain('const sbWrite = React.useCallback((token: number');
+    expect(code).toContain('token !== sbTokenRef.current');
+  });
+
+  it('★ 所有异步写入都走 sbWrite(token, ...), 不再直接 setStoryboard', () => {
+    // 直接写 (无 token 校验) 会让"在 A 剧本发起、切到 B 剧本后回填"落到 B —— 这就是串味根因
+    expect(count(code, 'sbWrite(token,')).toBeGreaterThanOrEqual(12);
+    // 旧的"裸写入"模式 (生成回调里直接 setStoryboard) 必须清零
+    expect(code).not.toContain('setStoryboard(prev => { if (!prev) return prev;');
+    expect(code).not.toContain('setStoryboard(prev => { if (!prev) return prev }');
+  });
+
+  it('★ 切换/新建/重生成/删除 剧本时推进 token (使在途回调立即失效)', () => {
+    expect(count(code, 'bumpSbToken()')).toBeGreaterThanOrEqual(4);
+  });
+
+  it('★ 异步流程在关键点校验 token (中止/提前返回)', () => {
+    // 批量/重试循环: token 变了就 break, 不再继续往新剧本写
+    expect(code).toContain('if (sbTokenRef.current !== token) break;');
+    // 单镜/角色图/场景图: token 变了就 return, 不弹"已生成"误导提示
+    expect(code).toContain('if (sbTokenRef.current !== token) return;');
+    expect(code).toContain('if (sbTokenRef.current !== token) return {');
+  });
+});
+
+describe('分镜: 左右栏可拖拽 + 底部不被裁 (2026-10-14)', () => {
+  const code = stripComments(src('components/StoryboardPanel.tsx'));
+
+  it('★ 根容器不能写 height:100% (在 VideoGen 的 flex 列里会顶破 → 底部被裁)', () => {
+    expect(code).toContain("display: 'flex', gap: 12, flex: 1, minHeight: 0");
+    expect(code).not.toContain("display: 'flex', gap: 12, height: '100%'");
+  });
+
+  it('★ 左栏拆两层: 外层 .page-pane 承载把手 (不滚), 内层单独滚动', () => {
+    // 外层: 复用外壳/创作页同一套 .page-pane + PaneGrip (与对话页一致的拖拽体验)
+    expect(code).toContain('className="page-pane page-pane--left"');
+    expect(code).toContain('<PaneGrip resizable={sbLeftPane}');
+    // 内层: 滚动容器独立存在
+    expect(code).toContain("flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingRight: 4");
+  });
+
+  it('★ 外层 .page-pane 不能再带 overflow:auto (否则 position:absolute 的把手随内容滚走 → 拖不到)', () => {
+    expect(code).not.toContain("flexDirection: 'column', gap: 8, overflow: 'auto', paddingRight: 4");
+  });
+});

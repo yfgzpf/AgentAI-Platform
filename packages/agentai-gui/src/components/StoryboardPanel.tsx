@@ -294,6 +294,7 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
 
   // 切换剧本
   const switchStoryboard = (id: string) => {
+    bumpSbToken(); // ★ 换剧本 → 在途生成的写入全部作废
     try {
       const raw = localStorage.getItem(`${STORAGE_KEY}-${id}`);
       if (raw) {
@@ -334,8 +335,10 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
     const failed = storyboard.episodes.flatMap((ep, epIdx) =>
       ep.shots.filter(s => s.status === 'failed').map(s => ({ epIdx, shotId: s.id })));
     if (failed.length === 0) return;
+    const token = sbTokenRef.current; // ★ 换剧本即停止重试
     message.info(`开始重试 ${failed.length} 个失败镜头 (串行)...`);
     for (const f of failed) {
+      if (sbTokenRef.current !== token) break; // 用户已切换剧本 → 中止
       await generateSingleShot(f.epIdx, f.shotId);
       // 镜间留 1s, 避免连续打满触发限流
       await new Promise(r => setTimeout(r, 1000));
@@ -344,6 +347,7 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
 
   // 删除剧本
   const deleteStoryboard = (id: string) => {
+    if (id === activeId) bumpSbToken(); // ★ 删的是当前剧本 → 在途生成的写入作废
     setStoryboardList(prev => {
       const next = prev.filter(s => s.id !== id);
       localStorage.removeItem(`${STORAGE_KEY}-${id}`);
@@ -368,6 +372,7 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
 
   // 新建剧本 — 不覆盖旧的, 先保存当前再清空
   const newStoryboard = () => {
+    bumpSbToken(); // ★ 新建 = 换剧本 → 在途生成的写入全部作废
     setStoryboard(null);
     setActiveId(null);
     setPrompt('');
@@ -394,6 +399,20 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
     defaultWidth: 620, minWidth: 380, maxWidth: 900, side: 'right',
   });
 
+  // ★ 2026-10-14 P0 修复: 剧本会话令牌 —— 修复「切换剧本后, 在途生成的视频写进新剧本」。
+  //   根因: 所有异步回调都用 `setStoryboard(prev => ... s.id === shotId ...)` 定位镜头, 而
+  //   shot.id 是**每集从 1 重新开始**的小整数 (gateway 生成 schema 与续集兜底都是 id:1,2,3…,
+  //   见 routes/video.ts:894 / :980 / :1095)。跨剧本必然撞号 →
+  //   用户在剧本 A 发起生成, 切到剧本 B 后, A 的回调仍按 id 命中 B 的同号镜头,
+  //   于是 B 出现"A 的视频" + 假的「已生成」标记, 还会被自动保存 effect 落盘。
+  //   令牌在 切换/新建/重新生成/删除 剧本时自增; 异步流程启动时快照该值,
+  //   写入时若值已变 (= 用户换了剧本) 则整条丢弃, 不污染当前剧本。
+  const sbTokenRef = React.useRef(0);
+  const bumpSbToken = () => { sbTokenRef.current += 1; };
+  const sbWrite = React.useCallback((token: number, fn: (sb: Storyboard) => Storyboard) => {
+    setStoryboard(prev => (prev === null || token !== sbTokenRef.current) ? prev : fn(prev));
+  }, []);
+
   // 生成剧本
   const generateStoryboard = async () => {
     if (!prompt.trim()) { message.warning('请输入创意描述'); return; }
@@ -410,6 +429,7 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
         const sb = data.storyboard as Storyboard;
         sb.episodes.forEach(ep => ep.shots.forEach(s => { s.selected = true; s.status = 'pending'; }));
         // 生成新剧本时清除 activeId, 让 useEffect 创建新条目而非覆盖当前
+        bumpSbToken(); // ★ 重新生成 = 换剧本 → 在途生成的写入全部作废
         setActiveId(null);
         setStoryboard(sb);
         message.success(`✅ 剧本已生成: ${sb.title}`);
@@ -424,6 +444,7 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
     if (!storyboard) return;
     const char = storyboard.characters.find(c => c.name === charName);
     if (!char) return;
+    const token = sbTokenRef.current; // 绑定当前剧本会话
     setGeneratingPortrait(charName);
     try {
       // 定妆图 prompt — 单人正面全身照, 白底, 适合抠图
@@ -460,22 +481,21 @@ White background, character sheet reference, concept art style, high detail, pro
       const portraitUrl = portraitData.url?.startsWith('/') ? httpUrl + portraitData.url : portraitData.url;
       const sheetUrl = sheetData.url?.startsWith('/') ? httpUrl + sheetData.url : sheetData.url;
 
-      setStoryboard(prev => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          characters: prev.characters.map(c => c.name === charName
-            ? { ...c, portraitUrl: portraitUrl || c.portraitUrl, sheetUrl: sheetUrl || c.sheetUrl }
-            : c
-          ),
-        };
-      });
+      sbWrite(token, prev => ({
+        ...prev,
+        characters: prev.characters.map(c => c.name === charName
+          ? { ...c, portraitUrl: portraitUrl || c.portraitUrl, sheetUrl: sheetUrl || c.sheetUrl }
+          : c
+        ),
+      }));
 
       // 自动保存到角色库 (跨剧本复用)
       if (portraitUrl) {
         saveToCharLibrary({ ...char, portraitUrl, sheetUrl: sheetUrl || char.sheetUrl });
       }
 
+      // 剧本已切换时不再弹「已生成」, 避免误导用户以为当前剧本生成成功
+      if (sbTokenRef.current !== token) return { portraitUrl: portraitUrl || undefined, sheetUrl: sheetUrl || undefined };
       const okCount = (portraitUrl ? 1 : 0) + (sheetUrl ? 1 : 0);
       if (portraitData.error && sheetData.error) {
         message.error(`角色图生成失败: ${portraitData.error}`);
@@ -506,6 +526,7 @@ White background, character sheet reference, concept art style, high detail, pro
     if (!storyboard) return undefined;
     const ep = storyboard.episodes[epIdx];
     if (!ep || !ep.scene) return undefined;
+    const token = sbTokenRef.current; // 绑定当前剧本会话
     setGeneratingScene(epIdx);
     try {
       const scenePrompt = `Photorealistic scene background ONLY: ${ep.scene.description}. 
@@ -521,13 +542,12 @@ High detail, professional quality, 16:9 aspect ratio.`;
       const data = await resp.json();
       if (data.error) { message.error(`场景图生成失败: ${data.error}`); return undefined; }
       const url = data.url?.startsWith('/') ? httpUrl + data.url : data.url;
-      setStoryboard(prev => {
-        if (!prev) return prev;
+      sbWrite(token, prev => {
         const eps = [...prev.episodes];
         eps[epIdx] = { ...eps[epIdx], scene: { ...eps[epIdx].scene!, imageUrl: url } };
         return { ...prev, episodes: eps };
       });
-      message.success(`✅ 第${epIdx + 1}集场景图已生成`);
+      if (sbTokenRef.current === token) message.success(`✅ 第${epIdx + 1}集场景图已生成`);
       return url || undefined;
     } catch (e: any) { message.error('场景图生成失败: ' + e.message); return undefined; }
     finally { setGeneratingScene(null); }
@@ -538,6 +558,7 @@ High detail, professional quality, 16:9 aspect ratio.`;
     if (!storyboard) return;
     const ep = storyboard.episodes[fromEpIdx];
     if (!ep) return;
+    const token = sbTokenRef.current; // 绑定当前剧本会话
     // 收集上一集剧情: 所有镜头的 prompt
     const epPrompts = ep.shots.map(s => s.prompt).join('\n');
     // 获取最后一镜的尾帧 URL — 有 API 尾帧就免去 ffmpeg 抽帧 (后端 next-episode 优先用它)
@@ -582,16 +603,13 @@ High detail, professional quality, 16:9 aspect ratio.`;
         scene: epData.episode.scene,
       };
 
-      setStoryboard(prev => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          characters: [...prev.characters, ...newChars],
-          episodes: [...prev.episodes, newEpisode],
-        };
-      });
+      sbWrite(token, prev => ({
+        ...prev,
+        characters: [...prev.characters, ...newChars],
+        episodes: [...prev.episodes, newEpisode],
+      }));
 
-      message.success(`✅ 智能续集已生成: ${newEpisode.title} (${newEpisode.shots.length} 镜)${data.warning ? '\n⚠️ ' + data.warning : ''}`);
+      if (sbTokenRef.current === token) message.success(`✅ 智能续集已生成: ${newEpisode.title} (${newEpisode.shots.length} 镜)${data.warning ? '\n⚠️ ' + data.warning : ''}`);
     } catch (e: any) { message.error('续集生成失败: ' + e.message); }
     finally { setGeneratingSequel(null); }
   };
@@ -779,11 +797,15 @@ High detail, professional quality, 16:9 aspect ratio.`;
     if (!shot) return;
     if (shot.status === 'generating') return;
 
+    // ★ 剧本会话令牌: 记录发起生成时所在的剧本; 之后用户切了剧本, 所有写入作废
+    const token = sbTokenRef.current;
+
     // 2026-10-13 缺图守卫 — 场景图/角色图缺失时先提示 (可一键补全)
     const guard = await guardMissingRefs([{ epIdx, shot }]);
     if (!guard.proceed) return;
+    if (sbTokenRef.current !== token) return; // 弹窗期间切了剧本 → 放弃本次
 
-    setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'generating', error: undefined } : s); return { ...prev, episodes: eps }; });
+    sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'generating', error: undefined } : s); return { ...prev, episodes: eps }; });
 
     try {
       // 收集角色定妆图+场景图作为参考 (guard.extra = 刚补全的图)
@@ -796,21 +818,21 @@ High detail, professional quality, 16:9 aspect ratio.`;
         body.images = refImages;
       }
       const result = await submitVideoTask(body, (retry, msg) => {
-        setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'generating', error: msg } : s); return { ...prev, episodes: eps }; });
+        sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'generating', error: msg } : s); return { ...prev, episodes: eps }; });
       });
       if ('error' in result) {
-        setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: result.error } : s); return { ...prev, episodes: eps }; });
+        sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: result.error } : s); return { ...prev, episodes: eps }; });
         return;
       }
       const videoResult = await pollVideo(result.taskId, result.provider || model);
       if (videoResult) {
-        setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
-        message.success(`第${epIdx + 1}集-${shotId}镜 生成完成`);
+        sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
+        if (sbTokenRef.current === token) message.success(`第${epIdx + 1}集-${shotId}镜 生成完成`);
       } else {
-        setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: '轮询超时或任务失败' } : s); return { ...prev, episodes: eps }; });
+        sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: '轮询超时或任务失败' } : s); return { ...prev, episodes: eps }; });
       }
     } catch (e: any) {
-      setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: e.message } : s); return { ...prev, episodes: eps }; });
+      sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: e.message } : s); return { ...prev, episodes: eps }; });
     }
   };
 
@@ -828,6 +850,8 @@ High detail, professional quality, 16:9 aspect ratio.`;
     });
     const guard = await guardMissingRefs(targets);
     if (!guard.proceed) return;
+    const token = sbTokenRef.current; // ★ 剧本会话令牌: 换剧本后所有写入作废 + 循环中止
+    if (sbTokenRef.current !== token) return;
 
     // Flash 模型警告
     if (isFlashModel && allShots.length > 3) {
@@ -846,9 +870,10 @@ High detail, professional quality, 16:9 aspect ratio.`;
         if (!shot.selected || shot.status === 'completed') continue;
         // 2026-10-12: 取消检查点 — 每镜开跑前看一眼, 已取消则收尾退出
         if (batchCancelled) break;
+        // ★ 2026-10-14: 用户切换剧本 → 立即中止, 不再继续烧额度
+        if (sbTokenRef.current !== token) break;
 
-        setStoryboard(prev => {
-          if (!prev) return prev;
+        sbWrite(token, prev => {
           const eps = [...prev.episodes];
           eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'generating' } : s);
           return { ...prev, episodes: eps };
@@ -863,24 +888,24 @@ High detail, professional quality, 16:9 aspect ratio.`;
               body.images = refImages;
             }
             const result = await submitVideoTask(body, (retry, msg) => {
-              setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'generating', error: msg } : s); return { ...prev, episodes: eps }; });
+              sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'generating', error: msg } : s); return { ...prev, episodes: eps }; });
             });
             if ('error' in result) {
               failed++;
-              setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: result.error } : s); return { ...prev, episodes: eps }; });
+              sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: result.error } : s); return { ...prev, episodes: eps }; });
             } else {
               const videoResult = await pollVideo(result.taskId, result.provider || model);
               if (videoResult) {
                 succeeded++;
-                setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
+                sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'completed', videoUrl: videoResult.videoUrl, lastFrameUrl: videoResult.lastFrameUrl, error: undefined } : s); return { ...prev, episodes: eps }; });
               } else {
                 failed++;
-                setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: '轮询超时或任务失败' } : s); return { ...prev, episodes: eps }; });
+                sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: '轮询超时或任务失败' } : s); return { ...prev, episodes: eps }; });
               }
             }
           } catch (e: any) {
           failed++;
-          setStoryboard(prev => { if (!prev) return prev; const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: e.message } : s); return { ...prev, episodes: eps }; });
+          sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: e.message } : s); return { ...prev, episodes: eps }; });
         }
         completed++;
         setBatchProgress(Math.round((completed / allShots.length) * 100));
@@ -891,9 +916,11 @@ High detail, professional quality, 16:9 aspect ratio.`;
       }
     }
     setBatchGenerating(false);
+    const switched = sbTokenRef.current !== token;
     const failMsg = failed > 0 ? `, ${failed} 镜失败` : '';
     const cancelMsg = batchCancelled ? ` (已取消, 剩 ${allShots.length - completed} 镜未跑)` : '';
-    message.info(`批量生成${batchCancelled ? '已取消' : '完成'}: ${succeeded} 镜成功${failMsg}${cancelMsg}`, 5);
+    // 剧本已切换时不再报「完成」——那些镜头不属于当前剧本
+    if (!switched) message.info(`批量生成${batchCancelled ? '已取消' : '完成'}: ${succeeded} 镜成功${failMsg}${cancelMsg}`, 5);
   };
 
   const pollVideo = (taskId: string, provider: string): Promise<{ videoUrl: string; lastFrameUrl?: string } | null> => {
@@ -943,22 +970,28 @@ High detail, professional quality, 16:9 aspect ratio.`;
   const completedShots = storyboard?.episodes.flatMap(e => e.shots).filter(s => s.status === 'completed').length || 0;
   const selectedShots = storyboard?.episodes.flatMap(e => e.shots).filter(s => s.selected && s.status !== 'completed').length || 0;
 
+// 2026-10-14 修复"底部被裁": 根容器原为 height:'100%' —— 但在 VideoGen 的 flex 列里,
+// 上方还有"生成模型"选择行, height:100% 会等于父容器整高 → 多出选择行的高度被 overflow:hidden 裁掉。
+// 改成 flex:1 + minHeight:0, 只在列中占"剩余"空间 (与 .page-body 的 min-height:0 同一套契约)。
 return (
-<div style={{ display: 'flex', gap: 12, height: '100%' }}>
+<div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
 <style>{RIGHT_COLLAPSE_CSS}</style>
       {/* 左侧: 输入 + 角色卡 + 分镜列表 — 右侧折叠时自动扩展到 100% (批次9 修) */}
       {/* 2026-10-12 C 批次: 宽度改由 useResizable 管 (可拖拽/双击复位/方向键/记忆/窄屏兜底)
           side:'right' → 把手在左栏右缘, 即两栏交界处
           ✅ 批次9: 右栏折叠 (rightPanelExpanded 空) 时左栏 flex:1 撑满剩余空间,
-          否则 620px 固定 + 右栏 display:none = 右边一大块黑 (用户报的"布局有问题") */}
+          否则 620px 固定 + 右栏 display:none = 右边一大块黑 (用户报的"布局有问题")
+          ⚠️ 2026-10-14 结构修复: 原左栏把 overflow:auto 写在外层 (.page-pane 本身) ——
+            而 .pane-grip 是 position:absolute, 放进滚动容器会随内容滚走 → 把手顶部即消失,
+            用户"拖不动/拖不到把手扩大左栏"。现拆两层: 外层(不滚, 承载把手) + 内层滚动容器。 */}
       <div ref={sbLeftPane.paneRef} className="page-pane page-pane--left"
-        style={{
-          ...(rightPanelExpanded.length === 0
-            ? { flex: 1, minWidth: 0, width: 'auto' }   // 折叠: 左栏撑满
-            : { width: sbLeftPane.width, flexShrink: 0 }), // 展开: 固定可拖宽度
-          display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', paddingRight: 4,
-        }}>
+        style={rightPanelExpanded.length === 0
+          ? { flex: 1, minWidth: 0, width: 'auto' }   // 折叠: 左栏撑满
+          : { width: sbLeftPane.width, flexShrink: 0 }}>
         <PaneGrip resizable={sbLeftPane} min={380} max={900} label="调整剧本编辑区宽度" />
+        {/* 内层滚动容器: 外层 .page-pane 不滚动 (overflow:hidden) → 把手不会被内容滚走。
+            内层承担原有滚动/布局 (flex 列 + gap + paddingRight)。 */}
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingRight: 4 }}>
         {/* 输入区 */}
         <Card size="small" title={
           <Space>
@@ -1275,6 +1308,7 @@ return (
             ))}
           </Collapse>
         )}
+        </div>
       </div>
 
 {/* 右侧: 可折叠 — 分镜预览 + 剧集成品, 折叠时完全隐藏让左侧全宽 */}
