@@ -1421,6 +1421,9 @@ await apiStream(base + '/v1/chat', {
     { cmd: '/pentest', desc: '渗透测试: 授权目标后自动挖洞', run: () => {
       handleSend(`/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) 用 wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10 模板; 4) 对找到的输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 最后按 bounty-report 出报告。越界目标一律拒绝。`);
     }},
+    { cmd: '/reverse', desc: '逆向复刻: 读懂陌生软件/网页的实现思路', run: () => {
+      handleSend(`/reverse 目标: ____ (本地文件路径 / URL / 打包应用, 或描述某功能)  请按 reverse-engineer-workflow 走: 1) 定位目标 (本地文件 list_directory, URL 先 web_fetch 抓下来, 打包应用用 rea:analyze_package); 2) rea:analyze 拿概览; 3) 按重点拆解 (rea:diff_versions 对比 / 读关键模块, 每条结论带证据 file:line 或 rea 输出); 4) 用自己的话提炼可复刻点, 不抄对方代码; 5) 按我的技术栈出 1-3 个复刻方案 (含取舍), 不写完整可运行代码。没证据的结论标 UNRESOLVED。`);
+    }},
     { cmd: '/help', desc: '查看帮助', run: () => {
       appendMessage({ id: 'help', role: 'system', segments: [{ kind: 'text', text: `
 **岐枢命令指南**
@@ -1430,6 +1433,7 @@ await apiStream(base + '/v1/chat', {
 - \`/abort\` — 中断当前回复
 - \`/bounty\` — 赏金打单 (挑目标+挖洞+出报告)
 - \`/pentest\` — 渗透测试 (授权+挖洞+落盘)
+- \`/reverse\` — 逆向复刻 (读懂陌生软件/网页实现, REA 工作流)
 - \`/help\` — 查看帮助
 
 **模式说明**

@@ -64,6 +64,7 @@ const INDUSTRY_ACTIONS: Record<string, Array<{ label: string; prompt: string; ic
     { label: '性能优化', prompt: '帮我分析性能瓶颈并给出优化建议', icon: '⚡' },
     { label: '赏金打单', prompt: '/bounty 请帮我打一个赏金单。目标平台: ____  项目页 URL: ____  in-scope 目标域名: ____  请按 bounty-target-picker 解析 scope → 让我逐条确认哪些能测 → grant_scope 授权 → 跑 pentest-workflow 挖洞 → 真复现的洞 report_vulnerability 落盘 → 最后按 bounty-report 出各平台能过审的报告。每步要我先确认才往下走。', icon: '🎯' },
     { label: '渗透测试', prompt: '/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10; 4) 对输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 按 bounty-report 出报告。越界目标一律拒绝。', icon: '🔒' },
+    { label: '逆向复刻', prompt: '/reverse 目标: ____ (本地文件 / URL / 打包应用 / 某功能)  请按 reverse-engineer-workflow: 先 rea:analyze 概览 → 按重点拆解 (rea:diff_versions / 读关键模块, 每条带证据) → 用自己的话提炼可复刻点 (不抄代码) → 按我的技术栈出复刻方案。没证据的标 UNRESOLVED。', icon: '🧬' },
   ],
   medical: [
     { label: '舌诊辨证', prompt: '我想做中医舌诊，请帮我分析舌象', icon: '👅' },
@@ -108,6 +109,7 @@ const INDUSTRY_ACTIONS: Record<string, Array<{ label: string; prompt: string; ic
     { label: '代码体检', prompt: '分析当前项目的代码质量，并给出优化建议', icon: '🧪' },
     { label: '赏金打单', prompt: '/bounty 请帮我打一个赏金单。目标平台: ____  项目页 URL: ____  in-scope 目标域名: ____  请按 bounty-target-picker 解析 scope → 让我逐条确认哪些能测 → grant_scope 授权 → 跑 pentest-workflow 挖洞 → 真复现的洞 report_vulnerability 落盘 → 最后按 bounty-report 出各平台能过审的报告。每步要我先确认才往下走。', icon: '🎯' },
     { label: '渗透测试', prompt: '/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10; 4) 对输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 按 bounty-report 出报告。越界目标一律拒绝。', icon: '🔒' },
+    { label: '逆向复刻', prompt: '/reverse 目标: ____ (本地文件 / URL / 打包应用 / 某功能)  请按 reverse-engineer-workflow: 先 rea:analyze 概览 → 按重点拆解 (rea:diff_versions / 读关键模块, 每条带证据) → 用自己的话提炼可复刻点 (不抄代码) → 按我的技术栈出复刻方案。没证据的标 UNRESOLVED。', icon: '🧬' },
   ],
 };
 
