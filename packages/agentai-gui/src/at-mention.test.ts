@@ -67,4 +67,14 @@ describe('@提及文件 契约 (防回归)', () => {
     expect(composer).toMatch(/const\s+ws\s*=\s*workspaceDir\s*\|\|\s*['"]/);
     expect(composer).toMatch(/if\s*\(\s*!ws\s*\)\s*return/);
   });
+
+  it('@目录钻取: 点目录进下一级 + 有 ⬆ 上级回退 (2026-10-15)', () => {
+    // 选目录时走钻取分支 (追加 / 再触发 fetch), 选文件才插入路径关闭弹层
+    expect(composer).toMatch(/file\.isDir/);
+    // 钻取按 query 里的 / 拆 browseDir + filter (支持 @src/comp → 钻到 src/, 过滤 comp)
+    expect(composer).toMatch(/browseDir\s*=\s*ws\s*\+/);
+    expect(composer).toMatch(/\/v1\/fs\/list\?dir=\$\{encodeURIComponent\(browseDir\)\}/);
+    // 回退按钮存在
+    expect(composer).toMatch(/⬆\s*上级|lastIndexOf\(['"]\/['"]\)/);
+  });
 });

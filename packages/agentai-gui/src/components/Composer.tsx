@@ -309,29 +309,43 @@ setActiveModel(modelId);
     return q ? slashCommands.filter(c => c.cmd.toLowerCase().includes(q)) : slashCommands;
   }, [popup, slashCommands]);
 
-  // @文件选择: 从工作区获取文件列表
+  // @文件选择: 从工作区获取文件列表 + 目录钻取 (2026-10-15: 点目录进下一级)
   const [atFiles, setAtFiles] = useState<Array<{ name: string; path: string; isDir: boolean }>>([]);
+  // 钻取目录状态: 当前正在浏览的子目录 (空串 = 工作区根)
+  const [atDir, setAtDir] = useState('');
   useEffect(() => {
-    if (!popup || popup.kind !== 'at') { setAtFiles([]); return; }
+    if (!popup || popup.kind !== 'at') { setAtFiles([]); setAtDir(''); return; }
     const q = popup.query.toLowerCase();
     const ws = workspaceDir || '';
     if (!ws) return;
+    // 钻取中的目录 (如 "src/components/") — 从 @query 里抽: 含 / 或 \ 的部分是路径, 其余是过滤词
+    let browseDir = ws;
+    let filter = q;
+    const slashIdx = q.indexOf('/');
+    const backslashIdx = q.indexOf('\\');
+    const splitAt = [slashIdx, backslashIdx].filter(i => i >= 0).sort((a, b) => a - b)[0];
+    if (splitAt !== undefined && splitAt > 0) {
+      // @src/comp → 钻到 <ws>/src/, 过滤词 comp
+      browseDir = ws + q.slice(0, splitAt + 1).replace(/\\/g, '/');
+      filter = q.slice(splitAt + 1).toLowerCase();
+    }
     // 防抖 300ms
     const timer = setTimeout(async () => {
       try {
         const base = GATEWAY_HTTP;
-        const r = await fetch(`${base}/v1/fs/list?dir=${encodeURIComponent(ws)}`);
+        const r = await fetch(`${base}/v1/fs/list?dir=${encodeURIComponent(browseDir)}`);
         if (!r.ok) return;
         const data = await r.json();
-        // /v1/fs/list 返回 { entries: [{ name, path, type, size }] } — 取 entries, 判 type (2026-10-15 修)
+        // /v1/fs/list 返回 { entries: [{ name, path, type, size }] } — 取 entries, 判 type
         const raw: any[] = data?.entries || data?.files || (Array.isArray(data) ? data : []);
         const files = raw
           .filter((f: any) => {
             const name = (f.name || f.path || '').toLowerCase();
             return name && !name.startsWith('.') && name !== 'node_modules';
           })
-          .filter((f: any) => !q || (f.name || f.path || '').toLowerCase().includes(q))
-          .slice(0, 15);
+          .filter((f: any) => !filter || (f.name || '').toLowerCase().includes(filter))
+          .slice(0, 20);
+        setAtDir(browseDir !== ws ? browseDir.replace(/^.*?\/?\//, '') : '');
         setAtFiles(files.map((f: any) => ({
           name: f.name || f.path,
           path: f.path || f.name,
@@ -377,10 +391,23 @@ setActiveModel(modelId);
       setDraft(next);
       (it as SlashCmd).run();
     } else if (popup.kind === 'at') {
-      // 插入文件路径到 draft
-      const file = it as { name: string; path: string };
-      const next = draft.replace(/@[^\s]*$/, `@${file.path} `);
-      setDraft(next);
+      // 插入文件路径到 draft; 目录 → 追加 / 继续钻取 (留在 @ 弹层里进下一级)
+      const file = it as { name: string; path: string; isDir?: boolean };
+      if (file.isDir) {
+        // 目录: @路径/ → 触发 effect 按新 query 钻取 (query 里含 / 就进 browseDir)
+        const rel = file.path.replace(/^.*?(\/|\\)/, ''); // 取最后一段目录名
+        // 保持 @ 弹层: 把 @query 替换成 <已敲的部分><dir>/, 让 handleChange 识别成 @
+        const currentAt = (draft.match(/@[^\s]*$/) || [''])[0];
+        const prefix = currentAt.startsWith('@') ? currentAt.slice(1) : '';
+        const drill = prefix + rel + '/';
+        setDraft(draft.replace(/@[^\s]*$/, `@${drill}`));
+        // 保持弹层, 用新 nonce 触发重新 fetch (钻到下一级)
+        setPopup({ kind: 'at', query: drill, nonce: Date.now() });
+      } else {
+        const next = draft.replace(/@[^\s]*$/, `@${file.path} `);
+        setDraft(next);
+        setPopup(null);
+      }
     }
     setPopup(null);
     textareaRef.current?.focus();
@@ -977,8 +1004,32 @@ setActiveModel(modelId);
           borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', padding: 4,
           maxHeight: 200, overflowY: 'auto', zIndex: 'var(--z-dropdown)',
         }}>
-          <div style={{ padding: '4px 8px', fontSize: 'var(--fs-micro)', color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: 2 }}>
-            {popup.kind === 'slash' ? '/ 命令' : '@ 选择文件'}
+          <div style={{ padding: '4px 8px', fontSize: 'var(--fs-micro)', color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {popup.kind === 'slash' ? '/ 命令' : '@ 选择文件'}
+              {popup.kind === 'at' && atDir ? ` · ${atDir}` : ''}
+            </span>
+            {popup.kind === 'at' && atDir ? (
+              <button
+                type="button"
+                onClick={() => {
+                  // 回退一级: 把 @query 里最后一个 / 之后的部分清掉
+                  const atPart = (draft.match(/@[^\s]*$/) || [''])[0].slice(1);
+                  const lastSlash = atPart.lastIndexOf('/');
+                  const up = lastSlash > 0 ? atPart.slice(0, lastSlash) : '';
+                  setDraft(draft.replace(/@[^\s]*$/, up ? `@${up}` : '@'));
+                  setPopup({ kind: 'at', query: up, nonce: Date.now() });
+                }}
+                style={{
+                  border: 'none', background: 'var(--panel-2)', color: 'var(--muted)',
+                  borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 'var(--fs-micro)',
+                  padding: '1px 6px', flexShrink: 0, fontFamily: 'inherit',
+                }}
+                title="回上一级"
+              >
+                ⬆ 上级
+              </button>
+            ) : null}
           </div>
           {items.map((item, i) => {
             const isSlash = popup.kind === 'slash';
