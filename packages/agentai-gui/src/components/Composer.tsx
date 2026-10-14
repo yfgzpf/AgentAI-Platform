@@ -323,17 +323,20 @@ setActiveModel(modelId);
         const r = await fetch(`${base}/v1/fs/list?dir=${encodeURIComponent(ws)}`);
         if (!r.ok) return;
         const data = await r.json();
-        const files = (data.files || data || [])
+        // /v1/fs/list 返回 { entries: [{ name, path, type, size }] } — 取 entries, 判 type (2026-10-15 修)
+        const raw: any[] = data?.entries || data?.files || (Array.isArray(data) ? data : []);
+        const files = raw
           .filter((f: any) => {
             const name = (f.name || f.path || '').toLowerCase();
-            return !name.startsWith('.') && name !== 'node_modules';
+            return name && !name.startsWith('.') && name !== 'node_modules';
           })
           .filter((f: any) => !q || (f.name || f.path || '').toLowerCase().includes(q))
           .slice(0, 15);
         setAtFiles(files.map((f: any) => ({
           name: f.name || f.path,
           path: f.path || f.name,
-          isDir: !!f.isDirectory || !!f.isDir,
+          // entries 用 type: 'directory'|'file'; 兼容旧字段 isDirectory/isDir
+          isDir: f.type === 'directory' || !!f.isDirectory || !!f.isDir,
         })));
       } catch { /* fetch error */ }
     }, 300);

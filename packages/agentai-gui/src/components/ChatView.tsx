@@ -2095,6 +2095,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           busy={loading}
           slashCommands={slashCommands}
           textareaRef={textareaRef}
+          workspaceDir={currentWorkspace}
           queuedSends={queuedSends}
           onQueueWhileBusy={handleQueueWhileBusy}
           onDequeueSend={handleDequeue}
