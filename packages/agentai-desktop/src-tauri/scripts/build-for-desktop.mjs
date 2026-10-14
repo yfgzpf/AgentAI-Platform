@@ -17,7 +17,7 @@
  */
 
 import { execSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, cpSync, rmSync, readdirSync, readFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, cpSync, rmSync, readdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -52,7 +52,11 @@ const gwDist = resolve(gwDir, 'dist', 'index.js');
       cwd: gwDir, stdio: 'inherit', shell: false,
     });
     if (tscResult.status !== 0 && tscResult.status !== undefined) {
-      logWarn(`tsc 编译失败 (exit ${tscResult.status})，继续...`);
+      // 2026-10-14: tsc 失败不再"warn 继续" —— dist 漏了就漏进安装包 = gateway 入口缺失
+      //   = 安装包里 gateway 起不来 = 所有依赖 gateway 的页面挂 (部分页面缺失)。
+      //   fail-fast 拦住, 让人先修编译错误再打包。
+      logWarn(`❌ tsc 编译失败 (exit ${tscResult.status}) —— 入口缺失会混进安装包, 中止打包`);
+      process.exit(1);
     } else {
       logOk('Gateway tsc 编译完成');
     }
@@ -68,6 +72,14 @@ const gwDist = resolve(gwDir, 'dist', 'index.js');
     cpSync(rulesSrc, rulesDst);
     logOk('rules.json 已复制');
   }
+
+  // 2026-10-14 R1: tsc 后入口 dist/index.js 必须存在 —— 这是"页面缺失"根因的 fail-fast 闸
+  const gwEntry = resolve(gwDir, 'dist', 'index.js');
+  if (!existsSync(gwEntry)) {
+    logWarn(`❌ Gateway 入口缺失: ${gwEntry} —— tsc 跑完却没有 dist/index.js, 中止打包 (防止漏入口进安装包)`);
+    process.exit(1);
+  }
+  logOk(`Gateway 入口存在: dist/index.js`);
 }
 
 // ── 2. 编译 GUI ─────────────────────────────────────────────────
@@ -169,6 +181,24 @@ const guiDistDir = resolve(guiDir, 'dist');
   } else {
     logWarn('verify-web-build.mjs 不存在, 跳过一致性校验');
   }
+
+  // 2026-10-14: gateway 运行时资源一致性门 (R1 入口 / R2 .env key 名 / R3 陈旧)。
+  // 与 GUI 门并列 —— 过去"部分页面缺失"(漏 gateway 入口) 和"显示不一致"(.env 漂移)
+  // 都靠人肉翻安装包, 现在机器化拦住。
+  const rtGateScript = resolve(SRC_TAUDI, 'scripts', 'verify-desktop-runtime.mjs');
+  if (existsSync(rtGateScript)) {
+    log('运行 gateway 运行时一致性门 (verify-desktop-runtime.mjs)...');
+    const rtGate = spawnSync(process.execPath, [rtGateScript], {
+      cwd: SRC_TAUDI, stdio: 'inherit', shell: false,
+    });
+    if (rtGate.status !== 0) {
+      logWarn('❌ gateway 运行时一致性门未通过 —— 安装包会缺 gateway 入口或 .env 漏 key, 已中止打包');
+      process.exit(1);
+    }
+    logOk('gateway 运行时一致性门通过');
+  } else {
+    logWarn('verify-desktop-runtime.mjs 不存在, 跳过 gateway 运行时校验');
+  }
 }
 
 // ── 3. 准备 gateway-dist-v2 ─────────────────────────────────────
@@ -245,8 +275,35 @@ if (existsSync(gwDistV2) && existsSync(resolve(gwDistV2, 'dist', 'index.js'))) {
       try { rmSync(resolve(resourcesDir, b), { recursive: true, force: true }); } catch {}
     });
   }
+  // 2026-10-14 R2: 同步根 .env 的 key 名到 bundle .env (只碰 key 名, 不复制/不打印 value)
+  syncEnvKeyNames(ROOT, gwDistFinal);
 } else {
   logWarn('gateway-dist-v2 不完整, 保持现有 gateway-dist');
+}
+
+/**
+ * 把根 .env 里出现的 key 名同步进 bundle .env —— 已同名保留原值行, 缺的追加 `KEY=` 空占位。
+ * 只碰 **key 名**, 绝不复制/打印 value (值由用户/CI 注入, 不把真 key 硬编码进仓库)。
+ * 堵住 R2"打包态 .env 漏 key" 导致的"与开发态显示不一致"。
+ */
+function syncEnvKeyNames(rootDir, gwDistDir) {
+  const rootEnv = resolve(rootDir, '.env');
+  const bundleEnv = resolve(gwDistDir, '.env');
+  if (!existsSync(rootEnv)) { logWarn('根 .env 不存在, 跳过 key 名同步'); return; }
+  const rootText = readFileSync(rootEnv, 'utf8');
+  const rootKeys = [...rootText.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/gm)].map(m => m[1]);
+  if (rootKeys.length === 0) { logWarn('根 .env 无 key, 跳过'); return; }
+
+  const bundleLines = existsSync(bundleEnv) ? readFileSync(bundleEnv, 'utf8').split(/\r?\n/) : [];
+  const existing = new Set(bundleLines.map(l => (l.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/) || [])[1]).filter(Boolean));
+  const missing = rootKeys.filter(k => !existing.has(k));
+  if (missing.length === 0) { logOk(`bundle .env 已含根 .env 全部 ${rootKeys.length} 个 key 名`); return; }
+
+  // 追加缺失 key 的空占位 (KEY=), 已有 key 的行不动 (保留用户已填的值)
+  const placeholder = missing.map(k => `${k}=`).join('\n');
+  const newContent = (bundleLines.join('\n') + '\n' + placeholder + '\n');
+  writeFileSync(bundleEnv, newContent, 'utf8');
+  logOk(`bundle .env 同步 ${missing.length} 个缺失 key 名: ${missing.join(', ')} (值为空占位, 由用户/CI 注入)`);
 }
 
 // ── 4. 生成 lite.html ───────────────────────────────────────────

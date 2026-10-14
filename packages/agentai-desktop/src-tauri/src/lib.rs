@@ -291,6 +291,9 @@ async fn spawn_gateway(app: tauri::AppHandle) -> Result<String, String> {
         .env("AGENTAI_PORT", "18789")
         .env("AGENTAI_HOST", "127.0.0.1")
         .env("AGENTAI_HOME", &data_dir)
+        // 2026-10-14: 显式指向 bundle 的 .env —— 之前 gateway 靠 cwd 候选猜, 不确定读哪份;
+        // 配合 verify-desktop-runtime.mjs 的 R2 (key 名齐全) 保证读到的是"不漏 key"那份。
+        .env("AGENTAI_ENV_PATH", gw_dir.join(".env"))
         .env("NODE_PATH", gw_dir.join("node_modules"))
         .stdout(log_handle.try_clone().map_err(|e| e.to_string())?)
         .stderr(log_handle);
