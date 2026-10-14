@@ -112,6 +112,33 @@ export const MCP_SERVERS: McpServerConfig[] = [
     args: ['sketchup-mcp2'],
     enabled: false,  // 需安装 uv + sketchup-mcp2 + SketchUp 后启用
   },
+
+  // ===== 逆向工程: REA (Reverse Engineer Anything) =====
+  // AI Agent 优先的逆向工程框架: JS/Electron 静态分析、APK/IPA/ASAR 解包、
+  // .NET 程序集检查、网站被动观测、版本差异对比 — 全部本地运行, 结论带 Evidence 证据链
+  // 原生二进制 (PE/ELF/Mach-O) 深度分析需自备 Ghidra 12.1.x (GHIDRA_INSTALL_DIR) / IDA / Hopper
+  // @see https://github.com/morluto/rea
+  {
+    name: 'rea',
+    transport: 'stdio',
+    command: 'npx',
+    args: ['-y', 'rea-agents@6.4.0', 'mcp'],
+    enabled: true,  // 无需 API Key; 无原生引擎时自动降级为 JS/归档/Web 分析
+  },
+
+  // ===== 2026-10-14 渗透测试: HexStrike AI (150+ 安全工具, 走外部 MCP) =====
+  // HexStrike 本体要在 Kali Linux / Docker 里跑 (nmap/sqlmap/nuclei/ffuf 预装环境),
+  // 本机 Windows 装不了。我们只把"接线"做进来: 你在另一台机器起
+  //   hexstrike_server --port 8888
+  // 然后把 url 指过去。默认 disabled, 需 HEXSTRIKE_MCP_URL 环境变量才启用
+  // (避免没起服务时白白连不上的报错)。pentest 子智能体已含 scope_guard,
+  // 调 hexstrike 工具前会先过授权边界 + 速率闸门。
+  {
+    name: 'hexstrike',
+    transport: 'streamable-http',
+    url: process.env.HEXSTRIKE_MCP_URL || 'http://localhost:8888',
+    enabled: !!process.env.HEXSTRIKE_MCP_URL,  // 有 URL 才启用
+  },
 ];
 
 /** 运行时使用的 server 列表 (自动检测 + 环境变量 MCP_ENABLED 覆盖) */
@@ -127,6 +154,7 @@ export const MCP_HOSTS: McpServerConfig[] = (() => {
   const autoEnabled = (name: string): boolean => {
     switch (name) {
       case 'memory': return true;               // 无需 API Key
+      case 'rea': return true;                  // 无需 API Key (原生引擎缺失时自动降级)
       case 'another': return !!process.env.ANOTHER_ENABLED;  // 需 ANOTHER_ENABLED=1 手动启用
       case 'github': return hasGithubToken;      // 有 GITHUB_TOKEN 自动启用
       case 'brave-search': return hasBraveKey;   // 有 BRAVE_API_KEY 自动启用

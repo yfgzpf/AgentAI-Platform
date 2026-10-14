@@ -599,6 +599,11 @@ async function gitExec(
 // "已读文件清单"注入任务进度快照，AI 就能知道"这些我读过了"。
 //
 //按 workspace 分桶（与 soul/workspace-scope 同理，避免跨工作区串味）。
+// 2026-10-14 HexStrike P0: scope_guard rate_limit 令牌桶 — 模块级变量, 不能引用
+// 对象字面量里的 key 名 (JS 对象字面量里 key 不在作用域内, 直接写 scope_guard._lastCalls 会
+// ReferenceError)。按 workspace 分桶避免跨工作区串味。
+const _scopeGuardBuckets = new Map<string, number[]>();
+
 const _readTrackers = new Map<string, ReadTracker>();
 
 function trackerFor(workspace: string): ReadTracker {
@@ -836,6 +841,25 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   // ===== 2026-10-14 P1 技能包导入/导出 (agent-skills 分发, 让跑出来的好技能跨项目复用) =====
   { name: 'import_skill_package', description: '【导入技能包】从 URL (http/https) 或本地 .skill 文件 (tar.gz) 拉技能包, 解压到项目技能目录, 自动注册进 smartDispatch。\n\n💡 触发场景:\n- 用户给你下载好的 .skill / .tgz 文件路径, 想装到当前项目\n- 用户给你 GitHub 上技能包 URL, 想在线拉取\n- 跨 workspace / 跨项目复用跑出来的好技能\n\n⚠️ 安全: 包内代码不在此处执行 (handler.py / handler.ts 由 skill-orchestrator 现有的 AST 安全扫描把关), 本工具只解压文件。\n\n💡 示例:\nimport_skill_package({ url: "C:/Users/me/.agentai/skill-packages/mine.skill" })\nimport_skill_package({ url: "https://example.com/skills/impeccable.skill", targetDir: ".agentai/skills" })', parameters: { type: 'object', properties: { url: { type: 'string', description: '技能包 URL 或本地 .skill / .tgz 文件路径' }, targetDir: { type: 'string', description: '可选, 解压目标目录 (默认: .agentai/skills/{skill-name}/)' } }, required: ['url'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'export_skill_package', description: '【导出技能包】把当前 workspace 里跑出来的好技能 (含 SKILL.md + reference/ + 脚本) 打成 .skill 文件 (tar.gz), 可发给其他项目 / 团队复用。\n\n💡 触发场景:\n- 跑出一个好用的技能, 想打包发给同事\n- 跨 workspace 迁移自定义技能\n\n💡 示例: export_skill_package({ skillDir: ".agentai/skills/my-custom-skill" })', parameters: { type: 'object', properties: { skillDir: { type: 'string', description: '技能目录 (相对/绝对路径, 必须含 SKILL.md)' }, outPath: { type: 'string', description: '可选, 输出 .skill 文件路径 (默认: .agentai/skill-packages/{name}.skill)' } }, required: ['skillDir'] }, parallelSafe: false, riskLevel: 'medium' },
+  // ===== 2026-10-14 渗透测试安全闸门 + 赏金漏洞落盘 (HexStrike 文章落地 P0/P2) =====
+  // P0: 任何攻击/扫描类命令前先 check_scope (授权边界) + rate_limit_check (速率),
+  //      越界直接拒绝。HexStrike 本身不内置严格授权控制, 强制 Scope 校验放我们这层。
+  { name: 'scope_guard', description: '【渗透测试安全闸门】攻击/扫描前**必须先**校验授权范围 + 速率限制。\n\n🔑 触发场景: 调 pentest / run_command 跑 nmap/sqlmap/nuclei/ffuf 等攻击类命令之前, 先调本工具。\n\n⚙️ 参数: target (要测的目标 URL/域名) + action:\n- check_scope: 校验 target 是否在 scope.json 授权范围内 (返回 in_scope + max_rps)。越界 = 拒绝, 别动手。\n- rate_limit: 令牌桶速率闸门, 限频防打崩目标 (按 scope.json 的 max_rps)。\n\n📄 scope.json 放 .agentai/scope.json: { "targets": ["example.com"], "max_rps": 5 }\n\n💡 示例:\nscope_guard({ target: "https://admin.example.com", action: "check_scope" }) → {in_scope:true, max_rps:5}\nscope_guard({ target: "https://admin.example.com", action: "rate_limit" }) → {ok:true}',
+    parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '要测试的目标 URL 或域名' },
+      action: { type: 'string', enum: ['check_scope', 'rate_limit'], description: 'check_scope=校验授权范围, rate_limit=速率闸门' },
+    }, required: ['action'] }, parallelSafe: true, riskLevel: 'medium' },
+  // P2: 把发现的漏洞落盘到 .agentai/vulns/, 跨会话可召回"上次这个目标挖到过 X"
+  { name: 'report_vulnerability', description: '【赏金漏洞落盘】把一个已验证的漏洞发现记录到 .agentai/vulns/ (JSON), 跨会话可召回。\n\n🔑 触发场景: pentest 子智能体复现成功 (有 PoC/截图/响应证据) 后, 调本工具存下来, 方便下次同类目标直接参考。\n\n⚠️ 只有**复现成功且有证据**才存 —— 未验证的猜测不存 (避免污染)。\n\n💡 示例: report_vulnerability({ title:"反射型XSS", target:"admin.example.com", severity:"high", type:"xss", poc:"<script>alert(1)</script>", evidence:"响应 302 + 页面执行脚本 (截图 vuln-2026-10-14-1)", platform:"补天" })',
+    parameters: { type: 'object', properties: {
+      title: { type: 'string', description: '漏洞标题: [类型] + [影响资产] + [简要描述]' },
+      target: { type: 'string', description: '影响的目标 (URL/域名)' },
+      severity: { type: 'string', enum: ['critical','high','medium','low'], description: '严重程度' },
+      vulnType: { type: 'string', description: '漏洞类型 (xss/sqli/csrf/auth_bypass/path_traversal/logic 等)' },
+      poc: { type: 'string', description: '可复现的 PoC / 利用 payload' },
+      evidence: { type: 'string', description: '验证证据 (截图路径 / 关键响应片段)' },
+      platform: { type: 'string', description: '可选: 目标赏金平台 (补天/漏洞盒子/阿里SRC/HackerOne...)' },
+    }, required: ['title','target','severity'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆 (不传 key 或 key="*" 清空全部)\n- all: 一键清理所有跨会话数据 (项目记忆+上轮摘要+会话日志+AI记忆+对话历史)\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除单条项目记忆\n- forget({type:"project_memory"}) — 清空全部项目记忆\n- forget({type:"all"}) — 一键清理所有跨会话知识库 (全新开始)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory','all'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名 (不传或 "*" 清空全部)' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'remember_this', description: '【AI 主动结构化记忆 / 长期知识沉淀】\n主动将关键发现/决策/教训/项目事实写入项目记忆, 跨会话复用。比 remember 更结构化, 支持分类、重要性、去重。\n\n⚠️ 关键区别:\n- remember = 简单键值记忆 (key-value)\n- remember_this = 结构化记忆 (5 类分类 + 重要性 1-5 + entityId 去重)\n- evolve_prompt = 永久行为规则\n\n🔑 5 类记忆分类:\n- bug_fix: Bug 修复 (症状→根因→方案)\n- decision: 关键决策 (选择+理由)\n- pattern: 代码/架构模式\n- user_preference: 用户偏好\n- project_fact: 项目事实\n\n💡 触发场景:\n- 修复一个 bug → remember_this(category:bug_fix)\n- 做出技术选型 → remember_this(category:decision)\n- 发现项目规律 → remember_this(category:pattern)\n- 用户表达偏好 → remember_this(category:user_preference)\n- 确认项目约束 → remember_this(category:project_fact)\n\n📝 示例:\n- remember_this({category:"bug_fix", title:"PowerShell不支持&&", content:"...", entityId:"bug:ps:&&", importance:4})\n- remember_this({category:"decision", title:"使用BM25而非向量检索", content:"...", entityId:"decision:bm25", importance:5})', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['bug_fix','decision','pattern','user_preference','project_fact'], description: '记忆分类' }, title: { type: 'string', description: '简短标题 (展示用)' }, content: { type: 'string', description: '核心内容 (详细描述)' }, entityId: { type: 'string', description: '实体ID (用于去重, 如 "bug:llm-router:comments")' }, importance: { type: 'number', minimum: 1, maximum: 5, description: '重要性 1-5 (5=必须记住, <3 不写入)' }, tags: { type: 'array', items: { type: 'string' }, description: '标签 (可选)' } }, required: ['category','title','content','entityId','importance'] }, parallelSafe: false, riskLevel: 'low' },
@@ -2520,6 +2544,86 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       }
       return { success: false, output: `⚠️ 未写入: ${result.reason}` };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+  // ===== 2026-10-14 渗透测试安全闸门 (HexStrike 文章 P0: 强制授权边界 + 速率限制) =====
+  // HexStrike 本身不内置严格授权控制, 强制 Scope 校验放我们这层。
+  scope_guard: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const scopeFile = path.join(ws, '.agentai', 'scope.json');
+      // 读 scope.json (不存在 → 保守: 一律拒绝, 不默认放行)
+      let scope: { targets?: string[]; max_rps?: number } = {};
+      if (fs.existsSync(scopeFile)) {
+        scope = JSON.parse(fs.readFileSync(scopeFile, 'utf-8'));
+      }
+      const hostOf = (u: string) => {
+        try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
+        catch { return null; }
+      };
+      const action = args.action || 'check_scope';
+
+      if (action === 'check_scope') {
+        if (!scope.targets?.length) {
+          return { success: false, output: '❌ 无授权范围 (scope.json 缺 targets)。先创建 .agentai/scope.json: {"targets":["example.com"],"max_rps":5} 后再测。默认拒绝, 不盲目放行。' };
+        }
+        const targetHost = hostOf(String(args.target || ''));
+        if (!targetHost) return { success: false, output: `❌ 无法解析目标: ${args.target}` };
+        const allowed = scope.targets.some(t => {
+          const th = hostOf(t);
+          return targetHost === th || targetHost.endsWith('.' + th);
+        });
+        return {
+          success: true,
+          output: allowed
+            ? `✅ in_scope: true — ${targetHost} 在授权范围内 (${scope.targets.length} 个目标), 速率上限 ${scope.max_rps || 5} rps。可继续, 每发一组扫描前调 rate_limit 限频。`
+            : `❌ in_scope: false — ${targetHost} 不在授权范围。范围: ${scope.targets.join(', ')}。禁止越界攻击, 换授权内目标或先补 scope.json。`,
+          data: { in_scope: allowed, target: targetHost, max_rps: scope.max_rps || 5, targets: scope.targets },
+        };
+      }
+
+      if (action === 'rate_limit') {
+        // 令牌桶: 按 max_rps 限频, 打崩目标前闸门 (无 scope.json 时用默认 5 rps)
+        const now = Date.now();
+        const maxRps = scope.max_rps || 5;
+        // 按 workspace 分桶, 避免跨工作区串味
+        const bucket = (_scopeGuardBuckets.get(ws) || [])
+          .filter((t: number) => now - t < 1000);
+        if (bucket.length >= maxRps) {
+          const waitMs = 1000 - (now - bucket[0]);
+          await new Promise(r => setTimeout(r, Math.max(waitMs, 0)));
+          bucket.length = 0;
+        }
+        bucket.push(Date.now());
+        _scopeGuardBuckets.set(ws, bucket);
+        return { success: true, output: `✅ rate_limit 通过 — 已按 ${maxRps} rps 限频。`, data: { ok: true, max_rps: maxRps } };
+      }
+
+      return { success: false, output: `无效 action: ${action} (check_scope / rate_limit)` };
+    } catch (e: any) { return { success: false, output: `scope_guard 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-14 赏金漏洞落盘 (HexStrike 文章 P2: 验证过的发现可跨会话召回) =====
+  report_vulnerability: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const vulnsDir = path.join(ws, '.agentai', 'vulns');
+      fs.mkdirSync(vulnsDir, { recursive: true });
+      const ts = new Date().toISOString().slice(0, 10);
+      const id = `vuln-${ts}-${(args.vulnType || 'x').replace(/[^a-z0-9]/gi, '_').slice(0, 12)}`;
+      const record = {
+        id, ts: Date.now(),
+        title: args.title, target: args.target,
+        severity: args.severity, vulnType: args.vulnType || 'unknown',
+        poc: args.poc || '', evidence: args.evidence || '', platform: args.platform || '',
+      };
+      // 追加到 JSONL (与 memory.jsonl 同构, 跨会话可召回)
+      const file = path.join(vulnsDir, 'vulns.jsonl');
+      fs.appendFileSync(file, JSON.stringify(record) + '\n');
+      return {
+        success: true,
+        output: `✅ 漏洞已落盘: ${id}\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${args.platform ? `平台: ${args.platform}\n` : ''}路径: ${file}\n下次同类目标可直接召回这条参考。`,
+        data: record,
+      };
+    } catch (e: any) { return { success: false, output: `report_vulnerability 失败: ${e.message}` }; }
   },
   plan_task: async (args, ctx) => {
     try {
