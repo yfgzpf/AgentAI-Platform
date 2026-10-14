@@ -217,11 +217,14 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
   // 每镜生成时把**上一镜的尾帧**作为本镜的第一个参考图发下去, 让画面能接着上一镜。
   // 默认开; 换场/换景/蒙太奇时可关。
   const [continuity, setContinuity] = useState(true);
-  // 上一镜没有可用尾帧(未生成/提取失败)时的弹窗 — 问是否先补上一镜
+  // 上一镜**还没生成**时的弹窗 — 问是否先补上一镜 (只有这一种情形弹窗)
   const [continuityPrompt, setContinuityPrompt] = useState<null | {
-    epIdx: number; prevShotId: number; reason: 'missing' | 'extract-failed';
+    epIdx: number; prevShotId: number;
     resolve: (v: 'fill' | 'skip' | 'cancel') => void;
   }>(null);
+  // 2026-10-14: 尾帧"取不到"只提示一次 — 服务器没装 ffmpeg 时每镜都会失败,
+  //   逐个弹窗/刷提示会把面板淹掉。这里降级为静默 + 首次警告一次。
+  const tailUnavailableRef = React.useRef(false);
 
   // ===== 多剧本持久化 =====
   // localStorage 结构: agentai-storyboards = { list: [{id,title,updatedAt}], activeId }
@@ -837,22 +840,25 @@ High detail, professional quality, 16:9 aspect ratio.`;
   };
 
   // 2026-10-14: 从视频里抽尾帧 (后端 ffmpeg)。用于上一镜有视频但没带 API 尾帧时的兜底。
+  //   注意: 后端 ffmpeg 缺失时该端点恒 500 (error 字段), 此处按"抽不到"处理即可。
   const extractTail = async (videoUrl: string): Promise<string | undefined> => {
     try {
       const resp = await fetch(`${httpUrl}/v1/video/extract-tail`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoUrl }),
       });
+      if (!resp.ok) return undefined;
       const data = await resp.json();
       return data.tailFrameUrl || undefined;
     } catch { return undefined; }
   };
 
-  // 上一镜没有可用尾帧 → 弹窗问"先补上一镜 / 跳过直接生成 / 取消"
-  const askPrevNotReady = (epIdx: number, prevShotId: number, reason: 'missing' | 'extract-failed'): Promise<{ proceed: boolean; tail?: string; skipped?: boolean }> =>
+  // 上一镜**还没生成** → 弹窗问"先补上一镜 / 跳过直接生成 / 取消"
+  //   (只有这一种情形弹窗: 上一镜已生成但取不到尾帧时不该弹 —— "先补上一镜" 无从谈起)
+  const askPrevNotReady = (epIdx: number, prevShotId: number): Promise<{ proceed: boolean; tail?: string; skipped?: boolean }> =>
     new Promise(resolve => {
       setContinuityPrompt({
-        epIdx, prevShotId, reason,
+        epIdx, prevShotId,
         resolve: (v) => {
           if (v === 'cancel') return resolve({ proceed: false });
           if (v === 'skip') return resolve({ proceed: true, skipped: true });
@@ -874,14 +880,20 @@ High detail, professional quality, 16:9 aspect ratio.`;
     if (!prevShot) return { proceed: true }; // 集内首镜: 没有上一镜可接, 不算断链
     // ① 有 API 尾帧 → 直接用 (生成时已 return_last_frame:true)
     if (prevShot.lastFrameUrl) return { proceed: true, tail: prevShot.lastFrameUrl };
-    // ② 有视频无尾帧 → 现场抽一帧
+    // ② 有视频无尾帧 → 现场抽一帧 (后端 ffmpeg)
     if (prevShot.videoUrl) {
       const tail = await extractTail(prevShot.videoUrl);
       if (tail) return { proceed: true, tail };
-      return askPrevNotReady(epIdx, prevShot.id, 'extract-failed');
+      // 抽不到 → **静默降级**: 上一镜已生成, "先补上一镜"无从谈起; 本镜照常生成
+      //   但打 ⚠ 无衔接 标。原因(服务器缺 ffmpeg)只提示一次, 避免逐镜刷屏。
+      if (!tailUnavailableRef.current) {
+        tailUnavailableRef.current = true;
+        message.warning('取不到上一镜的尾帧 (服务器未安装 ffmpeg, 上游也未返回尾帧) — 后续镜头将只用场景图/角色图, 动作可能接不上');
+      }
+      return { proceed: true, skipped: true };
     }
-    // ③ 上一镜根本没生成 → 询问
-    return askPrevNotReady(epIdx, prevShot.id, 'missing');
+    // ③ 上一镜根本没生成 → 询问 (可一键先补)
+    return askPrevNotReady(epIdx, prevShot.id);
   };
 
   /** 2026-10-13: 找出某镜头缺失的参考图 (该集场景图 / 该镜角色的定妆图+九宫格) */
@@ -1745,9 +1757,7 @@ return (
         ]}
       >
         <div style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.7 }}>
-          {continuityPrompt?.reason === 'extract-failed'
-            ? <>第 <b>{continuityPrompt?.prevShotId}</b> 镜已有视频, 但<b>尾帧提取失败</b>, 本镜接不上它。</>
-            : <>第 <b>{continuityPrompt?.prevShotId}</b> 镜<b>还没生成</b>, 本镜没有尾帧可接。</>}
+          <>第 <b>{continuityPrompt?.prevShotId}</b> 镜<b>还没生成</b>, 本镜没有尾帧可接。</>
           <div style={{ marginTop: 8, color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
             「先补上一镜」会先生成上一镜 (完成后请再点本镜), 这样本镜就能接上戏;<br />
             「跳过直接生成」则本镜只靠场景图/角色图生成 (会标 ⚠ 无衔接, 动作可能接不上)。

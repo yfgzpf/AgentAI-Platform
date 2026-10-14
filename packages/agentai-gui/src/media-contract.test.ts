@@ -457,13 +457,19 @@ describe('分镜: 尾帧衔接 (上一镜尾帧随参考图发送)', () => {
     expect(code).toContain('if (!prevShot) return { proceed: true }');
   });
 
-  it('★ 有视频无尾帧 → 现场抽帧 (POST /v1/video/extract-tail), 抽不到才弹窗', () => {
+  it('★ 有视频无尾帧 → 现场抽帧 (POST /v1/video/extract-tail), 抽不到则静默降级', () => {
     expect(code).toContain('const extractTail = async (videoUrl: string)');
     expect(code).toContain('${httpUrl}/v1/video/extract-tail');
-    // 抽帧失败 → 走弹窗 (reason='extract-failed')
-    expect(code).toContain("return askPrevNotReady(epIdx, prevShot.id, 'extract-failed')");
-    // 上一镜根本没生成 → 弹窗 (reason='missing')
-    expect(code).toContain("return askPrevNotReady(epIdx, prevShot.id, 'missing')");
+    // 抽帧接口失败(如服务器缺 ffmpeg → 500) 不再当"可恢复错误", 按抽不到处理
+    expect(code).toContain('if (!resp.ok) return undefined;');
+    // ★ 抽不到 → 静默降级 (上一镜已生成, 不该弹"先补上一镜"), 打 ⚠ 无衔接 标
+    expect(code).toContain('return { proceed: true, skipped: true }');
+    expect(code).toContain('tailUnavailableRef.current');
+    expect(code).toContain('message.warning(');
+    // 上一镜根本没生成 → 才弹窗 (无需 reason 参数, 只有这一种情形)
+    expect(code).toContain('return askPrevNotReady(epIdx, prevShot.id);');
+    // 旧的 'extract-failed' 弹窗路径必须清零 (那会把已生成的上一镜再烧一遍)
+    expect(code).not.toContain("'extract-failed'");
   });
 
   it('★ 跳镜询问弹窗: 先补上一镜 / 跳过直接生成 / 取消 三选项', () => {
