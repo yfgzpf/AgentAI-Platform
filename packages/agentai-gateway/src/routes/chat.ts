@@ -54,6 +54,18 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
   const r = Router();
   const { router, registry, sessionManager, frameworkSwitcher, persistentMemory, fts5Memory, userModel, industryEngine } = deps;
 
+  // 2026-10-14 P2 冻结开关: 评测/复现时暂停自进化写入 (进程级, 所有 workspace 生效)。
+  // 读操作 (list / readEvolution / 召回 / remember) 不受影响, 只挡 5 个写入口。
+  const { setEvolutionFrozen, isEvolutionFrozen } = require('../evolution-freeze.js');
+  r.get('/v1/evolution/freeze', (_req: any, res: any) => {
+    res.json({ frozen: isEvolutionFrozen() });
+  });
+  r.post('/v1/evolution/freeze', (req: any, res: any) => {
+    const v = !!req.body?.frozen;
+    setEvolutionFrozen(v);
+    res.json({ frozen: isEvolutionFrozen(), message: v ? '进入冻结: 自进化写入被拦截' : '已解冻: 自进化写入恢复' });
+  });
+
   // 定期同步可用 provider 数量到 limiter (每 30 秒)
   setInterval(() => {
     const available = Array.from((router as any).providers?.values() || [])

@@ -4554,17 +4554,21 @@ if (isComplexTask) {
             const argsRaw = sig.slice(toolName.length + 2); // 去掉 "toolName::" 前缀
             const argsSafe = argsRaw.length > 200 ? argsRaw.slice(0, 200) + '…' : argsRaw;
             try {
-              const { writeEvolution } = await import('./evolution.js');
-              writeEvolution({
-                type: 'failure',
-                content: `${toolName} 同参数连续失败 ${count} 次 (args: ${argsSafe}), 下次别再用这条路`,
-                userId: this.opts.userId,
-                sessionId: this.opts.userId,
-                workspace: this.opts.workspace,
-                errorType: 'UnknownError',
-                failureCategory: 'execution_error',
-                metadata: { source: 'dup_fail', toolName, failCount: count, args: argsSafe },
-              });
+              // 2026-10-14 P2 冻结开关: 冻结期跳过主循环 dup_fail 自动写
+              const { isEvolutionFrozen } = await import('./evolution-freeze.js');
+              if (!isEvolutionFrozen()) {
+                const { writeEvolution } = await import('./evolution.js');
+                writeEvolution({
+                  type: 'failure',
+                  content: `${toolName} 同参数连续失败 ${count} 次 (args: ${argsSafe}), 下次别再用这条路`,
+                  userId: this.opts.userId,
+                  sessionId: this.opts.userId,
+                  workspace: this.opts.workspace,
+                  errorType: 'UnknownError',
+                  failureCategory: 'execution_error',
+                  metadata: { source: 'dup_fail', toolName, failCount: count, args: argsSafe },
+                });
+              }
             } catch { /* evolution write optional */ }
             break; // 只触发一次
           }
@@ -5873,13 +5877,19 @@ try {
                 // 执行 promote 决策: 写入进化记忆
                 if (d.type === 'promote') {
                   try {
-                    const { writeEvolution } = await import('./evolution.js');
-                    writeEvolution({
-                      type: 'success',
-                      content: `Skill "${d.skill_name}" promoted: ${d.reason}`,
-                      userId: this.opts.userId,
-                      workspace: this.opts.workspace,
-                    });
+                    // 2026-10-14 P2 冻结开关: 冻结期跳过 skill-evolver 自动写
+                    const { isEvolutionFrozen } = await import('./evolution-freeze.js');
+                    if (isEvolutionFrozen()) {
+                      console.log(`[evolution-freeze] skill-evolver promote 写入被拦截 (冻结中): ${d.skill_name}`);
+                    } else {
+                      const { writeEvolution } = await import('./evolution.js');
+                      writeEvolution({
+                        type: 'success',
+                        content: `Skill "${d.skill_name}" promoted: ${d.reason}`,
+                        userId: this.opts.userId,
+                        workspace: this.opts.workspace,
+                      });
+                    }
                   } catch { /* evolution write optional */ }
                 }
               }
@@ -5923,7 +5933,13 @@ try {
     // ═══ 2026-06-26 新增: Model Distiller 自动蒸馏 ═══
     // 每次 loop 结束后，异步提取成功模式 → 固化经验
     if (this.iteration > 0 && this.opts.workspace) {
-      import('./model-distiller.js').then((m: any) => {
+      import('./model-distiller.js').then(async (m: any) => {
+        // 2026-10-14 P2 冻结开关: 冻结期跳过 distiller 自动写
+        const { isEvolutionFrozen } = await import('./evolution-freeze.js');
+        if (isEvolutionFrozen()) {
+          console.log(`[evolution-freeze] distiller 自动写被拦截 (冻结中, iteration=${this.iteration})`);
+          return;
+        }
         if (m && m.writeEvolution) {
           m.writeEvolution({
             type: 'success',

@@ -831,6 +831,8 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'evolve_prompt', description: '【AI 行为规则自进化 / 永久规则】修改 AI 自己的系统行为规则。\n\n⚠️ 关键区别:\n- remember = 存事实/上下文/用户偏好, 会话级记忆\n- evolve_prompt = 添加永久行为规则, 影响未来所有 AI 行为, 写入 .agentai/evolved-rules.json\n\n🔑 触发场景 (用户提到以下关键词时必须用此工具而非 remember):\n- "添加规则"/"写入规则"/"形成规则"/"系统约束"\n- "避免再犯"/"未来不要"/"以后都"/"永远不要"\n- "行为准则"/"操作规范"/"系统行为"/"AI 行为"\n- 发现低效/错误模式, 希望 AI 永久记住并避免\n\n💡 示例: "我发现 PowerShell 不支持 &&, 帮我添加这条规则避免再犯" → evolve_prompt(action:add, rule:...)\n"删除刚才那条规则" → evolve_prompt(action:remove, rule_id:N)\n"查看所有规则" → evolve_prompt(action:list)', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['add','remove','list'], description: 'add=添加新规则, remove=删除规则, list=查看所有规则' }, rule: { type: 'string', description: '规则内容 (add 时必填)。简洁明确, 1-2 句' }, reason: { type: 'string', description: '为什么要添加/删除这条规则' }, rule_id: { type: 'number', description: '要删除的规则编号 (remove 时必填)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'run_distillation', description: '【模型蒸馏 / 经验固化】从历史成功/失败案例中提取可复用模式，写入 implicit_rules 供后续任务参考。\n\n适用场景:\n- 想查看 AI 从过去任务中学到了什么经验\n- 希望系统从最近的成功/失败中提取规则\n- "巩固"/"固化"/"蒸馏"/"提炼经验"\n\n不适用: 简单记忆用 remember, 行为规则用 evolve_prompt', parameters: { type: 'object', properties: { force: { type: 'boolean', default: false, description: '是否强制完整蒸馏 (默认仅增量, 只蒸馏上次以来未处理的新记录)' } }, required: [] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'create_tool', description: '创建自定义工具。当发现经常需要某个操作但没有现成工具时使用。工具以脚本形式存储在 .agentai/custom-tools/ 目录下。', parameters: { type: 'object', properties: { name: { type: 'string', description: '工具名称 (小写+下划线)' }, description: { type: 'string' }, script: { type: 'string', description: 'Node.js 脚本内容。必须导出 async function run(args): Promise<string>' }, parameters: { type: 'object', description: '参数定义 (JSON Schema)' } }, required: ['name','description','script'] }, parallelSafe: false, riskLevel: 'high' },
+  // 2026-10-14 P2 冻结开关: AI 自己开/关 evolution 冻结 (评测/复现场景)。
+  { name: 'set_evolution_frozen', description: '【自进化写入冻结开关】设/取消 evolution + evolved-rules + custom-tools 的写入冻结。\n\n🔑 触发场景:\n- 跑评测/基准测试前冻结 (确保结果可复现, 不被自进化学习污染)\n- 复现 bug 前冻结 (行为稳定)\n- 跑完解冻\n\n⚠️ 冻结期:\n- 拦截: evolve_prompt (add/remove) / create_tool / record_failure / 主循环自动写 / 子智能体回写\n- 不拦截: list / readEvolution / 召回 / remember / remember_this (读操作与显式用户记忆不受影响)\n\n💡 示例: 跑评测前 → set_evolution_frozen({frozen:true}); 跑完 → set_evolution_frozen({frozen:false})', parameters: { type: 'object', properties: { frozen: { type: 'boolean', description: 'true=冻结 (拦截所有自进化写入), false=解冻' } }, required: ['frozen'] }, parallelSafe: true, riskLevel: 'medium' },
   { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆 (不传 key 或 key="*" 清空全部)\n- all: 一键清理所有跨会话数据 (项目记忆+上轮摘要+会话日志+AI记忆+对话历史)\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除单条项目记忆\n- forget({type:"project_memory"}) — 清空全部项目记忆\n- forget({type:"all"}) — 一键清理所有跨会话知识库 (全新开始)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory','all'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名 (不传或 "*" 清空全部)' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'remember_this', description: '【AI 主动结构化记忆 / 长期知识沉淀】\n主动将关键发现/决策/教训/项目事实写入项目记忆, 跨会话复用。比 remember 更结构化, 支持分类、重要性、去重。\n\n⚠️ 关键区别:\n- remember = 简单键值记忆 (key-value)\n- remember_this = 结构化记忆 (5 类分类 + 重要性 1-5 + entityId 去重)\n- evolve_prompt = 永久行为规则\n\n🔑 5 类记忆分类:\n- bug_fix: Bug 修复 (症状→根因→方案)\n- decision: 关键决策 (选择+理由)\n- pattern: 代码/架构模式\n- user_preference: 用户偏好\n- project_fact: 项目事实\n\n💡 触发场景:\n- 修复一个 bug → remember_this(category:bug_fix)\n- 做出技术选型 → remember_this(category:decision)\n- 发现项目规律 → remember_this(category:pattern)\n- 用户表达偏好 → remember_this(category:user_preference)\n- 确认项目约束 → remember_this(category:project_fact)\n\n📝 示例:\n- remember_this({category:"bug_fix", title:"PowerShell不支持&&", content:"...", entityId:"bug:ps:&&", importance:4})\n- remember_this({category:"decision", title:"使用BM25而非向量检索", content:"...", entityId:"decision:bm25", importance:5})', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['bug_fix','decision','pattern','user_preference','project_fact'], description: '记忆分类' }, title: { type: 'string', description: '简短标题 (展示用)' }, content: { type: 'string', description: '核心内容 (详细描述)' }, entityId: { type: 'string', description: '实体ID (用于去重, 如 "bug:llm-router:comments")' }, importance: { type: 'number', minimum: 1, maximum: 5, description: '重要性 1-5 (5=必须记住, <3 不写入)' }, tags: { type: 'array', items: { type: 'string' }, description: '标签 (可选)' } }, required: ['category','title','content','entityId','importance'] }, parallelSafe: false, riskLevel: 'low' },
@@ -2758,6 +2760,12 @@ ${violations.map(v => `• ${v}`).join('\n')}
       let rules: Array<{ id: number; rule: string; reason: string; ts: number }> = [];
       try { rules = JSON.parse(fs.readFileSync(rulesFile, 'utf-8')); } catch { /* new file */ }
 
+      // 2026-10-14 P2 冻结开关: 写操作 (add/remove) 冻结期拦截, 读 (list) 不受影响。
+      if ((args.action === 'add' || args.action === 'remove')
+        && !(await import('./evolution-freeze.js')).requireEvolution(() => {}, `evolve_prompt:${args.action}`)) {
+        return { success: false, output: 'evolution 冻结中, 该写入被拦截 (如需临时解冻, POST /v1/evolution/freeze {frozen:false} 或调 set_evolution_frozen)' };
+      }
+
       if (args.action === 'list') {
         if (rules.length === 0) return { success: true, output: '暂无自定义规则' };
         const list = rules.map(r =>
@@ -2807,6 +2815,10 @@ ${violations.map(v => `• ${v}`).join('\n')}
   },
   create_tool: async (args) => {
     try {
+      // 2026-10-14 P2 冻结开关: 冻结期 create_tool 写入被拦截
+      if (!(await import('./evolution-freeze.js')).requireEvolution(() => {}, 'create_tool')) {
+        return { success: false, output: 'evolution 冻结中, create_tool 被拦截 (如需临时解冻, POST /v1/evolution/freeze {frozen:false} 或调 set_evolution_frozen)' };
+      }
       const ws = getWs();
       const toolsDir = path.join(ws, '.agentai', 'custom-tools');
       fs.mkdirSync(toolsDir, { recursive: true });
@@ -2884,6 +2896,19 @@ ${violations.map(v => `• ${v}`).join('\n')}
         output: `✅ 自定义工具 "${name}" 已创建并通过审计\n脚本: ${scriptFile}\n描述: ${description}\n下次对话可通过 run_code 调用此脚本${warningStr}`,
       };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
+  },
+  // 2026-10-14 P2 冻结开关: AI 自己开/关 evolution 冻结 (进程级, 所有 workspace 生效)。
+  // 与 HTTP 端点 POST /v1/evolution/freeze 等价。
+  set_evolution_frozen: async (args) => {
+    const { frozen } = args;
+    const { setEvolutionFrozen, isEvolutionFrozen } = await import('./evolution-freeze.js');
+    setEvolutionFrozen(!!frozen);
+    return {
+      success: true,
+      output: frozen
+        ? '✅ evolution 已冻结: 后续自进化写入 (evolve_prompt / create_tool / record_failure / 主循环自动写 / 子智能体回写) 全被拦截, 读操作与 remember 不受影响'
+        : `✅ evolution 已解冻: 自进化写入恢复正常 (当前 isEvolutionFrozen=${isEvolutionFrozen()})`,
+    };
   },
   forget: async (args) => {
     try {
@@ -3016,6 +3041,10 @@ ${violations.map(v => `• ${v}`).join('\n')}
   record_failure: async (args, ctx) => {
     const { toolName, reason, errorType, hint } = args;
     if (!toolName || !reason) return { success: false, output: '缺参数: 需要 toolName + reason' };
+    // 2026-10-14 P2 冻结开关: 冻结期拦截
+    if (!(await import('./evolution-freeze.js')).requireEvolution(() => {}, 'record_failure')) {
+      return { success: false, output: 'evolution 冻结中, record_failure 被拦截 (如需临时解冻, POST /v1/evolution/freeze {frozen:false} 或调 set_evolution_frozen)' };
+    }
     const ws = getWs();
     try {
       const { writeEvolution } = await import('./evolution.js');
