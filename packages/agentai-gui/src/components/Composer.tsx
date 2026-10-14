@@ -65,6 +65,69 @@ onSend: (text: string, opts?: { webSearch?: boolean }) => void;
   onThinkingChange?: (v: boolean) => void;
 }
 
+/**
+ * 2026-10-15: 任务归属判断 (系统层 prompt 出口的前端镜像, agentai-loop.ts:1703)
+ * 用户反馈: 工作区设成 C 盘某目录, 但任务跟它无关时, AI 老在原地打转。
+ * 前端在 Composer 顶部弹一条轻提示 — 关键词启发式匹配 + 顶层目录匹配,
+ * 不阻断发送, 只提醒"新建目录/切换工作区/继续在这里做"。
+ */
+function detectTaskWorkspaceMismatch(draftText: string, workspaceDir: string | undefined): { text: string; dir: string } | null {
+  const txt = (draftText || '').trim();
+  if (txt.length < 4) return null; // 太短不判, 避免误报
+  const ws = (workspaceDir || '').trim();
+  if (!ws) return null; // 没设工作区, 无从比
+  const lower = txt.toLowerCase();
+  const wsLower = ws.toLowerCase();
+
+  // ① 明确要"另起炉灶" — 关键词
+  const newDirKeywords = /另[建存设放开新]|新建[一目工文夹项]|换个[目工]录|别[在到]这个[目工]录|换个[目工]录|新[开建]始/.test(txt);
+
+  // ② 目标里点了别的绝对路径 — 跨盘/跨目录
+  const otherPath = txt.match(/[A-Za-z]:[\\/][^\s"'\`<>|*?]+/g) || [];
+  const crossPath = otherPath.some(p => {
+    const pw = p.toLowerCase().replace(/\//g, '\\');
+    return wsLower.includes(pw.slice(0, pw.lastIndexOf('\\') > -1 ? pw.lastIndexOf('\\') : 0)) === false
+      && !wsLower.includes(pw.split('\\').filter(Boolean).pop()!); // 目标路径最后一段不在 ws 里
+  });
+
+  // ③ 任务关键词跟工作区目录名也完全无关 (粗判)
+  const wsLeaf = (ws.split(/[\\/]/).filter(Boolean).pop() || '').toLowerCase();
+  const taskMatchesWs = wsLeaf.length >= 2 && (lower.includes(wsLeaf) || wsLower.includes(wsLeaf));
+  if (taskMatchesWs) return null; // 任务明显跟工作区相关, 不提示
+
+  if (newDirKeywords || crossPath) {
+    return { text: '这个任务似乎跟当前工作区无直接关系', dir: ws };
+  }
+  return null;
+}
+
+/** 提示条: 显示在 Composer 顶部, 用户点"继续在这里做"即消失 (localStorage 记忆) */
+const MISMATCH_DISMISS_KEY = 'agentai.workspace.mismatchDismissed';
+function useWorkspaceMismatchDismiss(workspaceDir: string): [boolean, () => void] {
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    if (!workspaceDir) return;
+    try {
+      const raw = localStorage.getItem(MISMATCH_DISMISS_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as Record<string, number>;
+      // 同一 workspace 内 60s 内只提示一次
+      if (saved[workspaceDir] && Date.now() - saved[workspaceDir] < 60_000) setDismissed(true);
+    } catch { /* ignore */ }
+  }, [workspaceDir]);
+  const dismiss = useCallback(() => {
+    setDismissed(true);
+    try {
+      const saved: Record<string, number> = {};
+      const raw = localStorage.getItem(MISMATCH_DISMISS_KEY);
+      if (raw) Object.assign(saved, JSON.parse(raw));
+      saved[workspaceDir || '_none'] = Date.now();
+      localStorage.setItem(MISMATCH_DISMISS_KEY, JSON.stringify(saved));
+    } catch { /* ignore */ }
+  }, [workspaceDir]);
+  return [dismissed, dismiss];
+}
+
 const ComposerBase = ({
   onSend, onAbort, busy, disabled,
   slashCommands, textareaRef,
@@ -83,6 +146,12 @@ const ComposerBase = ({
   const [recording, setRecording] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [parsing, setParsing] = useState(false); // 文件解析中
+  // 工作区疑似不匹配提示 (2026-10-15): 关键词启发, 不阻断, 可关
+  const [mismatchDismissed, dismissMismatch] = useWorkspaceMismatchDismiss(workspaceDir || '');
+  const mismatch = useMemo(
+    () => (busy ? null : detectTaskWorkspaceMismatch(draft, workspaceDir)),
+    [draft, workspaceDir, busy],
+  );
 
   // ★ 行业感知: 检测是否为中医问诊模式 (2026-08-10)
   const [currentIndustry, setCurrentIndustry] = useState('general');
@@ -494,6 +563,72 @@ setActiveModel(modelId);
               {onDequeueSend && <span onClick={() => onDequeueSend(i)} style={{ cursor: 'pointer', color: 'var(--muted-2)', marginLeft: 2 }}>×</span>}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* 工作区疑似不匹配提示 (2026-10-15): 关键词启发, 不阻断, 可关 */}
+      {mismatch && !mismatchDismissed && (
+        <div style={{
+          margin: '0 12px 4px',
+          padding: '6px 12px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(250,173,20,0.10)',
+          border: '1px solid rgba(250,173,20,0.40)',
+          fontSize: 'var(--fs-sm)',
+          color: 'var(--fg-2)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+        }}>
+          <span style={{ color: 'var(--warning)', flexShrink: 0 }}>⚠️</span>
+          <span style={{ flex: 1, minWidth: 120 }}>
+            {mismatch.text} ({mismatch.dir})。继续在这里做, 或「新建目录」/「切换工作区」:
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              dismissMismatch();
+              // 追加提示让 AI 自选专属目录 (agentai-loop.ts:1703 任务归属判断出口)
+              const tip = '\n(提示: 这个任务跟当前工作区无直接关系, 如需新建产出, 请自建专属目录如 output/<task> 或 .agentai/scratch, 别散落在工作区根目录污染它; 若用户指定了目标目录就写到那。)';
+              setDraft((d) => d + tip);
+            }}
+            style={{
+              border: '1px solid rgba(250,173,20,0.5)', background: 'transparent',
+              color: 'var(--warning)', borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer', fontSize: 'var(--fs-micro)', fontWeight: 600,
+              padding: '2px 8px', fontFamily: 'inherit', flexShrink: 0,
+            }}
+          >
+            自建目录
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              // 触发 WorkspaceSelector 弹目录选择 (它内部 setBrowserOpen(true) 由
+              // "agentai:workspace-select" 自定义事件驱动, 下方 ChatView 监听)。
+              dismissMismatch();
+              window.dispatchEvent(new CustomEvent('agentai:workspace-select'));
+            }}
+            style={{
+              border: '1px solid var(--border)', background: 'var(--panel)',
+              color: 'var(--fg-2)', borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer', fontSize: 'var(--fs-micro)', fontWeight: 600,
+              padding: '2px 8px', fontFamily: 'inherit', flexShrink: 0,
+            }}
+          >
+            切换工作区
+          </button>
+          <button
+            type="button"
+            onClick={dismissMismatch}
+            title="忽略这条提示 (本会话 60s 内不再弹)"
+            style={{
+              border: 'none', background: 'transparent',
+              color: 'var(--muted-2)', cursor: 'pointer', fontSize: 'var(--fs-md)',
+              flexShrink: 0, padding: 0, lineHeight: 1, fontFamily: 'inherit',
+            }}
+          >✕</button>
         </div>
       )}
 

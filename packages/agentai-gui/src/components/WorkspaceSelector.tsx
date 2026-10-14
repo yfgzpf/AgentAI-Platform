@@ -112,6 +112,14 @@ export const WorkspaceSelector: React.FC = () => {
     }
   }, []);
 
+  // 2026-10-15: 外部 (Composer 工作区不匹配提示条) 可发 agentai:workspace-select
+  // 让本组件弹目录选择器, 不用去翻标题栏找 WorkspaceSelector
+  useEffect(() => {
+    const onSelect = () => { setEditing(true); setValue(workspace || ''); setBrowserOpen(true); loadDrives(); };
+    window.addEventListener('agentai:workspace-select', onSelect);
+    return () => window.removeEventListener('agentai:workspace-select', onSelect);
+  }, [loadDrives, workspace]);
+
   /** 加载目录子节点 */
   const loadDirEntries = useCallback(async (dirPath: string): Promise<FsEntry[]> => {
     const res = await fetch(`${gatewayUrl()}/v1/fs/list?dir=${encodeURIComponent(dirPath)}`);
