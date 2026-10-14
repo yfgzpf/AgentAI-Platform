@@ -1413,6 +1413,14 @@ await apiStream(base + '/v1/chat', {
       smartClear();
     }},
     { cmd: '/abort', desc: '中断当前回复', run: () => handleStop() },
+    // 赏金打单快捷入口 (2026-10-15): 填入一行指令后直接 send, 走 AI 跑
+    // bounty-target-picker → grant_scope → pentest-workflow → report_vulnerability → bounty-report 链路
+    { cmd: '/bounty', desc: '赏金打单: 挑授权目标+挖洞+出报告', run: () => {
+      handleSend(`/bounty 请帮我打一个赏金单。目标平台: ____  项目页 URL: ____  in-scope 目标域名: ____\n请按 bounty-target-picker 解析 scope → 让我逐条确认哪些能测 → grant_scope 授权 → 跑 pentest-workflow 挖洞(浏览器+nuclei+注入探针) → 真复现的洞 report_vulnerability 落盘 → 最后按 bounty-report 出各平台能过审的报告。每步要我先确认才往下走。`);
+    }},
+    { cmd: '/pentest', desc: '渗透测试: 授权目标后自动挖洞', run: () => {
+      handleSend(`/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) 用 wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10 模板; 4) 对找到的输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 最后按 bounty-report 出报告。越界目标一律拒绝。`);
+    }},
     { cmd: '/help', desc: '查看帮助', run: () => {
       appendMessage({ id: 'help', role: 'system', segments: [{ kind: 'text', text: `
 **岐枢命令指南**
@@ -1420,6 +1428,8 @@ await apiStream(base + '/v1/chat', {
 - \`/clear\` — 清空当前对话
 - \`/new\` — 新建对话
 - \`/abort\` — 中断当前回复
+- \`/bounty\` — 赏金打单 (挑目标+挖洞+出报告)
+- \`/pentest\` — 渗透测试 (授权+挖洞+落盘)
 - \`/help\` — 查看帮助
 
 **模式说明**
