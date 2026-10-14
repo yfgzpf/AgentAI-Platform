@@ -833,6 +833,9 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'create_tool', description: '创建自定义工具。当发现经常需要某个操作但没有现成工具时使用。工具以脚本形式存储在 .agentai/custom-tools/ 目录下。', parameters: { type: 'object', properties: { name: { type: 'string', description: '工具名称 (小写+下划线)' }, description: { type: 'string' }, script: { type: 'string', description: 'Node.js 脚本内容。必须导出 async function run(args): Promise<string>' }, parameters: { type: 'object', description: '参数定义 (JSON Schema)' } }, required: ['name','description','script'] }, parallelSafe: false, riskLevel: 'high' },
   // 2026-10-14 P2 冻结开关: AI 自己开/关 evolution 冻结 (评测/复现场景)。
   { name: 'set_evolution_frozen', description: '【自进化写入冻结开关】设/取消 evolution + evolved-rules + custom-tools 的写入冻结。\n\n🔑 触发场景:\n- 跑评测/基准测试前冻结 (确保结果可复现, 不被自进化学习污染)\n- 复现 bug 前冻结 (行为稳定)\n- 跑完解冻\n\n⚠️ 冻结期:\n- 拦截: evolve_prompt (add/remove) / create_tool / record_failure / 主循环自动写 / 子智能体回写\n- 不拦截: list / readEvolution / 召回 / remember / remember_this (读操作与显式用户记忆不受影响)\n\n💡 示例: 跑评测前 → set_evolution_frozen({frozen:true}); 跑完 → set_evolution_frozen({frozen:false})', parameters: { type: 'object', properties: { frozen: { type: 'boolean', description: 'true=冻结 (拦截所有自进化写入), false=解冻' } }, required: ['frozen'] }, parallelSafe: true, riskLevel: 'medium' },
+  // ===== 2026-10-14 P1 技能包导入/导出 (agent-skills 分发, 让跑出来的好技能跨项目复用) =====
+  { name: 'import_skill_package', description: '【导入技能包】从 URL (http/https) 或本地 .skill 文件 (tar.gz) 拉技能包, 解压到项目技能目录, 自动注册进 smartDispatch。\n\n💡 触发场景:\n- 用户给你下载好的 .skill / .tgz 文件路径, 想装到当前项目\n- 用户给你 GitHub 上技能包 URL, 想在线拉取\n- 跨 workspace / 跨项目复用跑出来的好技能\n\n⚠️ 安全: 包内代码不在此处执行 (handler.py / handler.ts 由 skill-orchestrator 现有的 AST 安全扫描把关), 本工具只解压文件。\n\n💡 示例:\nimport_skill_package({ url: "C:/Users/me/.agentai/skill-packages/mine.skill" })\nimport_skill_package({ url: "https://example.com/skills/impeccable.skill", targetDir: ".agentai/skills" })', parameters: { type: 'object', properties: { url: { type: 'string', description: '技能包 URL 或本地 .skill / .tgz 文件路径' }, targetDir: { type: 'string', description: '可选, 解压目标目录 (默认: .agentai/skills/{skill-name}/)' } }, required: ['url'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'export_skill_package', description: '【导出技能包】把当前 workspace 里跑出来的好技能 (含 SKILL.md + reference/ + 脚本) 打成 .skill 文件 (tar.gz), 可发给其他项目 / 团队复用。\n\n💡 触发场景:\n- 跑出一个好用的技能, 想打包发给同事\n- 跨 workspace 迁移自定义技能\n\n💡 示例: export_skill_package({ skillDir: ".agentai/skills/my-custom-skill" })', parameters: { type: 'object', properties: { skillDir: { type: 'string', description: '技能目录 (相对/绝对路径, 必须含 SKILL.md)' }, outPath: { type: 'string', description: '可选, 输出 .skill 文件路径 (默认: .agentai/skill-packages/{name}.skill)' } }, required: ['skillDir'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆 (不传 key 或 key="*" 清空全部)\n- all: 一键清理所有跨会话数据 (项目记忆+上轮摘要+会话日志+AI记忆+对话历史)\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除单条项目记忆\n- forget({type:"project_memory"}) — 清空全部项目记忆\n- forget({type:"all"}) — 一键清理所有跨会话知识库 (全新开始)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory','all'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名 (不传或 "*" 清空全部)' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'remember_this', description: '【AI 主动结构化记忆 / 长期知识沉淀】\n主动将关键发现/决策/教训/项目事实写入项目记忆, 跨会话复用。比 remember 更结构化, 支持分类、重要性、去重。\n\n⚠️ 关键区别:\n- remember = 简单键值记忆 (key-value)\n- remember_this = 结构化记忆 (5 类分类 + 重要性 1-5 + entityId 去重)\n- evolve_prompt = 永久行为规则\n\n🔑 5 类记忆分类:\n- bug_fix: Bug 修复 (症状→根因→方案)\n- decision: 关键决策 (选择+理由)\n- pattern: 代码/架构模式\n- user_preference: 用户偏好\n- project_fact: 项目事实\n\n💡 触发场景:\n- 修复一个 bug → remember_this(category:bug_fix)\n- 做出技术选型 → remember_this(category:decision)\n- 发现项目规律 → remember_this(category:pattern)\n- 用户表达偏好 → remember_this(category:user_preference)\n- 确认项目约束 → remember_this(category:project_fact)\n\n📝 示例:\n- remember_this({category:"bug_fix", title:"PowerShell不支持&&", content:"...", entityId:"bug:ps:&&", importance:4})\n- remember_this({category:"decision", title:"使用BM25而非向量检索", content:"...", entityId:"decision:bm25", importance:5})', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['bug_fix','decision','pattern','user_preference','project_fact'], description: '记忆分类' }, title: { type: 'string', description: '简短标题 (展示用)' }, content: { type: 'string', description: '核心内容 (详细描述)' }, entityId: { type: 'string', description: '实体ID (用于去重, 如 "bug:llm-router:comments")' }, importance: { type: 'number', minimum: 1, maximum: 5, description: '重要性 1-5 (5=必须记住, <3 不写入)' }, tags: { type: 'array', items: { type: 'string' }, description: '标签 (可选)' } }, required: ['category','title','content','entityId','importance'] }, parallelSafe: false, riskLevel: 'low' },
@@ -2909,6 +2912,34 @@ ${violations.map(v => `• ${v}`).join('\n')}
         ? '✅ evolution 已冻结: 后续自进化写入 (evolve_prompt / create_tool / record_failure / 主循环自动写 / 子智能体回写) 全被拦截, 读操作与 remember 不受影响'
         : `✅ evolution 已解冻: 自进化写入恢复正常 (当前 isEvolutionFrozen=${isEvolutionFrozen()})`,
     };
+  },
+  // 2026-10-14 P1 技能包导入 (agent-skills 分发) — 拉包 + 解压 + 注册进 smartDispatch
+  import_skill_package: async (args, ctx) => {
+    const { url, targetDir } = args;
+    if (!url) return { success: false, output: '缺 url 参数' };
+    try {
+      const ws = getWs();
+      const { importSkillPackage } = await import('./skill-package.js');
+      const { skillOrchestrator } = await import('./skill-orchestrator.js');
+      // 默认目标: 当前 workspace 的 .agentai/skills/ (跨项目复用)
+      const resolvedTarget = targetDir
+        ? (targetDir.startsWith('/') || /^[A-Za-z]:/.test(targetDir) ? targetDir : path.join(ws, targetDir))
+        : path.join(ws, '.agentai', 'skills');
+      const r = await importSkillPackage(url, resolvedTarget, skillOrchestrator);
+      return { success: r.success, output: r.message, data: { skillDir: r.skillDir, skillsFound: r.skillsFound } };
+    } catch (e: any) { return { success: false, output: `import_skill_package 失败: ${e.message}` }; }
+  },
+  // 2026-10-14 P1 技能包导出 — 把跑出来的好技能打包成 .skill (tar.gz)
+  export_skill_package: async (args, ctx) => {
+    const { skillDir, outPath } = args;
+    if (!skillDir) return { success: false, output: '缺 skillDir 参数' };
+    try {
+      const ws = getWs();
+      const { exportSkillPackage } = await import('./skill-package.js');
+      const resolvedDir = skillDir.startsWith('/') || /^[A-Za-z]:/.test(skillDir) ? skillDir : path.join(ws, skillDir);
+      const r = await exportSkillPackage(resolvedDir, outPath ? (outPath.startsWith('/') || /^[A-Za-z]:/.test(outPath) ? outPath : path.join(ws, outPath)) : undefined);
+      return { success: r.success, output: r.message, data: { archivePath: r.archivePath, skillName: r.skillName } };
+    } catch (e: any) { return { success: false, output: `export_skill_package 失败: ${e.message}` }; }
   },
   forget: async (args) => {
     try {
