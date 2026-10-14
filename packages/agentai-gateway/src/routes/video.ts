@@ -556,11 +556,17 @@ export function createVideoRouter(io?: any) {
             if (resp.ok) {
               const data: any = await resp.json();
               const status = data.status || data.state || 'processing';
-              const videoUrl = data.content?.video?.url || data.video_url || data.url || data.data?.url || data.output?.url || null;
+              const videoUrl = data.content?.video?.url || data.content?.video_url || data.video_url || data.url || data.data?.url || data.output?.url || null;
               const coverUrl = data.content?.video?.cover_image_url || data.cover_url || null;
+              // 2026-10-14: 尾帧 — 之前这里完全不解析, 导致工厂 Seedance 任务的尾帧恒为空,
+              // 分镜「尾帧衔接」每次都掉到 ffmpeg 兜底 (本机无 ffmpeg → 空转)。
+              const lastFrameUrl = pickLastFrameUrl(data);
               // 能解出 url 或明确任务状态 → 命中, 直接返回
               if (videoUrl || status !== 'processing') {
-                return res.json({ status, videoUrl, coverUrl, raw: JSON.stringify(data) });
+                if (videoUrl && !lastFrameUrl) {
+                  console.warn(`[video] seedance(工厂) 已出视频但未解析到尾帧, 响应顶层字段: ${Object.keys(data).join(',')}`);
+                }
+                return res.json({ status, videoUrl, coverUrl, lastFrameUrl, raw: JSON.stringify(data) });
               }
             }
           } catch {}
@@ -579,9 +585,14 @@ export function createVideoRouter(io?: any) {
             if (resp.ok) {
               const data: any = await resp.json();
               const status = data.status || data.state || 'processing';
-              const videoUrl = data.content?.video?.url || data.video_url || data.url || null;
+              const videoUrl = data.content?.video?.url || data.content?.video_url || data.video_url || data.url || null;
               const coverUrl = data.content?.video?.cover_image_url || data.cover_url || null;
-              return res.json({ status, videoUrl, coverUrl, raw: JSON.stringify(data) });
+              // 2026-10-14: 同上 — 火山直连也补上尾帧解析 (提交时已带 return_last_frame: true)
+              const lastFrameUrl = pickLastFrameUrl(data);
+              if (videoUrl && !lastFrameUrl) {
+                console.warn(`[video] seedance(火山) 已出视频但未解析到尾帧, 响应顶层字段: ${Object.keys(data).join(',')}`);
+              }
+              return res.json({ status, videoUrl, coverUrl, lastFrameUrl, raw: JSON.stringify(data) });
             }
           } catch {}
         }
@@ -1322,6 +1333,9 @@ async function submitSeedanceViaFactory(
   const volBody: any = {
     model: subModel,
     content: [{ type: 'text', text: prompt }],
+    // 2026-10-14: 主动索要尾帧 — 火山 Seedance 的文档参数 (默认 false)。
+    // 工厂是 OpenAI 兼容中转, 多余字段通常被忽略/透传; 若上游本就默认返回尾帧, 此参数无副作用。
+    return_last_frame: true,
   };
   if (image) {
     const imgData = await urlToBase64(image);
@@ -1368,6 +1382,9 @@ async function submitSeedanceVariant(
   const volBody: any = {
     model: volModel,
     content: [{ type: 'text', text: prompt }],
+    // 2026-10-14: 火山 Seedance 文档参数 — 让它把生成视频的最后一帧一并返回
+    // (查询结果的 content.last_frame_url)。不传则默认 false, 尾帧恒缺 → 分镜接戏空转。
+    return_last_frame: true,
   };
   if (image) {
     const imgData = await urlToBase64(image);
@@ -1507,8 +1524,8 @@ async function queryAgnesVideo25(
     const status = data.status || data.state || 'processing';
     const videoUrl = data.video_url || data.url || data.video?.url || data.output?.[0]?.url || data.result?.video_url || null;
     const coverUrl = data.cover_url || data.poster || data.cover || data.video?.cover_url || null;
-    // P0: 提取 API 返回的尾帧 URL (return_last_frame: true 时返回)
-    const lastFrameUrl = data.last_frame || data.last_frame_url || data.content?.last_frame || null;
+    // P0: 提取 API 返回的尾帧 URL (统一走 pickLastFrameUrl — 兼容各上游字段名)
+    const lastFrameUrl = pickLastFrameUrl(data);
     return res.json({ status, videoUrl, coverUrl, lastFrameUrl, raw: JSON.stringify(data) });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
@@ -1610,8 +1627,8 @@ async function queryAgnesFlash(res: any, apiKey: string, videoId: string) {
     const status = data.status || data.state || 'processing';
     const videoUrl = data.video_url || data.url || data.video?.url || data.output?.[0]?.url || null;
     const coverUrl = data.cover_url || data.poster || data.cover || null;
-    // P0: 提取 API 返回的尾帧 URL (return_last_frame: true 时返回)
-    const lastFrameUrl = data.last_frame || data.last_frame_url || data.content?.last_frame || null;
+    // P0: 提取 API 返回的尾帧 URL (统一走 pickLastFrameUrl — 兼容各上游字段名)
+    const lastFrameUrl = pickLastFrameUrl(data);
     return res.json({ status, videoUrl, coverUrl, lastFrameUrl, raw: JSON.stringify(data) });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
@@ -1642,6 +1659,34 @@ async function submitCogVideo(res: any, zhipuKey: string, prompt: string, image?
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
   }
+}
+
+// ===== 辅助: 从视频任务响应里取「尾帧」URL =====
+//
+// 2026-10-14: 各上游的尾帧字段名不统一 (Agnes 用 last_frame, 火山 Seedance 文档用
+// content.last_frame_url, 中转可能原样透传也可能改名), 且无法在本机核实准确契约
+// (火山文档是 JS 渲染, 抓不到正文)。故做"广撒网"式容错解析 —— 命中任一即返回。
+// ⚠️ 这是容错, 不是已确认契约: 若长期取不到, 看查询分支里的自诊断 warn
+//    (只打印响应**顶层字段名**, 不含值/凭据), 据此钉死真名。
+function pickLastFrameUrl(data: any): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const cands = [
+    data.content?.last_frame_url,
+    data.content?.video?.last_frame_url,
+    data.last_frame_url,
+    data.last_frame,
+    data.content?.last_frame,
+    data.data?.last_frame_url,
+    data.data?.last_frame,
+    data.output?.last_frame_url,
+    data.output?.last_frame,
+    data.result?.last_frame_url,
+    data.result?.last_frame,
+  ];
+  for (const c of cands) {
+    if (typeof c === 'string' && c.length > 0) return c;
+  }
+  return null;
 }
 
 // ===== 辅助: URL/Data URI 标准化 =====

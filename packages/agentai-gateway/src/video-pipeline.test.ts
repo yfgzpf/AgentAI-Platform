@@ -234,4 +234,49 @@ describe('V5 分镜/视频 refImages 相对路径不再被误拼为非法 Data U
   });
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// V6 Seedance/豆包 的尾帧经官方 API 取回 (2026-10-14)
+//
+// 旧缺陷: 只有 Agnes 两条查询分支解析尾帧; Seedance (火山直连 + Alrc 工厂)
+// 既不请求也不解析 → 前端 lastFrameUrl 恒 undefined → 分镜「尾帧衔接」每次都
+// 掉到 ffmpeg 兜底 (本机无 ffmpeg) → 空转。这批把尾帧接回来。
+// ════════════════════════════════════════════════════════════════════════
+
+describe('V6 Seedance 尾帧: 提交索要 + 查询解析', () => {
+  it('★ 两条 Seedance 提交体都带 return_last_frame: true (工厂 + 火山直连)', () => {
+    // 工厂走 /chat/completions, 直连走 /contents/generations/tasks — 两条都要带
+    expect(videoCode, '工厂提交体缺少尾帧开关').toMatch(
+      /model: subModel,[\s\S]{0,200}?return_last_frame: true/,
+    );
+    expect(videoCode, '火山直连提交体缺少尾帧开关').toMatch(
+      /model: volModel,[\s\S]{0,200}?return_last_frame: true/,
+    );
+  });
+
+  it('★ 四条查询分支 (2 Seedance + 2 Agnes) 的响应都带 lastFrameUrl', () => {
+    const returns = (videoCode.match(/coverUrl, lastFrameUrl, raw: JSON\.stringify\(data\)/g) || []).length;
+    expect(
+      returns,
+      'Seedance 工厂/火山 + Agnes 正式版/Flash 四条查询响应都应回传 lastFrameUrl',
+    ).toBe(4);
+  });
+
+  it('★ 统一走 pickLastFrameUrl 容错解析 (各上游字段名不一)', () => {
+    expect(videoCode, '缺少 pickLastFrameUrl 定义').toMatch(
+      /function pickLastFrameUrl\(data: any\): string \| null/,
+    );
+    const uses = (videoCode.match(/const lastFrameUrl = pickLastFrameUrl\(data\)/g) || []).length;
+    expect(uses, '四条查询分支都应改用该 helper').toBe(4);
+    // 覆盖火山 Seedance 文档字段
+    expect(videoCode).toContain('data.content?.last_frame_url');
+    // 旧的 Agnes 内联三元已删除 (改走 helper)
+    expect(videoCode).not.toContain('data.last_frame || data.last_frame_url');
+  });
+
+  it('★ 出视频却没解析到尾帧时打诊断日志 (只打字段名, 不打值/凭据)', () => {
+    expect(videoCode).toMatch(/未解析到尾帧, 响应顶层字段/);
+    expect(videoCode).toMatch(/Object\.keys\(data\)\.join\(','\)/);
+  });
+});
+
 void NL;
