@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { readFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 
 const ROOT = nodePath.resolve(__dirname, '..', '..', '..');
@@ -122,5 +122,95 @@ describe('行为: scope_guard + report_vulnerability', () => {
     expect(fs.existsSync(vulnsFile)).toBe(true);
     const lastLine = fs.readFileSync(vulnsFile, 'utf8').trim().split('\n').pop()!;
     expect(JSON.parse(lastLine).title).toBe('反射型XSS');
+  });
+});
+
+
+// ════════════════════════════════════════════════════════════════════════
+// kali 扫描器接线 (2026-10-15): wsl_scan + grant_scope + list_scope
+// ════════════════════════════════════════════════════════════════════════
+describe('契约: wsl_scan + grant_scope + list_scope (kali 接线)', () => {
+  it('tools.ts 有 wsl_scan 声明 (工具白名单 6 扫描器)', () => {
+    expect(toolsCode).toMatch(/name:\s*'wsl_scan'/);
+    expect(toolsCode).toMatch(/enum:\s*\['nmap'\s*,\s*'nuclei'\s*,\s*'sqlmap'/);
+  });
+
+  it('tools.ts 有 grant_scope + list_scope 声明 (授权对话化)', () => {
+    expect(toolsCode).toMatch(/name:\s*'grant_scope'/);
+    expect(toolsCode).toMatch(/name:\s*'list_scope'/);
+  });
+
+  it('subagent.ts pentest 工具集含 wsl_scan + grant_scope + list_scope', () => {
+    const m = subagentCode.match(/pentest:\s*\[[\s\S]*?'wsl_scan',\s*'grant_scope',\s*'list_scope'/);
+    expect(m, 'pentest 工具集段未含 kali 接线三件').toBeTruthy();
+  });
+
+  it('pentest prompt 工作流提到 wsl_scan / grant_scope', () => {
+    expect(subagentSrc).toMatch(/wsl_scan/);
+    expect(subagentSrc).toMatch(/grant_scope/);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// 行为: wsl_scan 越界拒绝 + 白名单 + grant_scope 写盘
+// ════════════════════════════════════════════════════════════════════════
+describe('行为: wsl_scan 授权闸门 + grant_scope 落盘', () => {
+  const gwSrcDir = nodePath.join(ROOT, 'packages', 'agentai-gateway', 'src');
+  const tmpWs2 = nodePath.join(gwSrcDir, '..', '.scope-guard-test-ws-wsl');
+  const fsMod = { rmSync, mkdirSync, writeFileSync, readFileSync, existsSync };
+
+  beforeAll(() => {
+    fsMod.rmSync(tmpWs2, { recursive: true, force: true });
+    fsMod.mkdirSync(nodePath.join(tmpWs2, '.agentai'), { recursive: true });
+    fsMod.writeFileSync(nodePath.join(tmpWs2, '.agentai', 'scope.json'),
+      JSON.stringify({ targets: ['example.com'], max_rps: 5 }));
+  });
+  afterAll(() => {
+    fsMod.rmSync(tmpWs2, { recursive: true, force: true });
+  });
+
+  it('wsl_scan 越界目标 → 拒绝 (不真跑 wsl)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['wsl_scan']({ target: 'https://bank.com', tool: 'nmap', args: ['-sV'] }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.output).toMatch(/越界|不在授权/);
+  });
+
+  it('wsl_scan 白名单外工具 → 拒绝 (防任意命令)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['wsl_scan']({ target: 'https://example.com', tool: 'rm' }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.output).toMatch(/未知工具|允许/);
+  });
+
+  it('grant_scope 把目标写进 scope.json (对话式授权)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['grant_scope']({ target: 'admin.example.com', max_rps: 3 }, ctx);
+    expect(r.success).toBe(true);
+    const scope = JSON.parse(fsMod.readFileSync(nodePath.join(tmpWs2, '.agentai', 'scope.json'), 'utf8'));
+    expect(scope.targets).toContain('admin.example.com');
+    expect(scope.max_rps).toBe(3);
+  });
+
+  it('grant_scope 去重 (同 host 不重复加)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
+    const r1 = await EXTRA_HANDLERS['grant_scope']({ target: 'https://admin.example.com' }, ctx);
+    expect(r1.data?.granted).toBe(false);
+    const scope = JSON.parse(fsMod.readFileSync(nodePath.join(tmpWs2, '.agentai', 'scope.json'), 'utf8'));
+    const adminCount = scope.targets.filter((t: string) => t.includes('admin.example.com')).length;
+    expect(adminCount).toBe(1);
+  });
+
+  it('list_scope 返回当前授权范围', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['list_scope']({}, ctx);
+    expect(r.success).toBe(true);
+    expect(r.data?.targets?.length).toBeGreaterThan(0);
+    expect(r.output).toMatch(/admin.example.com/);
   });
 });

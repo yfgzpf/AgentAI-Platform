@@ -81,9 +81,9 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
 - 每次工具调用前一句话说明目的, 调用后一句话总结发现。
 
 工作流程:
-1. 授权: scope_guard.check_scope 确认目标在范围内
-2. 侦察 (Recon): browser_navigate + browser_scan 发现 API 端点/表单/输入点; 有 hexstrike MCP 时用其侦察工作流 (子域名/端口/目录/指纹)
-3. 攻击 (Exploit): 对授权内目标试 SQL注入、XSS、CSRF、认证绕过、路径遍历、命令注入 (先 rate_limit)
+1. 授权: scope_guard.check_scope 确认目标在范围内; 无授权先调 grant_scope({target}) 让用户授权, 或 list_scope 看当前范围
+2. 侦察 (Recon): browser_navigate + browser_scan 发现 API 端点/表单/输入点; 有 kali WSL 时**优先用 wsl_scan** (nmap -sV / nuclei 指纹), 比 curl 火力强一档
+3. 攻击 (Exploit): 对授权内目标试 SQL注入、XSS、CSRF、认证绕过、路径遍历、命令注入; 重扫描 (全端口/字典爆破/CVE 库) 用 wsl_scan({tool:"nmap"/"nuclei"/"ffuf"}) (先 rate_limit)
 4. PoC: 为每个发现生成可运行的利用脚本 (Python/JavaScript), 强度最小
 5. 验证: 运行 PoC 证明漏洞真实 (截图/响应作为证据); 未复现的不写进报告
 6. 报告: 按下方模板输出; 已验证的用 report_vulnerability 落盘
@@ -517,6 +517,8 @@ const SUBAGENT_TOOLS: Record<string, string[]> = {
     'run_code', 'run_command', 'web_search', 'web_fetch',
     'read_file', 'search_content', 'get_file_info',
     'scope_guard', 'report_vulnerability',
+    // 2026-10-15 kali 接线: wsl_scan 走 WSL kali 调 nmap/nuclei/sqlmap; grant_scope/list_scope 授权对话化
+    'wsl_scan', 'grant_scope', 'list_scope',
   ],
   'fix-verifier': [
     'read_file', 'search_content', 'run_code', 'run_command',

@@ -860,6 +860,25 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       evidence: { type: 'string', description: '验证证据 (截图路径 / 关键响应片段)' },
       platform: { type: 'string', description: '可选: 目标赏金平台 (补天/漏洞盒子/阿里SRC/HackerOne...)' },
     }, required: ['title','target','severity'] }, parallelSafe: false, riskLevel: 'low' },
+  // ===== 2026-10-15 kali 扫描器 + 授权对话化 =====
+  // wsl_scan: 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等扫描器 (白名单 + 先过授权闸门)。
+  // 本机 Windows 装不了 Kali 本体, 但 WSL 里有 kali-linux 发行版, 子智能体经 wsl_scan 真能驱动它。
+  { name: 'wsl_scan', description: '【Kali 扫描器驱动】走 WSL kali-linux 调 nmap/nuclei/sqlmap/ffuf/gobuster/nikto 等扫描器, 对授权目标发起真实扫描。本机 Windows 装不了 Kali, 但 WSL 里有 kali-linux 发行版。\n\n🔑 触发场景: pentest 子智能体 / 主对话要"真扫端口/子域名/目录/指纹"时。比 run_command + curl 火力强一档 (nmap 全端口扫、nuclei 模板库、ffuf 字典爆破)。\n\n⚙️ 参数: target (授权目标 host) + tool (nmap|nuclei|sqlmap|ffuf|gobuster|nikto) + args (该工具的参数数组, 如 nmap 传 ["-sV","-p","80,443"]) + timeout_ms。\n\n🔒 安全: 外层先过授权闸门 (同 scope_guard 逻辑), target 必须在 .agentai/scope.json 授权范围内, 否则直接拒绝 — 工具白名单固定 6 个扫描器, 防 AI 借 wsl 跑任意命令。\n\n💡 前置: 需先 `wsl --install -d kali` 装 kali + `apt install nmap nuclei sqlmap ffuf gobuster nikto`。未装时返回明确报错, 不静默失败。\n\n💡 示例:\nwsl_scan({ target: "127.0.0.1", tool: "nmap", args: ["-sV","--top-ports","100"] })\nwsl_scan({ target: "target.local", tool: "nuclei", args: ["-tags","cve,misconfig"] })',
+    parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '授权目标 host (需在 scope.json targets 内)' },
+      tool: { type: 'string', enum: ['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto'], description: '扫描器' },
+      args: { type: 'array', items: { type: 'string' }, description: '该工具的参数数组 (如 nmap 的 ["-sV","-p","80,443"])' },
+      timeout_ms: { type: 'number', description: '超时毫秒 (默认 60000, 上限 180000)' },
+    }, required: ['target','tool'] }, parallelSafe: false, riskLevel: 'high' },
+  // grant_scope: 授权对话化 — 聊天里说"授权测 X"就自动写 scope.json, 免手写 JSON
+  { name: 'grant_scope', description: '【渗透测试授权 (对话式)】把一个目标加进 .agentai/scope.json 授权范围, 让后续 scope_guard / wsl_scan / pentest 子智能体能合法攻击它。免手写 JSON — 聊天里说"授权测 X / 把 X 加进授权范围"就自动调本工具。\n\n🔑 触发场景: 用户要"挖洞/渗透测/安全扫描"某目标, 但 scope.json 还没有这个目标 (scope_guard 返回 in_scope:false / 无授权范围)。\n\n📄 行为: 读现有 scope.json, 把 target 追加进 targets (去重), max_rps 可改。target 支持 host 或 URL (自动抽 host)。\n\n⚠️ 安全: 授权是"允许攻击边界", 加上即表示该目标可被 wsl_scan/pentest 动手。只在用户明确要测某目标时用, 别批量乱加。\n\n💡 示例: grant_scope({ target: "admin.example.com", max_rps: 5 }) → ✅ 已授权 admin.example.com (现共 N 个目标)',
+    parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '要授权的目标 host 或 URL' },
+      max_rps: { type: 'number', description: '可选, 速率上限 (默认 5)' },
+    }, required: ['target'] }, parallelSafe: false, riskLevel: 'medium' },
+  // list_scope: 查当前授权范围
+  { name: 'list_scope', description: '【查当前渗透测试授权范围】列出 .agentai/scope.json 的 targets + max_rps。用户问"现在能测哪些目标 / 授权范围是什么"时调本工具。',
+    parameters: { type: 'object', properties: {}, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆 (不传 key 或 key="*" 清空全部)\n- all: 一键清理所有跨会话数据 (项目记忆+上轮摘要+会话日志+AI记忆+对话历史)\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除单条项目记忆\n- forget({type:"project_memory"}) — 清空全部项目记忆\n- forget({type:"all"}) — 一键清理所有跨会话知识库 (全新开始)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory','all'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名 (不传或 "*" 清空全部)' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'remember_this', description: '【AI 主动结构化记忆 / 长期知识沉淀】\n主动将关键发现/决策/教训/项目事实写入项目记忆, 跨会话复用。比 remember 更结构化, 支持分类、重要性、去重。\n\n⚠️ 关键区别:\n- remember = 简单键值记忆 (key-value)\n- remember_this = 结构化记忆 (5 类分类 + 重要性 1-5 + entityId 去重)\n- evolve_prompt = 永久行为规则\n\n🔑 5 类记忆分类:\n- bug_fix: Bug 修复 (症状→根因→方案)\n- decision: 关键决策 (选择+理由)\n- pattern: 代码/架构模式\n- user_preference: 用户偏好\n- project_fact: 项目事实\n\n💡 触发场景:\n- 修复一个 bug → remember_this(category:bug_fix)\n- 做出技术选型 → remember_this(category:decision)\n- 发现项目规律 → remember_this(category:pattern)\n- 用户表达偏好 → remember_this(category:user_preference)\n- 确认项目约束 → remember_this(category:project_fact)\n\n📝 示例:\n- remember_this({category:"bug_fix", title:"PowerShell不支持&&", content:"...", entityId:"bug:ps:&&", importance:4})\n- remember_this({category:"decision", title:"使用BM25而非向量检索", content:"...", entityId:"decision:bm25", importance:5})', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['bug_fix','decision','pattern','user_preference','project_fact'], description: '记忆分类' }, title: { type: 'string', description: '简短标题 (展示用)' }, content: { type: 'string', description: '核心内容 (详细描述)' }, entityId: { type: 'string', description: '实体ID (用于去重, 如 "bug:llm-router:comments")' }, importance: { type: 'number', minimum: 1, maximum: 5, description: '重要性 1-5 (5=必须记住, <3 不写入)' }, tags: { type: 'array', items: { type: 'string' }, description: '标签 (可选)' } }, required: ['category','title','content','entityId','importance'] }, parallelSafe: false, riskLevel: 'low' },
@@ -2624,6 +2643,104 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         data: record,
       };
     } catch (e: any) { return { success: false, output: `report_vulnerability 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-15 kali 扫描器接线: wsl_scan 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等 =====
+  // 本机 Windows 装不了 Kali 本体, 但 WSL 里有个 kali-linux 发行版。
+  // 这里把扫描器白名单固定 (nmap/nuclei/sqlmap/ffuf/gobuster/nikto), 外层先过授权闸门
+  // (同 scope_guard 逻辑), 防止 AI 用它攻击未授权目标。参数经 cmd /c 转 wsl 执行,
+  // 不直接拼进 shell (避免引号注入)。
+  wsl_scan: async (args, ctx) => {
+    try {
+      const { execFile } = await import('child_process');
+      const ws = (ctx as any)?.workspace || getWs();
+      // 1. 先过授权闸门 (与 scope_guard 同源, 不绕开)
+      const scopeFile = path.join(ws, '.agentai', 'scope.json');
+      let scope: { targets?: string[]; max_rps?: number } = {};
+      if (fs.existsSync(scopeFile)) scope = JSON.parse(fs.readFileSync(scopeFile, 'utf-8'));
+      const hostOf = (u: string) => {
+        try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
+        catch { return null; }
+      };
+      const targetHost = hostOf(String(args.target || ''));
+      if (!scope.targets?.length || !targetHost) {
+        return { success: false, output: '❌ wsl_scan 需先有 .agentai/scope.json 授权 (targets 非空), 且 target 可解析 host。先调 scope_guard(check_scope) 或 grant_scope。' };
+      }
+      const allowed = scope.targets.some(t => { const th = hostOf(t); return targetHost === th || targetHost.endsWith('.' + th); });
+      if (!allowed) return { success: false, output: `❌ wsl_scan 越界: ${targetHost} 不在授权范围 [${scope.targets.join(', ')}]。禁止攻击未授权目标。` };
+      // 2. 工具白名单 (防任意命令注入, 只许这 6 个扫描器)
+      const tool = String(args.tool || 'nmap');
+      const ALLOWED = new Set(['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto']);
+      if (!ALLOWED.has(tool)) return { success: false, output: `❌ 未知工具: ${tool} (允许: ${[...ALLOWED].join('/').split(',').map(s=>s.trim()).join(' / ')})` };
+      // 3. 组装: wsl -d kali-linux -- <tool> <args> <target>
+      const extra = Array.isArray(args.args)
+        ? args.args.map((x: any) => String(x)).slice(0, 32)
+        : String(args.args || '').split(' ').filter(Boolean).slice(0, 32);
+      const innerCmd = [tool, ...extra, targetHost].join(' ');
+      const timeoutMs = Math.min(Number(args.timeout_ms) || 60_000, 180_000);
+      // 经 cmd /c 转义执行 (避免 bash 直连 wsl 时引号被吃), 参数经 argv 数组不走 shell 拼接
+      const wslCmd = `wsl -d kali-linux -- ${innerCmd.replace(/"/g, '\\"')}`;
+      const out = await new Promise<string>((resolve, reject) => {
+        execFile('cmd', ['/d', '/s', '/c', wslCmd], {
+          timeout: timeoutMs + 5000, maxBuffer: 5 * 1024 * 1024,
+          windowsHide: true, encoding: 'utf-8',
+        }, (err: any, so: any, se: any) => {
+          if (err) { const e: any = new Error(String(err.message)); e.stdout = so; e.stderr = se; reject(e); return; }
+          resolve(String(so ?? '') + (se ? `\nSTDERR:\n${se}` : ''));
+        });
+      });
+      const txt = (out || '').trim().slice(0, 6000);
+      return { success: true, output: txt || '(wsl_scan ok, 无输出)', data: { tool, target: targetHost, out: txt } };
+    } catch (e: any) {
+      const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
+      const se = e.stderr ? `\nSTDERR:\n${String(e.stderr).slice(0, 2000)}` : '';
+      return { success: false, output: `wsl_scan 失败: ${e.message}${so}${se}` };
+    }
+  },
+  // ===== 2026-10-15 授权对话化: grant_scope / list_scope (免手写 scope.json) =====
+  grant_scope: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const scopeFile = path.join(ws, '.agentai', 'scope.json');
+      // 读现有 (不存在则空)
+      let scope: { targets?: string[]; max_rps?: number } = {};
+      if (fs.existsSync(scopeFile)) {
+        try { scope = JSON.parse(fs.readFileSync(scopeFile, 'utf-8')); } catch { scope = {}; }
+      }
+      if (!Array.isArray(scope.targets)) scope.targets = [];
+      const hostOf = (u: string) => {
+        try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
+        catch { return null; }
+      };
+      const host = hostOf(String(args.target || ''));
+      if (!host) return { success: false, output: `❌ 无法解析目标 host: ${args.target}` };
+      // 去重追加
+      const already = scope.targets.some(t => { const th = hostOf(t); return th === host; });
+      if (!already) scope.targets.push(host);
+      if (args.max_rps) scope.max_rps = Number(args.max_rps);
+      fs.mkdirSync(path.dirname(scopeFile), { recursive: true });
+      fs.writeFileSync(scopeFile, JSON.stringify(scope, null, 2), 'utf-8');
+      return {
+        success: true,
+        output: `${already ? '（已在授权范围, 未重复添加）' : '✅ 已授权'} ${host} — 现共 ${scope.targets.length} 个目标, max_rps=${scope.max_rps || 5}。后续 scope_guard / wsl_scan / pentest 子智能体可对该目标动手。`,
+        data: { granted: !already, target: host, targets: scope.targets, max_rps: scope.max_rps || 5, file: scopeFile },
+      };
+    } catch (e: any) { return { success: false, output: `grant_scope 失败: ${e.message}` }; }
+  },
+  list_scope: async (_args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const scopeFile = path.join(ws, '.agentai', 'scope.json');
+      if (!fs.existsSync(scopeFile)) {
+        return { success: true, output: '📭 当前无授权范围 (.agentai/scope.json 不存在)。要挖洞先用 grant_scope 授权一个目标。', data: { targets: [], max_rps: 0 } };
+      }
+      const scope = JSON.parse(fs.readFileSync(scopeFile, 'utf-8'));
+      const targets = Array.isArray(scope.targets) ? scope.targets : [];
+      return {
+        success: true,
+        output: `🔓 当前授权范围: ${targets.length ? targets.join(', ') : '(空)'} | max_rps=${scope.max_rps || 5}。共 ${targets.length} 个目标。`,
+        data: { targets, max_rps: scope.max_rps || 5, file: scopeFile },
+      };
+    } catch (e: any) { return { success: false, output: `list_scope 失败: ${e.message}` }; }
   },
   plan_task: async (args, ctx) => {
     try {
