@@ -62,6 +62,8 @@ const INDUSTRY_ACTIONS: Record<string, Array<{ label: string; prompt: string; ic
     { label: '审查代码', prompt: '审查当前项目代码质量，指出问题', icon: '🔍' },
     { label: '排查 Bug', prompt: '帮我定位并修复这个问题', icon: '🐛' },
     { label: '性能优化', prompt: '帮我分析性能瓶颈并给出优化建议', icon: '⚡' },
+    { label: '赏金打单', prompt: '/bounty 请帮我打一个赏金单。目标平台: ____  项目页 URL: ____  in-scope 目标域名: ____  请按 bounty-target-picker 解析 scope → 让我逐条确认哪些能测 → grant_scope 授权 → 跑 pentest-workflow 挖洞 → 真复现的洞 report_vulnerability 落盘 → 最后按 bounty-report 出各平台能过审的报告。每步要我先确认才往下走。', icon: '🎯' },
+    { label: '渗透测试', prompt: '/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10; 4) 对输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 按 bounty-report 出报告。越界目标一律拒绝。', icon: '🔒' },
   ],
   medical: [
     { label: '舌诊辨证', prompt: '我想做中医舌诊，请帮我分析舌象', icon: '👅' },
@@ -104,6 +106,8 @@ const INDUSTRY_ACTIONS: Record<string, Array<{ label: string; prompt: string; ic
     { label: '画一张图', prompt: '画一张赛博朋克风格的猫，霓虹灯光，高质量', icon: '🎨' },
     { label: '搜索最新', prompt: '搜索最新的 AI Agent 开源框架，对比优缺点', icon: '🔍' },
     { label: '代码体检', prompt: '分析当前项目的代码质量，并给出优化建议', icon: '🧪' },
+    { label: '赏金打单', prompt: '/bounty 请帮我打一个赏金单。目标平台: ____  项目页 URL: ____  in-scope 目标域名: ____  请按 bounty-target-picker 解析 scope → 让我逐条确认哪些能测 → grant_scope 授权 → 跑 pentest-workflow 挖洞 → 真复现的洞 report_vulnerability 落盘 → 最后按 bounty-report 出各平台能过审的报告。每步要我先确认才往下走。', icon: '🎯' },
+    { label: '渗透测试', prompt: '/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10; 4) 对输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 按 bounty-report 出报告。越界目标一律拒绝。', icon: '🔒' },
   ],
 };
 
@@ -124,8 +128,8 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({ handleSend }) => {
       justifyContent: 'center', width: '100%', minHeight: 0,
       padding: '32px 24px', boxSizing: 'border-box', textAlign: 'center',
     }}>
-      {/* Logo — 静态, 无动画 */}
-      <BrandLogo size={68} glow />
+      {/* Logo — 描边入场动画 (两条流线被"画"出 → 交点脉冲亮起) */}
+      <BrandLogo size={68} glow animate />
 
       {/* 品牌名 — 小字, 弱化存在感 */}
       <div style={{
