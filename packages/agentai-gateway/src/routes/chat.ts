@@ -25,6 +25,8 @@ import { Xuanji } from '../xuanji/index.js';
 import { FACTORY_MODEL_ENTRIES } from '../factory-registry.js';
 import { getCostTracker, CostTracker } from '../cost/index.js';
 import { analyzeGaps } from '../diagnosis/gap-analyzer-llm.js';
+// 2026-10-14 P2 冻结开关 (ESM 模块, 用 import 不用 require — dev 下 tsx 直跑 ESM, require 会 ReferenceError)
+import { setEvolutionFrozen, isEvolutionFrozen } from '../evolution-freeze.js';
 
 // Xuanji 实例
 const xuanji = new Xuanji({
@@ -56,7 +58,7 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
 
   // 2026-10-14 P2 冻结开关: 评测/复现时暂停自进化写入 (进程级, 所有 workspace 生效)。
   // 读操作 (list / readEvolution / 召回 / remember) 不受影响, 只挡 5 个写入口。
-  const { setEvolutionFrozen, isEvolutionFrozen } = require('../evolution-freeze.js');
+  // 注意: setEvolutionFrozen / isEvolutionFrozen 已在本文件顶部 import (ESM), 不再用 require。
   r.get('/v1/evolution/freeze', (_req: any, res: any) => {
     res.json({ frozen: isEvolutionFrozen() });
   });
