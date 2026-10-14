@@ -153,6 +153,24 @@ const ComposerBase = ({
     [draft, workspaceDir, busy],
   );
 
+  // 2026-10-15: 切换工作区后自动把任务词填回 draft (用户点"切换工作区"按钮后,
+  // 选完新目录, 原输入不丢 — 监听 agentai:workspace-changed 事件, 用当前 draft
+  // 保留原文本, 再追加一句"已切换工作区, 继续执行"提示)
+  const lastDraftRef = useRef('');
+  useEffect(() => { lastDraftRef.current = draft; }, [draft]);
+  useEffect(() => {
+    const onWsChanged = (e: Event) => {
+      const newWs = (e as CustomEvent<{ workspace: string }>).detail?.workspace;
+      if (!newWs) return;
+      const prev = lastDraftRef.current.trim();
+      if (!prev) return; // 没原 draft 就不做
+      // 用户刚切换工作区 → 保留原文, 追加一句提示让 AI 知道新目录
+      setDraft((d) => (d.trim() ? d : prev) + `\n(已切换工作区到 ${newWs}, 请基于此继续, 别再用旧路径)`);
+    };
+    window.addEventListener('agentai:workspace-changed', onWsChanged);
+    return () => window.removeEventListener('agentai:workspace-changed', onWsChanged);
+  }, []);
+
   // ★ 行业感知: 检测是否为中医问诊模式 (2026-08-10)
   const [currentIndustry, setCurrentIndustry] = useState('general');
   useEffect(() => {

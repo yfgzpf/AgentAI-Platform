@@ -355,6 +355,72 @@ tier 决策链：`agentai-loop.ts:1840 getCapabilitiesById().tier` → `:1849 go
 | chatStore.ts | **throttled localStorage** (2 秒写入一次, 避免流式阻塞) |
 | SessionSidebar.tsx | 对话摘要列表, 双击编辑标题 |
 
+### 五·五、渗透测试 / 赏金打单 (2026-10-15 新增, 前端入口 + 工具链 + 技能)
+
+借鉴 HexStrike AI 文章 + 落地到 AgentAI 现有 pentest 栈。前端入口有三层, 工具/技能都在 gateway 侧:
+
+**前端入口 (三层曝光度)**
+| 入口 | 位置 | 触发 |
+|------|------|------|
+| 欢迎页卡片 | `WelcomePanel.tsx` 空态 (general + developer 行业) | 点 **🎯 赏金打单 / 🔒 渗透测试** 卡片, 自动发 slash command |
+| Slash 命令 | `ChatView.tsx` `slashCommands` | 输入框打 `/` 弹菜单: `/bounty`、`/pentest`、`/help` (指南已列新命令) |
+| 口述触发 | 聊天随便说 | "帮我打个赏金单 / 渗透测 X" → AI 自动识别走链路 |
+
+核验: `grep -n "bounty\|pentest" packages/agentai-gui/src/components/WelcomePanel.tsx packages/agentai-gui/src/components/ChatView.tsx`
+欢迎页卡片走既有 auto-fit 网格 (`minmax(190px,1fr)`), 4→6 张自动排 2 行, **无布局改动**; 卡片 CSS 全走 `var(--panel)/var(--border)/var(--accent)`, 无硬编码色。
+
+**工具链 (gateway 侧, 详见 §二 工具系统 + 新增 `wsl_scan`)**
+- `scope_guard` — 授权闸门 (check_scope 读 `.agentai/scope.json` + rate_limit 令牌桶, 越界拒绝, 无 scope 默认全拒)
+- `grant_scope` / `list_scope` — 授权对话化 (聊天说"授权测 X"自动写 scope.json, 免手写 JSON; 查当前范围)
+- `wsl_scan` — 走 `wsl -d kali-linux` 调 nmap/nuclei/sqlmap/ffuf/gobuster/nikto (白名单 6 扫描器 + 先过授权闸门, 防 AI 借 wsl 跑任意命令)
+- `report_vulnerability` — 真复现的洞落盘 `.agentai/vulns/vulns.jsonl` (跨会话可召回)
+- pentest 子智能体工具集含以上 6 件 (`subagent.ts`), prompt 写死"先 check_scope / 禁 DoS 爆破提权 / 越界拒绝"
+
+**Kali 安装 (本机 Windows 装不了本体, 走 WSL)**
+`node packages/agentai-gateway/scripts/install-kali-wsl.mjs` (一键: `wsl --install -d kali` + `apt install nmap nikto ffuf sqlmap nuclei` + which 自检 + 最小 nmap 真扫; `--check-only` 只探不装; 含 dpkg 锁/libc 依赖自愈)。
+本机已装 `kali-linux` 发行版, 5 扫描器就绪, `wsl -d kali-linux -- nmap -sV 127.0.0.1` 验证可出端口结果。
+
+**技能 (3 个, 在 `packages/agentai-skills/security/`)**
+| 技能 | 作用 | 触发词 |
+|------|------|--------|
+| `pentest-workflow` | 7 步挖洞 (授权→校验→限频→侦察→最小强度攻击→验证落盘→报告) + **网页专扫组合拳** (浏览器抓表单 + ffuf 目录爆破扫 `.git/admin/backup/.env` + nuclei owasp-top10 CVE + nikto + 注入探针) | 渗透测试/挖洞/安全扫描 |
+| `bounty-target-picker` | 抓赏金平台项目页 → 解析 in-scope/out-of-scope 资产 → 生成 `grant_scope` 待授权清单 (**不自动执行**, 给用户逐条确认) | 挑目标/解析 scope/赏金大厅 |
+| `bounty-report` | 把 `.agentai/vulns/` 落盘的洞整理成各平台 (HackerOne/补天/漏洞盒子/各厂SRC) 能过审的报告: 4 维定级 (CVSS 简化, 宁低勿高) + 复现证据规范 + 提交 checklist + 单条模板 | 提交漏洞/出报告/定级 |
+
+**全家桶链路 (打单)**
+```
+bounty-target-picker (挑目标: 抓 scope → 待授权清单) → grant_scope (授权, 用户确认)
+  → pentest-workflow (挖洞: 浏览器 + wsl_scan kali + 注入探针) → report_vulnerability (真洞落盘)
+  → bounty-report (出能过审报告) → 提交平台 (人工, 工具到此为止)
+```
+
+**合规红线 (写死在技能 + 工具, 不可越过)**
+- 只测授权范围内资产; out-of-scope / 支付 / 生产 / 第三方云 **一个字不碰** (`wsl_scan` 白名单 + `scope_guard` 闸门双重拦截)
+- `bounty-target-picker` 只产**待确认清单**, 不自动授权不自动开扫 —— 合规判断始终在人
+- 定级宁低勿高 (虚标 Critical 过审被打回 + 拉黑); 没复现的洞不报
+- 报告必须声明"最小强度、无破坏" —— 这是与真攻击者的界限
+
+**已知边界 (如实)**
+- 工具/技能/入口全就位, 但**子智能体真动手**需有余额的强模型 (免费档会回"建议换强模型"不真扫) —— 充值 key 后聊天点卡片/打 slash 即可真开扫
+- 平台准入/注册/提交过审是人工, 工具到"出报告"为止
+- Kali 需另机/本机 `install-kali-wsl.mjs` 装; 没装也能跑 (退回 curl 最小探针, `wsl_scan` 会报"未装"不静默失败)
+
+### 五·六、任务归属判断 (2026-10-15 新增, 防 AI 在无关工作区打转)
+
+**问题**: 用户把工作区设成 C 盘某目录, 但任务跟它无关时, AI 老在原地打转 (反复新建/改名/再试), 不主动避开或自建目录。诊断 = **系统问题** (prompt 缺口), 不是模型问题 — 模型知道怎么 mkdir/用绝对路径, 但 system prompt 没给"该挪就挪"的出口。
+
+**修法 (双层出口, 同源文案)**:
+- **系统层** `agentai-loop.ts:1703` workspace 注入补 "⚠️ 任务归属判断" 段:
+  ① 动手前先判任务与工作区是否相关 ② 无关就自建专属目录 (`output/<task>` 或 `.agentai/scratch`, 别污染工作区根) ③ 同一目录反复打转 >2 次没推进就停下 `ask_user` 确认放哪。全 tier 生效 (这段没被 `isStrongModel`/autonomous 门控, 强模型也吃得到)。
+- **前端镜像** `Composer.tsx` 加"工作区疑似不匹配"提示条: 输入命中"另起炉灶"类关键词且任务词跟工作区目录名对不上时, 弹轻提示 (不阻断发送, 60s 记忆可关)。两个按钮:
+  - **自建目录** → 给 draft 追加系统层同源提示 (文案跟 ① 对齐)
+  - **切换工作区** → 发 `agentai:workspace-select` 事件, `WorkspaceSelector` 监听后弹目录选择器; 选完发 `agentai:workspace-changed`, Composer 监听后**把原任务词保留 + 追加"已切换工作区到 X, 请基于此继续"** → 用户不用重打
+
+核验:
+- 系统层: `npx vitest run src/workspace-task-routing.test.ts` (4 契约测试: 出口存在 / 自建目录出口 / 打转停下 / 未被 tier 门控)
+- 前端层: `cd packages/agentai-gui && npx vitest run src/workspace-mismatch.test.ts` (6 契约测试: 检测函数 / busy 时不弹 / 文案同源 / 切换事件通道 / 颜色走变量 / 切完回填)
+- ⚠️ 前端启发式是**粗判** (关键词 + 目录名匹配), 误报就点 ✕ 关掉; 真正的"挪开"决策在系统层 prompt, 前端只是提前提醒。
+
 ### 五·补、布局机制（2026-10-11 实测，附核验方式）
 
 **外观层三处缺陷已修**：

@@ -49,4 +49,10 @@ describe('工作区不匹配前端提示 (与系统出口镜像)', () => {
     expect(composerNoCmt).toMatch(/var\(--warning\)|rgba\(250,173,20/);
     expect(composerNoCmt).not.toMatch(/backgroundColor:\s*['"]#faad14['"]/i);
   });
+
+  it('切换工作区后自动把任务词回填 draft (切完不用重打)', () => {
+    // Composer 监听 agentai:workspace-changed, 有原 draft 时保留原文 + 追加新工作区提示
+    expect(composerNoCmt).toMatch(/addEventListener\(\s*['"]agentai:workspace-changed['"]/);
+    expect(composerNoCmt).toMatch(/已切换工作区/);
+  });
 });
