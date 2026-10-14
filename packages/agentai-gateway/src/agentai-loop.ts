@@ -4546,6 +4546,26 @@ if (isComplexTask) {
             const [toolName] = sig.split('::');
             this.directives.add('dup_fail', `[SYSTEM] ${toolName} 已连续失败 ${count} 次。请停止重试，改用其他工具或方案。`, 'high');
             this.emit('tool:stuck', { tool: toolName, count });
+            // 2026-10-14 P1: 把这条"同参数连续失败 N 次"记进 evolution (跨会话可召回)。
+            // 不记 = 下次同类任务重蹈覆辙。args 截断 200 防日志膨胀。
+            // 注: 这里**不引用** currentTaskType/Industry/Keywords — 那 3 个在 ~50 行
+            // 后的 4561-4563 才定义 (块级作用域, 提前引用会 TS2448)。evolution 召回
+            // 按 userId+workspace 就够 (recallEvolution.ts:303 的过滤逻辑)。
+            const argsRaw = sig.slice(toolName.length + 2); // 去掉 "toolName::" 前缀
+            const argsSafe = argsRaw.length > 200 ? argsRaw.slice(0, 200) + '…' : argsRaw;
+            try {
+              const { writeEvolution } = await import('./evolution.js');
+              writeEvolution({
+                type: 'failure',
+                content: `${toolName} 同参数连续失败 ${count} 次 (args: ${argsSafe}), 下次别再用这条路`,
+                userId: this.opts.userId,
+                sessionId: this.opts.userId,
+                workspace: this.opts.workspace,
+                errorType: 'UnknownError',
+                failureCategory: 'execution_error',
+                metadata: { source: 'dup_fail', toolName, failCount: count, args: argsSafe },
+              });
+            } catch { /* evolution write optional */ }
             break; // 只触发一次
           }
         }

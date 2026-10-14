@@ -1050,6 +1050,11 @@ generate_poc({
   headers: { type: 'object', description: '额外请求头 (可选)' },
   verify: { type: 'boolean', default: true, description: '是否自动运行验证' },
 }, required: ['vulnerability', 'target'] }, parallelSafe: false, riskLevel: 'high' },
+  // ===== 2026-10-14 P1 失败教训持久化 (RSIAgent "验证即学习" 闭环) =====
+  // 走 evolution.ts 的 30 天 TTL + 6h 清理; 失因分类 = execution_error (不改技能, 与
+  // evolution.ts:92-101 EmbodiSkill 原则一致)。主循环在"重复失败" (agentai-loop.ts:4544)
+  // 也会自动写一份, 这里是 AI 主动补记的入口。
+  { name: 'record_failure', description: '【记录失败教训到 evolution 记忆 (跨会话/跨项目可召回)】\n当某工具/命令反复失败, 或 verifier 子智能体判 FAIL, 或发现"这条路走不通"时调用。参数:\n- toolName: 哪一步失败 (工具名/命令名)\n- reason: 为什么不通 (1 句话)\n- errorType: 可选, 与 evolution.ErrorType 一致 (NotFound/Permission/Timeout/...)\n- hint: 可选, 下次怎么绕过 (会一并写进 evolution, 召回时直接给建议)\n\n示例:\nrecord_failure({ toolName: "ffmpeg", reason: "本机未安装", errorType: "NotFound", hint: "走 API 尾帧, 别依赖 ffmpeg" })\n\n写入 30 天 TTL, 6h 清理, 下次同类任务自动召回。', parameters: { type: 'object', properties: { toolName: { type: 'string', description: '失败的步骤 (工具名/命令名)' }, reason: { type: 'string', description: '为什么不通 (1 句话)' }, errorType: { type: 'string', description: '可选, 与 evolution.ErrorType 一致, 如 NotFound/Permission/Timeout' }, hint: { type: 'string', description: '可选, 下次怎么绕过, 会一并写进 evolution' } }, required: ['toolName', 'reason'] }, parallelSafe: true, riskLevel: 'low' },
 ];
 
 // ====== 图表生成辅助函数 (generate_diagram tool) ======
@@ -3006,6 +3011,29 @@ ${violations.map(v => `• ${v}`).join('\n')}
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
   recall_memory: async (args) => { try { const { MemoryManager } = await import('./memory-manager.js'); const ws = getWs(); const mm = MemoryManager.getInstance(ws); const results = await mm.recall({ key: args.name, scope: args.scope, limit: args.limit || 10 }); if (results.length === 0) return { success: true, output: args.name ? `未找到: ${args.name}` : '暂无记忆' }; return { success: true, output: results.map(r => `[${r.key}] ${r.value.slice(0, 120)}`).join('\n---\n'), data: { count: results.length } }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
+  // 2026-10-14 P1 失败教训持久化 — 写入 evolution (30 天 TTL, 6h 清理, 跨会话可召回)。
+  // 与 agentai-loop.ts:4544 "重复失败自动写" 双路径: 这里是 AI 主动补记入口, 主循环自动写是兜底。
+  record_failure: async (args, ctx) => {
+    const { toolName, reason, errorType, hint } = args;
+    if (!toolName || !reason) return { success: false, output: '缺参数: 需要 toolName + reason' };
+    const ws = getWs();
+    try {
+      const { writeEvolution } = await import('./evolution.js');
+      writeEvolution({
+        type: 'failure',
+        content: `${toolName}: ${reason}${hint ? ` | 下次: ${hint}` : ''}`,
+        userId: (ctx as any)?.userId,
+        sessionId: (ctx as any)?.userId,
+        workspace: ws,
+        errorType: (errorType as any) || 'UnknownError',
+        failureCategory: 'execution_error',
+        metadata: { source: 'record_failure', toolName },
+      });
+      return { success: true, output: `✅ 已记 ${toolName} 失败教训 (30 天 TTL, 6h 清理, 跨会话可召回)` };
+    } catch (e: any) {
+      return { success: false, output: `写入 evolution 失败: ${e.message}` };
+    }
+  },
   session_manage: async (args) => {
     try {
       const { getPersistentMemory } = await import('./persistent-memory.js');

@@ -105,6 +105,12 @@ describe('提示词: verifier 系统提示词 3 要素', () => {
   it('明确 "执行者说成功不算 PASS" 的约束', () => {
     expect(subagentSrc).toMatch(/因为["「『]?执行者/);
   });
+
+  it('回执后主 Agent 可调用 record_failure 工具 (闭环: FAIL → 记教训)', () => {
+    // 防有人把 verifier 提示词里的 record_failure 引用删回去
+    // (RSIAgent "验证即学习" 闭环: verifier 判 FAIL 后主 Agent 调 record_failure 写 evolution)
+    expect(subagentSrc).toContain('record_failure');
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════

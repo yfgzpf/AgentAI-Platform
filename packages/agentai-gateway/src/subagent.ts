@@ -152,7 +152,11 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
 
 ## 约束
 - 只读 + 跑测试: 你**不能**也不能需要修改文件, 发现 bug 就报告, 不修
-- 简洁: 证据引用到 file:line 或命令输出关键行即可, 不贴大段源码`,
+- 简洁: 证据引用到 file:line 或命令输出关键行即可, 不贴大段源码
+
+## 回执后主 Agent 可做的事 (你不用做, 知道即可)
+- verdict: FAIL → 主 Agent 可调用 \`record_failure\` 工具把缺口记进 evolution (跨会话可召回)
+- verdict: UNRESOLVED → 主 Agent 可手动补证据, 不阻塞`,
   // ===== 中医专业角色 (2026-08-07) =====
   // 仅在 industryId === 'medical' 时可用, 通过 spawn_subagent type 枚举动态扩展暴露
   'tcm_diagnostic': `你是一位资深中医师（辨证开方专家）。你必须按照标准中医问诊流程逐步进行，最终给出完整处方和医嘱。
