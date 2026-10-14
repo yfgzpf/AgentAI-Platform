@@ -1700,7 +1700,7 @@ try {
           // 仅展示顶层目录结构, 需要时调用 list_directory 或 directory_tree 获取详情
           systemMsgs.push({
             role: 'system',
-            content: `\n# Workspace: ${dirPath}\n你正在此目录工作。文件操作默认使用相对路径（如 "src/index.ts"）。\n\n## 跨目录访问\n- 用户要求访问其他目录/盘时, 可以使用绝对路径 (如 "D:\\Projects\\my-project\\file.txt")\n- 系统目录(Windows/System32/Program Files)被安全拦截\n- 不要主动告诉用户"我只能访问工作区" — 你可以访问用户指定的任何非系统目录\n\n## 顶层目录:\n${listing || '(空)'}\n\n> ⚡ 仅展示顶层前15项。需要查看深层结构请调用 \`list_directory\` 或 \`directory_tree\`。`,
+            content: `\n# Workspace: ${dirPath}\n你正在此目录工作。文件操作默认使用相对路径（如 "src/index.ts"）。\n\n## ⚠️ 任务归属判断 (先于动手)\n动手前先问一句: 这个任务跟当前工作区 (dirPath) 的内容有关吗?\n- **有关** (改/读它里面的代码、配置、文档) → 就地操作, 用相对路径。\n- **无关** (要新建独立的东西: 新报告/新脚本/新文件夹/新分析产出, 跟 dirPath 里的东西没关系) → **不要在当前工作区里乱建文件/打转**。改为自建一个专属目录再写, 例如:\n  - 用户指定了目标目录 → 就写到那里 (用绝对路径)\n  - 没指定 → 用临时/产出目录, 如 \`${pathSync.join(dirPath, 'output', '<task-slug>')}\` 或 \`${pathSync.join(dirPath, '.agentai', 'scratch')}\` (相对路径), 别散落在工作区根目录污染它\n- 如果反复尝试都在原地打转 (同一目录里新建/改名/再试 >2 次没推进) → **停下来**, 先 ask_user 确认该把产出放哪, 或明确改个目录再动手, 别硬绕。\n\n## 跨目录访问\n- 用户要求访问其他目录/盘时, 可以使用绝对路径 (如 "D:\\Projects\\my-project\\file.txt")\n- 系统目录(Windows/System32/Program Files)被安全拦截\n- 不要主动告诉用户"我只能访问工作区" — 你可以访问用户指定的任何非系统目录\n\n## 顶层目录:\n${listing || '(空)'}\n\n> ⚡ 仅展示顶层前15项。需要查看深层结构请调用 \`list_directory\` 或 \`directory_tree\`。`,
           });
 
           // 子目录记忆
