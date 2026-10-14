@@ -81,10 +81,13 @@ describe('契约: reverse-engineer + design-review 子智能体类型', () => {
     }
   });
 
-  it('design-review 工具集含 check_design_patterns + 只读工具', () => {
+  it('design-review 工具集含 7 个只读工具 (不含写工具)', () => {
     const block = toolBlock('design-review');
-    expect(block).toContain('check_design_patterns');
+    expect(block).toContain('list_directory');
     expect(block).toContain('read_file');
+    expect(block).toContain('search_content');
+    expect(block).toContain('get_file_info');
+    expect(block).toContain('directory_tree');
   });
 
   it('spawn_subagent 工具声明的 type enum 含 reverse-engineer 和 design-review', () => {
