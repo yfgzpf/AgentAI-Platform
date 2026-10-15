@@ -513,7 +513,11 @@ function wm(): WorkspaceManager {
  */
 function getWs(): string {
   try {
-    return currentRequestWorkspace() || WorkspaceManager.getInstance().projectDir || process.cwd();
+    const ws = currentRequestWorkspace() || WorkspaceManager.getInstance().projectDir || process.cwd();
+    // ⚠️ 2026-10-16: 归一化分隔符 — 请求级 workspace 可能是反斜杠 Windows 中文路径
+    // (如 "F:\目录已检查\澳彩"), 直接参与 path.join 会拼坏路径 (.agentai/ 下所有文件读不到)。
+    // 统一转正斜杠, 跟 workspace-manager.setProjectDir 归一化后的 projectDir 同口径。
+    return String(ws).replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, '');
   } catch {
     return process.cwd();
   }

@@ -28,6 +28,16 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { currentRequestWorkspace } from './request-scope.js';
 
+/**
+ * 归一化路径分隔符 (2026-10-16): 反斜杠 Windows 路径 (如 "F:\目录已检查\澳彩")
+ * 统一转成正斜杠形式。Node 在中文路径下 path.resolve/path.join 会静默丢弃
+ * 反斜杠导致路径损坏 ("F:目录已检查澳彩"), 先归一化再参与任何路径拼接。
+ * posix 路径不受影响 (无 \ 可替换)。
+ */
+export function normalizeSeparators(p: string): string {
+  return String(p || '').trim().replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, '');
+}
+
 // ===== 类型定义 =====
 
 export interface WorkspaceManagerOptions {
@@ -103,7 +113,9 @@ export class WorkspaceManager {
       || process.env.AGENTAI_HOME
       || path.join(getUserHome(), '.agentai');
 
-    this.projectDir = opts.projectDir || process.cwd();
+    // ⚠️ 2026-10-16: 归一化分隔符。构造参数可能是反斜杠 Windows 中文路径
+    // (如 "F:\目录已检查\澳彩"), 不归一化后续 .agentai/ 读写全失效。
+    this.projectDir = opts.projectDir ? normalizeSeparators(opts.projectDir) : process.cwd();
   }
 
   /** 初始化: 创建全部标准子目录 */
@@ -204,12 +216,16 @@ export class WorkspaceManager {
    * 自动创建项目级 .agentai/ 子目录, 并持久化到磁盘
    */
   setProjectDir(dir: string): void {
-    if (!fs.existsSync(dir)) {
+    // ⚠️ 2026-10-16 修复: path.resolve 对反斜杠 Windows 中文路径 (如 "F:\目录已检查\澳彩")
+    // 会静默丢弃反斜杠 → 拼成 "F:目录已检查澳彩" (路径损坏), 导致 .agentai/ 下所有读写失效。
+    // 先归一化分隔符 (反斜杠→正斜杠), 保证盘符+中文路径完整。
+    const normalized = normalizeSeparators(dir);
+    if (!fs.existsSync(normalized)) {
       throw new Error(`Project directory does not exist: ${dir}`);
     }
-    this.projectDir = path.resolve(dir);
+    this.projectDir = normalized;
     // 创建项目级记忆目录
-    ensureDir(path.join(this.projectDir, '.agentai', 'memory'));
+    ensureDir(normalized + '/.agentai/memory');
     // 持久化 (重启后恢复)
     this._saveWorkspaceConfig();
   }
@@ -283,9 +299,11 @@ export class WorkspaceManager {
       // 尝试从持久化文件恢复上次的工作区路径
       try {
         const saved = _instance._loadWorkspaceConfig();
-        if (saved && fs.existsSync(saved)) {
-          _instance.projectDir = saved;
-          console.log(`[workspace-manager] 已从配置文件恢复工作区: ${saved}`);
+        // 归一化分隔符 (历史持久化值可能是反斜杠 Windows 形式, 中文路径会损坏)
+        const normalized = saved ? normalizeSeparators(saved) : null;
+        if (normalized && fs.existsSync(normalized)) {
+          _instance.projectDir = normalized;
+          console.log(`[workspace-manager] 已从配置文件恢复工作区: ${normalized}`);
         }
       } catch { /* ignore */ }
     }
