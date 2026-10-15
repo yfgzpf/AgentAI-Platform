@@ -19,6 +19,9 @@ import fsSync from 'fs';
 import pathSync from 'path';
 import { AgentAIRouter, ChatRequest, ChatResponse, ChatMessage, MessageContent, ProviderId, isFreeProvider, DEEPSEEK_FLASH_MODEL } from './llm-router.js';
 import { ToolRegistry, ToolContext, ToolResult } from './tool-registry.js';
+// 2026-10-15 P0 修复: pentest 子智能体 scope 闸门 (dispatchToolCalls 里对 run_command/
+// browser_navigate/web_fetch 做授权校验, 与 tools.ts 的 scope_guard 同源)
+import { isTargetInScope, readScope, extractTargets } from './pentest-scope-guard.js';
 import { hookCapture } from './hook-capture.js';
 import { AGENT_SYSTEM_IDENTITY } from './system-prompt.js';
 import { buildLiteSystemPrompt, detectTaskType, extractKeywords } from './system-prompt-lite.js';
@@ -200,6 +203,13 @@ fts5Memory?: any;
   taskId?: string;
   /** ★ 行业 ID (逐请求传递, 不再从单例读取. 'general' 或空 = 无行业) */
   industryId?: string;
+  /**
+   * ★ 子智能体角色类型 (2026-10-15 P0 修复: 'pentest' 等)。
+   * 仅 subagent.ts:runSubagent / inline spawn 构造时传入。dispatchToolCalls 据此对
+   * pentest 角色的 run_command/browser_navigate/web_fetch 加 scope 授权闸门 ——
+   * 原实现只有 wsl_scan 自带闸门, 其余工具可绕过授权体系打任意目标 (君子协定)。
+   */
+  subagentType?: string;
 }
 
 /**
@@ -663,6 +673,7 @@ private _forbiddenResponseCount: number = 0;
       activeFile: opts.activeFile ?? '',
       taskId: opts.taskId ?? '',  // 长任务快照 ID (跨会话恢复)
       industryId: opts.industryId ?? '',  // ★ 逐请求行业隔离
+      subagentType: opts.subagentType ?? '',  // ★ 子智能体角色 (pentest 闸门依据, 2026-10-15 P0)
       _autoResumed: false,
     };
 
@@ -3912,6 +3923,12 @@ if (isComplexTask) {
             function: { name: tc.name, arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args || {}) },
           }));
         }
+        // ═══ 2026-10-16: DeepSeek V4.1-Flash thinking 模式 — 带 tool_calls 的 assistant 消息
+        // 必须回传 reasoning_content, 否则官方 API 直接 400。把 res.reasoningContent 存进
+        // appendOnlyLog, 下一轮请求时 llm-router 保留这段, 不 400 了。 ═══
+        if ((res as any).reasoningContent) {
+          assistantMsg.reasoning_content = (res as any).reasoningContent;
+        }
         this.context.appendOnlyLog.push(assistantMsg);
         this.emit('log:appended', { role: 'assistant', content: res.content });
 
@@ -4124,6 +4141,7 @@ if (isComplexTask) {
                     modelName: subModelName,
                     userPickedModel: this.opts.userPickedModel,
                     industryId: this.opts.industryId,  // ★ 继承父级行业, 不读单例
+                    subagentType: String(tc.args?.type || ''),  // ★ pentest 闸门依据 (2026-10-15 P0)
                   });
                   // P0 修复: 转发子智能体事件到主 loop, 让前端能看到子Agent的思考过程
                   // 之前: 子智能体的 iteration/progress/tool 事件全部丢弃 → 前端只看到 start/done
@@ -6496,9 +6514,39 @@ try {
       c => !rejectedResults.find(r => r.id === c.id)
     );
 
+    // ★ 2026-10-15 P0 修复: pentest 子智能体 scope 授权闸门。
+    // 原实现只有 wsl_scan 自带授权检查, run_command/browser_navigate/web_fetch 可随意
+    // 打任意目标 (授权边界是君子协定)。这里在 dispatch 前对 pentest 角色的越权工具
+    // 做目标提取 + isTargetInScope 校验, 越界即拒 (与 Hook 拒绝同路, AI 收到 tool 错误)。
+    // 设计: loopback (127.0.0.1/localhost) 免授权; 抓不到 host 的纯本地命令放行;
+    // wsl_scan 自带闸门不重复拦。
+    if (this.opts.subagentType === 'pentest') {
+      const PENTEST_SCOPE_GATED = new Set(['run_command', 'browser_navigate', 'web_fetch']);
+      for (const c of callsToDispatchFiltered) {
+        if (!PENTEST_SCOPE_GATED.has(c.name)) continue;
+        const targets = extractTargets(c.name, c.args || {});
+        const bad = targets.find(t => !isTargetInScope(this.opts.workspace, t));
+        if (bad) {
+          const scopeTargets = readScope(this.opts.workspace);
+          rejectedResults.push({
+            id: c.id,
+            name: c.name,
+            output: `[SCOPE REJECTED] ${c.name} 的目标 ${bad} 不在授权范围内 (${scopeTargets.length ? scopeTargets.join(', ') : 'scope.json 为空, 默认全拒'})。禁止攻击未授权目标 — 未授权扫描有法律风险。请先用 grant_scope({target}) 向用户发起授权提案 (人类在授权面板确认后生效), 或换授权内目标。`,
+            data: null,
+          });
+          this.emit('tool:result', { callId: c.id, name: c.name, result: `[SCOPE REJECTED] ${bad} not in scope`, ok: false, durationMs: 0 });
+          console.log(`[pentest-scope] REJECTED ${c.name} → ${bad} (workspace=${this.opts.workspace})`);
+        }
+      }
+    }
+    // 被 scope 闸门拒绝的调用从 dispatch 列表剔除
+    const callsToDispatchFinal = callsToDispatchFiltered.filter(
+      c => !rejectedResults.find(r => r.id === c.id)
+    );
+
       // 发射 tool:start 事件 (仅被批准的)
-    for (const c of callsToDispatchFiltered) this.emit('tool:start', { callId: c.id, name: c.name, args: c.args });
-    let results = callsToDispatchFiltered.length > 0 ? await this.registry.dispatch(callsToDispatchFiltered, ctx) : [];
+    for (const c of callsToDispatchFinal) this.emit('tool:start', { callId: c.id, name: c.name, args: c.args });
+    let results = callsToDispatchFinal.length > 0 ? await this.registry.dispatch(callsToDispatchFinal, ctx) : [];
 
     // 自动重试: 失败的工具最多重试 2 次 (仅限可重试的临时错误)
     const retryableErrors = /timeout|ECONNREFUSED|ECONNRESET|ETIMEDOUT|network|503|429|rate.limit/i;
