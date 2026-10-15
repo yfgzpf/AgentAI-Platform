@@ -420,7 +420,10 @@ export const FileCard: React.FC<FileCardProps> = ({
         )}
 
         {/* 展开/收起按钮 — 只在 write/edit 模式显示 */}
-        {content && (
+        {/* 2026-10-15: 原条件 {content && ...} 在 content='' (write_file 上游只传了 path 没 content)
+            时隐藏按钮 → 卡片死头, 用户点"查看变更"没入口。改为: 有 content/oldContent/diffStats
+            任一项就显示 "查看变更" (展开后内容从 result.data 按需补), 全无才不显示。 */}
+        {(content || oldContent || (diffStats && (diffStats.added > 0 || diffStats.removed > 0))) && (
           <button
             onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
             style={{
@@ -446,11 +449,16 @@ export const FileCard: React.FC<FileCardProps> = ({
       )}
 
       {/* 展开时: 内容预览 + 操作按钮 (edit 模式走行级 diff) */}
-      {expanded && content && (
+      {/* 2026-10-15: 原条件 {expanded && content && ...} 在 write_file 上游只传 path
+          没 content 时, 即使展开也渲染不出内容区, 只剩 4 个按钮 + 空白。
+          改为 expanded 就渲染容器; 内容区按 "content 有 / 都没有" 分支处理:
+          都缺 → 显示占位文案 (可定位到文件树 / 在编辑器打开, 不必硬卡死)。 */}
+      {expanded && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
-          {isDiffMode ? (
+        {content || oldContent ? (
+          isDiffMode ? (
             /* 行级 diff 渲染 (edit 模式, 有旧内容) */
-            <DiffPreviewLines oldContent={oldContent!} newContent={content} />
+            <DiffPreviewLines oldContent={oldContent!} newContent={content ?? ''} />
           ) : (
             /* 纯文本预览 (create 模式或 read) */
             <pre style={{
@@ -485,7 +493,17 @@ export const FileCard: React.FC<FileCardProps> = ({
                 </div>
               ))}
             </pre>
-          )}
+          )
+        ) : (
+          /* content/oldContent 都缺 — 显示占位 (write_file 上游只传 path 没 content 的常见情况),
+             保留下方 4 个操作按钮, 让用户仍可定位/在编辑器打开, 不卡死 */
+          <div style={{
+            padding: '8px 12px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
+            borderBottom: '1px solid var(--border)',
+          }}>
+            （内容未在消息里携带, 可用下方「定位」在文件树打开, 或「编辑器」查看完整内容）
+          </div>
+        )}
 
           {capReached && (
             <div style={{
@@ -594,12 +612,21 @@ export const FilesFromToolSegment: React.FC<{
     const n = (seg.name || '').toLowerCase();
     const args = typeof seg.args === 'string' ? safeJson(seg.args) : seg.args;
     const result = typeof seg.result === 'string' ? safeJson(seg.result) : seg.result;
+    // ★ 2026-10-15: 统一"从 seg 抽路径" — 优先 args.path (工具声明参数),
+    // 兜底 result 里的 "已生成/created/saved: <path>" 模式 (run_code / generate_* 等
+    // 输出文本里才出现路径的工具, args 里没有 path 字段)。
+    const pathFromResult = (): string => {
+      if (!result) return '';
+      const rs = typeof result === 'string' ? result : JSON.stringify(result);
+      const m = rs.match(/(?:已生成|已创建|saved?|wrote|created|output|写入)[:\s]*[`'"]*([^\s`'"]+\.\w{2,5})/i);
+      return m?.[1] || '';
+    };
 
     // write_file / create_file
     if (n === 'write_file' || n === 'create_file') {
-      const path = args?.path || args?.filePath || args?.file || args?.file_path || '';
+      const path = args?.path || args?.filePath || args?.file || args?.file_path || pathFromResult();
       if (path) {
-        const content = typeof args?.content === 'string' ? args.content : '';
+        const content = typeof args?.content === 'string' ? args.content : (typeof result?.content === 'string' ? result.content : '');
         writeCards.push(
           <FileCard
             key={`${path}-w`}
@@ -607,7 +634,7 @@ export const FilesFromToolSegment: React.FC<{
             path={path}
             content={content}
             ok={seg.ok}
-            diffStats={{ added: content.split('\n').length, removed: 0 }}
+            diffStats={{ added: (content || '').split('\n').length, removed: 0 }}
             onOpenInEditor={onOpen}
           />
         );
@@ -615,18 +642,18 @@ export const FilesFromToolSegment: React.FC<{
     }
     // edit_file / patch_file
     else if (n === 'edit_file' || n === 'patch_file' || n === 'str_replace' || n === 'multi_edit') {
-      const path = args?.path || args?.filePath || args?.file || args?.file_path || '';
+      const path = args?.path || args?.filePath || args?.file || args?.file_path || pathFromResult();
       if (path) {
         // 从 result.data 提取 oldContent (后端 write_file/multi_edit 新增返回)
         const resultData = result?.data || {};
         const data = typeof resultData === 'string' ? safeJson(resultData) : resultData;
         const oldContent = data?.oldContent || undefined;
-        const newContent = data?.newContent || (typeof result?.content === 'string' ? result.content : undefined);
+        const newContent = data?.newContent || (typeof result?.content === 'string' ? result.content : undefined) || (typeof args?.content === 'string' ? args.content : undefined);
         // multi_edit: edits 数组情况下用第一项的 oldContent
         const editFromData = data?.edits?.[0];
         const resolvedOld = oldContent || editFromData?.oldContent || undefined;
         const resolvedNew = newContent || editFromData?.newContent || undefined;
-        // 计算 diffStats
+        // 计算 diffStats — 无 old/new 时给个最小 1 行占位, 让"查看变更"按钮能显示
         const oldLines = resolvedOld ? resolvedOld.split('\n').length : 0;
         const newLines = resolvedNew ? resolvedNew.split('\n').length : 0;
         const added = Math.max(0, newLines - oldLines);
@@ -647,7 +674,7 @@ export const FilesFromToolSegment: React.FC<{
     }
     // read_file / view_file
     else if (n === 'read_file' || n === 'view_file' || n === 'cat_file') {
-      const path = args?.path || args?.filePath || args?.file || args?.file_path || '';
+      const path = args?.path || args?.filePath || args?.file || args?.file_path || pathFromResult();
       if (path) {
         readCards.push(
           <FileCard
@@ -655,6 +682,23 @@ export const FilesFromToolSegment: React.FC<{
             op="read"
             path={path}
             ok={seg.ok}
+            onOpenInEditor={onOpen}
+          />
+        );
+      }
+    }
+    // ★ 2026-10-15: run_code / generate_image / generate_diagram 等 — 路径只出现在
+    // result 文本里, 之前这类工具直接被跳过, 导致"生成文件"列表空/不可点。
+    else if (n === 'run_code' || n === 'generate_image' || n === 'generate_diagram' || n === 'generate_video') {
+      const path = pathFromResult();
+      if (path) {
+        writeCards.push(
+          <FileCard
+            key={`${seg.name || 'gen'}-${path}`}
+            op="create"
+            path={path}
+            ok={seg.ok}
+            diffStats={{ added: 1, removed: 0 }}
             onOpenInEditor={onOpen}
           />
         );
