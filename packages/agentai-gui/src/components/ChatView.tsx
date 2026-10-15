@@ -1406,6 +1406,24 @@ await apiStream(base + '/v1/chat', {
   }, []);
 
   /* ---- Slash commands ---- */
+  // ★ 2026-10-16: 带占位符 (____) 的命令**不再直接发送** — 模板填进输入框, 光标停在首个占位符,
+  //   用户补完地址/平台后手动 Enter 才发。避免"发一次空的, AI 还要追问一次"浪费一轮。
+  //   无占位符的 (如 /clear /new /abort /scope /help) 保持直接执行。
+  const fillDraft = useCallback((text: string) => {
+    // 把模板写进 Composer 输入框 (走 composerRef.setDraft), 光标停到首个 ____ 占位符,
+    // 用户补完平台/地址后手动 Enter 才发。
+    composerRef.current?.setDraft(text);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      const m = ta?.value.match(/_{2,}/);
+      ta?.focus();
+      if (ta && m && m.index !== undefined) {
+        ta.selectionStart = m.index;
+        ta.selectionEnd = m.index;
+      }
+    });
+  }, [composerRef, textareaRef]);
+
   const slashCommands: SlashCmd[] = [
     { cmd: '/clear', desc: '清空当前对话', run: () => { smartClear(); } },
     { cmd: '/new', desc: '新建对话', run: () => {
@@ -1415,17 +1433,17 @@ await apiStream(base + '/v1/chat', {
     { cmd: '/abort', desc: '中断当前回复', run: () => handleStop() },
     // 赏金打单快捷入口 (2026-10-15): 填入一行指令后直接 send, 走 AI 跑
     // bounty-target-picker → grant_scope → pentest-workflow → report_vulnerability → bounty-report 链路
-    { cmd: '/bounty', desc: '赏金打单: 挑授权目标+挖洞+出报告', run: () => {
-      handleSend(`/bounty 请帮我打一个赏金单。目标平台: ____  项目页 URL: ____  in-scope 目标域名: ____\n请按 bounty-target-picker 解析 scope → 让我逐条确认哪些能测 → grant_scope 授权 → 跑 pentest-workflow 挖洞(浏览器+nuclei+注入探针) → 真复现的洞 report_vulnerability 落盘 → 最后按 bounty-report 出各平台能过审的报告。每步要我先确认才往下走。`);
+    { cmd: '/bounty', desc: '赏金打单: 挑授权目标+挖洞+出报告 (填入平台/地址后再发送)', run: () => {
+      fillDraft(`/bounty 请帮我打一个赏金单。目标平台: ____  项目页 URL: ____  in-scope 目标域名: ____\n请按 bounty-target-picker 解析 scope → 让我逐条确认哪些能测 → grant_scope 授权 → 跑 pentest-workflow 挖洞(浏览器+nuclei+注入探针) → 真复现的洞 report_vulnerability 落盘 → 最后按 bounty-report 出各平台能过审的报告。每步要我先确认才往下走。`);
+    }},
+    { cmd: '/pentest', desc: '渗透测试: 授权目标后自动挖洞 (填入目标后再发送)', run: () => {
+      fillDraft(`/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) 用 wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10 模板; 4) 对找到的输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 最后按 bounty-report 出报告。越界目标一律拒绝。`);
+    }},
+    { cmd: '/reverse', desc: '逆向复刻: 读懂陌生软件/网页的实现思路 (填入目标后再发送)', run: () => {
+      fillDraft(`/reverse 目标: ____ (本地文件路径 / URL / 打包应用, 或描述某功能)  请按 reverse-engineer-workflow 走: 1) 定位目标 (本地文件 list_directory, URL 先 web_fetch 抓下来, 打包应用用 rea:analyze_package); 2) rea:analyze 拿概览; 3) 按重点拆解 (rea:diff_versions 对比 / 读关键模块, 每条结论带证据 file:line 或 rea 输出); 4) 用自己的话提炼可复刻点, 不抄对方代码; 5) 按我的技术栈出 1-3 个复刻方案 (含取舍), 不写完整可运行代码。没证据的结论标 UNRESOLVED。`);
     }},
     { cmd: '/scope', desc: '渗透测试授权: 查看/添加可测目标 (免改 JSON)', run: () => {
       window.dispatchEvent(new CustomEvent('agentai:open-scope'));
-    }},
-    { cmd: '/pentest', desc: '渗透测试: 授权目标后自动挖洞', run: () => {
-      handleSend(`/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) 用 wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10 模板; 4) 对找到的输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 最后按 bounty-report 出报告。越界目标一律拒绝。`);
-    }},
-    { cmd: '/reverse', desc: '逆向复刻: 读懂陌生软件/网页的实现思路', run: () => {
-      handleSend(`/reverse 目标: ____ (本地文件路径 / URL / 打包应用, 或描述某功能)  请按 reverse-engineer-workflow 走: 1) 定位目标 (本地文件 list_directory, URL 先 web_fetch 抓下来, 打包应用用 rea:analyze_package); 2) rea:analyze 拿概览; 3) 按重点拆解 (rea:diff_versions 对比 / 读关键模块, 每条结论带证据 file:line 或 rea 输出); 4) 用自己的话提炼可复刻点, 不抄对方代码; 5) 按我的技术栈出 1-3 个复刻方案 (含取舍), 不写完整可运行代码。没证据的结论标 UNRESOLVED。`);
     }},
     { cmd: '/help', desc: '查看帮助', run: () => {
       appendMessage({ id: 'help', role: 'system', segments: [{ kind: 'text', text: `

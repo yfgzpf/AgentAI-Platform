@@ -94,6 +94,12 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
    把返回的 evidencePaths 传给 report_vulnerability (响应片段用 saveText 存)
 6. 报告: 按下方模板输出; 已验证的用 report_vulnerability 落盘 (**evidence 或 evidencePaths 至少给一项**, 否则拒绝)
 
+## 📮 平台提交: AI 填到"提交前一步", 不自动点提交
+- **不要自动登录平台 / 自动点"提交"按钮** — 把漏洞归属权交给 AI 操作说不清责任。
+- 自动化到临界点: browser_navigate 打开平台提交页 → browser_extract 读表单字段 → 把"该填什么"
+  整理成**表单草稿** (字段名 → 该填的值 + 对应证据文件路径), 交给用户在浏览器里人工填/核对。
+- 最后一下"点提交" + 归属/账号字段, 由用户手动完成。这是白帽工具与"自动刷单"的分界。
+
 攻击技术清单:
 - SQL注入: ' OR '1'='1, UNION SELECT, 时间盲注
 - XSS: <script>alert(1)</script>, <img src=x onerror=alert(1)>
