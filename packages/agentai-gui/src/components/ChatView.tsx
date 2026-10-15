@@ -1439,6 +1439,9 @@ await apiStream(base + '/v1/chat', {
     { cmd: '/pentest', desc: '渗透测试: 授权目标后自动挖洞 (填入目标后再发送)', run: () => {
       fillDraft(`/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) 用 wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10 模板; 4) 对找到的输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 最后按 bounty-report 出报告。越界目标一律拒绝。`);
     }},
+    { cmd: '/batch', desc: '批量挖洞: 遍历全部授权目标逐个跑, 用数量堆命中 (有限频保护)', run: () => {
+      handleSend(`/batch 批量挖洞: 请对**当前所有已授权目标**逐个跑 pentest-workflow (list_scope 读全量 → 每个目标先 scope_guard.check_scope+rate_limit → wsl_scan 端口/指纹 + 浏览器抓表单 + http_replay 最小强度探针 + nuclei owasp-top10)。\n规则: ① 每个目标"够深就停" — 命中 1 个可报的洞+证据就换下一个, 别在一个目标空耗; ② 全程守限频, 不打崩目标; ③ 通配符授权先 enum_subdomains 展开再逐个扫子域 (admin/api/dev 优先); ④ 真复现的 save_evidence 截图落盘 + report_vulnerability 存 (evidence/evidencePaths 至少一项); ⑤ 未命中的不写漏洞库, 只列"已扫无果"。最后给一张汇总表: 目标|命中洞|定级|证据文件|来源平台。`);
+    }},
     { cmd: '/reverse', desc: '逆向复刻: 读懂陌生软件/网页的实现思路 (填入目标后再发送)', run: () => {
       fillDraft(`/reverse 目标: ____ (本地文件路径 / URL / 打包应用, 或描述某功能)  请按 reverse-engineer-workflow 走: 1) 定位目标 (本地文件 list_directory, URL 先 web_fetch 抓下来, 打包应用用 rea:analyze_package); 2) rea:analyze 拿概览; 3) 按重点拆解 (rea:diff_versions 对比 / 读关键模块, 每条结论带证据 file:line 或 rea 输出); 4) 用自己的话提炼可复刻点, 不抄对方代码; 5) 按我的技术栈出 1-3 个复刻方案 (含取舍), 不写完整可运行代码。没证据的结论标 UNRESOLVED。`);
     }},
@@ -1455,6 +1458,7 @@ await apiStream(base + '/v1/chat', {
 - \`/bounty\` — 赏金打单 (挑目标+挖洞+出报告)
 - \`/scope\` — 渗透测试授权 (看/加可测目标, 免改 JSON)
 - \`/pentest\` — 渗透测试 (授权+挖洞+落盘)
+- \`/batch\` — 批量挖洞 (遍历全部授权目标, 数量堆命中)
 - \`/reverse\` — 逆向复刻 (读懂陌生软件/网页实现, REA 工作流)
 - \`/help\` — 查看帮助
 

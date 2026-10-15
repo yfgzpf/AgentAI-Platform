@@ -169,9 +169,10 @@ describe('契约: 子智能体继承链的 4 个注入点都在', () => {
     expect(l).toContain('let subModelName = this.opts.modelName;');
   });
 
-  it('tools.ts 的 6 个 spawn 调用点都传了 ctx?.modelName (battle/spawn_subagent/3×review/run_team)', () => {
-    // 数量即契约: 少一个就说明新加的路径又漏传父模型
-    expect((src('tools.ts').match(/ctx\?\.modelName/g) || []).length).toBe(6);
+  it('tools.ts 的 7 个 spawn 调用点都传了 ctx?.modelName (battle/spawn_subagent/3×review/run_team/batch_pentest)', () => {
+    // 数量即契约: 少一个就说明新加的路径又漏传父模型。
+    // 2026-10-16: batch_pentest (批量挖洞) 也走 runSubagent, 同样继承父模型 (7 = 原 6 + 批量挖洞 1)
+    expect((src('tools.ts').match(/ctx\?\.modelName/g) || []).length).toBe(7);
     expect(src('tools.ts')).not.toMatch(/ctx\?\.model,\s*\)/); // 反例: 只传 model 不传 modelName
   });
 

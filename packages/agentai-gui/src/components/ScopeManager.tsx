@@ -12,12 +12,15 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Tag, Empty, Input, InputNumber, Button, Space, message as antdMsg, Spin, Tooltip } from 'antd';
-import { PlusOutlined, DeleteOutlined, LockOutlined, SafetyCertificateOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, LockOutlined, SafetyCertificateOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, ClockCircleOutlined, ImportOutlined, BugOutlined, WarningOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 import { useProfileStore } from '../store';
 
+interface ScopeTarget { host: string; source: string; }
+
 interface ScopeState {
   targets: string[];
+  targetsWithSource: ScopeTarget[];
   maxRps: number;
   workspace: string;
 }
@@ -28,14 +31,48 @@ interface PendingProposal {
   ts: number;
 }
 
+interface BatchResult {
+  addedCount: number;
+  added: string[];
+  existing: string[];
+  invalid: string[];
+}
+
+/** 常见来源快捷标签 (平台名), 可自由输入 */
+const SOURCE_PRESETS = ['补天', '漏洞盒子', 'HackerOne', '阿里SRC', '自加', 'AI发现'];
+
 export const ScopeManager: React.FC = () => {
   const { profile } = useProfileStore();
   const [loading, setLoading] = useState(false);
-  const [scope, setScope] = useState<ScopeState>({ targets: [], maxRps: 5, workspace: '' });
+  const [scope, setScope] = useState<ScopeState>({ targets: [], targetsWithSource: [], maxRps: 5, workspace: '' });
   const [newTarget, setNewTarget] = useState('');
   const [newMaxRps, setNewMaxRps] = useState<number | null>(null);
+  const [newSource, setNewSource] = useState('');
+  // 来源筛选 (空 = 全部)
+  const [filterSource, setFilterSource] = useState('');
   // 2026-10-15 P0-2: AI 的授权提案 (grant_scope 只写 pending, 人类在此确认)
   const [pending, setPending] = useState<PendingProposal[]>([]);
+  // 2026-10-16 批量导入 (赏金平台 in-scope 清单一次粘贴 + 来源标注)
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchText, setBatchText] = useState('');
+  const [batchSource, setBatchSource] = useState('');
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
+  // 2026-10-16 CVE 盯哨告警 (scheduler 被动盯哨产出; 验证按钮 = 人在场主动动作)
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [verifying, setVerifying] = useState<string>(''); // 正在验证的 cveId::host
+  const [lastRun, setLastRun] = useState<{ ts?: number; newAlerts?: number } | null>(null);
+
+  /** 置信度 → 颜色/文案 (跟 scripts/lib/cve-matcher.mjs CONFIDENCE_ORDER 对齐) */
+  const confidenceStyle = (c: string): { color: string; label: string } => {
+    switch (c) {
+      case 'kev+cpe': return { color: 'var(--danger)', label: '在野利用+指纹命中' };
+      case 'kev+kw': return { color: 'var(--warn, #d48806)', label: '在野利用+关键词' };
+      case 'cpe': return { color: 'var(--accent)', label: '指纹命中' };
+      default: return { color: 'var(--muted-2)', label: '关键词命中' };
+    }
+  };
 
   const baseUrl = () => GATEWAY_HTTP || 'http://127.0.0.1:18789';
 
@@ -46,6 +83,37 @@ export const ScopeManager: React.FC = () => {
     return ws ? { 'x-workspace': ws } : {};
   }, [profile]);
 
+  /** 拉 CVE 盯哨告警 (scheduler 每 6h 被动跑的产物) */
+  const loadAlerts = useCallback(async () => {
+    setAlertsLoading(true);
+    try {
+      const r = await fetch(`${baseUrl()}/v1/pentest/cve/alerts?limit=50`, { headers: wsHeader() });
+      const d = await r.json();
+      if (d.ok) { setAlerts(d.alerts || []); if (d.lastRun) setLastRun(d.lastRun); }
+    } catch { /* 网关不可达 → 静默, 授权区照常工作 */ }
+    finally { setAlertsLoading(false); }
+  }, [baseUrl, wsHeader]);
+
+  /** 一键验证 (nuclei 单模板低交互检测; 未授权资产后端 403) */
+  const handleVerify = async (cveId: string, host: string) => {
+    setVerifying(`${cveId}::${host}`);
+    try {
+      const r = await fetch(`${baseUrl()}/v1/pentest/cve/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        body: JSON.stringify({ cveId, target: host }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        if (d.skipped) antdMsg.info(`跳过验证: ${d.reason || '本机无 WSL kali'}`);
+        else if (d.verified) antdMsg.success(`✅ ${cveId} 真命中! 已落盘 vulns.jsonl + 证据 (${d.evidencePath || ''})`);
+        else antdMsg.warning(`${cveId} 模板未命中 — 可能误报, 告警保持 new`);
+      } else antdMsg.error(d.error || '验证失败');
+      loadAlerts(); // 验证写 vulns.jsonl + 审计, 回来刷新面板
+    } catch { antdMsg.error('验证请求失败'); }
+    finally { setVerifying(''); }
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -54,7 +122,14 @@ export const ScopeManager: React.FC = () => {
         fetch(`${baseUrl()}/v1/pentest/scope/pending`, { headers: wsHeader() }),
       ]);
       const d = await rScope.json();
-      if (d.ok) setScope({ targets: d.targets || [], maxRps: d.max_rps || 5, workspace: d.workspace || '' });
+      if (d.ok) setScope({
+        targets: d.targets || [],
+        targetsWithSource: (d.targetsWithSource && d.targetsWithSource.length > 0)
+          ? d.targetsWithSource
+          : (d.targets || []).map((h: string) => ({ host: h, source: 'unknown' })),
+        maxRps: d.max_rps || 5,
+        workspace: d.workspace || '',
+      });
       else antdMsg.error(d.error || '读取授权范围失败');
       try {
         const dp = await rPending.json();
@@ -67,14 +142,14 @@ export const ScopeManager: React.FC = () => {
     }
   }, [baseUrl, wsHeader]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); loadAlerts(); }, [load, loadAlerts]);
 
   const handleGrant = async () => {
     const t = newTarget.trim();
     if (!t) return;
     setNewTarget('');
     try {
-      const body: Record<string, unknown> = { target: t };
+      const body: Record<string, unknown> = { target: t, source: newSource.trim() || 'manual' };
       if (newMaxRps) body.maxRps = newMaxRps;
       const r = await fetch(`${baseUrl()}/v1/pentest/scope`, {
         method: 'POST',
@@ -83,7 +158,7 @@ export const ScopeManager: React.FC = () => {
       });
       const d = await r.json();
       if (d.ok) {
-        antdMsg.success(d.granted ? `已授权 ${d.target}` : `${d.target} 已在授权范围`);
+        antdMsg.success(`${d.granted ? '已授权' : '已更新'} ${d.target} [${d.source || 'manual'}]`);
         load();
       } else antdMsg.error(d.error || '授权失败');
     } catch { antdMsg.error('授权请求失败'); }
@@ -130,6 +205,29 @@ export const ScopeManager: React.FC = () => {
     } catch { antdMsg.error('拒绝请求失败'); }
   };
 
+  /** 批量导入 (2026-10-16): 平台 in-scope 清单一次粘贴 + 来源标注, 容忍逗号/换号分隔 */
+  const handleBatchImport = async () => {
+    const text = batchText.trim();
+    if (!text) return;
+    setBatchLoading(true);
+    try {
+      const body: Record<string, unknown> = { targets: text.split('\n'), source: batchSource.trim() || 'manual' };
+      const r = await fetch(`${baseUrl()}/v1/pentest/scope/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setBatchResult({ addedCount: d.addedCount, added: d.added || [], existing: d.existing || [], invalid: d.invalid || [] });
+        antdMsg.success(`导入完成: 新增 ${d.addedCount} 个 [${batchSource.trim() || 'manual'}], 已存在 ${d.existing?.length || 0} 个${d.invalid?.length ? `, 无法解析 ${d.invalid.length} 个` : ''}`);
+        setBatchText('');
+        load();
+      } else antdMsg.error(d.error || '批量导入失败');
+    } catch { antdMsg.error('批量导入请求失败'); }
+    finally { setBatchLoading(false); }
+  };
+
   return (
     <Card
       size="small"
@@ -155,15 +253,23 @@ export const ScopeManager: React.FC = () => {
         只加**平台明文授权**的资产 (补天/盒子项目页"可测"清单)。禁止把 out-of-scope / 支付 / 生产 加进来。
       </div>
 
-      {/* 添加目标 */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+      {/* 添加目标 (+ 来源标注: 这批资产属于哪个平台) */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
         <Input
           size="small"
-          placeholder="目标域名, 如 admin.example.com / https://x.example.com"
+          placeholder="目标域名, 如 admin.example.com / *.bestpay.com.cn"
           value={newTarget}
           onChange={e => setNewTarget(e.target.value)}
           onPressEnter={handleGrant}
           style={{ flex: 1, fontSize: 'var(--fs-micro)' }}
+        />
+        <Input
+          size="small"
+          placeholder="来源, 如 补天/盒子/自加"
+          value={newSource}
+          onChange={e => setNewSource(e.target.value)}
+          onPressEnter={handleGrant}
+          style={{ width: 110, fontSize: 'var(--fs-micro)' }}
         />
         <InputNumber
           size="small"
@@ -172,11 +278,74 @@ export const ScopeManager: React.FC = () => {
           placeholder="rps"
           value={newMaxRps}
           onChange={setNewMaxRps}
-          style={{ width: 64, fontSize: 'var(--fs-micro)' }}
+          style={{ width: 56, fontSize: 'var(--fs-micro)' }}
         />
         <Button size="small" type="primary" icon={<PlusOutlined />} onClick={handleGrant}>
           授权
         </Button>
+      </div>
+      {/* 来源快捷标签 (点击填入, 再授权) */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
+        {SOURCE_PRESETS.map(s => (
+          <Tag
+            key={s}
+            onClick={() => setNewSource(s)}
+            style={{
+              cursor: 'pointer', fontSize: 'var(--fs-micro)', margin: 0, borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              background: newSource === s ? 'var(--accent)' : 'var(--panel)',
+              color: newSource === s ? 'var(--fg-on-accent)' : 'var(--muted-2)',
+            }}
+          >
+            {s}
+          </Tag>
+        ))}
+      </div>
+
+      {/* ═══════════ 2026-10-16 批量导入 (赏金平台 in-scope 清单一次粘贴) ═══════════ */}
+      <div style={{ marginBottom: 8 }}>
+        <Button size="small" type="link" icon={<ImportOutlined />} onClick={() => setBatchOpen(v => !v)} style={{ padding: 0, fontSize: 'var(--fs-micro)' }}>
+          {batchOpen ? '收起批量导入' : '批量导入 (从赏金平台清单粘贴, 一次存多个)'}
+        </Button>
+        {batchOpen && (
+          <div style={{ marginTop: 6 }}>
+            <Input.TextArea
+              rows={4}
+              placeholder={'每行一个 (也支持逗号分隔), 形如:\nwww.example.com\napi.example.com\n*.bestpay.com.cn\n# 注释行和空行自动忽略'}
+              value={batchText}
+              onChange={e => setBatchText(e.target.value)}
+              style={{ fontSize: 'var(--fs-micro)' }}
+            />
+            <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button size="small" type="primary" loading={batchLoading} onClick={() => void handleBatchImport()}>
+                导入授权
+              </Button>
+              <Input
+                size="small"
+                placeholder="来源, 如 补天/盒子"
+                value={batchSource}
+                onChange={e => setBatchSource(e.target.value)}
+                style={{ width: 110, fontSize: 'var(--fs-micro)' }}
+              />
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
+                只加平台明文授权的资产; 支付/生产/out-of-scope 别粘进来
+              </span>
+            </div>
+            {batchResult && (
+              <div style={{ marginTop: 6, fontSize: 'var(--fs-micro)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {batchResult.added.length > 0 && (
+                  <div style={{ color: 'var(--success)' }}>✅ 新增 {batchResult.addedCount}: {batchResult.added.join(', ')}</div>
+                )}
+                {batchResult.existing.length > 0 && (
+                  <div style={{ color: 'var(--muted-2)' }}>ℹ️ 已存在 {batchResult.existing.length}: {batchResult.existing.join(', ')}</div>
+                )}
+                {batchResult.invalid.length > 0 && (
+                  <div style={{ color: 'var(--danger)' }}>❌ 无法解析 {batchResult.invalid.length}: {batchResult.invalid.join(', ')}</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ═══════════ 2026-10-15 P0-2: AI 授权提案待确认区 (人类确认才生效) ═══════════ */}
@@ -219,7 +388,7 @@ export const ScopeManager: React.FC = () => {
         </div>
       )}
 
-      {/* 当前授权列表 */}
+      {/* 当前授权列表 — 按来源分组 (2026-10-16: 多平台清单可管理) */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: 12 }}><Spin size="small" /></div>
       ) : scope.targets.length === 0 ? (
@@ -229,35 +398,155 @@ export const ScopeManager: React.FC = () => {
           style={{ margin: '4px 0' }}
         />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
-          {scope.targets.map((t) => (
-            <div
-              key={t}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '4px 8px', borderRadius: 'var(--radius-sm)',
-                background: 'var(--panel)', border: '1px solid var(--border)',
-                fontSize: 'var(--fs-micro)',
-              }}
-            >
-              <LockOutlined style={{ color: 'var(--success)', fontSize: 'var(--fs-micro)', flexShrink: 0 }} />
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-2)' }}>
-                {t}
-              </span>
-              <Tag style={{ fontSize: 'var(--fs-micro)', margin: 0, borderRadius: 'var(--radius-sm)', border: 'none' }}
-                color="green">可测</Tag>
-              <Button
-                size="small"
-                type="text"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={() => handleRevoke(t)}
-                style={{ color: 'var(--danger)', fontSize: 'var(--fs-micro)', height: 20, padding: '0 4px' }}
-              />
-            </div>
-          ))}
+        <div>
+          {/* 来源筛选 */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>按来源:</span>
+            <Tag
+              onClick={() => setFilterSource('')}
+              style={{ cursor: 'pointer', fontSize: 'var(--fs-micro)', margin: 0, borderRadius: 'var(--radius-sm)', border: 'none',
+                background: filterSource === '' ? 'var(--accent)' : 'var(--panel)',
+                color: filterSource === '' ? 'var(--fg-on-accent)' : 'var(--fg-2)' }}>
+              全部 {scope.targets.length}
+            </Tag>
+            {Array.from(new Set(scope.targetsWithSource.map(t => t.source))).map(src => (
+              <Tag
+                key={src}
+                onClick={() => setFilterSource(src)}
+                style={{ cursor: 'pointer', fontSize: 'var(--fs-micro)', margin: 0, borderRadius: 'var(--radius-sm)', border: 'none',
+                  background: filterSource === src ? 'var(--accent)' : 'var(--panel)',
+                  color: filterSource === src ? 'var(--fg-on-accent)' : 'var(--muted-2)' }}>
+                {src} {scope.targetsWithSource.filter(t => t.source === src).length}
+              </Tag>
+            ))}
+          </div>
+
+          {/* 分组列表 */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 280, overflowY: 'auto' }}>
+            {(() => {
+              const visible = filterSource
+                ? scope.targetsWithSource.filter(t => t.source === filterSource)
+                : scope.targetsWithSource;
+              const groups = Array.from(new Set(visible.map(t => t.source)));
+              return groups.map(g => (
+                <div key={g} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)', fontWeight: 600, padding: '2px 2px 0' }}>
+                    {g === 'unknown' ? '未标注' : g}
+                    <span style={{ color: 'var(--muted-2)', fontWeight: 400 }}> · {visible.filter(t => t.source === g).length}</span>
+                  </div>
+                  {visible.filter(t => t.source === g).map((t) => (
+                    <div
+                      key={t.host}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                        background: 'var(--panel)', border: '1px solid var(--border)',
+                        fontSize: 'var(--fs-micro)',
+                      }}
+                    >
+                      <LockOutlined style={{ color: 'var(--success)', fontSize: 'var(--fs-micro)', flexShrink: 0 }} />
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-2)' }}>
+                        {t.host}
+                      </span>
+                      <Button
+                        size="small"
+                        type="text"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => handleRevoke(t.host)}
+                        style={{ color: 'var(--danger)', fontSize: 'var(--fs-micro)', height: 20, padding: '0 4px' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ));
+            })()}
+          </div>
         </div>
       )}
+
+      {/* ═══════════ 2026-10-16 CVE 盯哨告警 (被动情报盯哨产出; 验证 = 人在场手动) ═══════════ */}
+      <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4,
+          fontSize: 'var(--fs-micro)', color: 'var(--fg-2)',
+        }}>
+          <BugOutlined style={{ color: 'var(--danger)' }} />
+          <span style={{ flex: 1 }}>
+            CVE 盯哨告警 {alerts.length > 0 && <Tag style={{ fontSize: 'var(--fs-micro)', margin: 0, border: 'none', borderRadius: 'var(--radius-sm)' }} color="red">{alerts.length}</Tag>}
+          </span>
+          <Tooltip title="盯哨全自动 (每 6h 拉 NVD/CISA 情报 + 本地资产比对, 不打目标)。验证一律你点按钮才跑 — nuclei 单模板低交互检测, 且只验已授权资产。">
+            <WarningOutlined style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }} />
+          </Tooltip>
+          <Button size="small" type="text" icon={<ReloadOutlined />} loading={alertsLoading} onClick={() => void loadAlerts()} style={{ height: 20, padding: '0 4px', fontSize: 'var(--fs-micro)' }} />
+        </div>
+        {lastRun?.ts && (
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 6 }}>
+            上次盯哨 {new Date(lastRun.ts).toLocaleString('zh-CN', { hour12: false })}
+            {lastRun.newAlerts != null && ` · 新增 ${lastRun.newAlerts} 条`}
+          </div>
+        )}
+        {alerts.length === 0 ? (
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
+            暂无告警 — 盯哨在跑, 命中「已授权资产的指纹 × 新 CVE」时出现在这里
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 240, overflowY: 'auto' }}>
+            {alerts.map((a: any) => {
+              const cs = confidenceStyle(a.confidence || 'kw');
+              const key = `${a.cveId}::${a.host}`;
+              const busy = verifying === key;
+              return (
+                <div
+                  key={key}
+                  style={{
+                    padding: '6px 8px', borderRadius: 'var(--radius-sm)',
+                    background: 'var(--panel)', border: '1px solid var(--border)',
+                    borderLeft: `3px solid ${cs.color}`, fontSize: 'var(--fs-micro)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <a
+                      href={`https://nvd.nist.gov/vuln/detail/${a.cveId}`}
+                      target="_blank" rel="noreferrer"
+                      style={{ color: 'var(--fg)', fontWeight: 600 }}
+                    >
+                      {a.cveId}
+                    </a>
+                    {a.kev && (
+                      <Tag color="red" style={{ fontSize: 'var(--fs-micro)', margin: 0, border: 'none', borderRadius: 'var(--radius-sm)' }}>在野利用</Tag>
+                    )}
+                    {a.cvss != null && (
+                      <Tag style={{ fontSize: 'var(--fs-micro)', margin: 0, border: 'none', borderRadius: 'var(--radius-sm)' }}>CVSS {a.cvss}</Tag>
+                    )}
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-2)' }}>
+                      {a.host}
+                    </span>
+                    <Button
+                      size="small" type="primary" icon={<ThunderboltOutlined />} loading={busy}
+                      onClick={() => handleVerify(a.cveId, a.host)}
+                      style={{ height: 20, padding: '0 6px', fontSize: 'var(--fs-micro)' }}
+                    >
+                      验证
+                    </Button>
+                  </div>
+                  <div style={{ color: cs.color, marginTop: 2 }}>{cs.label}</div>
+                  {a.title && (
+                    <div style={{ color: 'var(--muted-2)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.title}>
+                      {a.title}
+                    </div>
+                  )}
+                  {Array.isArray(a.matchedOn) && a.matchedOn.length > 0 && (
+                    <div style={{ color: 'var(--muted-2)', marginTop: 2 }}>
+                      依据: {a.matchedOn.join(', ')}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* 速率上限 */}
       <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8, display: 'flex', justifyContent: 'space-between' }}>

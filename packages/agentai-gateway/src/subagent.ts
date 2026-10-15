@@ -100,6 +100,14 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
    把返回的 evidencePaths 传给 report_vulnerability (响应片段用 saveText 存)
 6. 报告: 按下方模板输出; 已验证的用 report_vulnerability 落盘 (**evidence 或 evidencePaths 至少给一项**, 否则拒绝)
 
+## 🔄 批量挖洞模式 (任务词含"批量/全部授权目标/逐个/数量取胜"时走这套)
+- 用 list_scope 读**全部**授权目标 → 逐个 (for 循环) 跑上面 1-6 步, 每换目标前先 scope_guard.check_scope + rate_limit
+- **数量取胜, 但守两条红线**: ① 每个目标"够深就停" — 命中 1 个可报的洞 + 证据就换下一个, 别在一个目标空耗;
+  ② 全程限频 (wsl_scan/http_replay 内部已强制 + 每目标开扫前 check_scope), 打崩目标 = 平台拉黑, 不划算
+- 每个目标产出: 1 句"扫了什么/命中什么"。汇总时给一张表: 目标 | 命中洞 | 定级 | 证据文件 | 平台
+- 未命中/低置信的目标**不写** vulns.jsonl (避免污染), 只列"已扫无果"
+- 通配符授权 (*.x.com) 可先 enum_subdomains 展开再逐个扫子域; 子域多时挑 admin/api/dev/stage/test 优先
+
 ## 📮 平台提交: AI 填到"提交前一步", 不自动点提交
 - **不要自动登录平台 / 自动点"提交"按钮** — 把漏洞归属权交给 AI 操作说不清责任。
 - 自动化到临界点: browser_navigate 打开平台提交页 → browser_extract 读表单字段 → 把"该填什么"

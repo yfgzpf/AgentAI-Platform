@@ -32,7 +32,7 @@ import { getGlobalSandbox } from './sandbox/index.js';
 // routes/pentest-scope.ts 的确认端点同源, 防止三处逻辑漂移)
 import {
   isTargetInScope, readScope, pentestRateLimit,
-  assertSafeScanArg,
+  assertSafeScanArg, auditLog,
 } from './pentest-scope-guard.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { ReadTracker } from './tools/read-tracker.js';
@@ -921,6 +921,12 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       args: { type: 'array', items: { type: 'string' }, description: '该工具的参数数组 (如 nmap 的 ["-sV","-p","80,443"])' },
       timeout_ms: { type: 'number', description: '超时毫秒 (默认 60000, 上限 180000)' },
     }, required: ['target','tool'] }, parallelSafe: false, riskLevel: 'high' },
+  // ===== 2026-10-16 批量挖洞: 遍历全部授权目标逐个跑 pentest 子智能体, 用数量堆命中 =====
+  { name: 'batch_pentest', description: '【批量挖洞】对当前**全部已授权目标**逐个跑一轮渗透 (每个目标 spawn 一个 pentest 子智能体: 侦察+最小强度探针+nuclei+证据落盘)。赏金"用数量取胜"的入口 — 不手动挑目标, 授权了几个就扫几个。\n\n🔑 触发场景: 用户说"批量挖洞/把所有授权目标都扫一遍/数量堆命中率"; 或 cron 定时任务自动触发 (无人值守批量巡检)。\n\n⚙️ 参数: maxTargets (可选, 本轮最多处理几个目标, 默认 10, 防单轮打崩); depth (可选, "quick"=每目标浅扫 / "deep"=每目标全工具, 默认 quick)。\n\n🔒 安全: 每个目标仍先过 scope_guard 授权闸门 + 限频; 每个子智能体"够深就停"(命中一个可报洞+证据就换下一个), 未命中不写漏洞库。越界目标一律不碰。\n\n📤 返回: 逐目标汇总表 (目标|状态|命中数) + 本轮新落盘的漏洞数 + 证据路径。命中项已自动 save_evidence + report_vulnerability 落盘, 可直接按 bounty-report 出报告。',
+    parameters: { type: 'object', properties: {
+      maxTargets: { type: 'number', description: '本轮最多处理几个目标 (默认 10, 上限 30, 防单轮打崩目标/超预算)' },
+      depth: { type: 'string', enum: ['quick', 'deep'], description: 'quick=每目标浅扫 (nmap 指纹+最小探针, 默认); deep=全工具重扫 (nuclei 全模板+sqlmap+ffuf)' },
+    }, required: [] }, parallelSafe: false, riskLevel: 'critical' },
   // grant_scope: 授权对话化 — 聊天里说"授权测 X"就自动写 scope.json, 免手写 JSON
   { name: 'grant_scope', description: '【渗透测试授权 (对话式)】把一个目标加进 .agentai/scope.json 授权范围, 让后续 scope_guard / wsl_scan / pentest 子智能体能合法攻击它。免手写 JSON — 聊天里说"授权测 X / 把 X 加进授权范围"就自动调本工具。\n\n🔑 触发场景: 用户要"挖洞/渗透测/安全扫描"某目标, 但 scope.json 还没有这个目标 (scope_guard 返回 in_scope:false / 无授权范围)。\n\n📄 行为: 读现有 scope.json, 把 target 追加进 targets (去重), max_rps 可改。target 支持 host 或 URL (自动抽 host)。\n\n⚠️ 安全: 授权是"允许攻击边界", 加上即表示该目标可被 wsl_scan/pentest 动手。只在用户明确要测某目标时用, 别批量乱加。\n\n💡 示例: grant_scope({ target: "admin.example.com", max_rps: 5 }) → ✅ 已授权 admin.example.com (现共 N 个目标)',
     parameters: { type: 'object', properties: {
@@ -2748,6 +2754,65 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       };
     } catch (e: any) { return { success: false, output: `save_evidence 失败: ${e.message}` }; }
   },
+  // ===== 2026-10-16 批量挖洞: 遍历全部授权目标逐个 spawn pentest 子智能体 =====
+  // 赏金"数量取胜"入口。读 scope.json 全部目标, 逐个 (受限频 + maxTargets 上限) 跑
+  // 一个 pentest 子智能体 (它内部先 scope_guard 校验 + save_evidence + report_vulnerability)。
+  // 命中自动落盘, 未命中/低置信不写 (防污染)。cron 定时触发 = 无人值守批量巡检。
+  batch_pentest: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const registry = ctx?._registry;
+      const router = ctx?._router;
+      if (!router || !registry) return { success: false, output: '批量挖洞需要 router/registry (cron/子智能体上下文缺失), 请在主对话里跑 /batch。' };
+
+      // 读全部授权目标 (带来源, 2026-10-16)
+      const { readScopeWithSource } = await import('./pentest-scope-guard.js');
+      const allTargets = readScopeWithSource(ws);
+      if (allTargets.length === 0) {
+        return { success: false, output: '❌ 无已授权目标。先 grant_scope 授权 (或在「渗透测试授权」面板批量粘贴平台清单), 再跑 batch。' };
+      }
+
+      const maxTargets = Math.min(Number(args.maxTargets) || 10, 30);
+      const depth = args.depth === 'deep' ? 'deep' : 'quick';
+      const batch = allTargets.slice(0, maxTargets);
+
+      const { default: subagent } = await import('./subagent.js');
+      const results: Array<{ target: string; source: string; ok: boolean; found: number; note: string }> = [];
+      let totalFound = 0;
+
+      for (const t of batch) {
+        const host = t.host;
+        const task = `批量挖洞 (depth=${depth}): 对目标 ${host} 跑一轮渗透 — ` +
+          `先 scope_guard.check_scope 确认授权 + rate_limit 限频; ` +
+          (depth === 'deep'
+            ? '全工具重扫 (wsl_scan nmap 指纹 + nuclei owasp-top10 + sqlmap risk1 + http_replay 最小强度认证/IDOR 探针);'
+            : '浅扫 (wsl_scan nmap -sV 指纹 + 浏览器抓表单端点 + http_replay 最小强度注入探针);') +
+          ` 真复现的洞必须 save_evidence 截图落盘 + report_vulnerability 存 (evidence/evidencePaths 至少一项); 未复现的不写。够深就停: 命中 1 个可报洞+证据即可, 别空耗。`;
+        try {
+          const out = await subagent.runSubagent(
+            'pentest', task, router, registry,
+            (ctx as any)?.userId || 'default', ws, ctx?.model, ctx?.modelName,
+          );
+          // 子智能体输出里统计"report_vulnerability 已落盘"次数作为命中数
+          const found = (String(out).match(/report_vulnerability/gi) || []).length > 0
+            ? (String(out).match(/已落盘|verified/i) || []).length : 0;
+          totalFound += Math.max(found, 0);
+          results.push({ target: host, source: t.source, ok: true, found: Math.max(found, 0), note: String(out).slice(0, 200) });
+        } catch (e: any) {
+          results.push({ target: host, source: t.source, ok: false, found: 0, note: `子智能体失败: ${e?.message || e}` });
+        }
+      }
+
+      const lines = [
+        `🔄 批量挖洞完成 (depth=${depth}): 处理 ${results.length}/${allTargets.length} 个授权目标 (上限 ${maxTargets}), 命中 ${totalFound} 个已落盘。`,
+        ...results.map(r => `  ${r.ok ? '✅' : '❌'} ${r.target} [${r.source}] — ${r.found > 0 ? `命中 ${r.found}` : '未命中'} · ${r.note}`),
+        totalFound > 0
+          ? `\n💡 ${totalFound} 个命中已 save_evidence + report_vulnerability 落盘 (.agentai/vulns/ + .agentai/evidence/)。下一步: 按 bounty-report 出各平台能过审的报告 (含截图附件)。`
+          : `\n本轮无命中。可: ① 提高 depth=deep 重扫; ② 盯哨(cve-watch)等新 CVE 曝光再扫; ③ 扩授权目标 (加新平台清单) 增数量。`,
+      ];
+      return { success: true, output: lines.join('\n'), data: { results, totalFound, processed: results.length, total: allTargets.length } };
+    } catch (e: any) { return { success: false, output: `batch_pentest 失败: ${e.message}` }; }
+  },
   // ===== 2026-10-16 第一梯队: 子域枚举 (crt.sh 证书透明日志 + 授权状态分组) =====
   // "赏金 80% 的洞在没人管的子域上" — 授权一个根域后, 用它把资产清单展开。
   // 枚举的是公开证书记录 (不打目标), 但结果按 isTargetInScope 分组, 直接服务
@@ -3023,6 +3088,8 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       if (args.max_rps) existing.max_rps = Number(args.max_rps);
       fs.mkdirSync(path.dirname(scopeFile), { recursive: true });
       fs.writeFileSync(scopeFile, JSON.stringify(existing, null, 2), 'utf-8');
+      // 2026-10-16 企业闭环: 授权审计 (谁/何时/授权了什么 — 被问"凭什么扫"时的自证材料)
+      auditLog(ws, { actor: 'agent', action: 'grant', target: host, detail: 'grant_scope 直接授权 (2026-10-16 用户反馈回退提案制)' });
       return {
         success: true,
         output: `${already ? 'ℹ️ 已在授权范围' : '✅ 已授权'} ${host} — 现共 ${targets.length} 个目标, 可立即挖洞 (scope_guard / wsl_scan / pentest 子智能体均可动手)。`,
