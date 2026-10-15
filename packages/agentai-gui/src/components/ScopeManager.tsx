@@ -76,31 +76,43 @@ export const ScopeManager: React.FC = () => {
 
   const baseUrl = () => GATEWAY_HTTP || 'http://127.0.0.1:18789';
 
-  /** 与 WorkspaceSelector 同口径的当前工作区 → x-workspace 头,
-   *  让前端读写的 scope.json 跟 AI 工具侧 (grant_scope/list_scope) 是同一份 */
-  const wsHeader = useCallback((): Record<string, string> => {
+  /** 与 WorkspaceSelector 同口径的当前工作区 → **URL 查询参数** workspace= (encodeURIComponent),
+   *  让前端读写的 scope.json 跟 AI 工具侧 (grant_scope/list_scope) 是同一份。
+   *  ⚠️ 2026-10-16 修复: 原来走 x-workspace header, 但 header 只允许 ASCII — 工作区路径带中文
+   *  (如 F:\目录已检查\澳彩) 时 undici 直接抛 "Cannot convert to ByteString", 请求根本发不出去,
+   *  面板加目标/删/批量全失败。改走 query (可编码) 后中文路径正常。 */
+  const wsQuery = useCallback((): string => {
     const ws = (profile?.workspace || localStorage.getItem('agentai.workspace') || '').trim();
-    return ws ? { 'x-workspace': ws } : {};
+    return ws ? `?workspace=${encodeURIComponent(ws)}` : '';
   }, [profile]);
+
+  /** 组合请求 URL (查询参数 + 已有 query 合并) */
+  const wsUrl = useCallback((path: string, extra?: string) => {
+    const base = `${baseUrl()}/${path}`;
+    const q = wsQuery();
+    if (!q) return extra ? `${base}${extra.startsWith('?') ? extra : `?${extra}`}` : base;
+    // 合并: workspace + 额外参数 (如 limit=50)
+    return extra ? `${base}${q}${extra.startsWith('?') ? '&' + extra.slice(1) : `&${extra}`}` : base + q;
+  }, [baseUrl, wsQuery]);
 
   /** 拉 CVE 盯哨告警 (scheduler 每 6h 被动跑的产物) */
   const loadAlerts = useCallback(async () => {
     setAlertsLoading(true);
     try {
-      const r = await fetch(`${baseUrl()}/v1/pentest/cve/alerts?limit=50`, { headers: wsHeader() });
+      const r = await fetch(wsUrl('v1/pentest/cve/alerts', 'limit=50'));
       const d = await r.json();
       if (d.ok) { setAlerts(d.alerts || []); if (d.lastRun) setLastRun(d.lastRun); }
     } catch { /* 网关不可达 → 静默, 授权区照常工作 */ }
     finally { setAlertsLoading(false); }
-  }, [baseUrl, wsHeader]);
+  }, [baseUrl, wsUrl]);
 
   /** 一键验证 (nuclei 单模板低交互检测; 未授权资产后端 403) */
   const handleVerify = async (cveId: string, host: string) => {
     setVerifying(`${cveId}::${host}`);
     try {
-      const r = await fetch(`${baseUrl()}/v1/pentest/cve/verify`, {
+      const r = await fetch(wsUrl('v1/pentest/cve/verify'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cveId, target: host }),
       });
       const d = await r.json();
@@ -118,8 +130,8 @@ export const ScopeManager: React.FC = () => {
     setLoading(true);
     try {
       const [rScope, rPending] = await Promise.all([
-        fetch(`${baseUrl()}/v1/pentest/scope`, { headers: wsHeader() }),
-        fetch(`${baseUrl()}/v1/pentest/scope/pending`, { headers: wsHeader() }),
+        fetch(wsUrl('v1/pentest/scope')),
+        fetch(wsUrl('v1/pentest/scope/pending')),
       ]);
       const d = await rScope.json();
       if (d.ok) setScope({
@@ -140,7 +152,7 @@ export const ScopeManager: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [baseUrl, wsHeader]);
+  }, [baseUrl, wsUrl]);
 
   useEffect(() => { load(); loadAlerts(); }, [load, loadAlerts]);
 
@@ -151,9 +163,9 @@ export const ScopeManager: React.FC = () => {
     try {
       const body: Record<string, unknown> = { target: t, source: newSource.trim() || 'manual' };
       if (newMaxRps) body.maxRps = newMaxRps;
-      const r = await fetch(`${baseUrl()}/v1/pentest/scope`, {
+      const r = await fetch(wsUrl('v1/pentest/scope'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const d = await r.json();
@@ -166,9 +178,9 @@ export const ScopeManager: React.FC = () => {
 
   const handleRevoke = async (host: string) => {
     try {
-      const r = await fetch(`${baseUrl()}/v1/pentest/scope`, {
+      const r = await fetch(wsUrl('v1/pentest/scope'), {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target: host }),
       });
       const d = await r.json();
@@ -180,9 +192,9 @@ export const ScopeManager: React.FC = () => {
   /** 人类确认 AI 的授权提案: pending → scope.json */
   const handleConfirm = async (host: string) => {
     try {
-      const r = await fetch(`${baseUrl()}/v1/pentest/scope/confirm`, {
+      const r = await fetch(wsUrl('v1/pentest/scope/confirm'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target: host }),
       });
       const d = await r.json();
@@ -194,9 +206,9 @@ export const ScopeManager: React.FC = () => {
   /** 人类拒绝 AI 的授权提案: 只删 pending */
   const handleReject = async (host: string) => {
     try {
-      const r = await fetch(`${baseUrl()}/v1/pentest/scope/pending`, {
+      const r = await fetch(wsUrl('v1/pentest/scope/pending'), {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target: host }),
       });
       const d = await r.json();
@@ -212,9 +224,9 @@ export const ScopeManager: React.FC = () => {
     setBatchLoading(true);
     try {
       const body: Record<string, unknown> = { targets: text.split('\n'), source: batchSource.trim() || 'manual' };
-      const r = await fetch(`${baseUrl()}/v1/pentest/scope/batch`, {
+      const r = await fetch(wsUrl('v1/pentest/scope/batch'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const d = await r.json();

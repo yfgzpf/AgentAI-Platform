@@ -203,23 +203,27 @@ const ComposerBase = ({
   const [scopeNew, setScopeNew] = useState('');
   const [scopePendingCount, setScopePendingCount] = useState(0);
 
-  const scopeHeaders = useCallback(() => ({
-    ...(workspaceDir ? { 'x-workspace': workspaceDir } : {}),
-  }), [workspaceDir]);
+  const scopeBaseUrl = GATEWAY_HTTP || 'http://127.0.0.1:18789';
+
+  // ⚠️ 2026-10-16 修复: workspace 走 URL 查询参数 (可编码中文), 不再走 x-workspace header —
+  // header 只允许 ASCII, 中文工作区路径 (如 F:\目录已检查\澳彩) 会令 undici 抛
+  // "Cannot convert to ByteString", 请求发不出去。跟 ScopeManager 同一修法。
+  const scopeUrl = useCallback((path: string) =>
+    workspaceDir ? `${scopeBaseUrl}/${path}?workspace=${encodeURIComponent(workspaceDir)}` : `${scopeBaseUrl}/${path}`,
+  [scopeBaseUrl, workspaceDir]);
 
   const scopeLoad = useCallback(async () => {
     try {
-      const r = await fetch(`${GATEWAY_HTTP || 'http://127.0.0.1:18789'}/v1/pentest/scope`, { headers: scopeHeaders() });
+      const r = await fetch(scopeUrl('v1/pentest/scope'));
       const d = await r.json();
       if (d.ok) { setScopeTargets(d.targets || []); setScopeMaxRps(d.max_rps || 5); }
-      // 2026-10-15 P0-2: AI 的授权提案在系统页「渗透测试授权」面板确认, 这里给条提示
       try {
-        const rp = await fetch(`${GATEWAY_HTTP || 'http://127.0.0.1:18789'}/v1/pentest/scope/pending`, { headers: scopeHeaders() });
+        const rp = await fetch(scopeUrl('v1/pentest/scope/pending'));
         const dp = await rp.json();
         setScopePendingCount(dp.ok ? (dp.pending?.length || 0) : 0);
       } catch { /* 旧网关无此端点 */ }
     } catch { /* 弹窗打开时再提示 */ }
-  }, [scopeHeaders]);
+  }, [scopeUrl]);
 
   useEffect(() => {
     if (!scopeOpen) return;
@@ -239,8 +243,8 @@ const ComposerBase = ({
     if (!t) return;
     setScopeNew('');
     try {
-      const r = await fetch(`${GATEWAY_HTTP || 'http://127.0.0.1:18789'}/v1/pentest/scope`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...scopeHeaders() }, body: JSON.stringify({ target: t }),
+      const r = await fetch(scopeUrl('v1/pentest/scope'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: t }),
       });
       const d = await r.json();
       if (d.ok) { message.success(d.granted ? `已授权 ${d.target}` : `${d.target} 已在授权范围`); void scopeLoad(); }
@@ -250,10 +254,9 @@ const ComposerBase = ({
 
   const scopeRevoke = async (host: string) => {
     try {
-      const h: Record<string, string> = { 'Content-Type': 'application/json', ...scopeHeaders() };
-      const r = await fetch(`${GATEWAY_HTTP || 'http://127.0.0.1:18789'}/v1/pentest/scope`, {
+      const r = await fetch(scopeUrl('v1/pentest/scope'), {
         method: 'DELETE',
-        headers: h,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target: host }),
       });
       const d = await r.json();
