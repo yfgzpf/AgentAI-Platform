@@ -22,7 +22,7 @@
  *      `#121212` (亮色主题下仍是纯黑)。
  *
  * 本文件锁住的约定 (源码文本断言, 与 layout-panes / rail-browser / token-layer 同一套路):
- *   A. 页壳三件存在且被唯一渲染点消费 —— 24 个页面在 App.tsx 一处统一拿到契约
+ *   A. 页壳三件存在且被唯一渲染点消费 —— 25 个页面在 App.tsx 一处统一拿到契约
  *   B. 外壳高度两处真相点 (#root / .app-root) 都必须带 100dvh; 死掉的 .app-shell 不得复活
  *   C. 全库不再出现 `calc(100vh - …)` 魔法高度
  *   D. `.app-content` 只有单层光晕, 且不再依赖 background-size (网格才需要)
@@ -83,7 +83,7 @@ const layoutCss = stripAll(readStyle('layout.css'));
 const appTsx = stripAll(readSrc('App.tsx'));
 
 // ════════════════════════════════════════════════════════════════════════
-// A. 页壳三件 —— 24 个页面在唯一渲染点统一拿到契约
+// A. 页壳三件 —— 25 个页面在唯一渲染点统一拿到契约
 // ════════════════════════════════════════════════════════════════════════
 
 describe('A 页壳层: 三件存在, 且 24 页在唯一渲染点统一拿到契约', () => {
@@ -123,9 +123,9 @@ describe('A 页壳层: 三件存在, 且 24 页在唯一渲染点统一拿到契
     expect(iShell).toBeGreaterThan(iLayout);
   });
 
-  it('★ 24 个页面在 App.tsx 这一个渲染点统一包裹 (改一处即全覆盖)', () => {
+  it('★ 25 个页面在 App.tsx 这一个渲染点统一包裹 (改一处即全覆盖)', () => {
     // PAGES 数组的条目数 = 页面数 (每条以 `  { key: '` 开头)
-    expect(count(appTsx, /^\s*\{ key: '/gm)).toBe(24);
+    expect(count(appTsx, /^\s*\{ key: '/gm)).toBe(25);
 
     // 恰好一对 PageShell, 且包住页面渲染区
     expect(count(appTsx, /<PageShell>/g)).toBe(1);

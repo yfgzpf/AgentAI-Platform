@@ -26,6 +26,7 @@ import { MCP_HOSTS } from './mcp/config.js';
 // ===== CORS 配置 =====
 const CORS_ORIGINS = (process.env.AGENTAI_CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5176,http://127.0.0.1:5176,http://localhost:1420,http://127.0.0.1:1420,http://localhost:4173,http://127.0.0.1:4173,http://localhost:4174,http://127.0.0.1:4174,http://127.0.0.1,http://localhost,tauri://localhost,http://tauri.localhost,https://tauri.localhost').split(',').map(o => o.trim());
 import { filesRouter } from './routes/files.js';
+import { pentestScopeRouter } from './routes/pentest-scope.js';
 import { createQQRouter } from './routes/qq.js';
 import { createChannelRouter } from './routes/channel.js';
 import { createCustomerRouter } from './routes/customer.js';
@@ -214,6 +215,7 @@ app.use(cors({
     app.use(createAdminRouter({}));
   }
   app.use(filesRouter);
+  app.use(pentestScopeRouter);
 app.use(createBrowserRouter());
 app.use('/v1/browser/engine', createBrowserEngineRouter(deps.io));
 app.use(parseFileRouter);

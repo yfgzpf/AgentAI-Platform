@@ -24,6 +24,7 @@ import {
   DownOutlined, CheckCircleFilled, FolderOpenOutlined, DashboardOutlined, SyncOutlined, DownloadOutlined,
   GlobalOutlined, MinusOutlined, BorderOutlined, CloseOutlined,
   HomeOutlined, KeyOutlined, HeartOutlined, ExpandOutlined, ReloadOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 /* P0-4: 代码分割 — 首屏组件同步加载，其他页面延迟加载 */
 // 首屏核心组件 - 同步导入避免骨架屏等待
@@ -53,6 +54,7 @@ import { preloadLazyChunks } from './lazyChunks';
 const MonitoringPanel = lazy(() => import('./components/MonitoringPanel').then(m => ({ default: m.default })));
 const KnowledgeDashboard = lazy(() => import('./components/KnowledgeDashboard').then(m => ({ default: m.KnowledgeDashboard })));
 const SoulPanel = lazy(() => import('./components/SoulPanel').then(m => ({ default: m.SoulPanel })));
+const ScopeManager = lazy(() => import('./components/ScopeManager').then(m => ({ default: m.default })));
 import { RightPanel } from './components/RightPanel';
 import { PulseFlowSidebar } from './components/PulseFlowSidebar';
 import { GuideModal } from './components/GuideModal';
@@ -67,6 +69,13 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { PageSkeleton } from './components/PageSkeleton';
 import { useProfileStore, UserProfile } from './store';
 import { useSessionStore } from './store/sessionStore';
+import { FeatureGuide } from './app/FeatureGuide';
+import { ChatModeToggle } from './app/ChatModeToggle';
+import { railTabStyle, railIconStyle } from './app/rail-styles';
+import { NavGroupDropdown, type NavGroupItem } from './app/NavGroupDropdown';
+import { getLocalProfile, getAllUserProfiles } from './app/profile-local';
+import type { PageKey, PageMeta } from './app/page-types';
+import { getCurrentWorkspace } from './utils/workspace-switch';
 import { useModeStore, MODE_CONFIG, MODE_ORDER } from './store/modeStore';
 import { useFontSizeStore, FONT_SIZE_MAP, type FontSize } from './store';
 import { useModelStore } from './store/modelStore';
@@ -98,160 +107,8 @@ if (typeof window !== 'undefined') {
  * 设计理念：
  * - 生图/生视频页面允许所有用户进入
  * - 免费用户使用内置免费模型（能力有限）
- * - 高级模型需要密钥，点击时引导去设置
- * - 不强制拦截页面访问
+ * 组件本体已搬至 ./app/FeatureGuide (2026-10-12 App.tsx 瘦身第一批)
  */
-const FeatureGuide: React.FC<{
-  page: PageMeta;
-  children: React.ReactNode;
-}> = ({ page, children }) => {
-  const { isActivated } = useSubscriptionStore();
-
-  // 「免费内置模型」提示条: 常驻会一直压在页面顶部, 允许用户关掉并记住
-  const NAG_KEY = 'agentai.nag.freeModelDismissed';
-  const [dismissed, setDismissed] = useState(() => {
-    try { return localStorage.getItem(NAG_KEY) === '1'; } catch { return false; }
-  });
-  const dismiss = () => {
-    setDismissed(true);
-    try { localStorage.setItem(NAG_KEY, '1'); } catch { /* 隐私模式下忽略 */ }
-  };
-
-  // 如果已激活、不需要引导、或用户已关闭提示，直接显示内容
-  if (isActivated || !page.requireSubscription || dismissed) {
-    return <>{children}</>;
-  }
-
-  // 未激活时显示内容 + 顶部提示条
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* 顶部提示条 */}
-      <div style={{
-        padding: '10px 16px',
-        background: 'var(--accent-soft)',
-        borderBottom: '1px solid var(--border)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        flexShrink: 0,
-      }}>
-        <span style={{ fontSize: 'var(--fs-md)' }}>💡</span>
-        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', flex: 1 }}>
-          当前使用<span style={{ fontWeight: 600, color: 'var(--accent)' }}> 免费内置模型</span>，
-          能力有限。添加密钥可解锁 <b>GPT Image 2</b>、<b>Nano Banana</b> 等高级模型。
-        </span>
-        <Button 
-          type="primary" 
-          size="small"
-          icon={<KeyOutlined />}
-          onClick={() => window.dispatchEvent(new CustomEvent('agentai:navigate', { detail: { page: 'settings' as any } }))}
-        >
-          添加密钥解锁
-        </Button>
-        <Tooltip title="本页不再提示 (可在设置里恢复)">
-          <span
-            data-testid="nag-dismiss"
-            onClick={dismiss}
-            style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: 20, height: 20, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-              color: 'var(--muted-2)', fontSize: 'var(--fs-md)', lineHeight: 1, flexShrink: 0,
-            }}
-          >
-            ×
-          </span>
-        </Tooltip>
-      </div>
-      {/* 页面内容 */}
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        {children}
-      </div>
-    </div>
-  );
-};
-
-/* ════════════════ 右栏模式切换条样式 (模块级, 避免每次渲染新建对象) ════════════════ */
-function railTabStyle(active: boolean): React.CSSProperties {
-  return {
-    fontSize: 'var(--fs-micro)', fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-sm)',
-    cursor: 'pointer', userSelect: 'none',
-    color: active ? 'var(--accent)' : 'var(--muted-2)',
-    background: active ? 'var(--accent-soft)' : 'transparent',
-    transition: 'color 0.15s, background 0.15s',
-  };
-}
-
-const railIconStyle: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  width: 20, height: 20, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-  fontSize: 'var(--fs-micro)', color: 'var(--muted-2)',
-};
-
-/* ════════════════ 对话改图切换按钮 ════════════════ */
-const ChatModeToggle: React.FC = () => {
-  const { chatMode, setChatMode, models, activeModelId, setActive } = useModelStore();
-  
-  // 切换按钮始终显示: 用户可随时切换回普通对话模式 (即使当前模型不支持图片)
-  const isImageMode = chatMode === 'image_edit';
-  
-  const handleToggle = () => {
-    const newMode = isImageMode ? 'chat' : 'image_edit';
-    setChatMode(newMode);
-    
-    // 切换到图片模式时，自动选择支持图片的模型
-    if (newMode === 'image_edit') {
-      const imageModels = models.filter(m => 
-        m.capabilities?.includes('image') || 
-        m.capabilities?.includes('multimodal') ||
-        ['zhipu', 'doubao-chat', 'qwen-chat', 'longcat-2.0'].includes(m.id)
-      );
-      if (imageModels.length > 0 && !imageModels.find(m => m.id === activeModelId)) {
-        setActive(imageModels[0].id);
-      }
-    }
-  };
-  
-  return (
-    <Tooltip title={isImageMode ? '切换回普通对话' : '切换到对话改图模式'}>
-      <span
-        onClick={handleToggle}
-        style={{
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          width: 30, height: 30, borderRadius: 'var(--radius-md)', cursor: 'pointer',
-          color: isImageMode ? 'var(--accent)' : 'var(--muted-2)',
-          background: isImageMode ? 'var(--accent-soft)' : 'transparent',
-          transition: 'all 0.15s ease', marginRight: 8,
-          fontSize: 'var(--fs-lg)',
-        }}
-      >
-        🎨
-      </span>
-    </Tooltip>
-  );
-};
-
-/* ════════════════ PAGES (图标 + 标签 + 渲染) ════════════════ */
-type PageKey = 'chat' | 'write' | 'image' | 'video' | '3d' | 'pascal' | 'decorai' | 'editor' | 'skills' | 'qq' | 'wechat' | 'knowledge' | 'settings' | 'notification' | 'workflow' | 'suggestions' | 'xuanji' | 'automation' | 'tasks' | 'stats' | 'evolution' | 'monitoring' | 'knowledge-explore' | 'soul';
-
-interface PageMeta {
-  key: PageKey;
-  label: string;
-  icon: React.ReactNode;
-  comp: React.FC;
-  /** 在 Sidebar 出现时排序分组 */
-  group: 'core' | 'media' | 'system';
-  /** 描述, 悬浮 tooltip 用 */
-  desc: string;
-  /** 导航下拉内的分组标题. system 组 15 项平铺太长, 用它切成可扫读的段落;
-   *  同 section 的条目必须在数组里连续 (下拉按数组顺序渲染)。 */
-  section?: string;
-  /** 右上角小徽章 (可选) */
-  badge?: string;
-  /** 是否需要订阅才能使用 */
-  requireSubscription?: boolean;
-  /** 是否在侧栏隐藏 (空壳/半成品栏目, 代码保留但不在导航中显示) */
-  hidden?: boolean;
-}
 
 const StatsPanel = lazy(() => import('./components/StatsPanel').then(m => ({ default: m.StatsPanel })));
 const PascalEditor = lazy(() => import('./components/PascalEditor').then(m => ({ default: m.PascalEditor })));
@@ -282,6 +139,7 @@ const PAGES: PageMeta[] = [
   { key: 'evolution', label: '自进化',  icon: <ExperimentOutlined />, comp: EvolutionPanel,  group: 'system', section: '运行与洞察', desc: '跨会话规则自修改 · 技能自动创建 · 行为优化', badge: 'NEW' },
   { key: 'monitoring', label: '监控面板', icon: <DashboardOutlined />, comp: MonitoringPanel, group: 'system', section: '运行与洞察', desc: '进化系统 · 审批策略 · 反馈闭环 实时监控', badge: 'NEW' },
   { key: 'soul', label: '灵魂', icon: <HeartOutlined />, comp: SoulPanel, group: 'system', section: '运行与洞察', desc: '梦境 · 好奇心 · 内心独白 · 痛觉 · 辩论 — AI 的内心世界', badge: 'NEW' },
+  { key: 'pentest-scope', label: '渗透测试授权', icon: <SafetyCertificateOutlined />, comp: ScopeManager, group: 'system', section: '运行与洞察', desc: '授权范围管理 · 赏金打单 · 挖洞前加目标, 免改 JSON' , badge: 'NEW' },
   { key: 'settings', label: '设置',     icon: <SettingOutlined />,    comp: Settings,      group: 'system', section: '应用设置', desc: '密钥 · 框架 · 模型 · 主题' },
 ];
 
@@ -298,178 +156,7 @@ const THEME_OPTIONS: { value: ThemeStyle; label: string; swatch: string }[] = [
   { value: 'porcelain', label: '瓷白 (亮)',   swatch: 'linear-gradient(135deg, #fafafa 0%, #e0e0e8 100%)' },
 ];
 
-/* ════════════════ App 主组件 ════════════════ */
-
-/** 从 localStorage 直接读取缓存的用户身份 (绕过 zustand persist 异步 hydration) */
-function getLocalProfile(): UserProfile | null {
-  try {
-    const raw = localStorage.getItem('agentai-user-profile');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    // zustand persist v4 格式: { state: { profile: ... } }
-    return parsed?.state?.profile || parsed?.profile || null;
-  } catch { return null; }
-}
-
-/** 获取所有已知的用户身份 (从 localStorage 中读取所有 agentai.user.* 键) */
-function getAllUserProfiles(): Array<UserProfile & { userId: string }> {
-  const profiles: Array<UserProfile & { userId: string }> = [];
-  try {
-    // 读取 agentai-user-profile (当前用户)
-    const currentRaw = localStorage.getItem('agentai-user-profile');
-    if (currentRaw) {
-      const parsed = JSON.parse(currentRaw);
-      const profile = parsed?.state?.profile || parsed?.profile || null;
-      if (profile?.name) {
-        profiles.push({ ...profile, userId: profile.name });
-      }
-    }
-    // 读取 agentai.user.* 键 (历史用户)
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('agentai.user.')) {
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed?.name) {
-            profiles.push({ ...parsed, userId: parsed.name });
-          }
-        }
-      }
-    }
-  } catch { /* ignore */ }
-  return profiles;
-}
-
-/* ════════════════ NavGroupDropdown — 内联下拉 (替代 antd Dropdown) ════════════════ */
-/**
- * 修复: 桌面端 (Tauri transparent 模式) antd Dropdown 的 portal popup 不可见
- * 原因: Tauri `transparent: true` 窗口下, antd 把 popup 渲染到 document.body,
- *       被 native compositor 裁剪到窗口外, 看不到
- * 解决: 用内联 position:absolute 弹出面板, 完全不离开 webview DOM 树
- */
-interface NavGroupItem {
-  key: string;
-  icon: React.ReactNode;
-  label: string;
-  desc: string;
-  active?: boolean;
-  badge?: string;
-  /** 段标题; 与上一项不同则在本项前渲染一条分隔段头 (空则不渲染) */
-  section?: string;
-}
-const NavGroupDropdown: React.FC<{
-  label: string;
-  icon: React.ReactNode;
-  active: boolean;
-  items: NavGroupItem[];
-  onSelect: (key: string) => void;
-}> = ({ label, icon, active, items, onSelect }) => {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLSpanElement>(null);
-
-  // 点击外部关闭
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.removeEventListener('mousedown', handler);
-      document.removeEventListener('keydown', esc);
-    };
-  }, [open]);
-
-  return (
-    <span
-      ref={wrapRef}
-      className={`app-tab ${active ? 'active' : ''}`}
-      onClick={() => setOpen(v => !v)}
-      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-    >
-      {icon}
-      <span>{label}</span>
-      <DownOutlined style={{ fontSize: 'var(--fs-micro)', marginLeft: 2, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
-      {open && (
-        <div
-          role="menu"
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
-            minWidth: 200,
-            maxHeight: 480,
-            overflowY: 'auto',
-            background: 'var(--panel)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-md)',
-            padding: 4,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-            zIndex: 'var(--z-toast)',
-          }}
-        >
-          {items.map((item, i) => {
-            const showSection = !!item.section && item.section !== items[i - 1]?.section;
-            return (
-            <React.Fragment key={item.key}>
-            {showSection && (
-              <div style={{
-                padding: i === 0 ? '2px 10px 4px' : '8px 10px 4px',
-                marginTop: i === 0 ? 0 : 4,
-                borderTop: i === 0 ? 'none' : '1px solid var(--border)',
-                fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--muted-2)',
-              }}>
-                {item.section}
-              </div>
-            )}
-            <div
-              role="menuitem"
-              onClick={() => { onSelect(item.key); setOpen(false); }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '8px 10px',
-                borderRadius: 'var(--radius-md)',
-                cursor: 'pointer',
-                background: item.active ? 'var(--accent-soft)' : 'transparent',
-                transition: 'background 0.12s',
-              }}
-              onMouseEnter={(e) => { if (!item.active) (e.currentTarget as HTMLElement).style.background = 'var(--card-hover)'; }}
-              onMouseLeave={(e) => { if (!item.active) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', color: item.active ? 'var(--accent)' : 'var(--fg-2)' }}>
-                {item.icon}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)', fontWeight: item.active ? 600 : 500, color: 'var(--fg)' }}>
-                  {item.label}
-                  {item.badge && (
-                    <span style={{ fontSize: 'var(--fs-micro)', padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--accent)', color: 'var(--fg-on-accent)', lineHeight: '14px' }}>
-                      {item.badge}
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.desc}
-                </div>
-              </div>
-              {item.active && <CheckCircleFilled style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)' }} />}
-            </div>
-            </React.Fragment>
-            );
-          })}
-        </div>
-      )}
-    </span>
-  );
-};
+/* getLocalProfile / getAllUserProfiles 已搬至 ./app/profile-local (2026-10-12) */
 
 export const App: React.FC = () => {
   /** 启动页 = localStorage 里上次的页面 (仅接受已知 PageKey, 异常值退回 'chat')。
@@ -483,7 +170,7 @@ export const App: React.FC = () => {
         const VALID: PageKey[] = ['chat', 'write', 'image', 'video', '3d', 'pascal', 'decorai',
         'editor', 'skills', 'qq', 'wechat', 'knowledge', 'settings', 'notification',
         'workflow', 'suggestions', 'xuanji', 'automation', 'tasks', 'stats',
-        'evolution', 'monitoring', 'knowledge-explore', 'soul'];
+        'evolution', 'monitoring', 'knowledge-explore', 'soul', 'pentest-scope'];
         if (VALID.includes(saved as PageKey)) return saved as PageKey;
       }
     } catch { /* ignore */ }
@@ -770,7 +457,7 @@ export const App: React.FC = () => {
           setActive(sessionId);
         } else {
           // 如果会话不存在（如自动化创建的会话），创建一个新会话并加载
-          const newId = createSession('自动化任务对话');
+          const newId = createSession('自动化任务对话', undefined, 'chat', getCurrentWorkspace());
           // 尝试从后端加载该会话的消息
           loadSessionFromGateway(sessionId, newId);
         }
@@ -991,9 +678,9 @@ export const App: React.FC = () => {
   // 现在改成 ZCode 那样嵌在右栏常驻, 与"信息"模式共用一个栏位。
   //   - chat 页: 信息 / 浏览器 可切
   //   - 其它页: 只走浏览器模式 —— Editor/ImageStudio 自带多栏, 平白加一条信息栏只会挤
-  const [railMode, setRailMode] = useState<'info' | 'browser'>(() => {
-    try { return localStorage.getItem('agentai.rail.mode') === 'browser' ? 'browser' : 'info'; } catch { return 'info'; }
-  });
+  // ✅ 批次8.8 (2026-10-12): 初值恒 'info' (不再读 localStorage 自动弹浏览器栏)。
+  //   写逻辑保留 —— 手动切到 browser 时仍持久化, 但**启动不再自动弹**。
+  const [railMode, setRailMode] = useState<'info' | 'browser'>('info');
   useEffect(() => {
     try { localStorage.setItem('agentai.rail.mode', railMode); } catch { /* 隐私模式忽略 */ }
   }, [railMode]);
