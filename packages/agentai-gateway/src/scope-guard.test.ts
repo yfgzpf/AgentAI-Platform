@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { readFileSync, existsSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, rmSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 import * as nodePath from 'node:path';
 
 const ROOT = nodePath.resolve(__dirname, '..', '..', '..');
@@ -289,10 +289,16 @@ describe('契约: 2026-10-15 P0/P1 修复接线', () => {
     expect(wslBody).toMatch(/execFile\('wsl', argv/);
   });
 
-  it('pentest prompt 反映提案制授权 + dispatch 硬闸门 + evidence 必填', () => {
+  it('pentest prompt 反映提案制授权 + dispatch 硬闸门 + 证据链 (save_evidence)', () => {
     expect(subagentSrc).toMatch(/grant_scope\(\{target\}\) \*\*向用户发起授权提案\*\*/);
     expect(subagentSrc).toMatch(/dispatch 层有硬闸门/);
-    expect(subagentSrc).toMatch(/\*\*evidence 必填\*\*/);
+    // 2026-10-16: 证据门槛放宽为 evidence 或 evidencePaths 至少一项; 工作流加 save_evidence 截图落盘
+    expect(subagentSrc).toMatch(/save_evidence/);
+    expect(subagentSrc).toMatch(/evidencePaths/);
+  });
+
+  it('pentest 工具集含 save_evidence (证据落盘)', () => {
+    expect(subagentSrc).toMatch(/'report_vulnerability', 'save_evidence'/);
   });
 });
 
@@ -349,16 +355,57 @@ describe('行为: wsl_scan 注入面修复 (P1-1)', () => {
   });
 });
 
-describe('行为: report_vulnerability 证据门槛 (P2-1)', () => {
-  it('evidence 为空 → 拒绝落盘', async () => {
+describe('行为: report_vulnerability 证据门槛 (P2-1) + 证据链 (2026-10-16)', () => {
+  it('evidence 与 evidencePaths 皆空 → 拒绝落盘', async () => {
     const { EXTRA_HANDLERS } = await import('./tools.ts');
     const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
     const r = await EXTRA_HANDLERS['report_vulnerability']({
       title: '无证据洞', target: 'example.com', severity: 'high', vulnType: 'xss',
     }, ctx);
     expect(r.success).toBe(false);
-    expect(r.output).toMatch(/evidence 为空/);
+    expect(r.output).toMatch(/无证据/);
     expect(existsSync(nodePath.join(wsB, '.agentai', 'vulns', 'vulns.jsonl'))).toBe(false);
+  });
+
+  it('只有 evidencePaths (截图文件) 也满足证据门槛 → 落盘且带上路径', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['report_vulnerability']({
+      title: '截图证据洞', target: 'example.com', severity: 'high', vulnType: 'xss',
+      evidencePaths: ['C:/x/.agentai/evidence/example.com-xss/screenshot-1.png'],
+    }, ctx);
+    expect(r.success).toBe(true);
+    expect(r.data?.evidencePaths).toHaveLength(1);
+    expect(r.data?.status).toBe('unverified');
+  });
+
+  it('save_evidence: 截图 base64 落盘成 PNG, 响应文本落盘成 TXT, 按目标归组', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    // 1x1 红点 PNG 的 base64 (合法, >100 字节)
+    const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const rShot = await EXTRA_HANDLERS['save_evidence']({
+      title: 'xss-proof', imageBase64: tinyPng, target: 'example.com',
+    }, ctx);
+    expect(rShot.success).toBe(true);
+    expect(rShot.data.evidencePaths.length).toBe(1);
+    const shotPath = rShot.data.evidencePaths[0];
+    expect(shotPath.endsWith('.png')).toBe(true);
+    expect(existsSync(shotPath)).toBe(true);
+    expect((statSync(shotPath).size)).toBeGreaterThan(0);
+
+    const rTxt = await EXTRA_HANDLERS['save_evidence']({
+      title: 'xss-proof', saveText: 'HTTP/1.1 200 OK\n<script>alert(1)</script>', target: 'example.com',
+    }, ctx);
+    expect(rTxt.success).toBe(true);
+    expect(existsSync(rTxt.data.evidencePaths[0])).toBe(true);
+
+    // 空内容 → 拒绝
+    const rEmpty = await EXTRA_HANDLERS['save_evidence']({ title: 'empty' }, ctx);
+    expect(rEmpty.success).toBe(false);
+    // 非法 base64 → 拒绝
+    const rBad = await EXTRA_HANDLERS['save_evidence']({ title: 'bad', imageBase64: '!!!' }, ctx);
+    expect(rBad.success).toBe(false);
   });
 
   it('有 evidence → 落盘且 status 默认 unverified; 显式 verified 生效', async () => {
@@ -376,9 +423,11 @@ describe('行为: report_vulnerability 证据门槛 (P2-1)', () => {
     }, ctx);
     expect(r2.success).toBe(true);
     expect(r2.data?.status).toBe('verified');
+    // 只校验本用例新追加的 2 行 (同 workspace 前序用例可能已写过其它行)
     const lines = readFileSync(nodePath.join(wsB, '.agentai', 'vulns', 'vulns.jsonl'), 'utf8').trim().split('\n');
-    expect(lines.length).toBe(2);
-    expect(JSON.parse(lines[1]).status).toBe('verified');
+    const last2 = lines.slice(-2).map(l => JSON.parse(l));
+    expect(last2[0].status).toBe('unverified');
+    expect(last2[1].status).toBe('verified');
   });
 });
 

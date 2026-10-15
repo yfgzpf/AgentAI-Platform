@@ -116,19 +116,21 @@ export class MCPHost {
     proc.on('exit', (code) => console.log(`[mcp] ${config.name} exited:`, code));
 
     // 发送 initialize 请求 (MCP 协议握手)
+    // ⚠️ 握手跑在 npx 冷启动里 (rea-agents 等现场拉包), 放宽到 180s 避免首包就超时白拉
+    const HANDSHAKE_TIMEOUT = 180_000;
     const initResult = await this._send(proc, pending, () => ++idCounter, {
       jsonrpc: '2.0', id: ++idCounter, method: 'initialize',
       params: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, clientInfo: { name: 'agentai-gateway', version: '0.1.0' } },
-    });
+    }, HANDSHAKE_TIMEOUT);
     if (initResult?.protocolVersion) {
       // 发送 initialized 通知
-      this._send(proc, pending, () => 0, { jsonrpc: '2.0', id: 0, method: 'notifications/initialized' });
+      this._send(proc, pending, () => 0, { jsonrpc: '2.0', id: 0, method: 'notifications/initialized' }, HANDSHAKE_TIMEOUT);
     }
 
     // 获取工具列表
     const toolsResult = await this._send(proc, pending, () => ++idCounter, {
       jsonrpc: '2.0', id: ++idCounter, method: 'tools/list',
-    });
+    }, HANDSHAKE_TIMEOUT);
 
     const tools = (toolsResult?.tools || []) as Array<{ name: string; description?: string; inputSchema?: any }>;
     for (const tool of tools) {
@@ -219,15 +221,17 @@ export class MCPHost {
     this.processes.set(config.name, { proc: null, tools: tools.map(t => t.name) });
   }
 
-  private _send(proc: any, pending: Map<any, any>, nextId: () => number, msg: JsonRpcRequest): Promise<any> {
+  private _send(proc: any, pending: Map<any, any>, nextId: () => number, msg: JsonRpcRequest, timeoutMs?: number): Promise<any> {
     return new Promise((resolve, reject) => {
       const id = msg.id;
       if (id !== 0) pending.set(id, { resolve, reject });
       const data = JSON.stringify(msg) + '\n';
       proc.stdin?.write(data);
       if (id === 0) resolve(null);
-      // 超时
-      setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error('MCP timeout')); } }, 60000);
+      // 超时: 握手阶段 (initialize/tools/list, 跑在 npx 冷启动里) 放宽到 180s,
+      // 运行期工具调用保持 60s。默认 60s, 握手方显式传 180s。
+      const t = timeoutMs ?? 60000;
+      setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error(`MCP timeout (${t / 1000}s)`)); } }, t);
     });
   }
 

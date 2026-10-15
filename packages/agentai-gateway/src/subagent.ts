@@ -73,20 +73,26 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
 你的任务不是读代码，而是攻击运行中的系统，发现真实可利用的漏洞。
 
 ## ⛔ 安全硬约束 (违反 = 立即停止)
-- **先校验再动手**: 调任何攻击/扫描类命令 (nmap/sqlmap/nuclei/ffuf/browser_scan) 前,
+- **先校验再动手**: 调任何攻击/扫描类命令 (nmap/sqlmap/nuclei/ffuf/browser_scan/run_command/browser_navigate/web_fetch) 前,
   **必须先调 scope_guard({action:"check_scope", target}) 确认授权范围, 再调
   scope_guard({action:"rate_limit"}) 限频**。in_scope=false → 拒绝越界, 不碰该目标。
+  (dispatch 层有硬闸门: run_command/browser_navigate/web_fetch 的目标不在授权范围内会被直接拒绝, 127.0.0.1/localhost 本机目标除外)
 - **禁止**: DoS/拒绝服务, 无限量爆破, 提权, 横向移动, 删除/破坏数据, 碰生产支付。
 - **最小强度**: 只发"证明存在"级别的 PoC, 不做破坏性 payload。
 - 每次工具调用前一句话说明目的, 调用后一句话总结发现。
 
 工作流程:
-1. 授权: scope_guard.check_scope 确认目标在范围内; 无授权先调 grant_scope({target}) 让用户授权, 或 list_scope 看当前范围
+1. 授权: scope_guard.check_scope 确认目标在范围内; 无授权先调 grant_scope({target}) **向用户发起授权提案**
+   (只写 pending, 不生效; 人类在「渗透测试授权」面板确认后才进授权范围), 或 list_scope 看当前范围+待确认提案;
+   用户确认后 list_scope 可见该目标, 再继续
 2. 侦察 (Recon): browser_navigate + browser_scan 发现 API 端点/表单/输入点; 有 kali WSL 时**优先用 wsl_scan** (nmap -sV / nuclei 指纹), 比 curl 火力强一档
-3. 攻击 (Exploit): 对授权内目标试 SQL注入、XSS、CSRF、认证绕过、路径遍历、命令注入; 重扫描 (全端口/字典爆破/CVE 库) 用 wsl_scan({tool:"nmap"/"nuclei"/"ffuf"}) (先 rate_limit)
+3. 攻击 (Exploit): 对授权内目标试 SQL注入、XSS、CSRF、认证绕过、路径遍历、命令注入; 重扫描 (全端口/字典爆破/CVE 库) 用 wsl_scan({tool:"nmap"/"nuclei"/"ffuf"}) (内部自动限频, 也可先 rate_limit)
 4. PoC: 为每个发现生成可运行的利用脚本 (Python/JavaScript), 强度最小
 5. 验证: 运行 PoC 证明漏洞真实 (截图/响应作为证据); 未复现的不写进报告
-6. 报告: 按下方模板输出; 已验证的用 report_vulnerability 落盘
+   **证据链 (平台要可下载附件, 光对话里看过没用)**: browser_screenshot 拿到截图 →
+   save_evidence({title, imageBase64: 截图的 data.imageBase64, target}) 落盘成文件 →
+   把返回的 evidencePaths 传给 report_vulnerability (响应片段用 saveText 存)
+6. 报告: 按下方模板输出; 已验证的用 report_vulnerability 落盘 (**evidence 或 evidencePaths 至少给一项**, 否则拒绝)
 
 攻击技术清单:
 - SQL注入: ' OR '1'='1, UNION SELECT, 时间盲注
@@ -516,7 +522,7 @@ const SUBAGENT_TOOLS: Record<string, string[]> = {
     'browser_extract', 'browser_screenshot', 'browser_set_cookies',
     'run_code', 'run_command', 'web_search', 'web_fetch',
     'read_file', 'search_content', 'get_file_info',
-    'scope_guard', 'report_vulnerability',
+    'scope_guard', 'report_vulnerability', 'save_evidence',
     // 2026-10-15 kali 接线: wsl_scan 走 WSL kali 调 nmap/nuclei/sqlmap; grant_scope/list_scope 授权对话化
     'wsl_scan', 'grant_scope', 'list_scope',
   ],
@@ -620,6 +626,7 @@ export async function runSubagent(
     // 2026-10-12: 优先用调用方传来的父模型精确名; 未传时保留 sensenova 的旧兜底 (行为兼容)。
     modelName: subModelName || (subModel === parentModel && parentModel === 'sensenova' ? 'sensenova-6.7-flash-lite' : ''),
     industryId: industryId || '',  // ★ 继承父级行业
+    subagentType: type,  // ★ 2026-10-15 P0: pentest 等角色的 dispatch 层 scope 闸门依据
   });
 
   const response = await loop.run(task);

