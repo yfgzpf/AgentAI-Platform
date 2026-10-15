@@ -5,11 +5,16 @@
  * 前端表单直接操作。调网关 /v1/pentest/scope API, 跟 AI 工具 (grant_scope /
  * scope_guard / wsl_scan) 读写同一份 .agentai/scope.json (按 workspace 隔离)。
  * 用户从赏金平台 (补天/漏洞盒子/HackerOne) 摘出的"可测资产域名"直接加进来。
+ *
+ * 2026-10-15 P0-2: AI 侧 grant_scope 改为提案制 (只写 scope-pending.json, 不生效),
+ * 本面板新增「待确认提案」区 — AI 提案 → 人类点确认才进授权范围。这是"白帽工具"
+ * 与"攻击框架"的分界线: AI 不能自我授权。
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Tag, Empty, Input, InputNumber, Button, Space, message as antdMsg, Spin, Tooltip } from 'antd';
-import { PlusOutlined, DeleteOutlined, LockOutlined, SafetyCertificateOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, LockOutlined, SafetyCertificateOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
+import { useProfileStore } from '../store';
 
 interface ScopeState {
   targets: string[];
@@ -17,27 +22,50 @@ interface ScopeState {
   workspace: string;
 }
 
+interface PendingProposal {
+  target: string;
+  proposedBy: string;
+  ts: number;
+}
+
 export const ScopeManager: React.FC = () => {
+  const { profile } = useProfileStore();
   const [loading, setLoading] = useState(false);
   const [scope, setScope] = useState<ScopeState>({ targets: [], maxRps: 5, workspace: '' });
   const [newTarget, setNewTarget] = useState('');
   const [newMaxRps, setNewMaxRps] = useState<number | null>(null);
+  // 2026-10-15 P0-2: AI 的授权提案 (grant_scope 只写 pending, 人类在此确认)
+  const [pending, setPending] = useState<PendingProposal[]>([]);
 
   const baseUrl = () => GATEWAY_HTTP || 'http://127.0.0.1:18789';
+
+  /** 与 WorkspaceSelector 同口径的当前工作区 → x-workspace 头,
+   *  让前端读写的 scope.json 跟 AI 工具侧 (grant_scope/list_scope) 是同一份 */
+  const wsHeader = useCallback((): Record<string, string> => {
+    const ws = (profile?.workspace || localStorage.getItem('agentai.workspace') || '').trim();
+    return ws ? { 'x-workspace': ws } : {};
+  }, [profile]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${baseUrl()}/v1/pentest/scope`);
-      const d = await r.json();
+      const [rScope, rPending] = await Promise.all([
+        fetch(`${baseUrl()}/v1/pentest/scope`, { headers: wsHeader() }),
+        fetch(`${baseUrl()}/v1/pentest/scope/pending`, { headers: wsHeader() }),
+      ]);
+      const d = await rScope.json();
       if (d.ok) setScope({ targets: d.targets || [], maxRps: d.max_rps || 5, workspace: d.workspace || '' });
       else antdMsg.error(d.error || '读取授权范围失败');
+      try {
+        const dp = await rPending.json();
+        if (dp.ok) setPending(dp.pending || []);
+      } catch { /* 旧网关无 pending 端点 → 忽略 */ }
     } catch {
       antdMsg.error('网关不可达, 无法读取授权范围');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [baseUrl, wsHeader]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -50,7 +78,7 @@ export const ScopeManager: React.FC = () => {
       if (newMaxRps) body.maxRps = newMaxRps;
       const r = await fetch(`${baseUrl()}/v1/pentest/scope`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...wsHeader() },
         body: JSON.stringify(body),
       });
       const d = await r.json();
@@ -63,11 +91,43 @@ export const ScopeManager: React.FC = () => {
 
   const handleRevoke = async (host: string) => {
     try {
-      const r = await fetch(`${baseUrl()}/v1/pentest/scope?target=${encodeURIComponent(host)}`, { method: 'DELETE' });
+      const r = await fetch(`${baseUrl()}/v1/pentest/scope`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        body: JSON.stringify({ target: host }),
+      });
       const d = await r.json();
       if (d.ok) { antdMsg.success(`已取消授权 ${d.target}`); load(); }
       else antdMsg.error(d.error || '取消授权失败');
     } catch { antdMsg.error('取消授权请求失败'); }
+  };
+
+  /** 人类确认 AI 的授权提案: pending → scope.json */
+  const handleConfirm = async (host: string) => {
+    try {
+      const r = await fetch(`${baseUrl()}/v1/pentest/scope/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        body: JSON.stringify({ target: host }),
+      });
+      const d = await r.json();
+      if (d.ok) { antdMsg.success(`已确认授权 ${d.target}`); load(); }
+      else antdMsg.error(d.error || '确认失败');
+    } catch { antdMsg.error('确认请求失败'); }
+  };
+
+  /** 人类拒绝 AI 的授权提案: 只删 pending */
+  const handleReject = async (host: string) => {
+    try {
+      const r = await fetch(`${baseUrl()}/v1/pentest/scope/pending`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...wsHeader() },
+        body: JSON.stringify({ target: host }),
+      });
+      const d = await r.json();
+      if (d.ok) { antdMsg.info(`已拒绝提案 ${host}`); load(); }
+      else antdMsg.error(d.error || '拒绝失败');
+    } catch { antdMsg.error('拒绝请求失败'); }
   };
 
   return (
@@ -118,6 +178,46 @@ export const ScopeManager: React.FC = () => {
           授权
         </Button>
       </div>
+
+      {/* ═══════════ 2026-10-15 P0-2: AI 授权提案待确认区 (人类确认才生效) ═══════════ */}
+      {pending.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--warn, #d48806)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <ClockCircleOutlined /> AI 发起的授权提案 ({pending.length}) — 需你确认后才生效
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {pending.map(p => (
+              <div
+                key={p.target}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                  background: 'rgba(250,173,20,0.08)', border: '1px solid rgba(250,173,20,0.35)',
+                  fontSize: 'var(--fs-micro)',
+                }}
+              >
+                <ClockCircleOutlined style={{ color: '#d48806', fontSize: 'var(--fs-micro)', flexShrink: 0 }} />
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-2)' }}>
+                  {p.target}
+                </span>
+                <span style={{ color: 'var(--muted-2)', fontSize: 'var(--fs-micro)', flexShrink: 0 }}>
+                  {p.proposedBy === 'agent' ? 'AI 提案' : p.proposedBy}
+                </span>
+                <Button
+                  size="small" type="text" icon={<CheckOutlined />}
+                  onClick={() => handleConfirm(p.target)}
+                  style={{ color: 'var(--success)', height: 20, padding: '0 4px' }}
+                />
+                <Button
+                  size="small" type="text" danger icon={<CloseOutlined />}
+                  onClick={() => handleReject(p.target)}
+                  style={{ color: 'var(--danger)', height: 20, padding: '0 4px' }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 当前授权列表 */}
       {loading ? (

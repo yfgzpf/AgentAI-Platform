@@ -1418,6 +1418,9 @@ await apiStream(base + '/v1/chat', {
     { cmd: '/bounty', desc: '赏金打单: 挑授权目标+挖洞+出报告', run: () => {
       handleSend(`/bounty 请帮我打一个赏金单。目标平台: ____  项目页 URL: ____  in-scope 目标域名: ____\n请按 bounty-target-picker 解析 scope → 让我逐条确认哪些能测 → grant_scope 授权 → 跑 pentest-workflow 挖洞(浏览器+nuclei+注入探针) → 真复现的洞 report_vulnerability 落盘 → 最后按 bounty-report 出各平台能过审的报告。每步要我先确认才往下走。`);
     }},
+    { cmd: '/scope', desc: '渗透测试授权: 查看/添加可测目标 (免改 JSON)', run: () => {
+      window.dispatchEvent(new CustomEvent('agentai:open-scope'));
+    }},
     { cmd: '/pentest', desc: '渗透测试: 授权目标后自动挖洞', run: () => {
       handleSend(`/pentest 目标: ____  请: 1) list_scope 看授权, 没授权先 grant_scope 让我确认; 2) scope_guard 校验; 3) 用 wsl_scan(nmap -sV) 扫端口 + 浏览器抓表单 + nuclei owasp-top10 模板; 4) 对找到的输入点发最小强度注入探针; 5) 真复现的 report_vulnerability 落盘, 最后按 bounty-report 出报告。越界目标一律拒绝。`);
     }},
@@ -1432,6 +1435,7 @@ await apiStream(base + '/v1/chat', {
 - \`/new\` — 新建对话
 - \`/abort\` — 中断当前回复
 - \`/bounty\` — 赏金打单 (挑目标+挖洞+出报告)
+- \`/scope\` — 渗透测试授权 (看/加可测目标, 免改 JSON)
 - \`/pentest\` — 渗透测试 (授权+挖洞+落盘)
 - \`/reverse\` — 逆向复刻 (读懂陌生软件/网页实现, REA 工作流)
 - \`/help\` — 查看帮助

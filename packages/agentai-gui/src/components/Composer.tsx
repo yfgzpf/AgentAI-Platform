@@ -10,7 +10,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback, useImperativeHandle, type KeyboardEvent, type RefObject, type DragEvent } from 'react';
 import { Tooltip, Select, Image, message, Dropdown } from 'antd';
-import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, BellOutlined, BulbOutlined, MoreOutlined, DesktopOutlined, ThunderboltOutlined, GithubOutlined, StarOutlined, ExperimentOutlined } from '@ant-design/icons';
+import { SendOutlined, StopOutlined, PaperClipOutlined, PictureOutlined, AudioOutlined, GlobalOutlined, CloseOutlined, FileExcelOutlined, FileTextOutlined, BellOutlined, BulbOutlined, MoreOutlined, DesktopOutlined, ThunderboltOutlined, GithubOutlined, StarOutlined, ExperimentOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { MessageOutlined as QQIcon } from '@ant-design/icons';
 import { useModeStore, MODE_CONFIG, MODE_ORDER } from '../store/modeStore';
 import { useModelStore } from '../store/modelStore';
@@ -193,6 +193,74 @@ const ComposerBase = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
+
+  // ★ 渗透测试授权弹窗 (2026-10-15: 授权入口从"系统页/改 JSON"挪到对话框图标,
+  //   跟 /scope /pentest 斜杠命令同一 API; 请求带 x-workspace 头, 跟 AI 工具侧写同一份 scope.json)
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [scopeTargets, setScopeTargets] = useState<string[]>([]);
+  const [scopeMaxRps, setScopeMaxRps] = useState<number>(5);
+  const [scopeLoading, setScopeLoading] = useState(false);
+  const [scopeNew, setScopeNew] = useState('');
+  const [scopePendingCount, setScopePendingCount] = useState(0);
+
+  const scopeHeaders = useCallback(() => ({
+    ...(workspaceDir ? { 'x-workspace': workspaceDir } : {}),
+  }), [workspaceDir]);
+
+  const scopeLoad = useCallback(async () => {
+    try {
+      const r = await fetch(`${GATEWAY_HTTP || 'http://127.0.0.1:18789'}/v1/pentest/scope`, { headers: scopeHeaders() });
+      const d = await r.json();
+      if (d.ok) { setScopeTargets(d.targets || []); setScopeMaxRps(d.max_rps || 5); }
+      // 2026-10-15 P0-2: AI 的授权提案在系统页「渗透测试授权」面板确认, 这里给条提示
+      try {
+        const rp = await fetch(`${GATEWAY_HTTP || 'http://127.0.0.1:18789'}/v1/pentest/scope/pending`, { headers: scopeHeaders() });
+        const dp = await rp.json();
+        setScopePendingCount(dp.ok ? (dp.pending?.length || 0) : 0);
+      } catch { /* 旧网关无此端点 */ }
+    } catch { /* 弹窗打开时再提示 */ }
+  }, [scopeHeaders]);
+
+  useEffect(() => {
+    if (!scopeOpen) return;
+    setScopeLoading(true);
+    void scopeLoad().finally(() => setScopeLoading(false));
+  }, [scopeOpen, scopeLoad]);
+
+  // /scope 斜杠命令 → 窗口事件 → 打开授权弹窗 (Composer 与 ChatView 解耦, 同 agentai:show-browser 套路)
+  useEffect(() => {
+    const onOpen = () => setScopeOpen(true);
+    window.addEventListener('agentai:open-scope', onOpen);
+    return () => window.removeEventListener('agentai:open-scope', onOpen);
+  }, []);
+
+  const scopeGrant = async () => {
+    const t = scopeNew.trim();
+    if (!t) return;
+    setScopeNew('');
+    try {
+      const r = await fetch(`${GATEWAY_HTTP || 'http://127.0.0.1:18789'}/v1/pentest/scope`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...scopeHeaders() }, body: JSON.stringify({ target: t }),
+      });
+      const d = await r.json();
+      if (d.ok) { message.success(d.granted ? `已授权 ${d.target}` : `${d.target} 已在授权范围`); void scopeLoad(); }
+      else message.error(d.error || '授权失败 (确认网关在线)');
+    } catch { message.error('授权请求失败 (网关不可达?)'); }
+  };
+
+  const scopeRevoke = async (host: string) => {
+    try {
+      const h: Record<string, string> = { 'Content-Type': 'application/json', ...scopeHeaders() };
+      const r = await fetch(`${GATEWAY_HTTP || 'http://127.0.0.1:18789'}/v1/pentest/scope`, {
+        method: 'DELETE',
+        headers: h,
+        body: JSON.stringify({ target: host }),
+      });
+      const d = await r.json();
+      if (d.ok) { message.success(`已取消授权 ${d.target}`); void scopeLoad(); }
+      else message.error(d.error || '取消授权失败');
+    } catch { message.error('取消授权请求失败'); }
+  };
 
   // ★ 舌诊拍照: 打开摄像头
   const openTongueCamera = async () => {
@@ -838,6 +906,12 @@ setActiveModel(modelId);
             </button>
           </Tooltip>
 
+          <Tooltip title="渗透测试授权 (加可测目标, 与 /scope /pentest 同一份范围)">
+            <button className="icon-btn-sm" onClick={() => setScopeOpen(true)}>
+              <SafetyCertificateOutlined style={{ fontSize: 'var(--fs-sm)' }} />
+            </button>
+          </Tooltip>
+
           {/* ★ 舌诊拍照 (仅中医行业显示) */}
           {isMedicalMode && (
             <Tooltip title="舌诊拍照">
@@ -849,6 +923,103 @@ setActiveModel(modelId);
                 👅
               </button>
             </Tooltip>
+          )}
+
+          {/* ★ 渗透测试授权弹窗 (点 🔒 图标开; 与 /scope /pentest 斜杠命令同一份 scope.json) */}
+          {scopeOpen && (
+            <div style={{
+              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+              background: 'rgba(0,0,0,0.55)', zIndex: 'var(--z-dragging)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }} onClick={(e) => { if (e.target === e.currentTarget) setScopeOpen(false); }}>
+              <div style={{
+                width: 440, maxHeight: '70vh', overflowY: 'auto',
+                borderRadius: 'var(--radius-lg)', background: 'var(--panel)',
+                border: '1px solid var(--border)', boxShadow: '0 8px 40px rgba(0,0,0,0.45)',
+                padding: 14,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <SafetyCertificateOutlined style={{ color: 'var(--accent)' }} />
+                  <span style={{ fontWeight: 600, color: 'var(--fg)', fontSize: 'var(--fs-sm)' }}>渗透测试授权</span>
+                  <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>· 与 AI 挖洞同一份范围</span>
+                  <button className="icon-btn-sm" onClick={() => setScopeOpen(false)} style={{ marginLeft: 'auto' }}>✕</button>
+                </div>
+
+                <div style={{
+                  fontSize: 'var(--fs-micro)', color: 'var(--warning)', marginBottom: 10,
+                  padding: '5px 8px', borderRadius: 'var(--radius-sm)',
+                  background: 'rgba(250,173,20,0.08)', border: '1px solid rgba(250,173,20,0.25)',
+                }}>
+                  只加平台明文授权资产 (补天/盒子 in-scope 清单)。通配符域名 (如 *.bestpay.com.cn) 直接填。
+                </div>
+
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  <input
+                    style={{
+                      flex: 1, fontSize: 'var(--fs-micro)', padding: '5px 8px',
+                      borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
+                      background: 'var(--card)', color: 'var(--fg)', outline: 'none',
+                    }}
+                    placeholder="目标域名, 如 *.bestpay.com.cn"
+                    value={scopeNew}
+                    onChange={e => setScopeNew(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') void scopeGrant(); }}
+                  />
+                  <button
+                    className="icon-btn-sm"
+                    style={{
+                      border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-sm)',
+                      background: 'var(--accent)', color: 'var(--fg-on-accent)',
+                      fontSize: 'var(--fs-micro)', padding: '4px 10px',
+                    }}
+                    onClick={() => void scopeGrant()}
+                  >
+                    授权
+                  </button>
+                </div>
+
+                {scopePendingCount > 0 && (
+                  <div style={{
+                    fontSize: 'var(--fs-micro)', color: '#d48806', marginBottom: 8,
+                    padding: '6px 8px', borderRadius: 'var(--radius-sm)',
+                    background: 'rgba(250,173,20,0.08)', border: '1px solid rgba(250,173,20,0.35)',
+                  }}>
+                    ⏳ 有 {scopePendingCount} 个 AI 发起的授权提案待你确认 — 在左侧「渗透测试授权」系统页确认后才生效 (AI 不能自我授权)
+                  </div>
+                )}
+
+                {scopeTargets.length === 0 ? (
+                  <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', textAlign: 'center', padding: '12px 0' }}>
+                    {scopeLoading ? '加载中…' : '尚未授权任何目标 — 添加后 AI 挖洞即可放行'}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 180, overflowY: 'auto' }}>
+                    {scopeTargets.map(t => (
+                      <div key={t} style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                        background: 'var(--card)', border: '1px solid var(--border)',
+                        fontSize: 'var(--fs-micro)',
+                      }}>
+                        <SafetyCertificateOutlined style={{ color: 'var(--success)', flexShrink: 0 }} />
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-2)' }}>{t}</span>
+                        <button
+                          className="icon-btn-sm"
+                          style={{ color: 'var(--danger)', border: 'none', background: 'none', cursor: 'pointer', padding: '0 4px' }}
+                          onClick={() => void scopeRevoke(t)}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 8 }}>
+                  速率上限 {scopeMaxRps} rps (限频防打崩目标)
+                </div>
+              </div>
+            </div>
           )}
 
           {/* ★ 舌诊摄像头弹窗 */}
