@@ -152,9 +152,9 @@ describe('契约: wsl_scan + grant_scope + list_scope (kali 接线)', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════
-// 行为: wsl_scan 越界拒绝 + 白名单 + grant_scope 提案制 (2026-10-15 P0-2 起)
+// 行为: wsl_scan 越界拒绝 + 白名单 + grant_scope 直接授权 (2026-10-16: 提案制回退)
 // ════════════════════════════════════════════════════════════════════════
-describe('行为: wsl_scan 授权闸门 + grant_scope 提案制', () => {
+describe('行为: wsl_scan 授权闸门 + grant_scope 直接授权', () => {
   const gwSrcDir = nodePath.join(ROOT, 'packages', 'agentai-gateway', 'src');
   const tmpWs2 = nodePath.join(gwSrcDir, '..', '.scope-guard-test-ws-wsl');
   const fsMod = { rmSync, mkdirSync, writeFileSync, readFileSync, existsSync };
@@ -174,7 +174,7 @@ describe('行为: wsl_scan 授权闸门 + grant_scope 提案制', () => {
     const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
     const r = await EXTRA_HANDLERS['wsl_scan']({ target: 'https://bank.com', tool: 'nmap', args: ['-sV'] }, ctx);
     expect(r.success).toBe(false);
-    expect(r.output).toMatch(/不在 .*授权范围|需授权/);
+    expect(r.output).toMatch(/不在 .*授权范围|越界|需授权/);
   });
 
   it('wsl_scan 白名单外工具 → 拒绝 (防任意命令)', async () => {
@@ -185,43 +185,42 @@ describe('行为: wsl_scan 授权闸门 + grant_scope 提案制', () => {
     expect(r.output).toMatch(/未知工具|允许/);
   });
 
-  // ⚠️ 2026-10-15 P0-2 行为变更: grant_scope 从"直接写 scope.json"改为"提案制"
-  // (AI 不能自我授权)。原测试锁的是旧行为, 随修复更新 —— 这正是回归测试的价值。
-  it('grant_scope 只提案不授权: 写 scope-pending.json, scope.json 不动 (P0-2)', async () => {
+  // ⚠️ 2026-10-16 行为回退: grant_scope 提案制 (P0-2) 拆掉 — 用户反馈"给网址还要去面板确认太多余"。
+  // 现 grant_scope 直接写 scope.json 立即生效; 保留 scope_guard 默认拒绝 + 越界 hard-stop 底线。
+  it('grant_scope 直接授权: 写 scope.json 立即生效 (2026-10-16 回退)', async () => {
     const { EXTRA_HANDLERS } = await import('./tools.ts');
     const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
     const r = await EXTRA_HANDLERS['grant_scope']({ target: 'admin.test.com', max_rps: 3 }, ctx);
     expect(r.success).toBe(true);
-    expect(r.data?.pending).toBe(true);
-    // scope.json 未被写 (仍只有 example.com, 无 admin.test.com, 无 max_rps 改动)
+    expect(r.data?.granted).toBe(true);
+    // scope.json 立即含 admin.test.com, max_rps 改成 3
     const scope = JSON.parse(fsMod.readFileSync(nodePath.join(tmpWs2, '.agentai', 'scope.json'), 'utf8'));
-    expect(scope.targets).not.toContain('admin.test.com');
-    expect(scope.max_rps).toBe(5);
-    // pending 里有该提案
-    const pending = JSON.parse(fsMod.readFileSync(nodePath.join(tmpWs2, '.agentai', 'scope-pending.json'), 'utf8'));
-    expect(pending.some((p: any) => p.target === 'admin.test.com')).toBe(true);
+    expect(scope.targets).toContain('admin.test.com');
+    expect(scope.max_rps).toBe(3);
+    // 立即生效: wsl_scan 对该目标可过授权闸门
+    const r2 = await EXTRA_HANDLERS['scope_guard']({ target: 'https://admin.test.com', action: 'check_scope' }, ctx);
+    expect(r2.data?.in_scope).toBe(true);
   });
 
-  it('grant_scope 提案去重 (同 host 不重复提案)', async () => {
+  it('grant_scope 去重 (同 host 不重复追加, max_rps 仍可调)', async () => {
     const { EXTRA_HANDLERS } = await import('./tools.ts');
     const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
     const r1 = await EXTRA_HANDLERS['grant_scope']({ target: 'https://admin.test.com' }, ctx);
     expect(r1.success).toBe(true);
-    expect(r1.data?.already).toBe('pending'); // 上一条测试已提案过
-    const pending = JSON.parse(fsMod.readFileSync(nodePath.join(tmpWs2, '.agentai', 'scope-pending.json'), 'utf8'));
-    expect(pending.filter((p: any) => p.target === 'admin.test.com').length).toBe(1);
+    expect(r1.data?.granted).toBe(false); // 已授权 → 非新增
+    const scope = JSON.parse(fsMod.readFileSync(nodePath.join(tmpWs2, '.agentai', 'scope.json'), 'utf8'));
+    expect(scope.targets.filter((t: string) => t === 'admin.test.com').length).toBe(1);
   });
 
-  it('list_scope 返回当前授权范围 + 待确认提案', async () => {
+  it('list_scope 返回当前授权范围 (2026-10-16 拆提案制, 不再展示 pending)', async () => {
     const { EXTRA_HANDLERS } = await import('./tools.ts');
     const ctx = { userId: 'u', workspace: tmpWs2, abortSignal: new AbortController().signal } as any;
     const r = await EXTRA_HANDLERS['list_scope']({}, ctx);
     expect(r.success).toBe(true);
     expect(r.data?.targets?.length).toBeGreaterThan(0);
     expect(r.output).toMatch(/example\.com/);
-    // P0-2: 待确认提案一并展示
-    expect(r.output).toMatch(/等待人类确认的提案/);
-    expect(r.data?.pending?.some((p: any) => p.target === 'admin.test.com')).toBe(true);
+    // 提案制已拆: 输出不再提"等待人类确认的提案"
+    expect(r.output).not.toMatch(/等待人类确认的提案/);
   });
 });
 
@@ -229,22 +228,17 @@ describe('行为: wsl_scan 授权闸门 + grant_scope 提案制', () => {
 // 2026-10-15 P0/P1 修复回归 (提案制授权 / 注入面 / 限频 / 证据门槛 / 闸门接线)
 // ════════════════════════════════════════════════════════════════════════
 
-/** 本组自建 fixture (不依赖上面 describe 的块内变量): wsA 有授权, wsB 无授权 */
+/** 本组自建 fixture (不依赖上面 describe 的块内变量): wsA 有授权, wsB 无授权。
+ *  ⚠️ 同步初始化不用 beforeAll — vitest 3.2.7 顶层 hook 有 "failed to find the
+ *  runner" 间歇 bug (实测指向顶层 beforeAll 行), import 时建目录最稳。 */
 const gwSrcDirMod = nodePath.join(ROOT, 'packages', 'agentai-gateway', 'src');
 const wsA = nodePath.join(gwSrcDirMod, '..', '.scope-guard-test-ws-p0a');
 const wsB = nodePath.join(gwSrcDirMod, '..', '.scope-guard-test-ws-p0b');
-
-beforeAll(() => {
-  rmSync(wsA, { recursive: true, force: true });
-  rmSync(wsB, { recursive: true, force: true });
-  mkdirSync(nodePath.join(wsA, '.agentai'), { recursive: true });
-  writeFileSync(nodePath.join(wsA, '.agentai', 'scope.json'),
-    JSON.stringify({ targets: ['example.com'], max_rps: 5 }));
-});
-afterAll(() => {
-  rmSync(wsA, { recursive: true, force: true });
-  rmSync(wsB, { recursive: true, force: true });
-});
+rmSync(wsA, { recursive: true, force: true });
+rmSync(wsB, { recursive: true, force: true });
+mkdirSync(nodePath.join(wsA, '.agentai'), { recursive: true });
+writeFileSync(nodePath.join(wsA, '.agentai', 'scope.json'),
+  JSON.stringify({ targets: ['example.com'], max_rps: 5 }));
 
 describe('契约: 2026-10-15 P0/P1 修复接线', () => {
   it('LoopOptions 有 subagentType 字段 (pentest 闸门依据)', () => {
@@ -268,14 +262,16 @@ describe('契约: 2026-10-15 P0/P1 修复接线', () => {
     expect(loopSrc).toMatch(/subagentType:\s*String\(tc\.args\?\.type \|\| ''\)/);
   });
 
-  it('grant_scope 不再直接写 scope.json (提案制, 防 AI 自我授权)', () => {
-    // handler 体内不应再出现 writeFileSync(scopeFile)
+  it('grant_scope 直接写 scope.json (2026-10-16 回退: 拆提案制, 给网址即授权)', () => {
+    // handler 体直接 writeFileSync scope.json, 不再走 proposeScope/pending
     const grantBody = toolsCode.slice(
       toolsCode.indexOf('grant_scope: async'),
       toolsCode.indexOf('list_scope: async'),
     );
-    expect(grantBody).not.toMatch(/writeFileSync/);
-    expect(grantBody).toMatch(/proposeScope/);
+    expect(grantBody).toMatch(/writeFileSync/);
+    expect(grantBody).toMatch(/readScope\(ws\)/);
+    expect(grantBody).not.toMatch(/proposeScope/);
+    expect(grantBody).not.toMatch(/scope-pending/);
   });
 
   it('wsl_scan 有参数级 shell 元字符安检 + argv 数组化 (不走 cmd /c 拼串)', () => {
@@ -289,8 +285,9 @@ describe('契约: 2026-10-15 P0/P1 修复接线', () => {
     expect(wslBody).toMatch(/execFile\('wsl', argv/);
   });
 
-  it('pentest prompt 反映提案制授权 + dispatch 硬闸门 + 证据链 (save_evidence)', () => {
-    expect(subagentSrc).toMatch(/grant_scope\(\{target\}\) \*\*向用户发起授权提案\*\*/);
+  it('pentest prompt 反映直接授权 + dispatch 硬闸门 + 证据链 (save_evidence)', () => {
+    // 2026-10-16: grant_scope 直接生效 (拆提案制), prompt 不再要求"发起提案/面板确认"
+    expect(subagentSrc).toMatch(/grant_scope\(\{target\}\) \*\*直接生效\*\*/);
     expect(subagentSrc).toMatch(/dispatch 层有硬闸门/);
     // 2026-10-16: 证据门槛放宽为 evidence 或 evidencePaths 至少一项; 工作流加 save_evidence 截图落盘
     expect(subagentSrc).toMatch(/save_evidence/);
@@ -302,27 +299,23 @@ describe('契约: 2026-10-15 P0/P1 修复接线', () => {
   });
 });
 
-describe('行为: 提案制授权 (P0-2 AI 不能自我授权)', () => {
-  it('grant_scope 只写 pending, 不碰 scope.json; confirm 后才生效', async () => {
+describe('行为: grant_scope 直接授权 (2026-10-16 回退, 拆提案制)', () => {
+  it('grant_scope 立即写 scope.json; 重复授权 granted=false; 已在范围直接提示', async () => {
     const { EXTRA_HANDLERS } = await import('./tools.ts');
-    const { readScopePending, readScope } = await import('./pentest-scope-guard.ts');
+    const { readScope } = await import('./pentest-scope-guard.ts');
     const ctx = { userId: 'u', workspace: wsA, abortSignal: new AbortController().signal } as any;
-    // AI 提案
-    const r = await EXTRA_HANDLERS['grant_scope']({ target: 'proposal.test.com' }, ctx);
+    // 新目标 → 直接生效, granted=true
+    const r = await EXTRA_HANDLERS['grant_scope']({ target: 'direct.test.com' }, ctx);
     expect(r.success).toBe(true);
-    expect(r.data?.pending).toBe(true);
-    expect(r.output).toMatch(/等待人类确认/);
-    // scope.json 未受影响
-    expect(readScope(wsA).includes('proposal.test.com')).toBe(false);
-    // pending 里有记录
-    expect(readScopePending(wsA).some(p => p.target === 'proposal.test.com')).toBe(true);
-    // 重复提案 → already pending, 不重复写
-    const r2 = await EXTRA_HANDLERS['grant_scope']({ target: 'proposal.test.com' }, ctx);
-    expect(r2.data?.already).toBe('pending');
-    expect(readScopePending(wsA).filter(p => p.target === 'proposal.test.com').length).toBe(1);
-    // 已在范围内的目标 → in_scope 提示
+    expect(r.data?.granted).toBe(true);
+    expect(readScope(wsA)).toContain('direct.test.com');
+    // 重复 → granted=false (已授权, 未重复追加)
+    const r2 = await EXTRA_HANDLERS['grant_scope']({ target: 'direct.test.com' }, ctx);
+    expect(r2.data?.granted).toBe(false);
+    expect(readScope(wsA).filter((t: string) => t === 'direct.test.com').length).toBe(1);
+    // wsA 已有 example.com → 子域 api.example.com 判定为已覆盖, granted=false
     const r3 = await EXTRA_HANDLERS['grant_scope']({ target: 'api.example.com' }, ctx);
-    expect(r3.data?.already).toBe('in_scope');
+    expect(r3.data?.granted).toBe(false);
   });
 });
 
@@ -510,5 +503,141 @@ describe('行为: pentest-scope-guard 模块单测 (闸门判定核心)', () => 
     const t0 = Date.now();
     for (let i = 0; i < 5; i++) await pentestRateLimit(wsB, 5);
     expect(Date.now() - t0).toBeLessThan(900); // 5 次在 1s 窗口内全过
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// 2026-10-16 第一梯队挖洞工具回归 (子域枚举 / JS端点提取 / HTTP重放)
+// ════════════════════════════════════════════════════════════════════════
+describe('契约: 第一梯队工具接线 (2026-10-16)', () => {
+  it('tools.ts 有 enum_subdomains / extract_js_endpoints / http_replay 声明', () => {
+    expect(toolsCode).toMatch(/name:\s*'enum_subdomains'/);
+    expect(toolsCode).toMatch(/name:\s*'extract_js_endpoints'/);
+    expect(toolsCode).toMatch(/name:\s*'http_replay'/);
+  });
+
+  it('subagent.ts pentest 工具集含第一梯队三件 + wsl_scan 白名单扩到 8 个', () => {
+    expect(subagentCode).toMatch(/'enum_subdomains', 'extract_js_endpoints', 'http_replay'/);
+    // wsl_scan 白名单: 6 扫描器 + subfinder + httpx
+    expect(toolsCode).toMatch(/new Set\(\['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto', 'subfinder', 'httpx'\]\)/);
+  });
+
+  it('http_replay handler 有授权闸门 + CRLF 防护 + 限频 (代码级强制)', () => {
+    const body = toolsCode.slice(
+      toolsCode.indexOf('http_replay: async'),
+      toolsCode.indexOf('// ===== 2026-10-15 kali 扫描器接线'),
+    );
+    expect(body).toMatch(/isTargetInScope\(ws, u\.hostname\)/);
+    // CRLF 防线: 匹配 tools.ts 源码里的正则字面量 /[\r\n]/ (反斜杠+r+反斜杠+n 四个字符)
+    expect(body).toContain('/[\\r\\n]/');
+    expect(body).toMatch(/pentestRateLimit/);
+    expect(body).toMatch(/httpRequestRaw/);
+  });
+
+  it('http-replay.ts 存在且重定向每跳校验授权 (防借道未授权域)', () => {
+    const replaySrc = src('packages/agentai-gateway/src/http-replay.ts');
+    expect(replaySrc).toMatch(/isTargetInScope\(next\.hostname\)/);
+    expect(replaySrc).toMatch(/rejectUnauthorized:\s*false/); // 自签名目标 (挖洞常态)
+    expect(replaySrc).toMatch(/maxRedirects/);
+  });
+});
+
+describe('行为: http_replay 安全闸门 (P0 同级, 代码级强制)', () => {
+  it('未授权目标 → 拒绝 (不发出请求)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['http_replay']({ method: 'GET', url: 'https://bank.com/api' }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.output).toMatch(/不在授权范围|越界/);
+  });
+
+  it('header CRLF 注入 → 拒绝', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    // loopback 免授权, 专门验证 CRLF 防线本身
+    const r = await EXTRA_HANDLERS['http_replay']({
+      method: 'GET', url: 'http://127.0.0.1:1/x',
+      headers: { 'X-Evil': 'a\r\nX-Injected: 1' },
+    }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.output).toMatch(/CRLF/);
+  });
+
+  it('非 http/https 协议 → 拒绝', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['http_replay']({ method: 'GET', url: 'file:///etc/passwd' }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.output).toMatch(/只支持 http\/https/);
+  });
+
+  it('授权内目标真发请求 (loopback 免授权; 端口无人听 → 连接错误而非闸门拒绝)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['http_replay']({
+      method: 'GET', url: 'http://127.0.0.1:19999/nope', timeout_ms: 3000, follow_redirect: false,
+    }, ctx);
+    // 放行了闸门 (没被拒绝), 失败只可能发生在连接层 (本机无监听)
+    expect(r.output).not.toMatch(/不在授权范围|CRLF|只支持 http/);
+  });
+});
+
+describe('行为: extract_js_endpoints 提取逻辑 (LinkFinder 思路)', () => {
+  it('content 模式: 提取 API 路径 / fetch 调用 / script 外链 / 绝对 URL', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const html = `
+      <html><script src="/static/js/app.abc123.js"></script>
+      <script>
+        fetch('/api/v2/user/profile', { method: 'POST' });
+        axios.get('/admin/login');
+        const u = "https://api.example.com/v1/token/refresh";
+        const p = '/internal/debug/config';
+        var xhr = new XMLHttpRequest(); xhr.open('GET', '/graphql');
+      </script></html>`;
+    const r = await EXTRA_HANDLERS['extract_js_endpoints']({ content: html }, ctx);
+    expect(r.success).toBe(true);
+    const d = r.data;
+    expect(d.apiPaths).toContain('/api/v2/user/profile');
+    expect(d.apiPaths).toContain('/admin/login');
+    expect(d.apiPaths).toContain('/graphql');
+    expect(d.apiPaths).toContain('/internal/debug/config');
+    expect(d.fetchCalls).toContain('/api/v2/user/profile');
+    expect(d.scriptSrcs).toContain('/static/js/app.abc123.js');
+    expect(d.absoluteUrls.some((u: string) => u.includes('api.example.com'))).toBe(true);
+  });
+
+  it('url 模式未授权目标 → 拒绝 (抓未授权页面同样算触碰)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['extract_js_endpoints']({ url: 'https://bank.com' }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.output).toMatch(/越界|不在授权范围/);
+  });
+
+  it('url 与 content 皆空 → 拒绝', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['extract_js_endpoints']({}, ctx);
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('行为: enum_subdomains 域名解析', () => {
+  it('非法域名 → 拒绝 (不发请求)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['enum_subdomains']({ domain: 'not a domain!!' }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.output).toMatch(/无法解析根域/);
+  });
+
+  it('*.example.com 通配符形式自动取根域 (打 crt.sh; 网络不可用 → 明确报错, 不静默)', async () => {
+    const { EXTRA_HANDLERS } = await import('./tools.ts');
+    const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    const r = await EXTRA_HANDLERS['enum_subdomains']({ domain: '*.example.com' }, ctx);
+    // 沙箱/离线 → crt.sh 不可达 → success:false 但输出含 crt.sh 上下文 (证明走到了网络层)
+    // 在线 → success:true 且有分组数据。两种都算"逻辑正确", 但不允许"域名解析错误"
+    expect(r.output).not.toMatch(/无法解析根域/);
   });
 });

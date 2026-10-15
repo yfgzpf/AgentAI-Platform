@@ -82,11 +82,17 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
 - 每次工具调用前一句话说明目的, 调用后一句话总结发现。
 
 工作流程:
-1. 授权: scope_guard.check_scope 确认目标在范围内; 无授权先调 grant_scope({target}) **向用户发起授权提案**
-   (只写 pending, 不生效; 人类在「渗透测试授权」面板确认后才进授权范围), 或 list_scope 看当前范围+待确认提案;
-   用户确认后 list_scope 可见该目标, 再继续
-2. 侦察 (Recon): browser_navigate + browser_scan 发现 API 端点/表单/输入点; 有 kali WSL 时**优先用 wsl_scan** (nmap -sV / nuclei 指纹), 比 curl 火力强一档
-3. 攻击 (Exploit): 对授权内目标试 SQL注入、XSS、CSRF、认证绕过、路径遍历、命令注入; 重扫描 (全端口/字典爆破/CVE 库) 用 wsl_scan({tool:"nmap"/"nuclei"/"ffuf"}) (内部自动限频, 也可先 rate_limit)
+1. 授权: 先 list_scope 看当前范围; 目标没授权就 grant_scope({target}) **直接生效**
+   (写 scope.json, 无需面板确认)。⚠️ 只在用户**明确给了这个目标**时才授权 —— 别自作主张扩大范围,
+   越界目标 (out-of-scope / 支付 / 生产 / 没在用户清单里的) 一律不碰。授权后 scope_guard.check_scope 校验再继续
+2. 侦察 (Recon): **enum_subdomains({domain}) 把授权根域展开成资产清单** (crt.sh 证书透明, 按授权状态分组 —
+   赏金 80% 的洞在没人管的子域上) → browser_navigate + browser_scan 发现 API 端点/表单/输入点 →
+   **extract_js_endpoints 把前端 JS 里的隐藏端点刨出来** (SPA 的接口全在 JS 里, 浏览器 DOM 挖不到);
+   有 kali WSL 时**优先用 wsl_scan** (nmap -sV / nuclei 指纹 / subfinder / httpx 存活探测), 比 curl 火力强一档
+3. 攻击 (Exploit): 对授权内目标试 SQL注入、XSS、CSRF、认证绕过、路径遍历、命令注入;
+   **深度利用用 http_replay ({method,url,headers,body})** — 改一个 header/参数重放看响应差异, 认证绕过/IDOR/越权
+   90% 靠它 (比真实浏览器精准, 比 curl 可控; 内部强制授权闸门+限频+CRLF 防护);
+   重扫描 (全端口/字典爆破/CVE 库) 用 wsl_scan({tool:"nmap"/"nuclei"/"ffuf"}) (内部自动限频, 也可先 rate_limit)
 4. PoC: 为每个发现生成可运行的利用脚本 (Python/JavaScript), 强度最小
 5. 验证: 运行 PoC 证明漏洞真实 (截图/响应作为证据); 未复现的不写进报告
    **证据链 (平台要可下载附件, 光对话里看过没用)**: browser_screenshot 拿到截图 →
@@ -531,6 +537,8 @@ const SUBAGENT_TOOLS: Record<string, string[]> = {
     'scope_guard', 'report_vulnerability', 'save_evidence',
     // 2026-10-15 kali 接线: wsl_scan 走 WSL kali 调 nmap/nuclei/sqlmap; grant_scope/list_scope 授权对话化
     'wsl_scan', 'grant_scope', 'list_scope',
+    // 2026-10-16 第一梯队 (审查报告第二问): 资产发现 (子域枚举) + 攻击面展开 (JS端点) + 深度利用 (HTTP重放)
+    'enum_subdomains', 'extract_js_endpoints', 'http_replay',
   ],
   'fix-verifier': [
     'read_file', 'search_content', 'run_code', 'run_command',

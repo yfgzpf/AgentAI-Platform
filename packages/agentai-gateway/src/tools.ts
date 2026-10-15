@@ -31,8 +31,8 @@ import { getGlobalSandbox } from './sandbox/index.js';
 // 2026-10-15 P0/P1 修复: 渗透授权/限频/参数安检共用模块 (与 agentai-loop 的 pentest 闸门、
 // routes/pentest-scope.ts 的确认端点同源, 防止三处逻辑漂移)
 import {
-  isTargetInScope, readScope, readScopePending, pentestRateLimit,
-  proposeScope, assertSafeScanArg,
+  isTargetInScope, readScope, pentestRateLimit,
+  assertSafeScanArg,
 } from './pentest-scope-guard.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { ReadTracker } from './tools/read-tracker.js';
@@ -613,6 +613,18 @@ async function gitExec(
 
 const _readTrackers = new Map<string, ReadTracker>();
 
+/** 端点可疑度打分 (extract_js_endpoints 排序用): 含敏感词的路径排前 */
+function suspiciousScore(p: string): number {
+  const s = p.toLowerCase();
+  let score = 0;
+  for (const kw of ['admin', 'auth', 'token', 'login', 'password', 'secret', 'key', 'internal', 'debug', 'config', 'actuator', 'swagger', 'graphql', 'upload', 'export', 'backup', 'shell', 'exec', 'eval']) {
+    if (s.includes(kw)) score += 2;
+  }
+  if (/\/v[0-9]/.test(s)) score += 1;
+  if (/[{}]|\$\{/.test(s)) score += 1; // 模板变量 → 可能是动态拼接的敏感接口
+  return score;
+}
+
 function trackerFor(workspace: string): ReadTracker {
   let t = _readTrackers.get(workspace);
   if (!t) {
@@ -876,13 +888,36 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       saveText: { type: 'string', description: '要存档的文本 (响应片段 / curl 输出 / 命令结果), 与 imageBase64 二选一' },
       target: { type: 'string', description: '关联目标 (写进证据目录名, 便于按目标归组)' },
     }, required: ['title'] }, parallelSafe: false, riskLevel: 'low' },
+  // ===== 2026-10-16 第一梯队挖洞工具 (子域枚举 / JS端点提取 / HTTP重放) =====
+  // 背景: 审查报告 PENTEST_REVIEW_2026-10-15 第二问 — "能扫但扫不深"。
+  // 赏金 80% 的洞在没人管的子域上 (enum_subdomains), 现代 SPA 隐藏 API 全在前端 JS 里
+  // (extract_js_endpoints), 认证绕过/IDOR/越权 90% 靠任意请求重放 (http_replay)。
+  { name: 'enum_subdomains', description: '【子域/资产枚举】查 crt.sh 证书透明日志, 列举目标根域的所有子域, 并按授权状态分组 (in_scope / 待授权)。赏金 80% 的洞在没人管的子域上 — 这是"发现资产"能力, 让"挑授权目标"从抄清单变一键。\n\n🔑 触发场景: 授权了一个根域 (如 example.com) 后, 想找出它有哪些子域可以测; 或从赏金平台项目页拿到 in-scope 根域, 想展开成资产清单。\n\n⚙️ 参数: domain (根域, 如 example.com 或 *.example.com) + resolve (可选, 是否对发现的子域做 DNS 解析验证存活, 默认 false)。\n\n📤 返回: in_scope (已授权可直接测) + pending (未授权, 调 grant_scope 直接授权 (立即生效)) 两组 + 通配符授权建议。\n\n💡 示例: enum_subdomains({ domain: "example.com" }) → 发现 47 个子域, 其中 admin/api/dev 未授权',
+    parameters: { type: 'object', properties: {
+      domain: { type: 'string', description: '根域 (如 example.com; 支持 *.example.com 形式, 自动取根域)' },
+      resolve: { type: 'boolean', description: '是否对发现的子域做 DNS 解析验证 (默认 false, 只列证书记录)' },
+    }, required: ['domain'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'extract_js_endpoints', description: '【JS 端点提取 (LinkFinder 思路)】从页面 HTML 或 JS 内容里提取隐藏的 API 端点/URL/路径。现代 SPA 的接口全在前端 JS 里, browser_navigate 只看渲染后 DOM 挖不到 — 本工具把 JS 里的"藏货"刨出来。\n\n🔑 触发场景: 对授权目标已 browser_navigate 拿到 HTML, 想提取其中的 API 端点列表逐个试; 或拿到一段 JS 源码想分析路由。\n\n⚙️ 参数: url (授权目标 URL, 工具自己去抓) 或 content (已获取的 HTML/JS 文本, 二选一)。传 url 会先过授权闸门; 传 content 纯本地分析不联网。\n\n📤 返回: 分类去重后的端点 (绝对URL / API路径 / fetch-ajax调用 / script外链), 按可能敏感度排序 (admin/auth/token/upload 排前)。\n\n💡 示例: extract_js_endpoints({ url: "https://app.example.com" }) → /api/v2/user/profile, /admin/login, https://api.example.com/...',
+    parameters: { type: 'object', properties: {
+      url: { type: 'string', description: '授权目标的 URL (工具自己去抓, 过授权闸门); 与 content 二选一' },
+      content: { type: 'string', description: '已获取的 HTML/JS 文本 (纯本地分析, 不联网); 与 url 二选一' },
+    }, required: [] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'http_replay', description: '【HTTP 请求重放 (Burp Repeater 式)】构造任意 HTTP 请求 (method/url/headers/body 全可控) 打到授权目标, 看原始响应。认证绕过、IDOR、越权 90% 靠"改一个 header/参数重放看响应差异" — 真实浏览器和 curl 之间的空白由它补上。\n\n🔑 触发场景: 试认证绕过 (改 JWT/session), 试 IDOR (改路径 id), 试越权 (加 X-Original-User 头), 对比登录/未登录响应差异。\n\n⚙️ 参数: method (GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS) + url + headers (对象, 如 {"Cookie":"session=xxx","X-Forwarded-For":"127.0.0.1"}) + body (原始字符串, form/json 均可) + follow_redirect (是否跟随跳转, 默认 true, 最多 3 跳且每跳都校验授权)。\n\n🔒 安全 (代码级强制, 非 prompt 约定):\n- url 的 host 必须在授权范围内 (同 wsl_scan 闸门), 越界直接拒绝\n- header 名/值含 \\r\\n (CRLF 头注入) 直接拒绝\n- 过限频令牌桶 (同 wsl_scan)\n- 支持自签名证书 (挖洞目标常见), 但不校验也不绕过业务认证\n\n📤 返回: 状态码 + 响应头 + body (截断 6000 字符) + 耗时 + 重定向链。\n\n💡 示例:\nhttp_replay({ method:"GET", url:"https://api.example.com/v1/user/1001", headers:{"Authorization":"Bearer <换成的他人token>"} })\nhttp_replay({ method:"POST", url:"https://example.com/login", headers:{"Content-Type":"application/json"}, body:\'{"user":"admin\' OR 1=1--"}\' })',
+    parameters: { type: 'object', properties: {
+      method: { type: 'string', enum: ['GET','POST','PUT','DELETE','PATCH','HEAD','OPTIONS'], description: 'HTTP 方法' },
+      url: { type: 'string', description: '目标 URL (http/https, host 需在授权范围内)' },
+      headers: { type: 'object', description: '请求头对象 (如 {"Cookie":"session=xxx"})', additionalProperties: { type: 'string' } },
+      body: { type: 'string', description: '请求体原始字符串 (form/json 均可, 默认空)' },
+      follow_redirect: { type: 'boolean', description: '是否跟随 30x 跳转 (默认 true, 最多 3 跳, 每跳校验授权)' },
+      timeout_ms: { type: 'number', description: '超时毫秒 (默认 15000, 上限 60000)' },
+    }, required: ['method','url'] }, parallelSafe: false, riskLevel: 'high' },
   // ===== 2026-10-15 kali 扫描器 + 授权对话化 =====
   // wsl_scan: 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等扫描器 (白名单 + 先过授权闸门)。
   // 本机 Windows 装不了 Kali 本体, 但 WSL 里有 kali-linux 发行版, 子智能体经 wsl_scan 真能驱动它。
-  { name: 'wsl_scan', description: '【Kali 扫描器驱动】走 WSL kali-linux 调 nmap/nuclei/sqlmap/ffuf/gobuster/nikto 等扫描器, 对授权目标发起真实扫描。本机 Windows 装不了 Kali, 但 WSL 里有 kali-linux 发行版。\n\n🔑 触发场景: pentest 子智能体 / 主对话要"真扫端口/子域名/目录/指纹"时。比 run_command + curl 火力强一档 (nmap 全端口扫、nuclei 模板库、ffuf 字典爆破)。\n\n⚙️ 参数: target (授权目标 host) + tool (nmap|nuclei|sqlmap|ffuf|gobuster|nikto) + args (该工具的参数数组, 如 nmap 传 ["-sV","-p","80,443"]) + timeout_ms。\n\n🔒 安全: 外层先过授权闸门 (同 scope_guard 逻辑), target 必须在 .agentai/scope.json 授权范围内, 否则直接拒绝 — 工具白名单固定 6 个扫描器, 防 AI 借 wsl 跑任意命令。\n\n💡 前置: 需先 `wsl --install -d kali` 装 kali + `apt install nmap nuclei sqlmap ffuf gobuster nikto`。未装时返回明确报错, 不静默失败。\n\n💡 示例:\nwsl_scan({ target: "127.0.0.1", tool: "nmap", args: ["-sV","--top-ports","100"] })\nwsl_scan({ target: "target.local", tool: "nuclei", args: ["-tags","cve,misconfig"] })',
+  { name: 'wsl_scan', description: '【Kali 扫描器驱动】走 WSL kali-linux 调 nmap/nuclei/sqlmap/ffuf/gobuster/nikto/subfinder/httpx 等扫描器, 对授权目标发起真实扫描。本机 Windows 装不了 Kali, 但 WSL 里有 kali-linux 发行版。\n\n🔑 触发场景: pentest 子智能体 / 主对话要"真扫端口/子域名/目录/指纹"时。比 run_command + curl 火力强一档 (nmap 全端口扫、nuclei 模板库、ffuf 字典爆破、subfinder 子域枚举、httpx 存活探测)。\n\n⚙️ 参数: target (授权目标 host) + tool (nmap|nuclei|sqlmap|ffuf|gobuster|nikto|subfinder|httpx) + args (该工具的参数数组, 如 nmap 传 ["-sV","-p","80,443"]) + timeout_ms。\n\n🔒 安全: 外层先过授权闸门 (同 scope_guard 逻辑), target 必须在 .agentai/scope.json 授权范围内, 否则直接拒绝 — 工具白名单固定 8 个扫描器, 防 AI 借 wsl 跑任意命令。\n\n💡 前置: 需先 `wsl --install -d kali` 装 kali + `apt install nmap nuclei sqlmap ffuf gobuster nikto subfinder httpx`。未装时返回明确报错, 不静默失败。\n\n💡 示例:\nwsl_scan({ target: "127.0.0.1", tool: "nmap", args: ["-sV","--top-ports","100"] })\nwsl_scan({ target: "target.local", tool: "nuclei", args: ["-tags","cve,misconfig"] })\nwsl_scan({ target: "example.com", tool: "subfinder", args: ["-silent"] })',
     parameters: { type: 'object', properties: {
       target: { type: 'string', description: '授权目标 host (需在 scope.json targets 内)' },
-      tool: { type: 'string', enum: ['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto'], description: '扫描器' },
+      tool: { type: 'string', enum: ['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto', 'subfinder', 'httpx'], description: '扫描器' },
       args: { type: 'array', items: { type: 'string' }, description: '该工具的参数数组 (如 nmap 的 ["-sV","-p","80,443"])' },
       timeout_ms: { type: 'number', description: '超时毫秒 (默认 60000, 上限 180000)' },
     }, required: ['target','tool'] }, parallelSafe: false, riskLevel: 'high' },
@@ -2713,6 +2748,189 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       };
     } catch (e: any) { return { success: false, output: `save_evidence 失败: ${e.message}` }; }
   },
+  // ===== 2026-10-16 第一梯队: 子域枚举 (crt.sh 证书透明日志 + 授权状态分组) =====
+  // "赏金 80% 的洞在没人管的子域上" — 授权一个根域后, 用它把资产清单展开。
+  // 枚举的是公开证书记录 (不打目标), 但结果按 isTargetInScope 分组, 直接服务
+  // "挑授权目标" 流程: in_scope 可直接测, pending 走 grant_scope 提案等人类确认。
+  enum_subdomains: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      let domain = String(args.domain || '').trim().toLowerCase().replace(/^\*\./, '');
+      domain = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+      if (!domain || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) {
+        return { success: false, output: `❌ 无法解析根域: ${args.domain} (形如 example.com)` };
+      }
+      await pentestRateLimit(ws, 3); // crt.sh 也限频, 别把它打挂
+      // crt.sh 证书透明日志: %.example.com 匹配所有子域证书记录
+      const url = `https://crt.sh/?q=${encodeURIComponent('%.' + domain)}&output=json`;
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 20_000);
+      let raw: string;
+      try {
+        const r = await fetch(url, { signal: ac.signal, headers: { 'User-Agent': 'pulseflow-pentest/1.0' } });
+        raw = await r.text();
+      } finally { clearTimeout(timer); }
+      if (!raw || raw.trim() === '' || raw.trim() === 'null') {
+        return { success: true, output: `📭 crt.sh 未找到 ${domain} 的证书记录 (可能确实没有子域证书, 或 crt.sh 暂时不可用)。`, data: { domain, subs: [], inScope: [], pending: [] } };
+      }
+      let records: any[];
+      try { records = JSON.parse(raw); } catch {
+        return { success: false, output: `❌ crt.sh 返回非 JSON (可能被限流/宕机): ${raw.slice(0, 200)}` };
+      }
+      if (!Array.isArray(records)) records = [];
+      // name_value 里是 "\n" 分隔的多域名 (含通配符项), 全部刨出来
+      const subs = new Set<string>();
+      for (const rec of records) {
+        for (const n of String(rec?.name_value || '').split('\n')) {
+          const h = n.trim().toLowerCase().replace(/^\*\./, '');
+          if (!h) continue;
+          if (h === domain || h.endsWith('.' + domain)) subs.add(h); // 只收该根域下的
+        }
+      }
+      const list = [...subs].sort();
+      // 按授权状态分组: in_scope 可直接测 / pending 需 grant_scope 提案
+      const inScope = list.filter(h => isTargetInScope(ws, h));
+      const pending = list.filter(h => !isTargetInScope(ws, h));
+      const lines = [
+        `🔍 ${domain} 子域枚举 (crt.sh): 发现 ${list.length} 个唯一子域`,
+        inScope.length ? `\n✅ 已授权可直接测 (${inScope.length}):\n${inScope.map(h => `  ${h}`).join('\n')}` : '',
+        pending.length ? `\n⏳ 未授权 (${pending.length}, 需 grant_scope 直接授权 (立即生效) 后才能动手):\n${pending.map(h => `  ${h}`).join('\n')}` : '',
+        pending.length ? `\n💡 建议: 对要测的子域逐个 grant_scope({target}) 直接授权, 或直接授权根域 ${domain} 覆盖全部子域。` : '',
+      ].filter(Boolean).join('\n');
+      return {
+        success: true,
+        output: lines,
+        data: { domain, subs: list, inScope, pending, wildcardCovered: isTargetInScope(ws, domain) },
+      };
+    } catch (e: any) { return { success: false, output: `enum_subdomains 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-16 第一梯队: JS 端点提取 (LinkFinder 思路) =====
+  // SPA 的隐藏 API 全在前端 JS 里。url 模式过授权闸门后自抓; content 模式纯本地分析
+  // (内容是 AI 从已授权页面拿到的, 分析它无额外网络触碰)。
+  extract_js_endpoints: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      let text = String(args.content || '');
+      let source = 'content';
+      if (!text) {
+        const url = String(args.url || '').trim();
+        if (!url) return { success: false, output: '❌ url 与 content 至少给一项。' };
+        const hostOf = (u: string) => { try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); } catch { return null; } };
+        const host = hostOf(url);
+        if (!host) return { success: false, output: `❌ 无法解析 URL: ${url}` };
+        // url 模式 = 真去抓页面 → 过授权闸门 (与 wsl_scan 同源)
+        if (!isTargetInScope(ws, host)) {
+          return { success: false, output: `❌ extract_js_endpoints 越界: ${host} 不在授权范围。抓未授权目标的页面同样算触碰 — 先 grant_scope 直接授权 (立即生效), 或改用 content 模式传已获取的内容。` };
+        }
+        await pentestRateLimit(ws, 3);
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 20_000);
+        try {
+          const r = await fetch(url.startsWith('http') ? url : `http://${url}`, {
+            signal: ac.signal, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+          });
+          text = await r.text();
+        } finally { clearTimeout(timer); }
+        source = url;
+      }
+      if (text.length > 2_000_000) text = text.slice(0, 2_000_000); // 防御性截断
+      const found = {
+        absoluteUrls: new Set<string>(),
+        apiPaths: new Set<string>(),
+        fetchCalls: new Set<string>(),
+        scriptSrcs: new Set<string>(),
+      };
+      // 1. 绝对 URL
+      for (const m of text.matchAll(/https?:\/\/[^\s"'`<>\\)\]]+/g)) found.absoluteUrls.add(m[0].replace(/[.,;)]+$/, ''));
+      // 2. API 风格相对路径 (字符串字面量里的 /api/... /v1/... /graphql ...)
+      for (const m of text.matchAll(/["'`](\/(?:api|v[0-9]|graphql|rest|admin|auth|oauth|token|user|users|account|internal|upload|download|export|debug|config|swagger|actuator)[a-zA-Z0-9_\-/.{}\[\]$]*)["'`]/gi)) {
+        found.apiPaths.add(m[1]);
+      }
+      // 3. fetch/axios/XHR 调用目标
+      for (const m of text.matchAll(/(?:fetch|axios\s*\.\s*(?:get|post|put|delete|patch|request)|\.open)\s*\(\s*["'`]([^"'`\s]{2,})["'`]/gi)) {
+        found.fetchCalls.add(m[1]);
+      }
+      // 4. <script src> 外链 (可再深入一层分析)
+      for (const m of text.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)) found.scriptSrcs.add(m[1]);
+      const dedup = (s: Set<string>) => [...s].filter(Boolean).slice(0, 100);
+      const result = {
+        absoluteUrls: dedup(found.absoluteUrls),
+        apiPaths: dedup(found.apiPaths),
+        fetchCalls: dedup(found.fetchCalls),
+        scriptSrcs: dedup(found.scriptSrcs),
+      };
+      const total = result.absoluteUrls.length + result.apiPaths.length + result.fetchCalls.length + result.scriptSrcs.length;
+      if (total === 0) {
+        return { success: true, output: `📭 未从 ${source === 'content' ? '提供的内容' : source} 提取到端点 (可能是纯静态页/SSR 无接口/内容已截断)。`, data: { ...result, total: 0 } };
+      }
+      const lines = [
+        `🔎 JS 端点提取 (${source === 'content' ? '本地内容' : source}): 共 ${total} 条`,
+        result.apiPaths.length ? `\n📌 API 路径 (${result.apiPaths.length}, 按可疑度排序):\n${result.apiPaths.sort((a, b) => suspiciousScore(b) - suspiciousScore(a)).map(p => `  ${p}`).join('\n')}` : '',
+        result.fetchCalls.length ? `\n📡 fetch/axios 调用 (${result.fetchCalls.length}):\n${result.fetchCalls.map(p => `  ${p}`).join('\n')}` : '',
+        result.absoluteUrls.length ? `\n🔗 绝对 URL (${result.absoluteUrls.length}):\n${result.absoluteUrls.slice(0, 30).map(p => `  ${p}`).join('\n')}` : '',
+        result.scriptSrcs.length ? `\n📜 script 外链 (可再抓来深入, ${result.scriptSrcs.length}):\n${result.scriptSrcs.slice(0, 20).map(p => `  ${p}`).join('\n')}` : '',
+        `\n💡 对可疑端点用 http_replay 逐个试 (未授权/改 id/换 token), 命中后用 report_vulnerability 落盘。`,
+      ].filter(Boolean).join('\n');
+      return { success: true, output: lines, data: { ...result, total } };
+    } catch (e: any) { return { success: false, output: `extract_js_endpoints 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-16 第一梯队: HTTP 请求重放 (Burp Repeater 式) =====
+  // 认证绕过/IDOR/越权 90% 靠"构造任意请求重放看响应差异"。安全全部代码级强制:
+  // ① host 过授权闸门 (与 wsl_scan 同源, 重定向每一跳也校验); ② header CRLF 拒绝;
+  // ③ 共用令牌桶限频; ④ 支持自签名证书 (挖洞目标常见) 但仅此而已。
+  http_replay: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const method = String(args.method || 'GET').toUpperCase();
+      const rawUrl = String(args.url || '').trim();
+      if (!rawUrl) return { success: false, output: '❌ url 必填。' };
+      let u: URL;
+      try { u = new URL(rawUrl); }
+      catch { return { success: false, output: `❌ 无法解析 URL: ${rawUrl}` }; }
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        return { success: false, output: `❌ 只支持 http/https (收到 ${u.protocol})。` };
+      }
+      // ① 授权闸门: 目标 host 必须 in_scope (loopback 免授权)
+      if (!isTargetInScope(ws, u.hostname)) {
+        return { success: false, output: `❌ http_replay 越界: ${u.hostname} 不在授权范围。重放未授权目标的请求 = 未授权访问 — 先 grant_scope({target}) 直接授权 (立即生效)。` };
+      }
+      // ② CRLF 头注入防护: header 名/值含 \r \n 一律拒绝
+      const headers: Record<string, string> = {};
+      const rawHeaders = args.headers && typeof args.headers === 'object' ? args.headers : {};
+      for (const [k, v] of Object.entries(rawHeaders)) {
+        const name = String(k), val = String(v);
+        if (/[\r\n]/.test(name) || /[\r\n]/.test(val)) {
+          return { success: false, output: `❌ header ${JSON.stringify(name)} 含 CRLF (\\r/\\n), 已拒绝 — 防请求头注入。` };
+        }
+        if (/^host$/i.test(name)) continue; // Host 头由 URL 决定, 不接受外部覆写
+        headers[name] = val;
+      }
+      if (!Object.keys(headers).some(h => /^user-agent$/i.test(h))) {
+        headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PulseFlow-Pentest/1.0';
+      }
+      const body = args.body != null ? String(args.body) : undefined;
+      const follow = args.follow_redirect !== false;
+      const timeoutMs = Math.min(Number(args.timeout_ms) || 15_000, 60_000);
+      // ③ 限频 (与 wsl_scan 同一桶)
+      await pentestRateLimit(ws, Number(args.max_rps) || 5);
+      const { httpRequestRaw } = await import('./http-replay.js');
+      const t0 = Date.now();
+      const resp = await httpRequestRaw(method, u, headers, body, { follow, timeoutMs, maxRedirects: 3, isTargetInScope: (h: string) => isTargetInScope(ws, h) });
+      const durationMs = Date.now() - t0;
+      const bodyTxt = resp.body.length > 6000 ? resp.body.slice(0, 6000) + `\n…[截断, 共 ${resp.body.length} 字符]` : resp.body;
+      const lines = [
+        `📡 ${method} ${u.toString()} → ${resp.status} ${resp.statusText} (${durationMs}ms)`,
+        resp.redirects.length ? `↪ 重定向链: ${resp.redirects.join(' → ')}` : '',
+        `\n响应头:\n${Object.entries(resp.headers).slice(0, 25).map(([k, v]) => `  ${k}: ${v}`).join('\n')}`,
+        `\n响应体 (${resp.body.length} 字符):\n${bodyTxt}`,
+      ].filter(Boolean).join('\n');
+      return {
+        success: resp.status > 0,
+        output: lines,
+        data: { status: resp.status, headers: resp.headers, body: resp.body.slice(0, 6000), redirects: resp.redirects, durationMs, target: u.hostname },
+      };
+    } catch (e: any) { return { success: false, output: `http_replay 失败: ${e.message}` }; }
+  },
   // ===== 2026-10-15 kali 扫描器接线: wsl_scan 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等 =====
   wsl_scan: async (args, ctx) => {
     try {
@@ -2725,11 +2943,11 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       };
       const targetHost = hostOf(String(args.target || ''));
       if (!isTargetInScope(ws, targetHost || '')) {
-        return { success: false, output: `❌ wsl_scan 需授权: ${targetHost || args.target} 不在 .agentai/scope.json 授权范围 (或无授权文件)。先调 scope_guard(check_scope) 确认, 未授权目标用 grant_scope 提案 (人类确认后生效)。` };
+        return { success: false, output: `❌ wsl_scan 越界: ${targetHost || args.target} 不在 .agentai/scope.json 授权范围 (或无授权文件)。这是安全底线, 先让用户明确要测这个目标, 再 grant_scope({target}) 授权 (直接生效), 然后重试。未授权目标一律不扫。` };
       }
-      // 2. 工具白名单 (防任意命令注入, 只许这 6 个扫描器)
+      // 2. 工具白名单 (防任意命令注入, 只许这几个扫描器/枚举器)
       const tool = String(args.tool || 'nmap');
-      const ALLOWED = new Set(['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto']);
+      const ALLOWED = new Set(['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto', 'subfinder', 'httpx']);
       if (!ALLOWED.has(tool)) return { success: false, output: `❌ 未知工具: ${tool} (允许: ${[...ALLOWED].join(' / ')})` };
       // 3. 参数级安检 (2026-10-15 P1-1): 每个参数独立过 shell 元字符黑名单
       const extra = Array.isArray(args.args)
@@ -2765,9 +2983,12 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
     }
   },
   // ===== 2026-10-15 授权对话化: grant_scope / list_scope (免手写 scope.json) =====
-  // ⚠️ 2026-10-15 P0-2 修复: grant_scope 原实现**直接写 scope.json** —— pentest 子智能体
-  // 可以自我授权任意目标再扫描 (白帽工具与攻击框架的分界线失守)。现改为提案制:
-  // AI 只能写 scope-pending.json, 人类在授权面板 (ScopeManager) 点确认后才进 scope.json。
+  // ⚠️ 2026-10-15 P0-2 提案制 → 2026-10-16 回退为直接授权:
+  //   提案制 (AI 只能写 scope-pending, 人类面板确认) 是给"AI 自我授权任意目标"加的保险,
+  //   但用户反馈**每次给网址都要去面板点确认, 太多余**。系统的主人自己给的网址自己负责,
+  //   中间这道人工确认是给用户添麻烦。现回退为 grant_scope 直接写 scope.json 立即生效。
+  //   保留的底线: scope_guard **默认拒绝** (没进 scope.json 的目标一律不扫) + 越界 hard-stop
+  //   —— 这些挡的是 AI 误操作/被注入扫到未授权资产, 不是挡用户。
   grant_scope: async (args, ctx) => {
     try {
       const ws = (ctx as any)?.workspace || getWs();
@@ -2781,25 +3002,31 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const isWildcard = rawTarget.startsWith('*.');
       const host = isWildcard ? rawTarget.toLowerCase() : hostOf(rawTarget);
       if (!host) return { success: false, output: `❌ 无法解析目标 host: ${args.target}` };
-      const r = proposeScope(ws, host, 'agent');
-      if (r.already === 'in_scope') {
-        return {
-          success: true,
-          output: `ℹ️ ${host} 已在授权范围内, 无需重复授权。可继续 (scope_guard / wsl_scan / pentest 子智能体均可动手)。`,
-          data: { granted: false, already: 'in_scope', target: host },
-        };
+      // 直接写 scope.json (去重追加), 立即生效 — 用户给的网址, 一句话授权即可开扫。
+      // 保留的底线: scope_guard 默认拒绝 + 越界 hard-stop (挡 AI 误操作/被注入扫到未授权资产)。
+      const targets = readScope(ws);
+      const already = targets.some(t => {
+        const p = String(t).trim().toLowerCase();
+        if (p.startsWith('*.') && p.length > 2) {
+          const base = p.slice(2);
+          return host === base || host.endsWith('.' + base);
+        }
+        return host === p || host.endsWith('.' + p);
+      });
+      if (!already) targets.push(host);
+      const scopeFile = path.join(ws, '.agentai', 'scope.json');
+      let existing: Record<string, any> = {};
+      if (fs.existsSync(scopeFile)) {
+        try { existing = JSON.parse(fs.readFileSync(scopeFile, 'utf-8')); } catch { /* 损坏 → 重建 */ }
       }
-      if (r.already === 'pending') {
-        return {
-          success: true,
-          output: `ℹ️ ${host} 的授权提案已存在, 仍在等待人类确认。请用户在左侧「渗透测试授权」面板确认后, 再调 list_scope 查看生效结果。`,
-          data: { granted: false, already: 'pending', target: host },
-        };
-      }
+      existing.targets = targets;
+      if (args.max_rps) existing.max_rps = Number(args.max_rps);
+      fs.mkdirSync(path.dirname(scopeFile), { recursive: true });
+      fs.writeFileSync(scopeFile, JSON.stringify(existing, null, 2), 'utf-8');
       return {
         success: true,
-        output: `📨 已向用户发起授权提案: ${host} (等待人类确认, 未生效)。\n请用户在左侧「渗透测试授权」面板 (或 /scope 弹窗) 点「确认授权」。确认后调 list_scope 可查, 之后 scope_guard / wsl_scan / pentest 子智能体才能对该目标动手。`,
-        data: { granted: false, pending: true, target: host },
+        output: `${already ? 'ℹ️ 已在授权范围' : '✅ 已授权'} ${host} — 现共 ${targets.length} 个目标, 可立即挖洞 (scope_guard / wsl_scan / pentest 子智能体均可动手)。`,
+        data: { granted: !already, target: host, targets, max_rps: existing.max_rps || 5 },
       };
     } catch (e: any) { return { success: false, output: `grant_scope 失败: ${e.message}` }; }
   },
@@ -2807,19 +3034,15 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
     try {
       const ws = (ctx as any)?.workspace || getWs();
       const targets = readScope(ws);
-      const pending = readScopePending(ws);
       const lines = [
         targets.length
           ? `🔓 当前授权范围: ${targets.join(', ')}。共 ${targets.length} 个目标。`
-          : '📭 当前无授权范围 (.agentai/scope.json 不存在或为空)。要挖洞先用 grant_scope 提案一个目标 (需人类确认)。',
+          : '📭 当前无授权范围。要挖洞先用 grant_scope 授权一个目标 (直接生效, 无需确认)。',
       ];
-      if (pending.length > 0) {
-        lines.push(`⏳ 等待人类确认的提案 ${pending.length} 条: ${pending.map(p => p.target).join(', ')} (在授权面板确认后生效)`);
-      }
       return {
         success: true,
         output: lines.join('\n'),
-        data: { targets, pending, max_rps: 5 },
+        data: { targets, max_rps: 5 },
       };
     } catch (e: any) { return { success: false, output: `list_scope 失败: ${e.message}` }; }
   },
