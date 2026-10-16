@@ -511,6 +511,26 @@ function wm(): WorkspaceManager {
  *   `wm()` 还提供 subdir()/resolveProjectPath() 等方法，
  *   且部分路径（非请求上下文）确实需要全局单例。渐进替换更安全。
  */
+/**
+ * Promise 超时包装 (2026-10-16 batch_pentest 卡死修复)
+ * ---------------------------------------------------------------------------
+ * ⚠️ 超时后**不取消**底层 Promise —— runSubagent 没有 abort 接口, 强杀会连带
+ * 破坏子智能体正在用的网络连接/gateway 状态。代价是那个子智能体可能仍在后台跑完,
+ * 但主流程已经继续了 (用户不会因为一个慢目标失去整批结果)。
+ * 若要彻底取消, 需要给 runSubagent 加 AbortSignal —— 见 subagent.ts 的 TODO。
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, label = ''): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`超时: ${label || '操作'} 超过 ${Math.round(ms / 1000)}s 未完成`));
+    }, ms);
+    p.then(
+      v => { clearTimeout(timer); resolve(v); },
+      e => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 function getWs(): string {
   try {
     const ws = currentRequestWorkspace() || WorkspaceManager.getInstance().projectDir || process.cwd();
@@ -2733,18 +2753,44 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const results: Array<{ target: string; source: string; ok: boolean; found: number; note: string }> = [];
       let totalFound = 0;
 
-      for (const t of batch) {
+      // 2026-10-16 P0: 每个目标必须有时间上限。
+      // 事故现场: batch_pentest 串行 spawn 子智能体, 每个子智能体是多轮 LLM + 多个网络探针,
+      // 实测单个目标可跑数分钟; 10 个目标串行 = 主 loop 长时间零输出 →
+      // 主循环的 tool:stuck 检测把它当成"卡死", dup_fail 指令又推着模型重试整个 batch,
+      // 形成截图里那种 "疑似卡死(3 次调用)" + 模型自言自语的循环。
+      const PER_TARGET_TIMEOUT_MS = Number(args.targetTimeoutMs) || 180_000;  // 默认 3 分钟/目标
+
+      // ⚠️ 进度心跳: batch_pentest 单次可跑十几分钟, 期间主 loop 完全静默 →
+      // 前端看不到任何活动, 只看到"疑似卡死"。每完成一个目标就发一次进度事件,
+      // 既让 GUI 侧栏显示"正在扫 3/10", 也让 idle 检测知道进程活着。
+      const emitProgress = (i: number, host: string, note: string) => {
+        try {
+          (ctx as any)?.onProgress?.({
+            event: 'progress',
+            description: `批量挖洞进度 ${i + 1}/${batch.length} — ${host} · ${note}`,
+          });
+        } catch { /* 心跳失败不影响主流程 */ }
+      };
+      emitProgress(0, batch[0]?.host || '', '开始');
+
+      for (const [i, t] of batch.entries()) {
         const host = t.host;
         const task = `批量挖洞 (depth=${depth}): 对目标 ${host} 跑一轮渗透 — ` +
           `先 scope_guard.check_scope 确认授权 + rate_limit 限频; ` +
           (depth === 'deep'
             ? '全工具重扫 (wsl_scan nmap 指纹 + nuclei owasp-top10 + sqlmap risk1 + http_replay 最小强度认证/IDOR 探针);'
             : '浅扫 (wsl_scan nmap -sV 指纹 + 浏览器抓表单端点 + http_replay 最小强度注入探针);') +
-          ` 真复现的洞必须 save_evidence 截图落盘 + report_vulnerability 存 (evidence/evidencePaths 至少一项); 未复现的不写。够深就停: 命中 1 个可报洞+证据即可, 别空耗。`;
+          ` 真复现的洞必须 save_evidence 截图落盘 + report_vulnerability 存 (evidence/evidencePaths 至少一项); 未复现的不写。够深就停: 命中 1 个可报洞+证据即可, 别空耗。` +
+          `⏱ 硬性要求: 最多 12 次工具调用就收尾汇报, 不要反复重试同一个探针; 网络超时直接记为"该目标无响应"并进入下一个。`;
         try {
-          const out = await runSubagent(
-            'pentest', task, router, registry,
-            (ctx as any)?.userId || 'default', ws, ctx?.model, ctx?.modelName,
+          // 单目标超时包装: 超时不算致命, 记为 skipped 并继续下一个
+          const out = await withTimeout(
+            runSubagent(
+              'pentest', task, router, registry,
+              (ctx as any)?.userId || 'default', ws, ctx?.model, ctx?.modelName,
+            ),
+            PER_TARGET_TIMEOUT_MS,
+            host,
           );
           // 子智能体输出里统计"report_vulnerability 已落盘"次数作为命中数
           const found = (String(out).match(/report_vulnerability/gi) || []).length > 0
@@ -2752,8 +2798,17 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           totalFound += Math.max(found, 0);
           results.push({ target: host, source: t.source, ok: true, found: Math.max(found, 0), note: String(out).slice(0, 200) });
         } catch (e: any) {
-          results.push({ target: host, source: t.source, ok: false, found: 0, note: `子智能体失败: ${e?.message || e}` });
+          // 超时 → ok:false 但注明是超时, 让模型知道"该目标没响应"而不是"工具坏了"
+          const isTimeout = /超时|timeout/i.test(e?.message || '');
+          results.push({
+            target: host, source: t.source, ok: false, found: 0,
+            note: isTimeout
+              ? `⏱ 超时 (>${Math.round(PER_TARGET_TIMEOUT_MS / 1000)}s), 该目标本轮无响应, 已跳过`
+              : `子智能体失败: ${e?.message || e}`,
+          });
         }
+        const last = results[results.length - 1];
+        emitProgress(i, host, last.ok ? `完成·命中 ${last.found}` : last.note.slice(0, 60));
       }
 
       const lines = [
@@ -2910,7 +2965,14 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       }
       // ① 授权闸门: 目标 host 必须 in_scope (loopback 免授权)
       if (!isTargetInScope(ws, u.hostname)) {
-        return { success: false, output: `❌ http_replay 越界: ${u.hostname} 不在授权范围。重放未授权目标的请求 = 未授权访问 — 先 grant_scope({target}) 直接授权 (立即生效)。` };
+        // ⚠️ 2026-10-16: 裸 host (admin/oms/sso 等) 是子域前缀, 不是完整域名 —
+        // 通配符 *.tycredit.com 只匹配 x.tycredit.com, 不匹配裸 host。
+        // 给模型明确下一步, 别让它误判"超时"反复重试 (卡死循环根因)。
+        const bare = !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(u.hostname);
+        const hint = bare
+          ? ` — 这是子域前缀不是完整域名, 请拼成 host.根域 (如 ${u.hostname}.tycredit.com) 再试`
+          : '';
+        return { success: false, output: `❌ http_replay 越界: ${u.hostname} 不在授权范围${hint}。重放未授权目标的请求 = 未授权访问 — 先 grant_scope({target}) 直接授权 (立即生效)。` };
       }
       // ② CRLF 头注入防护: header 名/值含 \r \n 一律拒绝
       const headers: Record<string, string> = {};

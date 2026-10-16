@@ -35,6 +35,8 @@ import { WorkflowOrchestrator, BUILTIN_WORKFLOWS } from './workflow-orchestrator
 import { getIntentClarifier, Clarification, ResolvedIntent } from './meta/intent-clarifier.js';
 import { ProactiveSuggestionEngine } from './proactive-suggestion-engine.js';
 import { getOrCreateSnapshot, formatResumeContext, findResumableTasks, isWorthSnapshotting, loadTaskSnapshot, type TaskSnapshotManager } from './task-snapshot.js';
+// 2026-10-16 会话级 checkpoint/rewind (docs/GIT_CAPABILITY_RESEARCH.md 缺口 B)
+import { beginTurn, trackFile } from './session-checkpoint.js';
 import { buildIdeContext } from './ide-state.js';
 import { buildMemoryContext, initProjectMemory, readProjectMemory } from './project-memory.js';
 import { MemoryManager } from './memory-manager.js';
@@ -168,6 +170,31 @@ export interface LoopOptions {
   userId: string;
   workspace: string;
   sessionId?: string;
+  /**
+   * 2026-10-16: 会话级 checkpoint 的归属会话 (前端会话 id)。
+   * ⚠️ 为什么单独一个字段而不用 sessionId: opts.sessionId 同时是 persistentMemory /
+   * fts5 的记忆键, 且 chat.ts 每请求新建 loop 会自带随机 sessionId ——
+   * 动它会连带污染记忆系统。checkpoint 是独立功能, 独立字段, 零副作用。
+   * 缺省时退回 opts.sessionId (子智能体等无前端会话的场景仍可用)。
+   */
+  checkpointSessionId?: string;
+  /**
+   * 工作区隔离模式 (2026-10-16)
+   * ---------------------------------------------------------------------------
+   * 'worktree': 在 git 仓库里为本回合自动建一个独立 worktree, 并把该路径作为
+   *   本次执行的工作目录。并行会话/子任务因此天然改不到彼此的文件 ——
+   *   这是**唯一**能根治"并行会话互相覆盖代码"的机制（checkpoint 只能救单会话内）。
+   *
+   * 代价与前置条件（重要）:
+   *   - 需要 git 可用 + 当前目录是 git 仓库，否则自动降级为普通模式
+   *     （在 result.isolation 里如实上报，不会静默假装隔离生效）
+   *   - worktree 不共享未跟踪文件，靠 .worktreeinclude 补 .env 等运行必需项
+   *   - 会留下 worktree 目录，需显式清理（worktree_sweep 工具 / 会话结束钩子）
+   * 不传 / 'none' = 传统行为，完全向后兼容。
+   */
+  isolation?: 'none' | 'worktree';
+  /** 隔离 worktree 的标签（便于在 worktree_list 里认出来源） */
+  isolationLabel?: string;
   abortSignal?: AbortSignal;
   parallelMax?: number;
   reflectEvery?: number;
@@ -241,7 +268,7 @@ function classifyToolError(toolName: string, errorOutput: string): { code: strin
     return { code: 'TDZ_ERROR', hint: '变量声明时序错误 (TDZ)', nextAction: '这是平台 bug, 已修复. 如果仍然出现请重启 gateway' };
   }
   // 超时
-  if (err.includes('timeout') || err.includes('etimedout')) {
+  if (err.includes('timeout') || err.includes('etimedout') || err.includes('请求超时') || err.includes('超时')) {
     return { code: 'TIMEOUT', hint: '操作超时', nextAction: '增加 timeout 参数, 或拆分为更小的任务' };
   }
   // 网络错误
@@ -266,6 +293,30 @@ function classifyToolError(toolName: string, errorOutput: string): { code: strin
   }
   // 默认
   return { code: 'UNKNOWN', hint: '未知错误', nextAction: `检查错误信息: ${errorOutput.slice(0, 100)}` };
+}
+
+/**
+ * 编辑距离 (Levenshtein) — 工具名模糊匹配用 (2026-10-16)
+ * 模型把 http_replay 幻觉成 http_reply 这种, 距离只有 2, 应该直接告诉它正确名字,
+ * 而不是让它反复重试同一个不存在的工具。
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev: number[] = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur: number[] = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = cur;
+  }
+  return prev[n];
 }
 
 export class AgentAILoop extends EventEmitter {
@@ -328,6 +379,61 @@ private _toolCallCount = 0;
  * 与 _capabilityTier 无关, 对所有 tier 生效。
  */
 private _iterCapWarned = false;
+  /** 2026-10-16: 本实例当前回合的 checkpoint id (会话级 rewind 用)。
+   *  必须实例级 —— 同一会话并发多个 loop 时靠全局 `current` 标记会串台 (见 trackFile 注释)。 */
+private _checkpointId: string | null = null;
+  /** 2026-10-16: worktree 隔离是否已应用 (run() 可能重入, 只建一次 worktree) */
+  private _isolationApplied = false;
+  /** 2026-10-16: 隔离失败时的可读原因 (如未装 git / 非仓库)。会随结果回传给前端,
+   *  避免用户以为"开了隔离但其实没隔离"—— 那比不开更危险。 */
+  private _isolationNote: string | null = null;
+  /** 实际生效的隔离目录 (null = 未隔离, 走原工作区) */
+  private _isolatedWorkspace: string | null = null;
+
+  /**
+   * 应用 worktree 隔离 (2026-10-16)
+   * ---------------------------------------------------------------------------
+   * 在 git 仓库里为本回合建独立 worktree, 并把它设为本次执行的工作目录。
+   * 失败时**不抛异常**: 降级为普通模式并记下原因 —— 因为隔离是"加固"不是"前提",
+   * 不能因为没装 git 就让整个会话跑不起来。
+   */
+  private async applyWorktreeIsolation(promptExcerpt: string): Promise<void> {
+    try {
+      const { worktreeCreate } = await import('./worktree.js');
+      const base = this.opts.workspace || process.cwd();
+      const label = this.opts.isolationLabel
+        || (this.opts.checkpointSessionId || this.opts.sessionId || 'turn').slice(0, 24)
+        || 'turn';
+      const r = await worktreeCreate(base, {
+        label,
+        sessionId: this.opts.checkpointSessionId || this.opts.sessionId,
+      });
+      if (!r.ok) {
+        this._isolationNote = r.reason || 'worktree 创建失败';
+        return;
+      }
+      this._isolatedWorkspace = r.data!.worktreePath;
+      // ⚠️ 关键: 切换 opts.workspace —— tools.ts 的 getWs()/resolveProjectPath() 都读它,
+      // 这才是让文件操作真正发生在隔离目录内的方式（而不是只把路径返回给 LLM）。
+      this.opts.workspace = this._isolatedWorkspace;
+    } catch (e: any) {
+      this._isolationNote = `隔离初始化异常: ${e?.message || e}`;
+    }
+  }
+
+  /**
+   * 隔离实况（供路由层回传前端）
+   * 前端据此明确告诉用户"这次改动是否真被隔离"，而不是让用户默认隔离一定生效。
+   */
+  getIsolationStatus(): ChatResponse['isolation'] {
+    if (this.opts.isolation !== 'worktree') return undefined;
+    return {
+      requested: 'worktree',
+      applied: !!this._isolatedWorkspace,
+      ...(this._isolatedWorkspace ? { workspace: this._isolatedWorkspace } : {}),
+      ...(this._isolationNote ? { note: this._isolationNote } : {}),
+    };
+  }
 
 /**
  * 2026-10-05 P0 修复: 本轮被去重跳过的工具调用
@@ -651,6 +757,9 @@ private _forbiddenResponseCount: number = 0;
       userId: opts.userId,
       workspace: opts.workspace,
       sessionId: opts.sessionId ?? '',  // v3.2 修复: Required<LoopOptions> 缺少此字段
+      checkpointSessionId: opts.checkpointSessionId ?? '',  // 2026-10-16 会话级 checkpoint 归属会话
+      isolation: opts.isolation ?? 'none',                  // 2026-10-16 工作区隔离（worktree）
+      isolationLabel: opts.isolationLabel ?? '',
       abortSignal: opts.abortSignal ?? new AbortController().signal,
       parallelMax: opts.parallelMax ?? 3,
       reflectEvery: opts.reflectEvery ?? 10,
@@ -2030,8 +2139,33 @@ try {
    * @param userMessage 纯文本消息, 或含 text+image_url 块的结构化消息
    */
 async run(userMessage: string | { content: MessageContent }): Promise<ChatResponse> {
-  const msgText = typeof userMessage === 'string' ? userMessage : '';
-  this._taskType = detectTaskType(msgText);
+const msgText = typeof userMessage === 'string' ? userMessage : '';
+    // ═══ 2026-10-16 工作区隔离 (worktree) ═══
+    // 必须在 checkpoint 建点**之前**切换: 否则 checkpoint 的 workspaceRoot 仍是原目录,
+    // 而实际改动发生在 worktree 里 → 回合回退会找不到文件（空操作, 看着像成功）。
+    if (this.opts.isolation === 'worktree' && !this._isolationApplied) {
+      this._isolationApplied = true;   // 只做一次: run() 可能被重入
+      await this.applyWorktreeIsolation(msgText);
+    }
+    // ═══ 2026-10-16 会话级 checkpoint: 回合边界 ═══
+    // 一次 run() = 一个用户回合 = rewind 菜单里的一个条目。
+    // 该回合内 AI 改文件前的副本在 dispatch 前存 (见 WRITE_CLASS_TOOLS 处的 trackFile)。
+    // 与 git 锚点 (discipline/gates.ts createAnchor) 互补: 那个是 commit 粒度跨会话,
+    // 这个是回合粒度会话内 —— 秒级回退, 且不需要脏工作区。
+    if (this.opts.checkpointSessionId || this.opts.sessionId) {
+      try {
+        const excerpt = msgText
+          || (typeof (userMessage as any)?.content === 'string' ? (userMessage as any).content : '')
+          || '';
+        // ⚠️ 记在**实例**上, 不靠 index 的 current 标记: 同一会话并发两条消息时,
+        // 后到的 beginTurn 会抢走 current, 本实例后续 trackFile 就挂错点 →
+        // rewind 变空操作, 代码改坏了退不回来 (已复现, 见 session-checkpoint.ts trackFile 注释)。
+        this._checkpointId = beginTurn(this.opts.checkpointSessionId || this.opts.sessionId!, excerpt.trim());
+      } catch { /* checkpoint 是加分项, 绝不能因它拖垮主流程 */ }
+    } else {
+      this._checkpointId = null;
+    }
+    this._taskType = detectTaskType(msgText);
   // ═══ 2026-10-11 P0: 先算 tier 再建上下文 — buildImmutablePrefix 依赖 _capabilityTier
   // 做分层门控 (强模型精简注入), 之前 tier 在 ensureContext 之后才算, 导致首跑时
   // tier 恒为默认 'supervised', 所有 tier 分支 (lite prompt / 全量工具 / 分层注入)
@@ -4041,6 +4175,36 @@ if (isComplexTask) {
           }
           _crossRoundDeduped.push(tc);
         }
+        // ═══ 2026-10-16 会话级 checkpoint: 写文件前存 pre-edit 副本 ═══
+        // 放在去重之后 —— 被去重跳过的调用不该产生多余快照。
+        // 语义是 "first write wins": 要回退到的是**本回合开始前**的样子,
+        // 而不是"上一次编辑前", 所以同一回合内同一文件只存首份 (trackFile 内部保证)。
+        // ⚠️ 只覆盖文件编辑类工具。run_command 跑 rm/mv/sed -i 改的文件**追不到**
+        //   (与 Claude Code 官方 checkpointing 同样的限制) → 那些改动必须靠 git 锚点。
+        if (this.opts.checkpointSessionId || this.opts.sessionId) {
+          const _cpSid = (this.opts.checkpointSessionId || this.opts.sessionId)!;
+          const _cpRoot = this.opts.workspace || process.cwd();
+          for (const tc of _crossRoundDeduped) {
+            if (!WRITE_CLASS_TOOLS.has(tc.name)) continue;
+            const _a = (tc.args || {}) as Record<string, any>;
+            const _targets: string[] = [];
+            const _one = _a.file_path ?? _a.path ?? _a.file;
+            if (typeof _one === 'string' && _one) _targets.push(_one);
+            // multi_edit: 目标在 edits[] 里, 一个调用可能动多个文件
+            if (Array.isArray(_a.edits)) {
+              for (const e of _a.edits) {
+                const p = (e as any)?.file_path ?? (e as any)?.path;
+                if (typeof p === 'string' && p) _targets.push(p);
+              }
+            }
+            for (const _t of _targets) {
+              try {
+                const _abs = pathSync.isAbsolute(_t) ? _t : pathSync.resolve(_cpRoot, _t);
+                trackFile(_cpSid, _abs, _cpRoot, this._checkpointId ?? undefined);
+              } catch { /* 单个文件跟踪失败不影响其他 */ }
+            }
+          }
+        }
         if (_crossRoundDeduped.length < res.toolCalls.length) {
           console.log(`[tool-repair] cross-round suppression: ${res.toolCalls.length} → ${_crossRoundDeduped.length}`);
           res.toolCalls = _crossRoundDeduped;
@@ -4400,7 +4564,31 @@ if (isComplexTask) {
  // 价值向量: 从成功中学习 (更大胆、更自主)
  try { (await import('./soul/index.js')).getValueSystem().learnFromSuccess({}); } catch {}
           } else {
-          duplicateTracker.set(sig, failCount + 1);
+          // 2026-10-16 P0 修复: 未知工具名 = 模型幻觉, **不计入重复失败**
+          // 事故现场: 模型把 http_replay 幻觉成 http_reply, 工具执行返回
+          //   "Unknown tool: http_reply" → 每轮都算失败 → 累加到 3 次触发 dup_fail →
+          //   模型被反复推回"再试一次", 陷入截图里那种自言自语的死循环。
+          // 正确处置: 立刻给出**名字纠正** (模糊匹配真实工具名), 而不是让它重试。
+          // 重试一个不存在的工具永远不会有不同结果。
+          const isUnknownTool = /Unknown tool|tool not found|no tool named/i.test(r.output || '');
+          if (isUnknownTool) {
+            const missing = (r.output.match(/Unknown tool:\s*(\S+)/i) || [])[1] || r.name;
+            // 模糊匹配: 找出最接近的真实工具名 (编辑距离), 直接告诉模型正确的名字
+            const allNames = this.registry.list().map((t: any) => t.name);
+            const suggestion = allNames
+              .map(n => ({ n, d: levenshtein(String(missing).toLowerCase(), n.toLowerCase()) }))
+              .filter(x => x.d <= Math.max(3, Math.floor(x.n.length * 0.4)))
+              .sort((a, b) => a.d - b.d)[0];
+            const msg = suggestion
+              ? `工具 "${missing}" 不存在。你要找的可能是 "${suggestion.n}" —— 请改用这个工具名。`
+              : `工具 "${missing}" 不存在。可用工具：${allNames.slice(0, 40).join(', ')}`;
+            toolContent = `[ERROR] ${msg}`;
+            this.directives.add('unknown_tool', `[SYSTEM] ${msg}`, 'high');
+            // 从失败追踪里移除: 幻觉重试无意义, 不该消耗 dup_fail 预算
+            duplicateTracker.delete(sig);
+          } else {
+            duplicateTracker.set(sig, failCount + 1);
+          }
           // 灵魂层: PainSense 记录失败
           try { (await import('./soul/index.js')).getPainSense().feelPain(r.name); } catch {}
           // 价值向量: 从失败中学习 (更谨慎、更保守)
