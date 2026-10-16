@@ -27,6 +27,8 @@ import { MCP_HOSTS } from './mcp/config.js';
 const CORS_ORIGINS = (process.env.AGENTAI_CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5176,http://127.0.0.1:5176,http://localhost:1420,http://127.0.0.1:1420,http://localhost:4173,http://127.0.0.1:4173,http://localhost:4174,http://127.0.0.1:4174,http://127.0.0.1,http://localhost,tauri://localhost,http://tauri.localhost,https://tauri.localhost').split(',').map(o => o.trim());
 import { filesRouter } from './routes/files.js';
 import { pentestScopeRouter } from './routes/pentest-scope.js';
+import { sessionCheckpointRouter } from './routes/session-checkpoint.js';
+import { systemCapabilityRouter } from './routes/system-capability.js';
 import { createQQRouter } from './routes/qq.js';
 import { createChannelRouter } from './routes/channel.js';
 import { createCustomerRouter } from './routes/customer.js';
@@ -216,6 +218,10 @@ app.use(cors({
   }
   app.use(filesRouter);
   app.use(pentestScopeRouter);
+// 2026-10-16 会话级 checkpoint/rewind (AI 改错了退回任意一轮)
+app.use(sessionCheckpointRouter);
+// 2026-10-16 打包/部署加固: 环境能力探测 (git/worktree/checkpoint 可用性 + 存储路径)
+app.use('/v1/system/capabilities', systemCapabilityRouter);
 app.use(createBrowserRouter());
 app.use('/v1/browser/engine', createBrowserEngineRouter(deps.io));
 app.use(parseFileRouter);
@@ -664,7 +670,7 @@ app.post('/v1/workflows/templates/import', async (req, res) => {
   app.use(createCleanerRouter());
   app.use('/v1/commercial-models', commercialModelsRouter);
   app.use('/v1/models', createModelsRouter(deps.router));
-  app.use(createAutomationRouter(process.cwd(), deps.registry));  // 自动化引擎 API (注入 registry 让 cron 能找到工具)
+  app.use(createAutomationRouter(process.cwd(), deps.registry, deps.router));  // 自动化引擎 API (注入 registry+router 让 cron 能找到工具 + 跑子智能体)
   app.use('/v1/knowledge', createKnowledgeRouter());
   app.use('/v1/materials', createMaterialsRouter());
   app.use(musicProxyRouter);
@@ -864,7 +870,7 @@ return { httpServer, io };
  * - session manager (内部已自动)
  * - 真定时反思 (cron dispatcher)
  */
-export function startBackgroundJobs(skillsDir: string, io?: IOServer) {
+export function startBackgroundJobs(skillsDir: string, io?: IOServer, deps?: Record<string, any>) {
   // 使用新的SkillManager扫描并注册所有技能
   if (skillsDir && fs.existsSync(skillsDir)) {
     import('./skill-manager.js').then(({ skillManager }) => {
@@ -964,7 +970,9 @@ export function startBackgroundJobs(skillsDir: string, io?: IOServer) {
 
   // P3: 将 AutomationEngine 事件连接到 Socket.IO + 通知引擎 (2026-08-03 修复: 之前完全未监听)
   import('./automation-engine.js').then(({ getAutomationEngine }) => {
-    const engine = getAutomationEngine(process.cwd());
+    // 2026-10-16: 补传 registry/router — batch_pentest 等重工具在 cron tick 里
+    // 需要 spawn 子智能体, 缺 router 会走"请在主对话里跑 /batch"拒绝分支。
+    const engine = getAutomationEngine(process.cwd(), deps?.registry, deps?.router);
     if (io) {
       engine.on('cron:result', (data: any) => {
         const job = engine.listCronJobs().find(j => j.id === data.jobId);

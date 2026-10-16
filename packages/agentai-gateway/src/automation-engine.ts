@@ -80,13 +80,15 @@ export class AutomationEngine extends EventEmitter {
   private _timers: Map<string, any> = new Map(); // NodeJS.Timeout
   private _loaded = false;
   private _registry?: any;
+  private _router?: any;
 
-  constructor(workspace: string, registry?: any) {
+  constructor(workspace: string, registry?: any, router?: any) {
     super();
     // P1 修复: 增加最大监听器限制, 防止定时任务触发时内存泄漏警告
     this.setMaxListeners(50);
     this.workspace = workspace;
     this._registry = registry;
+    this._router = router;
   }
 
   // ===== 持久化 =====
@@ -172,17 +174,36 @@ export class AutomationEngine extends EventEmitter {
             }
 
             // A2 修复: 超时保护 — 每个任务有独立 timeout
-            const jobTimeoutMs = (job as any).timeoutMs || 120_000;
+            // 重工具 (batch_pentest 等要 spawn 子智能体跑多轮 LLM) 默认 30 分钟,
+            // 普通命令类保持 120s — 否则子智能体刚起就被 abort。
+            const isHeavyTool = job.action === 'batch_pentest' || job.action === 'subagent_run';
+            const jobTimeoutMs = (job as any).timeoutMs || (isHeavyTool ? 1_800_000 : 120_000);
             const abortCtrl = new AbortController();
             const timeoutTimer = setTimeout(() => abortCtrl.abort(), jobTimeoutMs);
 
             const execStart = Date.now();
             let result: any;
             try {
+              // 2026-10-16: workspace 跟随**活动工作区** (WorkspaceManager), 不是 gateway 进程 cwd。
+              // 授权目标 (scope.json / vulns) 都落在用户当前选定的工作区 (如 F:/目录已检查/澳彩),
+              // gateway 进程 cwd 是 F:/agentai-platform — 用 cwd 会读不到授权目标 → cron 空跑。
+              let wsForTool = this.workspace;
+              if (job.action === 'batch_pentest') {
+                try {
+                  const { WorkspaceManager } = await import('./workspace-manager.js');
+                  wsForTool = String(WorkspaceManager.getInstance().projectDir)
+                    .replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, '');
+                } catch { /* fallback 到 this.workspace */ }
+              }
               result = await tool.handler(job.params || {}, {
                 userId: 'system',
-                workspace: this.workspace,
+                workspace: wsForTool,
                 abortSignal: abortCtrl.signal,
+                // 2026-10-16: 注入 registry/router — batch_pentest 等重工具需要
+                // spawn 子智能体 (router 走 LLM, registry 供子智能体调工具),
+                // 没有它们工具只能返回"请在主对话里跑 /batch", cron 白跑。
+                _registry: this._registry,
+                _router: this._router,
               });
             } catch (e: any) {
               result = { success: false, output: '', error: e.message, _timedOut: abortCtrl.signal.aborted };
@@ -935,15 +956,44 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     defaultParams: { command: 'node -e "const fs=require(\'fs\');if(fs.existsSync(\'.env\')){const l=fs.readFileSync(\'.env\',\'utf8\').split(\'\\n\').filter(x=>x.trim()).length;console.log(\'.env 存在, \'+l+\' 行\')}else{console.log(\'WARNING: .env 缺失\')}"' },
     guide: '检查 .env 文件是否存在，确保环境变量配置完整。',
   },
+  // ===== 赏金打单: 定时批量渗透 (2026-10-16) =====
+  // 配合「渗透测试授权」面板 + 盯哨 (cve-watch): 授权目标就位后,
+  // 批量巡检自动把授权范围内的目标逐个扫, 命中落盘, 报告人工提交。
+  {
+    id: 'batch-pentest',
+    name: '🎯 批量挖洞巡检',
+    description: '对当前工作区「渗透测试授权」里的全部授权目标, 逐个 spawn 一个 pentest 子智能体跑一轮渗透 (浅扫: nmap 指纹 + 表单端点 + 最小强度探针)。命中的洞自动 save_evidence + report_vulnerability 落盘, 未命中的不写 — 数量堆命中率。',
+    category: 'security',
+    defaultExpression: '0 3 */2 * *',
+    defaultAction: 'batch_pentest',
+    defaultParams: { depth: 'quick', maxTargets: 10 },
+    guide: '前提: 工作区 .agentai/scope.json 里已有授权目标 (在「渗透测试授权」面板批量粘贴平台清单)。执行窗口内用户在跑任务会先让路。内置限频 (scope_guard 默认 max_rps=5) + 每子智能体"够深就停"策略。建议配 cve-watch 盯哨: 新 CVE 曝光后下一轮批量扫自动命中。',
+  },
+  {
+    id: 'cve-watch-subdomains',
+    name: '👁️ 盯哨巡检 (CVE + 子域扩展)',
+    description: '跑一轮 cve-watch: 拉 NVD + CISA KEV 新曝光 CVE → 子域自动扩展 (crt.sh, 不打目标) → 比对授权资产 → 新命中告警落 .agentai/cve/alerts.json (GUI 面板可见)。配合 batch-pentest 巡检: 盯哨发现新面/新洞, 下一轮批量扫自动跟上。',
+    category: 'security',
+    defaultExpression: '0 6 */2 * *',
+    defaultAction: 'run_command',
+    defaultParams: { command: 'node packages/agentai-gateway/scripts/cve-watch.mjs --once --skip-fingerprint' },
+    guide: '纯被动: CVE 数据源是 NVD/KEV 公开 API, 子域枚举只查 crt.sh 证书日志, 目标服务器零请求。告警人工触发 nuclei 验证。需 Kali WSL 已装 (install-kali-wsl.mjs)。',
+  },
 ];
 
 // ===== 全局单例 =====
 let _instance: AutomationEngine | null = null;
 
-export function getAutomationEngine(workspace?: string, registry?: any): AutomationEngine {
+export function getAutomationEngine(workspace?: string, registry?: any, router?: any): AutomationEngine {
   if (!_instance && workspace) {
-    _instance = new AutomationEngine(workspace, registry);
+    _instance = new AutomationEngine(workspace, registry, router);
     _instance.load();
+  }
+  // 延迟注入: 首次调用时 registry/router 可能尚未 ready (index.ts 里
+  // createAutomationRouter 在 deps.router 之前挂载过), 补填不影响已加载的 job。
+  if (_instance) {
+    if (registry && !(_instance as any)._registry) (_instance as any)._registry = registry;
+    if (router && !(_instance as any)._router) (_instance as any)._router = router;
   }
   return _instance!;
 }

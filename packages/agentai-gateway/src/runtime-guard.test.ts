@@ -676,3 +676,73 @@ describe('改-11 迭代预算: 能力层裁决 + opts 封顶 (批次3b)', () => 
   }, 60000);
 });
 
+
+/**
+ * 批次4 — 定时批量挖洞 cron 链路 (2026-10-16)
+ * ==========================================================================
+ * 闭环缺口: 用户在 AutomationPanel「一键安装」batch-pentest 预设 → cron tick
+ * 调 batch_pentest 工具 → 它需要 ctx._registry + ctx._router 才能 spawn 子智能体。
+ * 此前 cron tick 的 handler ctx 只有 userId/workspace/abortSignal → 工具必走
+ * "请在主对话里跑 /batch" 拒绝分支, 定时任务白跑。
+ *
+ * 修: AutomationEngine 持 _router + tick ctx 注入 _registry/_router;
+ *      重工具 (batch_pentest) 默认 30min 超时; app.ts/startBackgroundJobs 补传 deps。
+ */
+describe('批次4 定时批量挖洞 cron 链路 (router 注入)', () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf-8');
+
+  it('AutomationEngine 持 _router 且 tick ctx 注入 _registry/_router', () => {
+    expect(AUTOMATION_SRC).toMatch(/private _router\?: any/);
+    expect(AUTOMATION_SRC).toMatch(/constructor\(workspace: string, registry\?: any, router\?: any\)/);
+    // handler ctx 必须带 _registry + _router (batch_pentest 的硬依赖)
+    const idx = AUTOMATION_SRC.indexOf("_registry: this._registry");
+    expect(idx, 'tick ctx 缺 _registry 注入').toBeGreaterThan(-1);
+    expect(AUTOMATION_SRC.slice(idx, idx + 120)).toMatch(/_router: this\._router/);
+  });
+
+  it('重工具 (batch_pentest) 有独立 30min 超时, 普通命令仍 120s', () => {
+    expect(AUTOMATION_SRC).toMatch(/isHeavyTool = job\.action === 'batch_pentest'/);
+    expect(AUTOMATION_SRC).toMatch(/1_800_000/);
+    // 不得一刀切: 普通 run_command 类任务还走 120_000
+    expect(AUTOMATION_SRC).toMatch(/120_000/);
+  });
+
+  it('预设注册表含 batch-pentest + 盯哨巡检两个 security 预设', () => {
+    expect(AUTOMATION_SRC).toMatch(/id: 'batch-pentest'/);
+    expect(AUTOMATION_SRC).toMatch(/id: 'cve-watch-subdomains'/);
+    const start = AUTOMATION_SRC.indexOf("id: 'batch-pentest'");
+    const chunk = AUTOMATION_SRC.slice(start, start + 400);
+    expect(chunk).toMatch(/defaultAction: 'batch_pentest'/);
+    // 默认参数: 浅扫 + 目标上限 10 (防单轮打崩)
+    expect(chunk).toMatch(/maxTargets: 10/);
+  });
+
+  it('startBackgroundJobs 把 deps (registry/router) 传给 AutomationEngine 单例', () => {
+    const APP = read('./app.ts');
+    expect(APP).toMatch(/export function startBackgroundJobs\(skillsDir: string, io\?: IOServer, deps\?: Record<string, any>\)/);
+    const idx = APP.indexOf('getAutomationEngine(process.cwd()');
+    expect(idx, 'startBackgroundJobs 内必须调 getAutomationEngine').toBeGreaterThan(-1);
+    expect(APP.slice(idx, idx + 80)).toMatch(/deps\?\.registry, deps\?\.router/);
+  });
+
+  it('index.ts 调 startBackgroundJobs 时传 deps', () => {
+    const IDX = read('./index.ts');
+    expect(IDX).toMatch(/startBackgroundJobs\(path\.join\(process\.cwd\(\), 'packages', 'agentai-skills'\), deps\.io, deps\)/);
+  });
+
+  it('路由层透传 router 参数 (routes/automation.ts)', () => {
+    const ROUTE = read('./routes/automation.ts');
+    expect(ROUTE).toMatch(/createAutomationRouter\(workspace: string, registry\?: any, router\?: any\)/);
+    expect(ROUTE).toMatch(/getAutomationEngine\(workspace, registry, router\)/);
+  });
+});
+
+  it('batch_pentest cron tick 的 workspace 跟随活动工作区 (WorkspaceManager), 不是 gateway 进程 cwd', () => {
+    // 锚定 workspace 跟随块 (let wsForTool 行), 而不是 isHeavyTool 那行的同名判断
+    const idx = AUTOMATION_SRC.indexOf('let wsForTool');
+    expect(idx, '找不到 wsForTool (workspace 跟随) 逻辑').toBeGreaterThan(-1);
+    const chunk = AUTOMATION_SRC.slice(idx, idx + 700);
+    expect(chunk).toMatch(/job\.action === 'batch_pentest'/);
+    expect(chunk).toMatch(/WorkspaceManager\.getInstance\(\)\.projectDir/);
+    expect(chunk).toMatch(/workspace: wsForTool/);
+  });

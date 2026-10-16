@@ -868,6 +868,14 @@ function tryListenWithRetry(): void {
     console.log(`[agentai-gateway] ${registry.list().length} tools registered`);
     eaddrRetryCount = 0; // 重置计数
 
+    // 2026-10-16 CVE 盯哨调度器: 启动即挂 (每 6h 被动盯哨, 用户零操作;
+    // 只拉公开情报+本地比对, 不打目标; 主动验证人工触发)。CVE_WATCH_ENABLED=false 可关。
+    try {
+      const { startCveWatchScheduler } = await import('./cve-watch-scheduler.js');
+      const wsRoot = (() => { try { return WorkspaceManager.getInstance().projectDir; } catch { return process.cwd(); } })();
+      startCveWatchScheduler(wsRoot);
+    } catch (e: any) { console.warn('[cve-watch] scheduler 启动失败:', e?.message); }
+
   // 沙箱已在 createApp 之前初始化, 此处仅注入 deps
   const sb = getGlobalSandbox();
   if (sb) {
@@ -931,7 +939,9 @@ function tryListenWithRetry(): void {
 
   // 后台任务 (skills watcher, evolution cleanup, cron dispatcher)
   try {
-    startBackgroundJobs(path.join(process.cwd(), 'packages', 'agentai-skills'), deps.io);
+    // 2026-10-16: 传 deps (含 registry/router) — cron tick 里 batch_pentest 等
+    // 重工具需要 router spawn 子智能体, 之前缺注入会走"请在主对话里跑 /batch"拒绝分支
+    startBackgroundJobs(path.join(process.cwd(), 'packages', 'agentai-skills'), deps.io, deps);
   } catch (e: any) {
     console.warn('[background] jobs failed to start:', e?.message);
   }

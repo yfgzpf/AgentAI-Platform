@@ -541,62 +541,10 @@ function getWs(): string {
  * 顺带好处: 异步执行不再阻塞事件循环（原 execSync 会卡住整个 gateway）。
  */
 
-// DEF-11 修复: Windows 上查找 git 完整路径, 避免 execFile ENOENT
-let _gitBinCache: string | null = null;
-async function findGitBinary(): Promise<string> {
-  if (_gitBinCache) return _gitBinCache;
-  const { execSync } = await import('child_process');
-  // 用 where 查找 git 完整路径
-  try {
-    const found = execSync('where git 2>nul', { encoding: 'utf-8', timeout: 3000 }).trim().split('\n')[0].trim();
-    if (found) { _gitBinCache = found; return found; }
-  } catch {}
-  // 常见安装路径
-  const candidates = [
-    'C:\\Program Files\\Git\\bin\\git.exe',
-    'C:\\Program Files (x86)\\Git\\bin\\git.exe',
-    `${process.env.LOCALAPPDATA || ''}\\Programs\\Git\\bin\\git.exe`,
-  ];
-  for (const p of candidates) {
-    try { if (fs.existsSync(p)) { _gitBinCache = p; return p; } } catch {}
-  }
-  _gitBinCache = 'git'; // fallback
-  return _gitBinCache;
-}
-
-async function gitExec(
-  args: string[],
-  opts: { cwd: string; timeout?: number },
-): Promise<string> {
-  const { execFile } = await import('child_process');
-  // DEF-11 修复: Windows 上 execFile('git') 可能 ENOENT — 尝试完整路径 fallback
-  const gitBin = process.platform === 'win32' ? await findGitBinary() : 'git';
-  return new Promise((resolve, reject) => {
-    execFile(
-      gitBin,
-      args,
-      {
-        cwd: opts.cwd,
-        encoding: 'utf-8',
-        timeout: opts.timeout ?? 10000,
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true,
-      },
-      (err: any, stdout: any, stderr: any) => {
-        const out = String(stdout ?? '');
-        const errOut = String(stderr ?? '');
-        if (err) {
-          // git 失败时错误详情在 stderr/stdout，合并后抛出（调用方沿用 catch 读 e.message）
-          const e: any = new Error((out + '\n' + errOut).trim() || err.message);
-          e.gitExitCode = err.code;
-          reject(e);
-          return;
-        }
-        resolve((out + (errOut ? '\n' + errOut : '')).trim());
-      },
-    );
-  });
-}
+// git 可用性探测与执行已抽到 git-runtime.ts（2026-10-16 打包/部署加固）。
+// 本文件保留的薄封装只为不改 200+ 处既有调用点。
+import { gitExec as _gitExecShared } from './git-runtime.js';
+const gitExec: (args: string[], opts: { cwd: string; timeout?: number }) => Promise<string> = _gitExecShared;
 
 // ═══════════════════════════════════════════════════════════
 // 2026-10-05: 已读文件追踪（此前 read-tracker.ts 是 59 行死代码）
@@ -955,9 +903,10 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'search_codebase', description: 'Semantic code search — find functions, classes, or patterns by describing what they do in natural language (Chinese or English)', parameters: { type: 'object', properties: { question: { type: 'string', description: 'Natural language question about the codebase, e.g. "Where is the LLM router implemented?"' } }, required: ['question'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'auto_project_doc', description: '【AI 自动维护项目说明文件】自动审查项目结构并生成/更新三个核心文档：PROJECT_README.md（项目架构）、PROJECT_CONTEXT.md（任务上下文）、PROJECT_STATE.md（实时状态）。当项目结构不清晰、需要同步任务进度、或开始新任务时调用。action=review: 首次审查生成所有文件; update_context: 更新任务上下文; refresh_state: 刷新实时状态; read: 读取所有文档内容。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['review', 'update_context', 'refresh_state', 'read'], description: 'review=首次审查生成所有文件; update_context=更新任务上下文; refresh_state=刷新实时状态; read=读取所有文档' }, current_task: { type: 'string', description: '当前进行中的任务描述 (update_context 时使用)' }, decisions: { type: 'array', items: { type: 'string' }, description: '最近做出的决策列表 (update_context 时使用)' }, related_files: { type: 'array', items: { type: 'string' }, description: '相关文件路径 (update_context 时使用)' }, notes: { type: 'array', items: { type: 'string' }, description: '注意事项 (update_context 时使用)' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'analyze_code', description: 'Analyze a TypeScript file — list exported symbols, dependencies, and cyclomatic complexity', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Absolute path to the .ts/.tsx file to analyze' }, detail: { type: 'string', enum: ['symbols','deps','complexity','all'], default: 'all' } }, required: ['file_path'] }, parallelSafe: true, riskLevel: 'low' },
-  { name: 'worktree_create', description: 'Create an isolated git worktree for parallel task execution (symlinks node_modules)', parameters: { type: 'object', properties: { branch_prefix: { type: 'string', default: 'task-' } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
-  { name: 'worktree_list', description: 'List all git worktrees in the current repository', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
-  { name: 'worktree_remove', description: 'Remove a git worktree and its branch (safety: blocks main/master removal)', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the worktree to remove' } }, required: ['path'] }, parallelSafe: false, riskLevel: 'high' },
+  { name: 'worktree_create', description: 'Create an isolated git worktree for parallel task execution (symlinks node_modules). NOTE: creation does NOT switch the session working directory - you must pass the returned path explicitly to subsequent file/command tools. Requires git to be installed; degrades gracefully with a readable reason if not.', parameters: { type: 'object', properties: { label: { type: 'string', description: 'Short human-readable label for this isolation (e.g. feature-auth, fix-bug)' }, branch_prefix: { type: 'string', default: 'agentai' } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'worktree_list', description: 'List all git worktrees in the current repository, marking orphan/prunable ones that need sweeping', parameters: { type: 'object', properties: {} }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'worktree_remove', description: 'Remove a git worktree and its branch (safety: blocks main/master/current worktree, and rejects any path outside the worktree root)', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the worktree to remove' } }, required: ['path'] }, parallelSafe: false, riskLevel: 'high' },
+  { name: 'worktree_sweep', description: 'Clean up orphaned/stale worktrees: git prunable entries (directory gone), state-file leftovers from interrupted creates, and worktrees older than a threshold. Use dry_run to preview. Prevents unbounded disk usage and a dirty `git worktree list`.', parameters: { type: 'object', properties: { dry_run: { type: 'boolean', default: false } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'code_review', description: 'Multi-perspective code review: spawns 3 parallel sub-agents (security, code-quality, testing) and returns a merged verdict', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' }, description: 'List of absolute file paths to review' }, focus: { type: 'string', description: 'Optional: specific concern to focus on, e.g. "auth flow" or "error handling"' } }, required: ['files'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'npm_install', description: '【智能依赖安装】自动检测包管理器 (pnpm/yarn/npm/pip), 支持 monorepo 工作区, 支持 dev/global 安装, 安装后自动验证。\n\n🔑 触发场景:\n- 代码运行报 "Cannot find module" / "ModuleNotFoundError" → 立即安装\n- 探索项目时发现依赖缺失 → 安装后继续\n- 用户要求安装某个包\n- 调用 share_port/generate_3d_scene 等工具提示缺包 → 安装后重试\n- 运行项目前预检依赖\n\n🛠️ 参数:\n- package: 包名 (字符串) 或 包名数组 (批量安装)\n- manager: 包管理器 (auto=自动检测, npm/pnpm/yarn/pip)\n- dev: true = 安装为开发依赖 (-D)\n- global: true = 全局安装 (-g)\n- workspace: monorepo 工作区包名 (pnpm --filter, yarn workspace, npm -w)\n\n💡 自动检测逻辑:\n- pnpm-lock.yaml → pnpm add\n- yarn.lock → yarn add\n- package-lock.json → npm install\n- requirements.txt / pyproject.toml → pip install\n- Python 项目自动检测 .venv 虚拟环境\n\n💡 示例:\n- npm_install({package:"axios"}) → 自动检测管理器安装\n- npm_install({package:["react","react-dom"], dev:true}) → 批量装开发依赖\n- npm_install({package:"localtunnel"}) → 装 share_port 工具所需依赖\n- npm_install({package:"requests", manager:"pip"}) → 强制用 pip\n- npm_install({package:"lodash", workspace:"@agentai/gui"}) → monorepo 子包安装', parameters: { type: 'object', properties: { package: { type: 'string', description: '包名 (单个) — 如需批量请用数组', }, packages: { type: 'array', items: { type: 'string' }, description: '批量安装的包名列表 (与 package 二选一)' }, manager: { type: 'string', enum: ['auto','npm','pnpm','yarn','pip'], default: 'auto', description: '包管理器 (默认自动检测)' }, dev: { type: 'boolean', default: false, description: '是否安装为开发依赖 (-D)' }, global: { type: 'boolean', default: false, description: '是否全局安装 (-g)' }, workspace: { type: 'string', description: 'monorepo 工作区包名 (如 @agentai/gateway)' } }, required: [] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'ensure_dependency', description: '【依赖预检 + 自动安装】检查依赖是否已安装, 未安装则自动安装。在运行代码/调用工具前调用此工具可避免 "Cannot find module" 错误。\n\n🔑 触发场景:\n- 运行项目前预检依赖 (避免启动失败)\n- 调用工具前确保依赖就绪 (如 share_port 需要 localtunnel)\n- 探索项目时检查关键依赖是否齐全\n- 用户说"运行项目"/"启动服务"前\n\n🛠️ 参数:\n- package: 包名 (单个) 或 包名数组\n- manager: 包管理器 (auto/npm/pnpm/yarn/pip)\n- importCheck: 可选, 检查能否 import/require 此模块名 (用于验证安装结果)\n\n💡 与 npm_install 区别:\n- npm_install = 直接安装 (无论是否已装)\n- ensure_dependency = 先检查, 已装则跳过, 未装才装 (幂等)\n\n💡 示例:\n- ensure_dependency({package:"localtunnel"}) → 检查 localtunnel 是否已装, 未装则装\n- ensure_dependency({package:["react","react-dom","antd"]}) → 批量预检\n- ensure_dependency({package:"requests", manager:"pip"}) → 检查 Python 包\n- ensure_dependency({package:"axios", importCheck:"axios"}) → 装后验证可 import', parameters: { type: 'object', properties: { package: { type: 'string' }, packages: { type: 'array', items: { type: 'string' } }, manager: { type: 'string', enum: ['auto','npm','pnpm','yarn','pip'], default: 'auto' }, importCheck: { type: 'string', description: '可选: 验证此模块名能否 import/require (默认同 package)' } }, required: [] }, parallelSafe: true, riskLevel: 'low' },
@@ -2780,7 +2729,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const depth = args.depth === 'deep' ? 'deep' : 'quick';
       const batch = allTargets.slice(0, maxTargets);
 
-      const { default: subagent } = await import('./subagent.js');
+      const { runSubagent } = await import('./subagent.js');
       const results: Array<{ target: string; source: string; ok: boolean; found: number; note: string }> = [];
       let totalFound = 0;
 
@@ -2793,7 +2742,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
             : '浅扫 (wsl_scan nmap -sV 指纹 + 浏览器抓表单端点 + http_replay 最小强度注入探针);') +
           ` 真复现的洞必须 save_evidence 截图落盘 + report_vulnerability 存 (evidence/evidencePaths 至少一项); 未复现的不写。够深就停: 命中 1 个可报洞+证据即可, 别空耗。`;
         try {
-          const out = await subagent.runSubagent(
+          const out = await runSubagent(
             'pentest', task, router, registry,
             (ctx as any)?.userId || 'default', ws, ctx?.model, ctx?.modelName,
           );
@@ -3789,8 +3738,8 @@ ${violations.map(v => `• ${v}`).join('\n')}
         const solutions: Array<import('./agent-battle.js').Solution> = [];
         const subPromises = agents.map(async (agent) => {
           try {
-            const { default: subagent } = await import('./subagent.js');
-            const result = await subagent.runSubagent(
+            const { runSubagent } = await import('./subagent.js');
+            const result = await runSubagent(
               agent.id as any,
               `[${agent.persona}视角] ${task}\n请以${agent.persona}的身份分析并给出方案。`,
               router, registry,
@@ -3840,9 +3789,9 @@ ${violations.map(v => `• ${v}`).join('\n')}
         return { success: true, output: summary };
       }
 
-      const { default: subagent } = await import('./subagent.js');
+      const { runSubagent } = await import('./subagent.js');
       // 2026-10-12: 传父模型 (provider + 精确模型名) → 子智能体用父模型自身
-      const result = await subagent.runSubagent(type, task, router, registry, (ctx as any)?.userId || 'default', ws(), ctx?.model, ctx?.modelName);
+      const result = await runSubagent(type, task, router, registry, (ctx as any)?.userId || 'default', ws(), ctx?.model, ctx?.modelName);
       return { success: true, output: result || '(subagent returned empty)' };
     } catch (e: any) { return { success: false, output: `Subagent error: ${e.message}` }; }
   },
@@ -4096,17 +4045,45 @@ contextData: args.action === 'update_context' ? {
     try {
       const { worktreeCreate } = await import('./worktree.js');
 const ws = getWs();
-        const { worktreePath, branch } = worktreeCreate(ws, args.branch_prefix || 'task-');
-      return { success: true, output: `Worktree created: ${worktreePath}\nBranch: ${branch}`, data: { path: worktreePath, branch } };
+      // ⚠️ 2026-10-16 修复: 旧代码漏了 await —— worktreeCreate 是 async，
+      // 解构 Promise 得到 worktreePath=undefined/branch=undefined，
+      // 却还返回 success:true。LLM 拿到 "Worktree created: undefined"。
+      const r = await worktreeCreate(ws, {
+        label: args.label,
+        branchPrefix: args.branch_prefix,
+        sessionId: ctx?.sessionId,
+      });
+      if (!r.ok) {
+        // 结构化降级: git 缺失/非仓库 → 给人话 + 替代方案，不抛 ENOENT 原文
+        const hint = r.hint ? `\n建议: ${r.hint}` : '';
+        return { success: false, output: `无法创建 worktree: ${r.reason}${hint}` };
+      }
+      const { worktreePath, branch } = r.data!;
+      return {
+        success: true,
+        output:
+`Worktree 已创建:
+  路径: ${worktreePath}
+  分支: ${branch}
+
+⚠️ 重要: 创建 worktree **不会自动切换**当前会话的工作目录。
+若要让后续读写操作发生在该隔离目录内，必须显式调用 worktree_enter 并把返回的路径
+作为后续 read_file / write_file / run_command 的目录参数使用。`,
+        data: { path: worktreePath, branch, id: r.data!.id },
+      };
     } catch (e: any) { return { success: false, output: `worktree_create error: ${e.message}` }; }
   },
   worktree_list: async (args: any, ctx?: any) => {
     try {
-      const { worktreeList } = await import('./worktree.js');
+      const { worktreeList, worktreeCapability } = await import('./worktree.js');
 const ws = getWs();
-        const trees = worktreeList(ws);
-      if (trees.length === 0) return { success: true, output: '(no worktrees)' };
-      const out = trees.map(t => `${t.path} [${t.branch}] ${t.head}${t.current ? ' (current)' : ''}`).join('\n');
+      const cap = await worktreeCapability(ws);
+      if (!cap.available) {
+        return { success: true, output: `worktree 不可用: ${cap.reason}\n建议: ${cap.hint || ''}`, data: { available: false } };
+      }
+      const trees = await worktreeList(ws);
+      if (trees.length === 0) return { success: true, output: '(no worktrees)', data: { count: 0 } };
+      const out = trees.map(t => `${t.path} [${t.branch}] ${t.head}${t.current ? ' (current)' : ''}${t.prunable ? ' ⚠️目录已丢失,建议执行 worktree_sweep' : ''}`).join('\n');
       return { success: true, output: out, data: { count: trees.length } };
     } catch (e: any) { return { success: false, output: `worktree_list error: ${e.message}` }; }
   },
@@ -4114,10 +4091,28 @@ const ws = getWs();
     try {
       const { worktreeRemove } = await import('./worktree.js');
 const ws = getWs();
-        const r = worktreeRemove(ws, args.path);
-      if (!r.ok) return { success: false, output: r.error || 'Failed to remove worktree' };
-      return { success: true, output: `Worktree removed: ${args.path}` };
+      const r = await worktreeRemove(ws, args.path);
+      if (!r.ok) return { success: false, output: r.reason || 'Failed to remove worktree' };
+      return { success: true, output: `Worktree 已移除: ${args.path}${r.data?.branch ? `\n分支已删除: ${r.data.branch}` : ''}` };
     } catch (e: any) { return { success: false, output: `worktree_remove error: ${e.message}` }; }
+  },
+  worktree_sweep: async (args: any, ctx?: any) => {
+    try {
+      const { worktreeSweep, worktreeCapability } = await import('./worktree.js');
+const ws = getWs();
+      const cap = await worktreeCapability(ws);
+      if (!cap.available) return { success: false, output: `worktree 不可用: ${cap.reason}` };
+      const r = await worktreeSweep(ws, { dryRun: !!args.dry_run });
+      if (!r.ok) return { success: false, output: r.reason! };
+      const { removed, kept } = r.data!;
+      if (!removed.length) return { success: true, output: `无需清理（${kept} 个 worktree 均正常）`, data: r.data };
+      const verb = args.dry_run ? '（预演，未实际删除）' : '';
+      return {
+        success: true,
+        output: `已清理 ${removed.length} 个 worktree${verb}:\n${removed.map(r => `  - ${r}`).join('\n')}\n保留 ${kept} 个`,
+        data: r.data,
+      };
+    } catch (e: any) { return { success: false, output: `worktree_sweep error: ${e.message}` }; }
   },
   code_review: async (args: any, ctx?: any) => {
     try {
@@ -4140,7 +4135,7 @@ const ws = getWs();
 
       // 3 个并行审查角色 (学自 Addy Osmani agent-skills /ship)
       // 每个角色带超时控制, 防止单个子代理卡住阻塞整个 review
-      const { default: subagentMod } = await import('./subagent.js');
+      const subagentMod = await import('./subagent.js');
       const REVIEW_TIMEOUT_MS = 90_000; // 单个角色 90s 超时
       const wrapWithTimeout = (promise: Promise<any>, label: string) => {
         return Promise.race([
