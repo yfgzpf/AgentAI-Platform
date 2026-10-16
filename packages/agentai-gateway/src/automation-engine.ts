@@ -967,7 +967,7 @@ export const AUTOMATION_PRESETS: AutomationPreset[] = [
     defaultExpression: '0 3 */2 * *',
     defaultAction: 'batch_pentest',
     defaultParams: { depth: 'quick', maxTargets: 10 },
-    guide: '前提: 工作区 .agentai/scope.json 里已有授权目标 (在「渗透测试授权」面板批量粘贴平台清单)。执行窗口内用户在跑任务会先让路。内置限频 (scope_guard 默认 max_rps=5) + 每子智能体"够深就停"策略。建议配 cve-watch 盯哨: 新 CVE 曝光后下一轮批量扫自动命中。',
+    guide: '前提: 工作区 .agentai/scope.json 里已有授权目标 (在「渗透测试授权」面板批量粘贴平台清单)。执行窗口内用户在跑任务会先让路。内置限频 (scope_guard 默认 max_rps=5) + 每子智能体"够深就停"策略。跑完自动沉淀课程焦点 (命中目标下轮转 deep 重扫 + 已验证手法复用), 下一轮 48h 定时自动加深。建议配 cve-watch 盯哨: 新 CVE 曝光后下一轮批量扫自动命中。',
   },
   {
     id: 'cve-watch-subdomains',

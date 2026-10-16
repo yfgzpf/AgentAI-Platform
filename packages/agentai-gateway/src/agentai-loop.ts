@@ -72,6 +72,8 @@ import { getLedger, type TaskLedger } from './task-ledger.js';
 import { touchUserTask } from './runtime-activity.js';
 import { extractDecisions } from './decision-extractor.js';
 import { consolidateSystemInjections, sanitizeToolMessages } from './message-utils.js';
+import { renderPlatformsForAi, renderScopeGroupsForAi } from './src-platforms.js';
+import { renderAuthForAi } from './auth-attestation.js';
 
 /* ═══════════ 审批白名单: 用户信任的命令模式 ═══════════
  * 当用户在审批卡片中点击"信任此命令"后，相同工具+路径模式将自动跳过审批
@@ -359,6 +361,23 @@ private _iterToolStartIdx = 0;
  * 语义与原实现完全一致, 只是不再被每轮重置。
  */
 private _failTracker = new Map<string, number>();
+
+/**
+ * 2026-10-16 新增: 已播报过"疑似卡死"的 sig (同一 sig 只播报一次)
+ * ============================================================
+ * 事故现场 (富哥实机截图): http_replay 明明在正常返回 403/404/302/200,
+ * 但每一条消息前面都挂着 "⚠️ 工具 http_replay 疑似卡死 (3 次调用)"。
+ *
+ * 两个叠加的缺陷:
+ *   ① **计数永不复位** —— 模型一旦换参数 (sig 变了), 旧 sig 就永远停在 3,
+ *      因为 `duplicateTracker.delete(sig)` 只在该 sig **成功**时才执行,
+ *      而"不再用它"不等于"它成功了"。判定又每轮遍历全表 → 从此每轮都 emit。
+ *   ② **电平触发而非边沿触发** —— 只要 count>=3, 之后每轮都重复播报同一件事。
+ *
+ * 修法: ① 每轮结束剔除本轮未出现的 sig ("连续失败"的语义就是连续,
+ *      模型换方案后旧失败已不连续); ② 用本集合保证同一 sig 只播报一次。
+ */
+private _stuckEmitted = new Set<string>();
 
 /**
  * 2026-10-11 新增: 本次任务累计工具调用次数
@@ -878,7 +897,70 @@ private _forbiddenResponseCount: number = 0;
     // ⚠️ 保留已存在的 appendOnlyLog 内容 (附件可能在 loop.run() 之前被推入)
     const initialLog = this.initialMessages.filter(m => m.role !== 'system');
     this.context.appendOnlyLog = [...initialLog, ...this.context.appendOnlyLog];
+    await this.injectSrcPlatformContext();
     this.contextReady = true;
+  }
+
+  /**
+   * 2026-10-16: 把 SRC 平台档案注入系统上下文 —— **消除 AI 反复追问授权的关键**。
+   *
+   * 富哥实机问题: "避免AI一直不断的问"。根因是 AI 看不到完整授权清单,
+   * 只能靠 proposeScope 一个个问。注入后 AI 第一轮就知道:
+   *   ① 哪几家平台、各自授权了什么(归属!)
+   *   ② 哪些是明确禁止的
+   *   ③ 报告该发给谁(platform id)
+   *
+   * 为什么放ensureContext 而不是每轮重新拼:
+   *   immutablePrefix 是"本会话固定不变"的部分, 平台清单在会话内不会变,
+   *   放这里既保证**每轮都看得到**, 又不会重复膨胀上下文。
+   *
+   * ⚠️ 边界: 平台清单是**授权事实**, 不是行为禁令的全部来源 ——
+   *   代码层的硬拦截在 pentest-scope-guard.isTargetInScope (deny 优先于 allow),
+   *   这里的文字只是让 AI 不去试探, 两层都要在, 不能互相替代。
+   */
+  private async injectSrcPlatformContext(): Promise<void> {
+    try {
+      const ws = this.opts?.workspace;
+      if (!ws) return;
+      // ═══ 授权声明优先注入 (2026-10-16) ═══
+      // 顺序很关键: 授权声明是"该不该干"的裁决, SRC 平台档案是"怎么干"的细则。
+      // 声明在前, AI 先读到"授权已落盘, 直接开工", 才不会在平台细节上纠结真伪。
+      const authText = renderAuthForAi(ws);
+      if (authText) {
+        const authMarker = '# ═══ 授权声明';
+        if (!this.context.immutablePrefix.some(m => typeof m.content === 'string' && m.content.includes(authMarker))) {
+          this.context.immutablePrefix.push({ role: 'system', content: authText } as ChatMessage);
+          console.log(`[loop] ✅ 已注入授权声明 (${authText.length} 字) — 授权为既定事实, AI 不应再核实`);
+        }
+      }
+
+      const ctxText = renderPlatformsForAi(ws);
+      // ⚠️ 2026-10-16 scope.json 兜底分组 (实机事故: 授权两个项目被一锅端)
+      //   富哥当时的授权只是往 scope.json 塞目标(source 是 unknown/manual),
+      //   **没建平台档案也没签声明** → 上面两个 render 都是空 → 多项目隔离纪律
+      //   一条都没注入 → AI 必然一锅端。所以再从 scope.json 的 source 兜一层。
+      //   注意不能 `if (!ctxText) return` 提前退出, 兜底分支必须能独立生效。
+      const scopeGroupsText = await renderScopeGroupsForAi(ws);
+
+      if (!ctxText && !scopeGroupsText) return;
+      // 已注入过就不重复 (ensureContext 只跑一次, 但防重保险)
+      const marker = '🎯 已授权的 SRC 平台';
+      const groupsMarker = '授权范围里有';
+      const already = this.context.immutablePrefix.some(m =>
+        typeof m.content === 'string' && (m.content.includes(marker) || m.content.includes(groupsMarker)));
+      if (already) return;
+      if (ctxText) {
+        this.context.immutablePrefix.push({ role: 'system', content: ctxText } as ChatMessage);
+        console.log(`[loop] 已注入 SRC 平台上下文 (${ctxText.length} 字) — AI 无需再逐个询问授权`);
+      }
+      if (scopeGroupsText) {
+        this.context.immutablePrefix.push({ role: 'system', content: scopeGroupsText } as ChatMessage);
+        console.log(`[loop] ✅ 已注入多项目隔离纪律 (${scopeGroupsText.length} 字) — 授权多个项目时必须分开探测`);
+      }
+    } catch (e: any) {
+      // 注入失败**绝不能**中断主流程, 退回"AI 逐个问"的旧行为即可
+      console.warn(`[loop] SRC 平台/授权声明上下文注入失败 (不影响主流程): ${e?.message || e}`);
+    }
   }
 
   /**
@@ -1113,6 +1195,18 @@ private _forbiddenResponseCount: number = 0;
         evolutionSystemBlock = `# Evolution Memory (跨会话经验)\n${lines.join('\n')}`;
       }
     } catch (e) { logger.warn('[ctx:evolution] 进化记忆加载失败, 本轮不注入跨会话经验', e); }
+
+    // === 课程循环焦点 (RSIAgent 探索→验证→沉淀, 2026-10-16): 同 taskType 历史
+    // 有效路线 + 下轮焦点, 走 recall/extractPatterns 既有管道, 弱模型区注入。
+    // 强模型与 evolution 块同一门控 (强模型自带决策力, 外部注入反而引入矛盾指令)。
+    try {
+      const { focusBlock } = await import('./curriculum.js');
+      const focusText = focusBlock(this.opts.workspace || process.cwd(), taskType, 600, this.opts.userId);
+      if (focusText) {
+        systemMsgs.push({ role: 'system', content: focusText });
+        track('curriculum:focus', 20);
+      }
+    } catch { /* 课程循环焦点注入失败不影响主流程 */ }
     } // !isStrongModel
     
     if (useLitePrompt) {
@@ -2209,6 +2303,7 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
   this._forceSkill = null; // 清除上轮强制技能, 让 skillManager重新匹配
   this._skippedToolCalls = []; // 清空上一轮遗留的跳过记录
   this._failTracker.clear();   // 2026-10-11: 失败计数按任务隔离 (不跨 run 累积)
+  this._stuckEmitted.clear();  // 2026-10-16: 卡死播报同样按任务隔离, 否则跨 run 漏播
   this._toolCallCount = 0;     // 2026-10-11: 工具调用预算按任务归零
   this._iterCapWarned = false; // 2026-10-11: 迭代上限软着陆标记按任务归零
   // ═══ 2026-10-12: 死循环护栏的计数器必须按任务隔离 ═══
@@ -4058,10 +4153,28 @@ if (isComplexTask) {
           }));
         }
         // ═══ 2026-10-16: DeepSeek V4.1-Flash thinking 模式 — 带 tool_calls 的 assistant 消息
-        // 必须回传 reasoning_content, 否则官方 API 直接 400。把 res.reasoningContent 存进
-        // appendOnlyLog, 下一轮请求时 llm-router 保留这段, 不 400 了。 ═══
-        if ((res as any).reasoningContent) {
+        // 必须回传 reasoning_content, 否则官方 API 直接 400。
+        //
+        // ⚠️⚠️ 这是一个**间歇性** 400 的根因 (2026-10-16 二次复现):
+        //   原写法 `if (res.reasoningContent) { ... }` 是**条件写入** ——
+        //   只要某轮模型返回的 reasoning_content 为空串/undefined (思考被跳过、
+        //   命中 prompt cache、token 预算耗尽、纯工具轮不吐思考等), 该条
+        //   assistant 消息就**带着 tool_calls 却没有 reasoning_content** 落进历史。
+        //   下一轮请求带上它 → DeepSeek 立即 400:
+        //     "The `reasoning_content` in the thinking mode must be passed back to the API"
+        //   而 400 是**确定性重放**: 重试 3 次全挂 → rescue chain → 再次 400,
+        //   最终 "AI 什么都没做"。用户侧表现就是"昨天好好的, 今天突然全挂"。
+        //
+        //   修法: 字段**无条件写入** (缺失时补空串), 而不是缺失就不写。
+        //   DeepSeek 接受 reasoning_content: "" 表示"这一轮没有思考内容"。
+        //   若改成"没有就摘掉 tool_calls"会丢失工具调用历史, 让模型以为自己
+        //   没调过工具 → 重复调用, 比 400 更难排查。
+        if ((res as any).reasoningContent !== undefined && (res as any).reasoningContent !== null) {
           assistantMsg.reasoning_content = (res as any).reasoningContent;
+        } else if (res.toolCalls && res.toolCalls.length > 0) {
+          // 带工具调用但无思考内容 → 补空串, 明确告诉 API "本轮无 thinking"
+          assistantMsg.reasoning_content = '';
+          logger.debug(`[loop] assistant(tool_calls) 无 reasoning_content, 补空串以满足 DeepSeek thinking 回传协议 (iter=${this.iteration})`);
         }
         this.context.appendOnlyLog.push(assistantMsg);
         this.emit('log:appended', { role: 'assistant', content: res.content });
@@ -4497,8 +4610,23 @@ if (isComplexTask) {
         // 2026-10-11: 用实例级 _failTracker (跨迭代存活) 替代原来的局部 Map。
         // 原实现每轮重建 → failCount 恒为 1 → "连续失败 3 次换方案"从未生效。
         const duplicateTracker = this._failTracker; // tool:args → 连续失败次数 (跨轮累积)
+        // 2026-10-16: 记录本轮实际出现的 sig。循环结束后用它剔除"陈旧失败计数"——
+        //   模型换参数后旧 sig 不再出现, 它的失败已不"连续", 必须移出计数表,
+        //   否则它会永远停在 3, 让"疑似卡死"前缀从此每轮都出现(实机事故)。
+        const seenSigsThisRound = new Set<string>();
         for (const r of toolResults) {
-          const sig = `${r.name}::${JSON.stringify(res.toolCalls?.find((tc:any) => tc.id === r.id)?.args || {})}`;
+          // args 反查不到 → 用固定占位 sig, 它**不会**被下面累加(见下)。
+        //   ⚠️ 不能退化成 {} —— 那会让所有调用共用一个 sig, 把"参数各不相同"误判成
+        //   "同参数连续失败"。实机事故: http_replay 正常工作却全程挂"疑似卡死"前缀。
+        //   也不能用带 id 的 sig —— id 每轮不同, Map 会无限膨胀。
+        //   语义: "同参数失败"的前提是**确实知道参数**; 反查不到就不参与重复计数,
+        //   宁可漏判(多试一两次)也不能误判(污染整段对话)。
+        const _matchedTc = res.toolCalls?.find((tc: any) => tc.id === r.id);
+        const sigResolved = !!_matchedTc;
+        const sig = _matchedTc
+          ? `${r.name}::${JSON.stringify(_matchedTc.args || {})}`
+          : `${r.name}::<args-unresolved>`;
+        if (sigResolved) seenSigsThisRound.add(sig);
 
           // ═══ P0 修复: plan_task / update_plan 工具结果 → emit SSE 事件 (右侧面板实时同步) ═══
           const toolData = (r as any).data || (rawResults.find(rr => rr.id === r.id) as any)?.data;
@@ -4564,6 +4692,8 @@ if (isComplexTask) {
  // 价值向量: 从成功中学习 (更大胆、更自主)
  try { (await import('./soul/index.js')).getValueSystem().learnFromSuccess({}); } catch {}
           } else {
+          // 2026-10-16: 参数反查不到 → 不累加失败计数(见 sig 构造处的说明)
+          if (sigResolved) {
           // 2026-10-16 P0 修复: 未知工具名 = 模型幻觉, **不计入重复失败**
           // 事故现场: 模型把 http_replay 幻觉成 http_reply, 工具执行返回
           //   "Unknown tool: http_reply" → 每轮都算失败 → 累加到 3 次触发 dup_fail →
@@ -4589,6 +4719,7 @@ if (isComplexTask) {
           } else {
             duplicateTracker.set(sig, failCount + 1);
           }
+          } // sigResolved
           // 灵魂层: PainSense 记录失败
           try { (await import('./soul/index.js')).getPainSense().feelPain(r.name); } catch {}
           // 价值向量: 从失败中学习 (更谨慎、更保守)
@@ -4747,11 +4878,28 @@ if (isComplexTask) {
           }
         }
         // 检测重复失败 → 引导 AI 换方案
+        //
+        // ⚠️ 2026-10-16 两处修复 (实机事故: http_replay 正常工作却全程挂"疑似卡死"前缀):
+        //   ① 先剔除本轮未出现的 sig —— "连续失败 N 次"的语义要求失败是连续的;
+        //      模型换参数后旧 sig 不该继续占着计数。
+        //   ② 边沿触发: 同一 sig 只在**首次**达到阈值时播报一次。
+        //      原来只要 count>=3 就每轮 emit, 于是此后每条消息都带这个前缀。
+        for (const sig of [...duplicateTracker.keys()]) {
+          if (!seenSigsThisRound.has(sig)) {
+            duplicateTracker.delete(sig);
+            this._stuckEmitted.delete(sig);
+          }
+        }
         for (const [sig, count] of duplicateTracker) {
           if (count >= 3) {
             const [toolName] = sig.split('::');
+            // 边沿触发: 已播报过就只保留 directive(让模型换方案), 不再往前端推消息
+            const firstReport = !this._stuckEmitted.has(sig);
+            if (firstReport) {
+              this._stuckEmitted.add(sig);
+              this.emit('tool:stuck', { tool: toolName, count });
+            }
             this.directives.add('dup_fail', `[SYSTEM] ${toolName} 已连续失败 ${count} 次。请停止重试，改用其他工具或方案。`, 'high');
-            this.emit('tool:stuck', { tool: toolName, count });
             // 2026-10-14 P1: 把这条"同参数连续失败 N 次"记进 evolution (跨会话可召回)。
             // 不记 = 下次同类任务重蹈覆辙。args 截断 200 防日志膨胀。
             // 注: 这里**不引用** currentTaskType/Industry/Keywords — 那 3 个在 ~50 行
@@ -4759,6 +4907,9 @@ if (isComplexTask) {
             // 按 userId+workspace 就够 (recallEvolution.ts:303 的过滤逻辑)。
             const argsRaw = sig.slice(toolName.length + 2); // 去掉 "toolName::" 前缀
             const argsSafe = argsRaw.length > 200 ? argsRaw.slice(0, 200) + '…' : argsRaw;
+            // 2026-10-16: evolution 也只在**首次**写。原来每轮都写同一条失败,
+            //   把evolution 记忆刷成重复条目, 反而淹掉别的教训。
+            if (firstReport) {
             try {
               // 2026-10-14 P2 冻结开关: 冻结期跳过主循环 dup_fail 自动写
               const { isEvolutionFrozen } = await import('./evolution-freeze.js');
@@ -4776,6 +4927,7 @@ if (isComplexTask) {
                 });
               }
             } catch { /* evolution write optional */ }
+            } // firstReport
             break; // 只触发一次
           }
         }
@@ -5122,12 +5274,32 @@ if (isComplexTask) {
           if (toolMsgsThisIter.length >= 5) {
             const last5 = toolMsgsThisIter.slice(-5);
             const isExemptName = (n: string) => LOOP_EXEMPT_TOOLS.has(n);
+            // ═══ 2026-10-17 P0 修复: 签名必须从【assistant 的 tool_calls】反查 args ═══
+            // 事故: tool 消息 push 时只有 {role,name,tool_call_id,content}, **没有 args**。
+            //       旧代码 `JSON.stringify(m.args || {})` 于是对所有 http_replay 调用
+            //       都产出同一个签名 `http_replay::{}` → 参数各不相同的正常探测
+            //       (改 header/换 id/试注入) 被判成"同参数死循环" → 硬停强杀整个任务。
+            //       这就是"http_replay 明明正常工作, 任务却被截断"的根因。
+            // 修法: 用 tool_call_id 回到本轮 assistant 的 tool_calls 里取真实 args;
+            //       反查不到就退化成 <args-unresolved> 且**不参与计数**(宁可漏判不可误判)。
+            const _argsById = new Map<string, any>();
+            for (const _am of this.context.appendOnlyLog) {
+              if (_am.role !== 'assistant' || !(  _am as any).tool_calls) continue;
+              for (const _tc of (_am as any).tool_calls) {
+                if (_tc?.id) _argsById.set(_tc.id, _tc.function?.arguments ?? _tc.args);
+              }
+            }
             const sig = (m: any) => {
               const name = m.name || 'unknown';
-              // P0 修复: 用完整 args 生成签名, 而非 content.slice(0,60)
-              // content 是工具返回结果, 不同参数可能返回相似结果导致误判
-              const argsStr = JSON.stringify(m.args || {}).slice(0, 200);
-              return `${name}::${argsStr}`;
+              const a = _argsById.get(m.tool_call_id);
+              if (!a || typeof a !== 'object') return `${name}::<args-unresolved>`;
+              // 参数稳定序列化 (键排序), 避免同一份 args 因键序不同被算成两个签名
+              const stable = (o: any): string => {
+                if (o === null || typeof o !== 'object') return JSON.stringify(o);
+                if (Array.isArray(o)) return `[${o.map(stable).join(',')}]`;
+                return `{${Object.keys(o).sort().map(k => `${JSON.stringify(k)}:${stable(o[k])}`).join(',')}}`;
+              };
+              return `${name}::${stable(a).slice(0, 300)}`;
             };
             // ═══ 2026-10-12 修复 A2: 豁免改成【按签名】而非"全有全无" ═══
             // 原 allExempt = last5.every(是豁免工具) → 最后 5 条里只要混进 1 条非搜索工具
@@ -5135,7 +5307,13 @@ if (isComplexTask) {
             // maxCount>=4 → 越是"搜一下再画个图"这种正常操作越容易被判死循环。
             // 现在把豁免工具产生的签名整组剔除, 只统计非豁免签名 ("5 次中至少 4 次相同")。
             const sigs = last5.map(sig);
-            const countedSigs = sigs.filter(s => !isExemptName(s.split('::')[0] || ''));
+            const countedSigs = sigs.filter(s => {
+              const n = s.split('::')[0] || '';
+              if (isExemptName(n)) return false;
+              // 反查不到真实 args 的签名不参与计数 (宁可漏判不可误判, 同 2026-10-16 卡死修复)
+              if (s.endsWith('::<args-unresolved>')) return false;
+              return true;
+            });
             const sigCounts = new Map<string, number>();
             for (const s of countedSigs) sigCounts.set(s, (sigCounts.get(s) || 0) + 1);
             const maxCount = countedSigs.length > 0 ? Math.max(...sigCounts.values()) : 0;
@@ -5145,9 +5323,26 @@ if (isComplexTask) {
               const repeatName = repeatSig.split('::')[0] || 'unknown';
               const errResults = last5.filter(m => typeof m.content === 'string' && (m.content.startsWith('[ERROR]') || m.content.includes('未启动') || m.content.includes('失败')));
               const isErrorLoop = errResults.length >= 3;
+              // ═══ 2026-10-17 P0 修复: 硬停必须"真的没有信息增益"才成立 ═══
+              // 事故: http_replay 连续 5 次都在**正常**返回 403/404/302/200 (这正是它的用途:
+              //       改 header/换 id/试注入, 每次参数不同但都算"重复签名") → 被硬停强杀,
+              //       用户看到的是"任务被截断"。日志里 isErrorLoop 明明算出来了却**没参与判定**。
+              // 现在要求: 同签名 4 次 + (至少 3 次是错误 **或** 结果内容高度雷同)。
+              // 探针类工具 (200/403/404 各不相同) 不再被误杀。
+              const repeatContents = last5
+                .filter((m: any) => sig(m) === repeatSig)
+                .map((m: any) => typeof m.content === 'string' ? m.content.slice(0, 120) : '');
+              const uniqContents = new Set(repeatContents).size;
+              const isStuckLoop = isErrorLoop || uniqContents <= 1;
+              if (!isStuckLoop) {
+                this.directives.add('loop_hint',
+                  `[SYSTEM] 你已连续 ${maxCount} 次用相同参数调用 "${repeatName}", 但每次响应内容都不同 —— 这是正常的探测行为, 继续。`,
+                  'low');
+                continue;
+              }
 
               logger.warn(`[loop] 🛑 死循环硬停: ${repeatName} 连续 5 次返回相同/错误结果, 强制终止`);
-              taskSnap?.appendLog('warn', 'dead-loop-hard-stop', { tool: repeatName, signatures: sigs, errLoop: isErrorLoop });
+              taskSnap?.appendLog('warn', 'dead-loop-hard-stop', { tool: repeatName, signatures: sigs, errLoop: isErrorLoop, uniqContents });
               // 注入强引导 + 硬停
               this.directives.add('dead_loop_stop',
                 `[SYSTEM] ⚠️ 工具 "${repeatName}" 连续多次返回相同结果${isErrorLoop ? '且包含错误' : ''}。
@@ -5791,6 +5986,38 @@ if (this._capabilityTier !== 'autonomous') {
     } catch { /* plan completion optional */ }
 
     this.emit('loop:done', { iterations: this.iteration, response: lastResponse });
+
+    // ═══ 课程循环 (RSIAgent 探索→验证→沉淀, 2026-10-16): 终态把"本轮有效路线"
+    // 沉淀为技术粒度 success 进化条目 + 工作区 curriculum.json。
+    // 判定"有效路线": 本轮成功写过的工具链 (有实际改动/执行) + 台账摘要, 一句话。
+    // 失败 / 纯描述无操作 → 不沉淀 (只沉淀真正验证过的路线)。
+    try {
+      const _crWs = this.opts.workspace || process.cwd();
+      const _crLedger = this.ledger?.snapshot();
+      const _crLastUser = [...this.context.appendOnlyLog].reverse().find(m => m.role === 'user');
+      const _crGoal = typeof _crLastUser?.content === 'string' ? _crLastUser.content.slice(0, 120) : '';
+      // 有效路线 = 本轮成功 (非 [ERROR]) 的工具调用序列, 取 top 3 工具名作 technique 摘要
+      const _crToolMsgs = this.context.appendOnlyLog.filter(m => m.role === 'tool');
+      const _crSuccTools = _crToolMsgs
+        .filter(m => typeof (m as any).content === 'string' && !/^\[ERROR\]|^Error:/.test((m as any).content))
+        .map(m => (m as any).name)
+        .filter(Boolean);
+      const _crSeen = new Set<string>();
+      const _crTopTools = _crSuccTools.filter(t => { if (_crSeen.has(t)) return false; _crSeen.add(t); return true; }).slice(-3);
+      const _crVerified = _crTopTools.length > 0; // 有实际成功工具调用才算"验证过的路线"
+      const _crTechnique = _crTopTools.length
+        ? `经 ${_crTopTools.join(' → ')} 完成` + (_crLedger?.writtenFiles?.length ? ` (改 ${_crLedger.writtenFiles.slice(-2).join(', ')})` : '')
+        : '';
+      const { distillRound } = await import('./curriculum.js');
+      distillRound(_crWs, {
+        goal: _crGoal,
+        taskType: this._taskType as any,
+        technique: _crTechnique,
+        verified: _crVerified,
+        ledger: _crLedger,
+        userId: this.opts.userId,
+      });
+    } catch { /* 课程循环绝不阻塞收尾 */ }
 
     // ═══ 跨会话工作日志 (2026-10-10): 写入 .agentai/work-log.jsonl ═══
     // 新会话启动时自动注入"上次在这个工作区做了什么"，解决跨会话失忆

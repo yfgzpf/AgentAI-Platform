@@ -859,6 +859,8 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       imageBase64: { type: 'string', description: '截图 PNG base64 (来自 browser_screenshot 的 data.imageBase64), 与 saveText 二选一' },
       saveText: { type: 'string', description: '要存档的文本 (响应片段 / curl 输出 / 命令结果), 与 imageBase64 二选一' },
       target: { type: 'string', description: '关联目标 (写进证据目录名, 便于按目标归组)' },
+      filename: { type: 'string', description: '可选: 图片文件名 (如 poc1-unauth-api.png)。**强烈建议给** —— 留空会用 screenshot-<时间戳>.png, 之后你在汇报里容易记错名字对不上文件。不含路径, 只给文件名。' },
+      textFilename: { type: 'string', description: '可选: saveText 的文件名 (如 response-unauth.txt)。同上, 不含路径。' },
     }, required: ['title'] }, parallelSafe: false, riskLevel: 'low' },
   // ===== 2026-10-16 第一梯队挖洞工具 (子域枚举 / JS端点提取 / HTTP重放) =====
   // 背景: 审查报告 PENTEST_REVIEW_2026-10-15 第二问 — "能扫但扫不深"。
@@ -2657,6 +2659,59 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       }
       const status = ['unverified', 'verified', 'reported'].includes(String(args.status))
         ? String(args.status) : 'unverified';
+
+      // ═══ 2026-10-16 归属平台自动识别 (多SRC 并行授权的收口)═══
+      // 富哥实机问题: "不能正确对应SRC到底座是属于哪家 → 浪费"。
+      // 根因: platform 字段原本只能靠 AI 自觉传, 而 AI 从 list_scope 读不到来源,
+      // 于是实际几乎总是空串 —— 挖到的洞不知道该报给谁, 白干。
+      // 现在: AI 不传时, 由 findPlatformForTarget 按 target 反查已确认平台。
+      let platform = String(args.platform || '').trim();
+      let platformAuto = false;
+      if (!platform) {
+        try {
+          const { findPlatformForTarget } = await import('./src-platforms.js');
+          const p = findPlatformForTarget(ws, String(args.target || ''));
+          if (p) { platform = p.id; platformAuto = true; }
+        } catch { /* 反查失败不阻塞落盘, 只是 platform 为空 */ }
+      }
+
+      // ═══ 2026-10-17 归属可信度校验 (实机事故: PoC 里白纸黑字写 valaSRC,
+      //   vulns.jsonl 里 platform 却被标成 "补天" —— platformAuto:false 说明是
+      //   AI 手填的, 而平台档案 src-platforms.json 根本不存在, 无从反查,
+      //   于是**一个凭空猜的名字被当成事实落进证据链**。
+      //   后果很实: 报告投错平台 = 白干 + 对方风控, 而这类错误事后极难发现。
+      //
+      // 处置: 不阻塞落盘 (那是用户的活), 但必须**如实标注**可信度,
+      //   让"这是猜的"这件事在数据层可见, 而不只是模型自己心里知道。
+      let platformTrusted = platformAuto;
+      let platformWarn = '';
+      if (platform && !platformAuto) {
+        try {
+          const { findPlatformForTarget, readSrcPlatforms } = await import('./src-platforms.js');
+          const matched = findPlatformForTarget(ws, String(args.target || ''));
+          const known = readSrcPlatforms(ws);
+          const byId = known.find(p => p.id === platform);
+          const byName = known.find(p => p.name === platform);
+          if (matched) {
+            // 有平台档案, 且 AI 填的正好是这个 target 的归属平台 → 可信
+            platformTrusted = (matched.id === platform) || (matched.name === platform);
+            if (!platformTrusted) {
+              platformWarn = `⚠️ platform="${platform}" 与该目标的实际归属(${matched.name}/${matched.id})不符, 已按实际归属修正为 "${matched.id}"`;
+              platform = matched.id;
+              platformAuto = true;
+            }
+          } else if (byId || byName) {
+            // 平台档案存在, 只是这个 target 没落在里面 → 归属存疑但不冲突
+            platformWarn = `⚠️ platform="${platform}" 不在已建平台档案的授权范围里 (该 target 未匹配任何平台) —— 归属可能填错, 提交前请核对`;
+          } else {
+            //⚠️ 完全没有平台档案 → 这个名字无从核对, 纯猜测
+            platformWarn = `⚠️ platform="${platform}" **未在任何平台档案中登记**, 无法核对是否正确(工作区无 src-platforms.json)。请到「渗透测试授权 → SRC 平台导入」建档案, 否则归属只能靠记忆, 易投错平台`;
+          }
+        } catch { /* 校验失败不阻塞 */ }
+      } else if (!platform) {
+        platformWarn = '⚠️ platform 为空: 该 target 未匹配任何已确认的平台档案, 提交前请自行确认投给哪个平台';
+      }
+
       const vulnsDir = path.join(ws, '.agentai', 'vulns');
       fs.mkdirSync(vulnsDir, { recursive: true });
       const ts = new Date().toISOString().slice(0, 10);
@@ -2665,7 +2720,12 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         id, ts: Date.now(),
         title: args.title, target: args.target,
         severity: args.severity, vulnType: args.vulnType || 'unknown',
-        poc: args.poc || '', evidence, evidencePaths, platform: args.platform || '',
+        poc: args.poc || '', evidence, evidencePaths,
+        platform,
+        platformAuto,// true = 由 target 反查得出(而非 AI 显式声明)
+        // 2026-10-17: 归属可信度 —— false = AI 凭印象填的, 且无法与平台档案核对
+        platformTrusted,
+        platformWarn,  // 归属存疑的具体原因(提交前必看)
         status,  // unverified(默认) / verified / reported
       };
       // 追加到 JSONL (与 memory.jsonl 同构, 跨会话可召回)
@@ -2673,7 +2733,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       fs.appendFileSync(file, JSON.stringify(record) + '\n');
       return {
         success: true,
-        output: `✅ 漏洞已落盘: ${id} [${status}]\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${args.platform ? `平台: ${args.platform}\n` : ''}证据文件: ${evidencePaths.length ? evidencePaths.join(', ') : '(仅文本证据)'}\n路径: ${file}\n下次同类目标可直接召回这条参考。${status === 'unverified' ? '\n提示: 复现验证通过后可更新为 verified (赏金平台提交需 verified)。' : ''}`,
+        output: `✅ 漏洞已落盘: ${id} [${status}]\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${platform ? `平台: ${platform}${platformAuto ? ' (由目标自动反查)' : ''}${platformTrusted ? '' : ' **(不可信: 凭印象填的, 无法核对)**'}\n` : '⚠️ 平台: 未识别 —— 该目标不属于任何已确认的 SRC 平台, 请确认是否要提交或换平台\n'}${platformWarn ? `${platformWarn}\n` : ''}证据文件: ${evidencePaths.length ? evidencePaths.join(', ') : '(仅文本证据)'}\n路径: ${file}\n下次同类目标可直接召回这条参考。${status === 'unverified' ? '\n提示: 复现验证通过后可更新为 verified (赏金平台提交需 verified)。' : ''}`,
         data: record,
       };
     } catch (e: any) { return { success: false, output: `report_vulnerability 失败: ${e.message}` }; }
@@ -2701,11 +2761,33 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const out: string[] = [];
 
+      // 2026-10-17: 支持**人类可读的自定义文件名**(如 poc1-unauth-api.png)。
+      // 起因 (实机): AI 用 write_file 落了 poc1-unauth-api.png, 但 save_evidence
+      // 恒用 `screenshot-<时间戳>.png`, 两者对不上 → 前端按名字取图必然裂图;
+      // 更糟的是 AI 常在汇报里**凭印象编一个名字**(实机编出
+      // `poc-01-unauth-recommend-200.png`, 磁盘上根本没这个文件)。
+      // 让文件名可控, AI 报的路径与磁盘文件就能对上。
+      //
+      // ⚠️ 安全: 必须防路径穿越 —— 模型给的 filename 可能含 ../ 或绝对路径,
+      //   不挡就等于让它往工作区外任意写文件。只允许 [A-Za-z0-9._-],
+      //   长度截断, 且落地后校验解析结果仍在 evDir 内(纵深防御)。
+      const safeName = (raw: unknown, fallback: string): string => {
+        const s = String(raw || '').trim();
+        if (!s) return fallback;
+        const base = s.split(/[\\/]/).pop() || s;          // 先剥掉任何目录成分
+        const cleaned = base.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 64);
+        if (!cleaned || !/\.[a-z0-9]{2,5}$/i.test(cleaned)) return fallback; // 无有效扩展名 → 用默认名
+        const finalPath = path.join(evDir, cleaned);
+        // 纵深防御: 解析后必须仍在 evDir 内(防符号链接/编码绕过)
+        if (!path.resolve(finalPath).startsWith(path.resolve(evDir) + path.sep)) return fallback;
+        return cleaned;
+      };
+
       if (args.imageBase64) {
         const b64 = String(args.imageBase64).replace(/^data:image\/\w+;base64,/, '');
         // 合法 base64 且非空壳 (真实截图几 KB; 只挡空串/占位符)
         if (/^[A-Za-z0-9+/=]+$/.test(b64) && b64.length > 8) {
-          const p = path.join(evDir, `screenshot-${stamp}.png`);
+          const p = path.join(evDir, safeName(args.filename, `screenshot-${stamp}.png`));
           fs.writeFileSync(p, Buffer.from(b64, 'base64'));
           out.push(p);
         } else {
@@ -2713,7 +2795,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         }
       }
       if (args.saveText) {
-        const p = path.join(evDir, `response-${stamp}.txt`);
+        const p = path.join(evDir, safeName(args.textFilename, `response-${stamp}.txt`));
         fs.writeFileSync(p, String(args.saveText), 'utf-8');
         out.push(p);
       }
@@ -2722,7 +2804,10 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       }
       return {
         success: true,
-        output: `✅ 证据已落盘 ${out.length} 项 → ${evDir}\n${out.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}\n把这些路径传进 report_vulnerability 的 evidencePaths, 提交平台时作为附件。`,
+        // ⚠️ 最后一行 `EVIDENCE_PATHS:` 是**给前端解析的机器可读标记**, 勿删。
+        //   前端据此用**真实绝对路径**渲染图片, 而不是从模型文字里正则抓文件名 ——
+        //   实机事故: 模型凭印象编文件名 → 前端拿到不存在的路径 → 裂图。
+        output: `✅ 证据已落盘 ${out.length} 项 → ${evDir}\n${out.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}\n把这些路径传进 report_vulnerability 的 evidencePaths, 提交平台时作为附件。\nEVIDENCE_PATHS: ${out.join(' | ')}`,
         data: { evidencePaths: out, dir: evDir },
       };
     } catch (e: any) { return { success: false, output: `save_evidence 失败: ${e.message}` }; }
@@ -2775,12 +2860,44 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
 
       for (const [i, t] of batch.entries()) {
         const host = t.host;
+
+        // ═══ 课程循环读回 (RSIAgent 探索→验证→沉淀, 2026-10-16): 该目标的历史有效路线 +
+        // 下轮焦点 (命中过的转 deep / 待坐实洞 / KEV 告警), 直接写进 task 让子智能体少走弯路。
+        let focusCtx = '';
+        try {
+          const { focusBlock } = await import('./curriculum.js');
+          const fb = focusBlock(ws, 'industry', 500, (ctx as any)?.userId);
+          if (fb) focusCtx = `\n🧭 课程焦点 (上轮验证过的路线, 优先复用): ${fb.split('\n').slice(2).join(' ')}`.slice(0, 500);
+        } catch { /* 读回失败不阻断 batch */ }
+
+        // ═══ 2026-10-16: 归属平台注入 (多SRC 并行授权的最后一环) ═══
+        // 之前 readScopeWithSource 已经拿到了 t.source, 却**只用于结果回显**,
+        // 没进子智能体的 task —— 于是子智能体挖到洞也不知道该报给哪家,
+        // report_vulnerability 的 platform 恒为空 → 富哥实机说的"白干/浪费"。
+        // 现在: 把归属平台 + 该平台禁止项显式告诉子智能体。
+        let platCtx = '';
+        try {
+          const sp = await import('./src-platforms.js');
+          const p = sp.findPlatformForTarget(ws, host);
+          if (p) {
+            const denies = (p.deny || []).slice(0, 20);
+            const actions = (p.forbiddenActions || []).slice(0, 12);
+            platCtx = `\n🏛️ 归属平台: 【${p.name}】(platform id: ${p.id}) — report_vulnerability 的 platform 参数必须填 "${p.id}"。`
+              + (denies.length ? `\n🚫 该平台明确禁止的目标(绝对不要打): ${denies.join(', ')}` : '')
+              + (actions.length ? `\n⛔ 该平台禁止的行为: ${actions.join('、')}` : '');
+          } else {
+            platCtx = `\n⚠️ 该目标不属于任何已确认的 SRC 平台 — report_vulnerability 的 platform 留空, 并在汇报里说明归属未知。`;
+          }
+        } catch { /* 平台档案不可用 → 不注入, 子智能体照旧跑 */ }
+
         const task = `批量挖洞 (depth=${depth}): 对目标 ${host} 跑一轮渗透 — ` +
           `先 scope_guard.check_scope 确认授权 + rate_limit 限频; ` +
           (depth === 'deep'
             ? '全工具重扫 (wsl_scan nmap 指纹 + nuclei owasp-top10 + sqlmap risk1 + http_replay 最小强度认证/IDOR 探针);'
             : '浅扫 (wsl_scan nmap -sV 指纹 + 浏览器抓表单端点 + http_replay 最小强度注入探针);') +
           ` 真复现的洞必须 save_evidence 截图落盘 + report_vulnerability 存 (evidence/evidencePaths 至少一项); 未复现的不写。够深就停: 命中 1 个可报洞+证据即可, 别空耗。` +
+          platCtx +
+          focusCtx +
           `⏱ 硬性要求: 最多 12 次工具调用就收尾汇报, 不要反复重试同一个探针; 网络超时直接记为"该目标无响应"并进入下一个。`;
         try {
           // 单目标超时包装: 超时不算致命, 记为 skipped 并继续下一个
@@ -2818,6 +2935,31 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           ? `\n💡 ${totalFound} 个命中已 save_evidence + report_vulnerability 落盘 (.agentai/vulns/ + .agentai/evidence/)。下一步: 按 bounty-report 出各平台能过审的报告 (含截图附件)。`
           : `\n本轮无命中。可: ① 提高 depth=deep 重扫; ② 盯哨(cve-watch)等新 CVE 曝光再扫; ③ 扩授权目标 (加新平台清单) 增数量。`,
       ];
+      // ═══ 课程循环 (RSIAgent 探索→验证→沉淀, 2026-10-16): 全批跑完沉淀"下轮焦点"。
+      // 命中过的目标下轮自动转 depth=deep 重扫 + 带已验证手法; KEV 告警目标优先。
+      // 读回侧: 下一轮 batch_pentest / 下一会话 pentest 任务在 task 前自动注入焦点段。
+      try {
+        const { distillRound, focusBlock } = await import('./curriculum.js');
+        const hitHosts = results.filter(r => r.ok && r.found > 0).map(r => r.target);
+        const cr = distillRound(ws, {
+          goal: `批量挖洞 (depth=${depth}, ${batch.length}/${allTargets.length} 目标)`,
+          taskType: 'industry',
+          technique: hitHosts.length > 0
+            ? `${hitHosts.length} 个目标命中 (${hitHosts.slice(0, 4).join(', ')})`
+            : '本轮无命中',
+          verified: results.some(r => r.ok),
+          nextFocus: hitHosts.length > 0
+            ? `pentest: 命中目标转 deep 重扫 (${hitHosts.slice(0, 3).join(', ')}), 其余盯 KEV 告警`
+            : 'pentest: 提高 depth=deep / 盯哨等新 CVE / 扩授权目标',
+          keywords: ['pentest', 'batch_pentest', ...hitHosts.slice(0, 3)],
+          userId: (ctx as any)?.userId,
+        });
+        if (cr.written) {
+          const focus = focusBlock(ws, 'industry', 400, (ctx as any)?.userId);
+          if (focus) lines.push(`\n🧭 已沉淀课程焦点 (下轮自动带上): ${focus.split('\n').slice(2).join(' | ').slice(0, 200)}`);
+        }
+      } catch { /* 课程循环失败不影响 batch 主结果 */ }
+
       return { success: true, output: lines.join('\n'), data: { results, totalFound, processed: results.length, total: allTargets.length } };
     } catch (e: any) { return { success: false, output: `batch_pentest 失败: ${e.message}` }; }
   },
@@ -3072,6 +3214,10 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   grant_scope: async (args, ctx) => {
     try {
       const ws = (ctx as any)?.workspace || getWs();
+      // ⚠️ 2026-10-16 修复: readScopeWithSource / writeScopeWithSource 必须**在本handler 内 import**。
+      //   之前只在 batch_pentest 里局部 import 过, grant_scope 直接引用 → ReferenceError
+      //   → 被外层 catch 吞成 "grant_scope 失败", 表现为"AI 说授权了但实际没授权"。
+      const { readScopeWithSource, writeScopeWithSource } = await import('./pentest-scope-guard.js');
       const hostOf = (u: string) => {
         try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
         catch { return null; }
@@ -3084,31 +3230,54 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       if (!host) return { success: false, output: `❌ 无法解析目标 host: ${args.target}` };
       // 直接写 scope.json (去重追加), 立即生效 — 用户给的网址, 一句话授权即可开扫。
       // 保留的底线: scope_guard 默认拒绝 + 越界 hard-stop (挡 AI 误操作/被注入扫到未授权资产)。
-      const targets = readScope(ws);
-      const already = targets.some(t => {
-        const p = String(t).trim().toLowerCase();
+      //
+      // ⚠️ 2026-10-16 修复 source 被洗掉的bug:
+      //   原实现 `const targets = readScope(ws)` 拿到的是 **string[]**,
+      //   然后 `existing.targets = targets` 整体覆盖 —— 于是面板里标注的
+      //   {host, source} 对象数组被**降级成裸字符串, source 全部丢失**。
+      //   后果: 多 SRC 并行授权时归属信息被抹掉, 挖到的洞不知道报给谁
+      //   (富哥实机反馈"不能正确对应属于哪家→浪费")。
+      //   修: 一律用 readScopeWithSource / writeScopeWithSource 走对象格式,
+      //   保留已有 host 的 source; 新增的可按归属平台自动标注。
+      const withSrc = readScopeWithSource(ws);
+      const norm = (s: string) => String(s || '').trim().toLowerCase();
+      const already = withSrc.some(t => {
+        const p = norm(t.host);
         if (p.startsWith('*.') && p.length > 2) {
           const base = p.slice(2);
           return host === base || host.endsWith('.' + base);
         }
         return host === p || host.endsWith('.' + p);
       });
-      if (!already) targets.push(host);
-      const scopeFile = path.join(ws, '.agentai', 'scope.json');
-      let existing: Record<string, any> = {};
-      if (fs.existsSync(scopeFile)) {
-        try { existing = JSON.parse(fs.readFileSync(scopeFile, 'utf-8')); } catch { /* 损坏 → 重建 */ }
+      const next = [...withSrc];
+      if (!already) {
+        // 自动标注归属: host 落在某个已确认平台下 → source 记平台名
+        let src = 'ai-granted';
+        try {
+          const { findPlatformForTarget } = await import('./src-platforms.js');
+          const p = findPlatformForTarget(ws, host);
+          if (p) src = p.name;
+        } catch { /* 无平台档案 → 用默认标记 */ }
+        next.push({ host, source: src });
       }
-      existing.targets = targets;
-      if (args.max_rps) existing.max_rps = Number(args.max_rps);
-      fs.mkdirSync(path.dirname(scopeFile), { recursive: true });
-      fs.writeFileSync(scopeFile, JSON.stringify(existing, null, 2), 'utf-8');
+      const maxRps = args.max_rps ? Number(args.max_rps) : 0;
+      const extra: Record<string, unknown> = {};
+      if (maxRps) extra.max_rps = maxRps;
+      writeScopeWithSource(ws, next, extra);
       // 2026-10-16 企业闭环: 授权审计 (谁/何时/授权了什么 — 被问"凭什么扫"时的自证材料)
-      auditLog(ws, { actor: 'agent', action: 'grant', target: host, detail: 'grant_scope 直接授权 (2026-10-16 用户反馈回退提案制)' });
+      auditLog(ws, {
+        actor: 'agent', action: 'grant', target: host,
+        detail: `grant_scope 直接授权 (2026-10-16 用户反馈回退提案制), 来源=${next.find(t => t.host === host)?.source || 'n/a'}`,
+      });
+      // ⚠️ 2026-10-16 修复: 上游改为 writeScopeWithSource 后, 这里的 targets/oldExisting
+      //   变量已不存在却仍被引用 → grant_scope 一调必抛 ReferenceError(被 catch 吞成
+      //   "grant_scope 失败", 表现为"AI 说授权了但实际没授权")。
+      //   改为从 next / 读回的真实文件取数, 不引用任何已删除的局部变量。
+      const maxRpsNow = maxRps || readScope(ws).max_rps || 5;
       return {
         success: true,
-        output: `${already ? 'ℹ️ 已在授权范围' : '✅ 已授权'} ${host} — 现共 ${targets.length} 个目标, 可立即挖洞 (scope_guard / wsl_scan / pentest 子智能体均可动手)。`,
-        data: { granted: !already, target: host, targets, max_rps: existing.max_rps || 5 },
+        output: `${already ? 'ℹ️ 已在授权范围' : '✅ 已授权'} ${host} — 现共 ${next.length} 个目标, 可立即挖洞 (scope_guard / wsl_scan / pentest 子智能体均可动手)。`,
+        data: { granted: !already, target: host, targets: next.map(t => t.host), max_rps: maxRpsNow },
       };
     } catch (e: any) { return { success: false, output: `grant_scope 失败: ${e.message}` }; }
   },
