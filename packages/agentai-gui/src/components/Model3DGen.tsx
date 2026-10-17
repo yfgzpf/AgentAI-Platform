@@ -9,6 +9,7 @@ import { AppstoreOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, Set
 import { GATEWAY_HTTP } from '../services/config';
 import { saveApiKey } from '../services/secureKeyStorage';
 import { Scene3DViewer } from './Scene3DViewer';
+import { SplatViewer } from './SplatViewer';
 
 const PROVIDERS = [
   { value: 'doubao', label: '豆包 Seed3D 2.0', desc: '火山引擎 ARK_API_KEY, 图生3D', keyLabel: 'ARK API Key', keyStorage: 'agentai.3d.ark-key' },
@@ -49,7 +50,13 @@ export const Model3DGen: React.FC = () => {
     return [];
   });
   useEffect(() => {
-    try { localStorage.setItem('agentai-3d-tasks', JSON.stringify(tasks.slice(0, 20))); } catch {}
+    try {
+      // 2026-10-17: sourceImage 是用户原图 (可达 6MB → base64 8MB), 存进
+      // localStorage 会直接顶爆 5MB 配额, 而且 try/catch 会把整个任务列表
+      // 的持久化一起静默吞掉。持久化时剥掉, 只在本次会话内存里留。
+      const slim = tasks.slice(0, 20).map(({ sourceImage, ...rest }) => rest);
+      localStorage.setItem('agentai-3d-tasks', JSON.stringify(slim));
+    } catch {}
   }, [tasks]);
   const [showKeys, setShowKeys] = useState(false);
   // 2026-10-12: 用户在任务列表点「在画布中查看」的任务 (null = 显示最新成功的)
@@ -237,7 +244,7 @@ export const Model3DGen: React.FC = () => {
             message={provider === 'doubao'
               ? '豆包 Seed3D: 需要 ARK API Key (火山引擎), 仅支持图生3D, 输出 GLB/OBJ/USD 格式'
               : provider === 'tripo'
-                ? 'Tripo 国内站: 单图→Gaussian Splat (.splat, 约4分钟/30积分). 产物是 3D 高斯场景, 可点任务条「发往生视频」把场景图作为视频首帧 (透视/光照锁定). .splat 产物可下载, 需 splat 查看器渲染'
+                ? 'Tripo 国内站: 单图→Gaussian Splat (.splat, 约4分钟/30积分). 生成完成后页面内会加载高斯渲染器 — 拖动调好视角, 点「截取当前视角」, 把 1280×720 帧发往生视频做首帧 (透视/光照由 3D 场景锁定, 最稳). 任务条的「发源图」是快速路径, 直接用原图.'
                 : '混元 3D: 需要腾讯云 SecretId+SecretKey, 支持文生3D 和 图生3D, 输出多种格式'} />
         </Space>
       </Card>
@@ -251,6 +258,26 @@ export const Model3DGen: React.FC = () => {
           ? previewTask
           : tasks.find(t => t.status === 'succeeded' && t.fileUrl);
         if (!target?.fileUrl) return null;
+        // 2026-10-17: Tripo 产物是 .splat (3D 高斯), 不能用 GLB 查看器 —
+        // 走 SplatViewer: 可调视角 + 截 1280x720 帧发往生视频做首帧。
+        if (target.provider === 'tripo') {
+          return (
+            <div style={{ marginTop: 16 }}>
+              <SplatViewer splatUrl={target.fileUrl}
+                title={target.prompt?.slice(0, 20) || '高斯场景'}
+                extra={(
+                  <Button size="small" icon={<DownloadOutlined />} href={target.fileUrl} target="_blank">
+                    下载 .splat
+                  </Button>
+                )} />
+              {previewTask && (
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4 }}>
+                  正在查看选中的场景 · <a onClick={() => setPreviewTask(null)} style={{ cursor: 'pointer' }}>回到最新</a>
+                </div>
+              )}
+            </div>
+          );
+        }
         return (
           <div style={{ marginTop: 16 }}>
             <Scene3DViewer scene={null} glbUrl={target.fileUrl}
@@ -293,17 +320,17 @@ export const Model3DGen: React.FC = () => {
                   }} />
                 </Tooltip>
               )}
-              {/* 2026-10-17: 场景图 → 生视频首帧 (跨页 localStorage 链路, 同 ImageStudio 先例) */}
+              {/* 2026-10-17: 场景源图 → 生视频首帧 (快速路径, 无需等渲染器加载) */}
               {task.provider === 'tripo' && task.sourceImage && (
-                <Tooltip title="把场景图发往生视频页做首帧 (图生视频, 场景透视/光照锁定)">
+                <Tooltip title="把源图发往生视频做首帧 (快速路径; 想要真实 3D 视角请用上方渲染器的「截取当前视角」)">
                   <Button size="small" type="primary"
                     onClick={() => {
                       try {
                         localStorage.setItem('agentai-video-sceneframe', task.sourceImage!);
-                        message.success('已发送 3D 场景图, 请切换到「生视频」页查看');
+                        message.success('已发送场景源图, 请切换到「生视频」页查看');
                       } catch { message.error('图片太大, 无法传递'); }
                     }}>
-                    发往生视频
+                    发源图
                   </Button>
                 </Tooltip>
               )}
