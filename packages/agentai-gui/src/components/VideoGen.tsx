@@ -391,7 +391,7 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
       setCurrent(active);
       setBusy(!!active);
     });
-    // ★ 读取跨页图片 (从 ImageStudio 发送过来) — 作为参考图输入, 不强制设首帧
+    // ★ 读取跨页图片 (从 ImageStudio / 3D建模页 发送过来) — 作为参考图/首帧输入
     try {
       const crossImg = localStorage.getItem('agentai-video-refimg') || localStorage.getItem('agentai-video-firstframe');
       if (crossImg) {
@@ -400,6 +400,14 @@ const [viewMode, setViewMode] = useState<'single' | 'storyboard'>('single');
         localStorage.removeItem('agentai-video-refimg');
         localStorage.removeItem('agentai-video-firstframe');
         message.info('📸 已从图像工作室接收图片, 已添加为参考图');
+      }
+      // 2026-10-17: 3D 场景图链路 — 3D建模页 (Tripo 高斯场景) 发来的场景图,
+      //   直接设首帧 (图生视频, 场景透视/光照锁定), 而不是堆进参考图列表。
+      const sceneFrame = localStorage.getItem('agentai-video-sceneframe');
+      if (sceneFrame) {
+        setFirstFrame(sceneFrame);
+        localStorage.removeItem('agentai-video-sceneframe');
+        message.info('🧊 已接收 3D 场景图, 已设为视频首帧 (场景图生视频)');
       }
     } catch {}
     return () => { unsub(); };

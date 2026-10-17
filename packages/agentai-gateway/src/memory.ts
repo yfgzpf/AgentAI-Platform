@@ -14,7 +14,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import * as crypto from 'crypto';
 import { WorkspaceManager } from './workspace-manager.js';
 
 export interface MemoryEntry {
@@ -54,35 +53,139 @@ const userDir = getMemoryDir();
 const writeQueues = new Map<string, Promise<void>>();
 
 /**
+ * ═══ 2026-10-17 P0: 有界尾部读取 (治 1.6GB default.jsonl 事故) ═══
+ *
+ * 背景: readMemory / compressMemoryFile / cleanupOldMemory 都用
+ * `fs.readFile(file, 'utf-8')` 整读进字符串。Node 字符串上限约 512MB
+ * (2^29-24) — 超过即抛 `Invalid string length`, 而三处调用全部
+ * `.catch(() => '')` / try-catch 吞掉 → 表现是"静默返回 0 条记忆"。
+ * 实测用户目录 default.jsonl 已涨到 1.6GB: 每次 recall 回退都要白读
+ * 7.5s 磁盘再抛错 (agent loop 里就是一次 7s 卡死), 且 compress/cleanup
+ * 在同一文件上同步失效 → 文件只涨不减, 恶性循环。
+ *
+ * JSONL 是 append-only 按时间追加的, 尾部即最新; 读取方 (readMemory)
+ * 只取 limit 条且按分数排序 (时效衰减 favor 新条目), compress/cleanup
+ * 也有条数上限 — 所以"只读尾部 N 字节"在语义上安全, 且内存/耗时都有界。
+ *
+ * @param maxBytes 尾部窗口, 默认 4MB (约 8k 条典型记忆, 远超各方 200/1000 上限)
+ */
+const TAIL_READ_MAX_BYTES = 4 * 1024 * 1024;
+export async function readTailLines(filePath: string, maxBytes: number = TAIL_READ_MAX_BYTES): Promise<string[]> {
+  let size = 0;
+  try {
+    size = (await fs.stat(filePath)).size;
+  } catch {
+    return []; // 不存在 — 与旧行为一致 (readFile 抛 ENOENT 被吞)
+  }
+  let raw: string;
+  if (size <= maxBytes) {
+    raw = await fs.readFile(filePath, 'utf-8');
+  } else {
+    // 只读尾部窗口: 开 fd 定位到 size-maxBytes, 避免整文件进内存
+    const fd = await fs.open(filePath, 'r');
+    try {
+      const buf = Buffer.allocUnsafe(maxBytes);
+      const { bytesRead } = await fd.read(buf, 0, maxBytes, size - maxBytes);
+      raw = buf.toString('utf-8', 0, bytesRead);
+    } finally {
+      await fd.close();
+    }
+  }
+  const lines = raw.split('\n');
+  // 窗口首行大概率被截断 (也可能正好截在多字节 UTF-8 字符中间) — 直接丢弃
+  if (size > maxBytes) lines.shift();
+  return lines;
+}
+
+/** 文件级变异排队: append/prune/rewrite 共用同一 per-file 队列, 防止写入交错 */
+async function withFileQueue<T>(filePath: string, op: () => Promise<T>): Promise<T> {
+  const prev = writeQueues.get(filePath) || Promise.resolve();
+  // 队列里排的是"已封口的 void 结果" — 与 Map<string, Promise<void>> 类型一致;
+  // 泛型 T 只作为对外返回值, 不入 Map (原实现把 Promise<T> 直接 set 进 Map, 触发 TS2345)
+  const next: Promise<void> = prev.then(async () => { await op(); }).finally(() => {
+    if (writeQueues.get(filePath) === next) writeQueues.delete(filePath);
+  });
+  writeQueues.set(filePath, next);
+  return next as unknown as Promise<T>; // 调用方均 await 且不消费返回值 (void 语义)
+}
+
+/**
+ * 排队原子重写整个文件内容。
+ * rename 优先 (原子); Windows 上目标被占用会 EPERM — 此时退化为
+ * unlink + writeFile (与 compressMemoryFile 的既有教训一致, 有极小崩溃窗口,
+ * 但比 6h 清理跑不动、文件永远膨胀要好)。tmp 名确定性, 失败即清理。
+ */
+async function atomicRewrite(filePath: string, content: string): Promise<void> {
+  await withFileQueue(filePath, async () => {
+    const tmpPath = `${filePath}.rewrite.tmp`;
+    try {
+      await fs.writeFile(tmpPath, content, 'utf-8');
+      await fs.rename(tmpPath, filePath);
+    } catch (renameErr: any) {
+      await fs.unlink(tmpPath).catch(() => {});
+      try {
+        await fs.unlink(filePath).catch(() => {});
+        await fs.writeFile(filePath, content, 'utf-8');
+      } catch (writeErr: any) {
+        console.warn(`[memory:atomicRewrite] both rename and direct write failed for ${filePath}:`, writeErr?.message || renameErr?.message);
+        throw writeErr;
+      }
+    }
+  });
+}
+
+/**
  * 原子写入 JSONL 行
  * 策略: 写入临时文件 → rename 替换 (原子操作)
  * 如果 rename 失败 (跨设备), 回退到 appendFile
+ *
+ * ═══ 2026-10-17 P0 修复 (两项) ═══
+ * ① tmp 文件泄漏: 原回退路径每次随机生成 `file.<8hex>.tmp`, rename 失败
+ *    (Windows EPERM: 目标被占用) 后 catch 里再 appendFile 也失败 → 错误被吞,
+ *    tmp 永久残留。实测用户目录攒了 **10,931 个 0 字节 tmp** (目录列表 847KB)。
+ *    现改为: 确定性 tmp 名 (每文件最多 1 个, 重试自动复用) + 失败即 unlink。
+ * ② 大文件回退读整文件: rename 回退要 `readFile(whole)+writeFile(tmp)+rename`,
+ *    在 >512MB 文件上 readFile 直接 Invalid string length → 追加静默丢失。
+ *    现改为: 超过 RENAME_FALLBACK_MAX_BYTES 跳过 tmp 舞步, 直接重试 append。
  */
+const RENAME_FALLBACK_MAX_BYTES = 8 * 1024 * 1024;
 async function atomicAppendFile(filePath: string, line: string): Promise<void> {
-  const queue = writeQueues.get(filePath) || Promise.resolve();
-  const next = queue.then(async () => {
+  return withFileQueue(filePath, async () => {
     try {
       await fs.appendFile(filePath, line, 'utf-8');
+      return;
     } catch (appendErr: any) {
       console.warn('[memory:atomicAppend] appendFile failed, trying fallback:', appendErr?.message);
+    }
+    // ── 回退 1: 大文件不做 tmp+rename (读整文件必炸), 直接重试 append ──
+    let size = 0;
+    try { size = (await fs.stat(filePath)).size; } catch { /* 不存在: size=0 */ }
+    if (size > RENAME_FALLBACK_MAX_BYTES) {
       try {
-        const tmpPath = `${filePath}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-        const existing = await fs.readFile(filePath, 'utf-8').catch(() => '');
-        await fs.writeFile(tmpPath, existing + line, 'utf-8');
-        await fs.rename(tmpPath, filePath);
-      } catch (renameErr: any) {
-        console.warn('[memory:atomicAppend] rename fallback failed:', renameErr?.message);
-        await fs.appendFile(filePath, line, 'utf-8').catch((finalErr: any) => {
-          console.warn('[memory:atomicAppend] final appendFile also failed:', finalErr?.message);
-        });
+        await fs.appendFile(filePath, line, 'utf-8');
+        return;
+      } catch (retryErr: any) {
+        console.warn('[memory:atomicAppend] large-file append retry failed:', retryErr?.message);
+        throw retryErr;
       }
     }
-  }).finally(() => {
-    // 完成后清理队列条目, 防止 Map 无限增长
-    writeQueues.delete(filePath);
+    // ── 回退 2: 小文件 tmp+rename (确定性 tmp 名, 失败即清理, 不再泄漏) ──
+    const tmpPath = `${filePath}.tmp`;
+    try {
+      const existing = await fs.readFile(filePath, 'utf-8').catch(() => '');
+      await fs.writeFile(tmpPath, existing + line, 'utf-8');
+      await fs.rename(tmpPath, filePath);
+    } catch (renameErr: any) {
+      await fs.unlink(tmpPath).catch(() => {});   // ★ 无论成败都清掉 tmp, 杜绝残留
+      console.warn('[memory:atomicAppend] rename fallback failed:', renameErr?.message);
+      try {
+        await fs.appendFile(filePath, line, 'utf-8');
+      } catch (finalErr: any) {
+        console.warn('[memory:atomicAppend] final appendFile also failed:', finalErr?.message);
+        throw finalErr;   // ★ 不再无条件吞掉 — 调用方 (writeMemory) 需要知道写入失败
+      }
+    }
   });
-  writeQueues.set(filePath, next);
-  return next;
 }
 
 export async function writeMemory(entry: Omit<MemoryEntry, 'ts'>): Promise<MemoryEntry> {
@@ -202,8 +305,10 @@ async function compressMemoryFile(filePath: string): Promise<void> {
   try {
     const { evaluateBatch, generateSummary } = await import('./memory-importance.js');
 
-    const raw = await fs.readFile(filePath, 'utf-8').catch(() => '');
-    const lines = raw.trim().split('\n').filter(Boolean);
+    // ★ 2026-10-17 P0: 有界尾部读取 — 原 readFile 整读在大文件上抛
+    //   Invalid string length 被 .catch(() => '') 吞掉 → 压缩静默失效 (文件只涨不减)
+    //   压缩本身有 KEEP_HIGH_VALUE/KEEP_RECENT 上限, 尾部窗口语义兼容
+    const lines = (await readTailLines(filePath)).filter(Boolean);
     if (lines.length <= COMPRESS_THRESHOLD) return;
 
     const entries: MemoryEntry[] = lines.map(l => {
@@ -325,8 +430,10 @@ export async function readMemory(opts: {
   const all: MemoryEntry[] = [];
   for (const file of files) {
     try {
-      const content = await fs.readFile(file, 'utf-8');
-      for (const line of content.split('\n')) {
+      // ★ 2026-10-17 P0: 有界尾部读取 — 整读会在 >512MB 文件上抛
+      //   Invalid string length 被 catch 吞掉 (表现: 静默 0 条记忆 + 每次 7s 白读)
+      const lines = await readTailLines(file);
+      for (const line of lines) {
         if (!line.trim()) continue;
         try {
           const entry = JSON.parse(line) as MemoryEntry;
@@ -444,6 +551,17 @@ export async function readMemory(opts: {
  * 清理过期的记忆文件
  * - 默认保留最近 30 天的条目
  * - 超过 MAX_ENTRIES 的文件, 只保留最新的
+ *
+ * ═══ 2026-10-17 P0 重写 ═══
+ * 原实现三个致命问题 (实测 default.jsonl 1.6GB 全中):
+ *   ① `fs.readFile` 整读 — >512MB 抛 Invalid string length 被 catch 吞 →
+ *      "清理成功"但一条没删, 文件永远只涨不减 (且无调用方发现, 因为从没人调过它)
+ *   ② 写回用 `fs.writeFile` 直写 — 不走 append 队列, 与并发 append 交错丢行
+ *   ③ **全代码库零调用** — evolution/task-snapshot/persistent-memory 都有 6h
+ *      清理循环, 唯独 JSONL 记忆没有 → 用户级文件 (<userDir>/<userId>.jsonl)
+ *      只被 writeMemory 双写追加, 没有任何机制 prune
+ * 现在: 有界尾部读取 + 排队原子重写 + 真实条数上限, 且由
+ * `startMemoryCleanupLoop()` 每 6h 驱动 (index.ts / app.ts 启动处接线)。
  */
 const MAX_MEMORY_ENTRIES_PER_FILE = 1000;
 const MEMORY_RETENTION_DAYS = 30;
@@ -451,8 +569,9 @@ const MEMORY_RETENTION_DAYS = 30;
 export async function cleanupOldMemory(
   userId?: string,
   workspace?: string,
-): Promise<{ deleted: number }> {
+): Promise<{ deleted: number; tmpSwept: number }> {
   let deleted = 0;
+  let tmpSwept = 0;
   const files: string[] = [];
   if (workspace) {
     files.push(path.join(workspace, '.agentai', 'memory.jsonl'));
@@ -479,35 +598,131 @@ export async function cleanupOldMemory(
 
   for (const file of files) {
     try {
-      const content = await fs.readFile(file, 'utf-8');
-      const lines = content.split('\n').filter(l => l.trim());
-      const kept: string[] = [];
+      // ★ 2026-10-17 P0: 有界尾部读取 + 排队原子重写。
+      //   原实现整读 readFile — 在 1.6GB 的 default.jsonl 上抛 Invalid string
+      //   length 被 catch 吞掉, 清理"成功"返回 deleted=0, 文件永远不缩。
+      //   尾部窗口 (4MB ≈ 8k 条) 已远超 MAX_MEMORY_ENTRIES_PER_FILE(1000) 上限,
+      //   "保留期内 + 最新 1000 条" 的语义不受影响 (被窗口截掉的只可能更旧)。
+      const lines = (await readTailLines(file)).filter(l => l.trim());
+      const kept: Array<{ ts: number; line: string }> = [];
       for (const line of lines) {
         try {
           const entry = JSON.parse(line);
           if (entry.ts >= cutoff) {
-            kept.push(line);
+            kept.push({ ts: entry.ts, line });
           } else {
             deleted++;
           }
         } catch {
-          kept.push(line); // 坏行保留 — JSON parse failure per line is expected
+          kept.push({ ts: 0, line }); // 坏行保留 — JSON parse failure per line is expected
         }
       }
-      // 如果保留的条目数超过上限, 只保留最新的
+      // 超过上限 → 按 ts 只保留最新的 N 条 (原实现靠文件序 slice, 尾部读取后显式排序更稳)
+      let finalLines = kept;
       if (kept.length > MAX_MEMORY_ENTRIES_PER_FILE) {
-        const trimmed = kept.slice(kept.length - MAX_MEMORY_ENTRIES_PER_FILE);
-        deleted += kept.length - trimmed.length;
-        await fs.writeFile(file, trimmed.join('\n') + '\n', 'utf-8');
-      } else {
-        await fs.writeFile(file, kept.join('\n') + '\n', 'utf-8');
+        const sorted = [...kept].sort((a, b) => a.ts - b.ts);
+        finalLines = sorted.slice(sorted.length - MAX_MEMORY_ENTRIES_PER_FILE);
+        deleted += kept.length - finalLines.length;
       }
-    } catch {
-      // 文件不存在或不可读, 跳过
+      const newContent = finalLines.map(k => k.line).join('\n') + '\n';
+      // 只有真变了才写 (避免每 6h 无意义重写整个文件)
+      const before = lines.join('\n') + '\n';
+      if (newContent === before) continue;
+      await atomicRewrite(file, newContent);
+    } catch (e: any) {
+      // 文件不存在或不可读, 跳过 (单文件失败不影响其他文件)
+      console.warn(`[memory:cleanupOldMemory] skip ${file}: ${e?.message}`);
     }
   }
 
-  return { deleted };
+  // ★ 2026-10-17 P0: 清扫 atomicAppendFile 回退路径泄漏的 tmp 残留。
+  //   实测用户目录攒了 10,931 个 0 字节 `*.jsonl.*.tmp` (旧实现随机 tmp 名 +
+  //   rename 失败不清理)。只删"确定是本模块产生的模式 + 1 小时以上 + ≤1MB"的
+  //   文件 — 保守边界, 不碰任何 .jsonl 本体。
+  try {
+    const entries = await fs.readdir(userDir);
+    const tmpCutoff = Date.now() - 60 * 60 * 1000;
+    for (const name of entries) {
+      if (!/\.jsonl(\.[0-9a-f]+)?\.tmp$|\.jsonl\.(cleanup|compress|rewrite)\.tmp$/.test(name)) continue;
+      const p = path.join(userDir, name);
+      try {
+        const st = await fs.stat(p);
+        if (!st.isFile() || st.size > 1024 * 1024) continue;
+        if (st.mtimeMs < tmpCutoff) {
+          await fs.unlink(p);
+          tmpSwept++;
+        }
+      } catch { /* 并发删除/不存在, 忽略 */ }
+    }
+  } catch { /* userDir 不存在, 忽略 */ }
+
+  return { deleted, tmpSwept };
+}
+
+// ═══════════════════════════════════════════════════════
+// 记忆文件定期清理 (2026-10-17 P0 新增)
+// ═══════════════════════════════════════════════════════
+// 背景: cleanupOldMemory 自出生起就没有任何调用方 (evolution/task-snapshot/
+// persistent-memory 都有 6h 循环, 唯独 JSONL 记忆没有) → 用户级记忆文件
+// 无限增长 (实测 1.6GB / 约 320 万条, 绝大多数是测试跑出来的 auto_reflect)。
+// 本循环补上这个缺口: 每 6h 跑一次全量清理 (保留 30 天 + 最新 1000 条/文件
+// + 清扫泄漏 tmp)。与 task-snapshot 的清理循环同模式: 启动即跑一次 + unref。
+
+const MEMORY_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let memoryCleanupTimer: NodeJS.Timeout | null = null;
+
+export function startMemoryCleanupLoop(): void {
+  if (memoryCleanupTimer) return;
+  const run = () => {
+    cleanupOldMemory()
+      .then((r) => {
+        if (r.deleted > 0 || r.tmpSwept > 0) {
+          console.log(`[memory:cleanup] pruned ${r.deleted} entries, swept ${r.tmpSwept} stale tmp files`);
+        }
+      })
+      .catch((e: any) => console.warn('[memory:cleanup] failed:', e?.message));
+  };
+  run(); // 启动即执行一次 (修复已存在的巨文件)
+  memoryCleanupTimer = setInterval(run, MEMORY_CLEANUP_INTERVAL_MS);
+  memoryCleanupTimer.unref?.();
+}
+
+export function stopMemoryCleanupLoop(): void {
+  if (memoryCleanupTimer) {
+    clearInterval(memoryCleanupTimer);
+    memoryCleanupTimer = null;
+  }
+}
+
+/**
+ * 按调用方策略 prune 单个 JSONL 记忆文件 (排队原子重写)
+ *
+ * 2026-10-17 P0: 为 self-memory-updater.cleanupStaleMemories 提供真实现 —
+ * 那个函数原来声称"删除过时记忆"实际一条不删 (条目无 id 字段, toDelete 恒空,
+ * 连日志都不打, 纯摆设)。decide 返回要保留的条目, 本函数负责有界读取 +
+ * 排队写入, 调用方只写过滤策略。
+ */
+export async function pruneMemoryFile(
+  filePath: string,
+  decide: (entries: MemoryEntry[]) => MemoryEntry[],
+): Promise<{ before: number; after: number; rewritten: boolean }> {
+  const lines = (await readTailLines(filePath)).filter(l => l.trim());
+  const entries: MemoryEntry[] = [];
+  const badLines: string[] = [];
+  for (const line of lines) {
+    try { entries.push(JSON.parse(line)); } catch { badLines.push(line); }
+  }
+  if (entries.length === 0 && badLines.length === 0) return { before: 0, after: 0, rewritten: false };
+
+  const kept = decide(entries);
+  const keptLines = kept.map(e => JSON.stringify(e));
+  const newContent = [...keptLines, ...badLines].join('\n') + '\n';
+  const oldContent = lines.join('\n') + '\n';
+  if (newContent === oldContent) {
+    return { before: entries.length, after: kept.length, rewritten: false };
+  }
+  await atomicRewrite(filePath, newContent);
+  return { before: entries.length, after: kept.length, rewritten: true };
 }
 
 // ═══════════════════════════════════════════════════════
