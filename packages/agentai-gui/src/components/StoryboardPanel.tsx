@@ -41,6 +41,27 @@ export interface ShotVideoVersion {
   createdAt: number;
 }
 
+/**
+ * 2026-10-17: 服装随剧情 —— 一套服装 (角色卡里的服装库条目)。
+ * 分镜的 `Shot.costume` 只存**显式换装** (角色名 → outfitId), 未标注 = 继承上一镜。
+ */
+export interface Outfit {
+  id: string;
+  name: string;
+  description: string;
+  /** 该套服装的参考图 — 按需生成 (img2img 以定妆图为底), 不自动产生成本 */
+  imageUrl?: string;
+}
+
+/** 提交时解析出来的服装 (由 resolveShotCostumes 计算, 不持久化) */
+export interface ResolvedCostume {
+  outfitId: string;
+  name: string;
+  description: string;
+  /** 本镜相对上一镜确实换了装 */
+  changed?: boolean;
+}
+
 export interface Shot {
   id: number;
   type: string;
@@ -52,6 +73,13 @@ export interface Shot {
   dialogue: string;
   /** 2026-10-13 新增: 内心独白/旁白 (角色未出声的心声) — 与 dialogue 一起内联进视频 prompt 做音画同步 */
   monologue?: string;
+  /**
+   * 2026-10-17: 本镜的**显式换装**标注 (角色名 → outfitId)。
+   * 没写 = 沿用本集上一镜; 集内首镜没写 = 用该角色 defaultOutfitId。
+   */
+  costume?: Record<string, string>;
+  /** 提交前临时附加的解析结果 (buildSubmitPrompt 用), 持久化时清掉 */
+  costumeResolved?: Record<string, ResolvedCostume>;
   status?: 'pending' | 'generating' | 'completed' | 'failed';
   /** 当前选用的版本 (拼接/导出/预览都用它, 语义未变) */
   videoUrl?: string;
@@ -86,16 +114,47 @@ export interface Episode {
 
 export interface StoryboardCharacter {
   name: string;
+  /** 只写外貌, 不含具体服装 (服装在 outfits 里) */
   description: string;
   refImageIndex?: number;
   portraitUrl?: string; // 定妆图 — 单人白底全身照, 用于精编抠图
   sheetUrl?: string;    // 九宫格 — 多角度参考图, 用于AI理解角色特征
+  /** 服装库 — 旧剧本可能没有 (向后兼容: 没有就不渲染服装 UI) */
+  outfits?: Outfit[];
+  /** 首次出场时穿的服装 id */
+  defaultOutfitId?: string;
+}
+
+/** 剧本阶段的数据 (用户审核/编辑的对象, 跟着 Storyboard 一起持久化) */
+export interface ScriptCharacter {
+  name: string;
+  description: string;
+  refImageIndex?: number;
+  outfits: Outfit[];
+  defaultOutfitId: string;
+}
+
+export interface ScriptEpisode {
+  index: number;
+  title: string;
+  summary: string;
+  /** 可读剧本全文 (用户编辑的就是它) */
+  text: string;
+}
+
+export interface ScriptDraft {
+  title: string;
+  logline: string;
+  characters: ScriptCharacter[];
+  episodes: ScriptEpisode[];
 }
 
 export interface Storyboard {
   title: string;
   characters: StoryboardCharacter[];
   episodes: Episode[];
+  /** 已确认/待审核的剧本 — 有它才有服装库; 旧剧本没有 */
+  script?: ScriptDraft;
 }
 
 export interface StoryboardPanelProps {
@@ -151,6 +210,13 @@ export function buildSubmitPrompt(shot: Shot): string {
   const parts = [(shot.prompt || '').trim()];
   if (shot.camera_motion) parts.push(`[Camera motion] ${shot.camera_motion}`);
   if (shot.mood) parts.push(`[Mood] ${shot.mood}`);
+  // 2026-10-17: 服装随剧情 — 解析后的服装描述必须进 prompt, 否则同一角色跨镜会"随机换衣"。
+  //   只描述本镜出场且服装库可解析的角色; 旧剧本没有 outfits → resolved 为空 → 行为与原来完全一致。
+  const costumes = shot.costumeResolved ? Object.entries(shot.costumeResolved) : [];
+  for (const [name, c] of costumes) {
+    if (!c?.description) continue;
+    parts.push(`[Costume] ${name}: ${c.description}${c.changed ? ' (changed at this shot)' : ''}`);
+  }
   const dialogue = (shot.dialogue || '').trim();
   const monologue = (shot.monologue || '').trim();
   if (dialogue) parts.push(`[Dialogue in Chinese, character speaks: "${dialogue}"]`);
@@ -160,6 +226,71 @@ export function buildSubmitPrompt(shot: Shot): string {
     parts.push('Generate synchronized audio: the spoken lines must match the on-screen character lip movement and natural voice tone.');
   }
   return parts.filter(Boolean).join('\n');
+}
+
+/**
+ * 2026-10-17: 解析某镜的服装 —— 服装的"真相"在镜头级, 未标注 = 继承。
+ *
+ * 规则 (与 gateway `video-script.ts` 的 prompt 规则同源, 但这里是**渲染/提交时**的解析):
+ * - 沿本集从第 1 镜走到目标镜, 逐镜应用 `shot.costume` 的显式标注;
+ * - 没标注的角色 → 沿用最近一次显式值;
+ * - 集内首镜没标注 → `defaultOutfitId` (再退到服装库第一套);
+ * - 跨集**不继承** (每集从默认套重新起, 避免观众记不住第 1 集穿什么)。
+ *
+ * 于是"用户改了前面某镜的服装, 后面继承的镜头自动跟着变" —— 这正是需求要的联动。
+ */
+export function resolveShotCostumes(
+  sb: Storyboard | null | undefined,
+  epIdx: number,
+  shotIdx: number,
+): Record<string, ResolvedCostume> {
+  const ep = sb?.episodes?.[epIdx];
+  const shot = ep?.shots?.[shotIdx];
+  if (!ep || !shot) return {};
+  const characters = sb!.characters || [];
+  const state: Record<string, string> = {};
+  let prev: Record<string, string> = {};
+  let current: Record<string, string> = {};
+
+  for (let i = 0; i <= shotIdx; i++) {
+    const s = ep.shots[i];
+    if (!s) continue;
+    // 显式换装先生效 (只影响本镜及之后)
+    for (const [name, outfitId] of Object.entries(s.costume || {})) {
+      if (typeof outfitId === 'string' && outfitId) state[name] = outfitId;
+    }
+    const snapshot: Record<string, string> = {};
+    for (const name of s.characters || []) {
+      const ch = characters.find(c => c.name === name);
+      const outfits = ch?.outfits || [];
+      if (!outfits.length) continue;
+      const explicit = state[name];
+      // 显式值可能已失效 (服装被删) → 回落到默认套, 而不是把不存在的 id 发给视频模型
+      const outfit = (explicit ? outfits.find(o => o.id === explicit) : undefined)
+        || outfits.find(o => o.id === ch?.defaultOutfitId)
+        || outfits[0];
+      if (outfit) snapshot[name] = outfit.id;
+    }
+    prev = current;
+    current = snapshot;
+  }
+
+  const out: Record<string, ResolvedCostume> = {};
+  for (const name of shot.characters || []) {
+    const outfitId = current[name];
+    if (!outfitId) continue;
+    const ch = characters.find(c => c.name === name);
+    const outfit = ch?.outfits?.find(o => o.id === outfitId);
+    if (!outfit) continue;
+    out[name] = {
+      outfitId: outfit.id,
+      name: outfit.name,
+      description: outfit.description,
+      // "换装" = 与上一镜解析结果不同 (首镜不算换装)
+      changed: !!prev[name] && prev[name] !== outfitId,
+    };
+  }
+  return out;
 }
 
 /** 一键补全时新生成的参考图 (按场景集号 / 角色名索引), 直接并入提交, 不依赖 setState 时序 */
@@ -189,6 +320,15 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
   const [episodeCount, setEpisodeCount] = useState(3);
   const [shotDuration, setShotDuration] = useState(5);
   const [generating, setGenerating] = useState(false);
+  // 2026-10-17: 两段式 —— 剧本先审 (script), 确认后才拆分镜 (shots)。
+  //   null = 按数据推导: 有 script 且还没分镜 → script; 否则 shots。用户手动切换后置为具体值。
+  const [sbView, setSbView] = useState<'script' | 'shots' | null>(null);
+  // 「继续优化」剧本的指令弹窗
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [refineText, setRefineText] = useState('');
+  const [refining, setRefining] = useState(false);
+  // 正在生成某套服装参考图 (key = `${角色名}:${outfitId}`) — 按需生成, 不自动批量
+  const [generatingOutfit, setGeneratingOutfit] = useState<string | null>(null);
 
   // ===== 2026-10-13: 视频生成参数 (与单次生成页对齐) =====
   // 原实现提交体写死 size:'720P' / aspect_ratio:'16:9', 页面上没有任何分辨率控件。
@@ -288,7 +428,13 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
     const id = activeId || `sb-${Date.now()}`;
     const toSave: Storyboard = {
       ...storyboard,
-      characters: storyboard.characters.map(c => ({ ...c, portraitUrl: c.portraitUrl?.startsWith('data:') ? undefined : c.portraitUrl })),
+      characters: storyboard.characters.map(c => ({
+        ...c,
+        portraitUrl: c.portraitUrl?.startsWith('data:') ? undefined : c.portraitUrl,
+        sheetUrl: c.sheetUrl?.startsWith('data:') ? undefined : c.sheetUrl,
+        // 2026-10-17: 服装参考图同理 — data: 落盘后失效
+        outfits: c.outfits?.map(o => ({ ...o, imageUrl: o.imageUrl?.startsWith('data:') ? undefined : o.imageUrl })),
+      })),
       episodes: storyboard.episodes.map(ep => ({
         ...ep,
         shots: ep.shots.map(s => ({
@@ -296,6 +442,8 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
           videoUrl: s.videoUrl?.startsWith('http') || s.videoUrl?.startsWith('/api/') ? s.videoUrl : undefined,
           // 2026-10-14: 候选版本同样只留可用 URL (blob:/data: 之类落盘后失效)
           videoVersions: s.videoVersions?.filter(v => v.url?.startsWith('http') || v.url?.startsWith('/api/')),
+          // 2026-10-17: 解析结果是提交时的临时值, 不落盘 (否则改前面镜头后继承链会读到旧值)
+          costumeResolved: undefined,
         })),
         scene: ep.scene ? { ...ep.scene, imageUrl: ep.scene.imageUrl?.startsWith('http') || ep.scene.imageUrl?.startsWith('/api/') ? ep.scene.imageUrl : undefined } : undefined,
       })),
@@ -303,13 +451,19 @@ export const StoryboardPanel: React.FC<StoryboardPanelProps> = ({ httpUrl, refIm
     // 保存剧本数据到独立 key
     try { localStorage.setItem(`${STORAGE_KEY}-${id}`, JSON.stringify(toSave)); } catch {
       // 溢出 — 精简保存
+      // 2026-10-17: 必须保住 script (含服装库) 与每镜 costume, 否则容量告警一触发
+      //   服装标注就全丢 —— 继承链断掉比丢历史版本更难察觉。
       try {
         const minimal = {
           title: storyboard.title,
-          characters: storyboard.characters.map(c => ({ name: c.name, description: c.description })),
+          script: storyboard.script,
+          characters: storyboard.characters.map(c => ({
+            name: c.name, description: c.description,
+            outfits: c.outfits, defaultOutfitId: c.defaultOutfitId,
+          })),
           episodes: storyboard.episodes.map(ep => ({
             index: ep.index, title: ep.title,
-            shots: ep.shots.map(s => ({ ...s, videoUrl: s.videoUrl?.startsWith('http') ? s.videoUrl : undefined, videoVersions: undefined })),
+            shots: ep.shots.map(s => ({ ...s, costumeResolved: undefined, videoUrl: s.videoUrl?.startsWith('http') ? s.videoUrl : undefined, videoVersions: undefined })),
           })),
         };
         localStorage.setItem(`${STORAGE_KEY}-${id}`, JSON.stringify(minimal));
@@ -456,28 +610,130 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
     setStoryboard(prev => (prev === null || token !== sbTokenRef.current) ? prev : fn(prev));
   }, []);
 
-  // 生成剧本
-  const generateStoryboard = async () => {
+  // ══════════════════════════════════════════════════════════════════
+  // 2026-10-17: 两段式 —— ① 生成可读剧本 (用户审核/编辑) ② 确认后拆分镜
+  //   根因: 原来一步出分镜, 用户拿到 20 个镜头的 prompt 才能看出剧情对不对,
+  //   想改剧情只能逐镜改 prompt。现在剧情在文本层解决, 分镜只负责镜头语言。
+  // ══════════════════════════════════════════════════════════════════
+
+  // ① 生成剧本 (只出文本, 不拆分镜)
+  const generateScript = async () => {
     if (!prompt.trim()) { message.warning('请输入创意描述'); return; }
+    setGenerating(true);
+    try {
+      const resp = await fetch(`${httpUrl}/v1/video/script`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, episodeCount, refImages, scriptProvider, scriptModel: scriptModelName }),
+      });
+      const data = await resp.json();
+      if (data.error) { message.error('剧本生成失败: ' + data.error); return; }
+      if (data.ok && data.script) {
+        const s = data.script as ScriptDraft;
+        // 生成新剧本 = 换剧本 → 在途生成的写入全部作废
+        bumpSbToken();
+        setActiveId(null);
+        setStoryboard({
+          title: s.title || '未命名剧本',
+          characters: (s.characters || []).map(c => ({ ...c })),
+          episodes: [],
+          script: s,
+        });
+        setSbView('script');
+        message.success(`✅ 剧本已生成: ${s.title} (${s.episodes.length} 集) — 请先审核, 确认后再拆分镜`);
+      }
+    } catch (e: any) { message.error('剧本生成失败: ' + e.message); }
+    finally { setGenerating(false); }
+  };
+
+  // ①b 继续优化剧本 — 把当前 (可能手改过的) 剧本 + 优化指令发回同一接口
+  const refineScript = async () => {
+    const current = storyboard?.script;
+    if (!current) return;
+    if (!refineText.trim()) { message.warning('请填写优化要求 (如: 第2集冲突不够, 加一场雨夜对峙)'); return; }
+    const token = sbTokenRef.current;
+    setRefining(true);
+    try {
+      const resp = await fetch(`${httpUrl}/v1/video/script`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: prompt || current.title,
+          episodeCount: current.episodes.length,
+          refImages,
+          scriptProvider, scriptModel: scriptModelName,
+          refine: { instruction: refineText.trim(), script: current },
+        }),
+      });
+      const data = await resp.json();
+      if (data.error) { message.error('剧本优化失败: ' + data.error); return; }
+      if (data.ok && data.script) {
+        const s = data.script as ScriptDraft;
+        // 保留已生成的定妆图/九宫格 (剧本里没有这些字段)
+        sbWrite(token, prev => prev ? {
+          ...prev,
+          title: s.title || prev.title,
+          script: s,
+          characters: (s.characters || []).map(c => {
+            const old = prev.characters.find(o => o.name === c.name);
+            return old ? { ...c, portraitUrl: old.portraitUrl, sheetUrl: old.sheetUrl } : { ...c };
+          }),
+        } : prev);
+        if (sbTokenRef.current === token) {
+          setRefineOpen(false);
+          setRefineText('');
+          message.success('✅ 剧本已优化, 请再审一遍再确认');
+        }
+      }
+    } catch (e: any) { message.error('剧本优化失败: ' + e.message); }
+    finally { setRefining(false); }
+  };
+
+  // ② 确认剧本 → 拆分镜 (服务端只做镜头语言, 不得改剧情/人名/对白/服装表)
+  const confirmScript = async () => {
+    const script = storyboard?.script;
+    if (!script) return;
+    if (!script.episodes?.length) {
+      message.warning('剧本没有内容 (模型未产出剧集), 请重新生成或优化后再确认');
+      return;
+    }
+    const token = sbTokenRef.current;
     setGenerating(true);
     try {
       const resp = await fetch(`${httpUrl}/v1/video/storyboard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, episodeCount, durationPerShot: String(shotDuration), refImages, scriptProvider, scriptModel: scriptModelName }),
+        body: JSON.stringify({
+          prompt: prompt || script.title,
+          episodeCount: script.episodes.length,
+          durationPerShot: String(shotDuration),
+          refImages,
+          scriptProvider, scriptModel: scriptModelName,
+          script,
+        }),
       });
       const data = await resp.json();
-      if (data.error) { message.error('剧本生成失败: ' + data.error); return; }
+      if (data.error) { message.error('分镜生成失败: ' + data.error); return; }
       if (data.ok && data.storyboard) {
         const sb = data.storyboard as Storyboard;
         sb.episodes.forEach(ep => ep.shots.forEach(s => { s.selected = true; s.status = 'pending'; }));
-        // 生成新剧本时清除 activeId, 让 useEffect 创建新条目而非覆盖当前
-        bumpSbToken(); // ★ 重新生成 = 换剧本 → 在途生成的写入全部作废
-        setActiveId(null);
-        setStoryboard(sb);
-        message.success(`✅ 剧本已生成: ${sb.title}`);
+        sbWrite(token, prev => ({
+          ...sb,
+          // 服务端返回的是归一化后的剧本快照; 缺省时用本地已确认版本
+          script: (data.script as ScriptDraft) || script,
+          // 服务端不知道本地已生成的定妆图/九宫格 — 按角色名搬回来
+          characters: sb.characters.map(c => {
+            const old = prev?.characters.find(o => o.name === c.name);
+            return old ? { ...c, portraitUrl: old.portraitUrl, sheetUrl: old.sheetUrl } : c;
+          }),
+        }));
+        if (sbTokenRef.current === token) {
+          setSbView('shots');
+          const total = sb.episodes.reduce((n, e) => n + e.shots.length, 0);
+          message.success(`✅ 已按剧本拆分镜: ${sb.episodes.length} 集 / ${total} 镜`);
+        }
       }
-    } catch (e: any) { message.error('剧本生成失败: ' + e.message); }
+    } catch (e: any) { message.error('分镜生成失败: ' + e.message); }
     finally { setGenerating(false); }
   };
 
@@ -657,7 +913,110 @@ High detail, professional quality, 16:9 aspect ratio.`;
     finally { setGeneratingSequel(null); }
   };
 
-  // 更新单镜提示词
+  // ===== 2026-10-17: 剧本编辑 (审核阶段) =====
+  // 剧本是"唯一真相": 用户在这里改剧情/台词, 确认后分镜只能拆镜头, 不能再改内容。
+  const updateScriptTitle = (title: string) => {
+    setStoryboard(prev => prev?.script ? { ...prev, title, script: { ...prev.script, title } } : prev);
+  };
+  const updateScriptEpisode = (idx: number, patch: Partial<ScriptEpisode>) => {
+    setStoryboard(prev => {
+      if (!prev?.script) return prev;
+      return {
+        ...prev,
+        script: {
+          ...prev.script,
+          episodes: prev.script.episodes.map((ep, i) => i === idx ? { ...ep, ...patch } : ep),
+        },
+      };
+    });
+  };
+
+  // 角色服装库 CRUD — 同时同步 storyboard.characters (角色卡渲染) 与 script.characters (持久化/重拆)
+  const patchOutfits = (charName: string, fn: (outfits: Outfit[], defaultId: string) => { outfits: Outfit[]; defaultOutfitId: string }) => {
+    setStoryboard(prev => {
+      if (!prev) return prev;
+      const apply = (c: any) => {
+        if (c?.name !== charName) return c;
+        const next = fn(Array.isArray(c.outfits) ? c.outfits as Outfit[] : [], c.defaultOutfitId || '');
+        return { ...c, outfits: next.outfits, defaultOutfitId: next.defaultOutfitId };
+      };
+      return {
+        ...prev,
+        characters: prev.characters.map(apply),
+        script: prev.script ? { ...prev.script, characters: prev.script.characters.map(apply) } : prev.script,
+      };
+    });
+  };
+  const addOutfit = (charName: string) => {
+    patchOutfits(charName, (outfits, defaultId) => {
+      const used = new Set(outfits.map(o => o.id));
+      let n = outfits.length + 1;
+      while (used.has(`o${n}`)) n++;
+      const outfit: Outfit = { id: `o${n}`, name: `服装${n}`, description: '' };
+      return { outfits: [...outfits, outfit], defaultOutfitId: defaultId || outfit.id };
+    });
+  };
+  const updateOutfit = (charName: string, outfitId: string, patch: Partial<Outfit>) => {
+    patchOutfits(charName, (outfits, defaultId) => ({
+      outfits: outfits.map(o => o.id === outfitId ? { ...o, ...patch } : o),
+      defaultOutfitId: defaultId,
+    }));
+  };
+  const removeOutfit = (charName: string, outfitId: string) => {
+    patchOutfits(charName, (outfits, defaultId) => {
+      const next = outfits.filter(o => o.id !== outfitId);
+      return { outfits: next, defaultOutfitId: defaultId === outfitId ? (next[0]?.id || '') : defaultId };
+    });
+  };
+  const setDefaultOutfit = (charName: string, outfitId: string) => {
+    patchOutfits(charName, (outfits, _d) => ({ outfits, defaultOutfitId: outfitId }));
+  };
+
+  // 按需生成某套服装的参考图 (img2img 以定妆图为底) — 显式点击才产生图片成本
+  const generateOutfitImage = async (charName: string, outfitId: string) => {
+    if (!storyboard) return;
+    const char = storyboard.characters.find(c => c.name === charName);
+    const outfit = char?.outfits?.find(o => o.id === outfitId);
+    if (!char || !outfit) return;
+    if (!outfit.description.trim()) {
+      message.warning('请先填写这套服装的描述 (颜色/款式/材质), 否则生成的图没有依据');
+      return;
+    }
+    if (!char.portraitUrl) {
+      message.warning('请先生成角色定妆图 — 服装参考图以它为底图, 才能保证是同一个人');
+      return;
+    }
+    const key = `${charName}:${outfitId}`;
+    const token = sbTokenRef.current;
+    setGeneratingOutfit(key);
+    try {
+      const prompt = `Full body shot of the SAME character as the reference image, now wearing: ${outfit.description}. 
+Keep the same face, hairstyle, body type and skin tone as the reference. 
+Standing facing forward, neutral pose, full body visible from head to toe. 
+Plain solid white background, studio lighting, photorealistic, high detail. The character is the ONLY subject, no other people or objects.`;
+      const resp = await fetch(`${httpUrl}/v1/image`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, model: 'agnes', mode: 'img2img', size: '2K', image: char.portraitUrl }),
+      });
+      const data = await resp.json();
+      if (data.error) { message.error(`服装参考图生成失败: ${data.error}`); return; }
+      const url = data.url?.startsWith('/') ? httpUrl + data.url : data.url;
+      if (!url) { message.error('服装参考图生成失败: 上游没有返回图片'); return; }
+      sbWrite(token, prev => {
+        const patch = (c: any) => c?.name === charName
+          ? { ...c, outfits: (Array.isArray(c.outfits) ? c.outfits as Outfit[] : []).map(o => o.id === outfitId ? { ...o, imageUrl: url } : o) }
+          : c;
+        return {
+          ...prev,
+          characters: prev.characters.map(patch),
+          script: prev.script ? { ...prev.script, characters: prev.script.characters.map(patch) } : prev.script,
+        };
+      });
+      if (sbTokenRef.current === token) message.success(`✅ ${charName} · ${outfit.name} 参考图已生成`);
+    } catch (e: any) { message.error('服装参考图生成失败: ' + e.message); }
+    finally { setGeneratingOutfit(null); }
+  };
+
   const updateShotPrompt = (epIdx: number, shotId: number, newPrompt: string) => {
     setStoryboard(prev => {
       if (!prev) return prev;
@@ -675,6 +1034,31 @@ High detail, professional quality, 16:9 aspect ratio.`;
       eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, [field]: value } : s);
       return { ...prev, episodes: eps };
     });
+  };
+
+  // 2026-10-17: 镜头服装标注 — 选具体服装 = 写入显式换装; 选「沿用上一镜」= 删除该键 (回到继承)
+  const updateShotCostume = (epIdx: number, shotId: number, charName: string, outfitId: string | undefined) => {
+    setStoryboard(prev => {
+      if (!prev) return prev;
+      const eps = [...prev.episodes];
+      eps[epIdx] = {
+        ...eps[epIdx],
+        shots: eps[epIdx].shots.map(s => {
+          if (s.id !== shotId) return s;
+          const costume = { ...(s.costume || {}) };
+          if (outfitId) costume[charName] = outfitId; else delete costume[charName];
+          return { ...s, costume: Object.keys(costume).length ? costume : undefined };
+        }),
+      };
+      return { ...prev, episodes: eps };
+    });
+  };
+
+  /** 提交前把解析后的服装挂到镜头副本上 (不改 state; buildSubmitPrompt 读 costumeResolved) */
+  const withResolvedCostume = (epIdx: number, shot: Shot): Shot => {
+    const shotIdx = storyboard?.episodes[epIdx]?.shots.findIndex(s => s.id === shot.id) ?? -1;
+    if (shotIdx < 0) return shot;
+    return { ...shot, costumeResolved: resolveShotCostumes(storyboard, epIdx, shotIdx) };
   };
 
   const toggleShot = (epIdx: number, shotId: number) => {
@@ -814,9 +1198,16 @@ High detail, professional quality, 16:9 aspect ratio.`;
     }
     // 2. 角色定妆图 + 九宫格 — 只传该镜头涉及的角色
     if (shot.characters && shot.characters.length > 0) {
+      // 2026-10-17: 该镜解析出的服装若有参考图, **优先于**定妆图 —
+      //   定妆图是默认服装, 用它当参考会让"换装"那一镜仍然穿着默认衣服。
+      const sIdx = ep?.shots.findIndex(x => x.id === shot.id) ?? -1;
+      const resolved = sIdx >= 0 ? resolveShotCostumes(storyboard, epIdx, sIdx) : {};
       for (const charName of shot.characters) {
         const char = storyboard.characters.find(c => c.name === charName);
-        const portraitUrl = extra?.chars[charName] || char?.portraitUrl;
+        const outfitImg = resolved[charName]
+          ? char?.outfits?.find(o => o.id === resolved[charName].outfitId)?.imageUrl
+          : undefined;
+        const portraitUrl = extra?.chars[charName] || outfitImg || char?.portraitUrl;
         if (portraitUrl) {
           refs.push(portraitUrl);
         }
@@ -970,7 +1361,9 @@ High detail, professional quality, 16:9 aspect ratio.`;
       const refImages = collectRefImages(epIdx, shot, guard.extra, cont.tail);
       // 2026-10-13: prompt 走 buildSubmitPrompt — 把 dialogue/monologue 内联, 不再只发 shot.prompt;
       // 分辨率/宽高比改用面板上的选择 (原写死 720P / 16:9)。
-      const body: any = { prompt: buildSubmitPrompt(shot), model, duration: `${shot.duration}s`, size: videoSize, aspect_ratio: videoAspect };
+      // 2026-10-17: 提交前附加解析后的服装 (继承链在此刻结算, 前面镜头改了这边自动跟随)。
+      const shotForPrompt = withResolvedCostume(epIdx, shot);
+      const body: any = { prompt: buildSubmitPrompt(shotForPrompt), model, duration: `${shot.duration}s`, size: videoSize, aspect_ratio: videoAspect };
       // 有参考图时用 reference 模式
       if (refImages.length > 0) {
         body.images = refImages;
@@ -1061,7 +1454,9 @@ High detail, professional quality, 16:9 aspect ratio.`;
             // 收集角色定妆图+场景图作为参考 (guard.extra = 刚补全的图; tail = 上一镜尾帧)
             const refImages = collectRefImages(epIdx, shot, guard.extra, tail);
             // 2026-10-13: 对白/独白内联 + 面板分辨率/宽高比 (原写死 720P/16:9)
-            const body: any = { prompt: buildSubmitPrompt(shot), model, duration: `${shot.duration}s`, size: videoSize, aspect_ratio: videoAspect };
+            // 2026-10-17: 同上 — 服装按本镜继承链解析后注入
+            const shotForPrompt = withResolvedCostume(epIdx, shot);
+            const body: any = { prompt: buildSubmitPrompt(shotForPrompt), model, duration: `${shot.duration}s`, size: videoSize, aspect_ratio: videoAspect };
             if (refImages.length > 0) {
               body.images = refImages;
             }
@@ -1149,6 +1544,9 @@ High detail, professional quality, 16:9 aspect ratio.`;
   const totalShots = storyboard?.episodes.flatMap(e => e.shots).length || 0;
   const completedShots = storyboard?.episodes.flatMap(e => e.shots).filter(s => s.status === 'completed').length || 0;
   const selectedShots = storyboard?.episodes.flatMap(e => e.shots).filter(s => s.selected && s.status !== 'completed').length || 0;
+  // 2026-10-17: 有剧本但还没分镜 → 强制停在剧本审核 (审核门不允许被绕过)
+  const effectiveSbView: 'script' | 'shots' =
+    storyboard?.script && storyboard.episodes.length === 0 ? 'script' : (sbView || 'shots');
 
 // 2026-10-14 修复"底部被裁": 根容器原为 height:'100%' —— 但在 VideoGen 的 flex 列里,
 // 上方还有"生成模型"选择行, height:100% 会等于父容器整高 → 多出选择行的高度被 overflow:hidden 裁掉。
@@ -1253,14 +1651,78 @@ return (
                 </span>
               </Tooltip>
               <div style={{ flex: 1 }} />
-              <Button type="primary" icon={<ThunderboltOutlined />} loading={generating} onClick={generateStoryboard}>
-                {generating ? '生成中...' : '生成剧本'}
+              <Button type="primary" icon={<ThunderboltOutlined />} loading={generating} onClick={generateScript}>
+                {generating ? '生成中...' : storyboard?.script ? '生成新剧本' : '生成剧本'}
               </Button>
             </div>
             {refImages.length > 0 && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}><PictureOutlined /> 已上传 {refImages.length} 张参考图</div>}
             {scriptProvider && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>剧本模型: {activeModelId} (跟随对话所选)</div>}
+            {/* 2026-10-17: 两段式状态 — 剧本未确认时不允许直接拆分镜 */}
+            {storyboard?.script && (
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>
+                <Tag color={storyboard.episodes.length ? 'green' : 'gold'} style={{ fontSize: 'var(--fs-micro)' }}>
+                  {storyboard.episodes.length ? '剧本已确认' : '剧本待审核'}
+                </Tag>
+                {storyboard.episodes.length === 0
+                  ? '先改剧本 → 点「确认剧本, 生成分镜」'
+                  : '分镜只做镜头语言; 改剧情请回剧本审核'}
+              </div>
+            )}
           </div>
         </Card>
+
+        {/* ═══ 2026-10-17: 剧本审核 (第一步) — 可读文本, 逐集可改 ═══ */}
+        {storyboard?.script && effectiveSbView === 'script' && (
+          <Card size="small"
+            title={<Space><EditOutlined /> 剧本审核 <Tag>{storyboard.script.episodes.length} 集</Tag></Space>}
+            extra={storyboard.episodes.length > 0 ? (
+              <Button size="small" onClick={() => setSbView('shots')}>返回分镜</Button>
+            ) : undefined}>
+            <Alert type="info" showIcon style={{ marginBottom: 8, fontSize: 'var(--fs-micro)' }}
+              message="先审剧本, 再拆分镜"
+              description="这里是可读剧本全文 (剧名/剧情/台词), 直接改就行。改到满意后点「确认剧本, 生成分镜」—— 分镜只负责镜头/运镜/音画, 不会改你写的剧情。角色服装库在下方角色卡里。" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', flexShrink: 0 }}>剧名</span>
+              <Input size="small" value={storyboard.script.title}
+                onChange={e => updateScriptTitle(e.target.value)} />
+            </div>
+            {storyboard.script.logline && (
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 8, lineHeight: 1.5 }}>
+                {storyboard.script.logline}
+              </div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 520, overflow: 'auto', paddingRight: 4 }}>
+              {storyboard.script.episodes.map((ep, i) => (
+                <div key={i} style={{ padding: 8, borderRadius: 'var(--radius-md)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <Tag color="blue" style={{ margin: 0, flexShrink: 0 }}>第 {ep.index || i + 1} 集</Tag>
+                    <Input size="small" value={ep.title}
+                      onChange={e => updateScriptEpisode(i, { title: e.target.value })} />
+                  </div>
+                  {ep.summary && (
+                    <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 4 }}>{ep.summary}</div>
+                  )}
+                  <TextArea value={ep.text}
+                    onChange={e => updateScriptEpisode(i, { text: e.target.value })}
+                    autoSize={{ minRows: 6, maxRows: 24 }} style={{ fontSize: 'var(--fs-sm)' }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <Button icon={<ThunderboltOutlined />} loading={refining} onClick={() => setRefineOpen(true)}>
+                优化剧本
+              </Button>
+              <Button icon={<ReloadOutlined />} loading={generating} onClick={generateScript}>
+                重新生成
+              </Button>
+              <div style={{ flex: 1 }} />
+              <Button type="primary" loading={generating} onClick={confirmScript}
+                disabled={!storyboard.script.episodes.length}>
+                确认剧本, 生成分镜
+              </Button>
+            </div>
+          </Card>
+        )}
 
 {/* 角色卡区域 — 独立面板 */}
 {storyboard?.characters && storyboard.characters.length > 0 && (
@@ -1332,6 +1794,55 @@ return (
                       <Button size="small" icon={<PictureOutlined />} style={{ fontSize: 'var(--fs-micro)' }}>上传</Button>
                     </Upload>
                   </div>
+                  {/* 2026-10-17: 服装库 — 镜头只标注"换装", 未标注的镜头继承这里的默认套 */}
+                  {char.outfits && char.outfits.length > 0 && (
+                    <Collapse size="small" ghost style={{ marginTop: 6 }}>
+                      <Panel key="outfits" header={<span style={{ fontSize: 'var(--fs-micro)' }}>👕 服装库 ({char.outfits.length})</span>}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {char.outfits.map(o => (
+                            <div key={o.id} style={{ padding: 6, borderRadius: 'var(--radius-sm)', background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Input size="small" value={o.name}
+                                  onChange={e => updateOutfit(char.name, o.id, { name: e.target.value })}
+                                  style={{ flex: 1 }} />
+                                <Tooltip title="设为默认 (集内首镜 / 未标注的镜头穿这套)">
+                                  <Tag color={char.defaultOutfitId === o.id ? 'green' : 'default'}
+                                    style={{ cursor: 'pointer', margin: 0, fontSize: 'var(--fs-micro)' }}
+                                    onClick={() => setDefaultOutfit(char.name, o.id)}>
+                                    {char.defaultOutfitId === o.id ? '默认' : '设默认'}
+                                  </Tag>
+                                </Tooltip>
+                                <Tooltip title="删除这套服装 (引用它的镜头会回落到默认套)">
+                                  <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                                    onClick={() => removeOutfit(char.name, o.id)} />
+                                </Tooltip>
+                              </div>
+                              <TextArea size="small" value={o.description}
+                                onChange={e => updateOutfit(char.name, o.id, { description: e.target.value })}
+                                placeholder="服装描述: 颜色/款式/材质 (决定生成时穿什么)"
+                                autoSize={{ minRows: 1, maxRows: 3 }}
+                                style={{ fontSize: 'var(--fs-micro)', marginTop: 4 }} />
+                              {o.imageUrl && (
+                                <img src={o.imageUrl} alt={o.name}
+                                  style={{ width: '100%', borderRadius: 'var(--radius-sm)', marginTop: 4, cursor: 'zoom-in' }}
+                                  onClick={() => setZoomPortrait({ url: o.imageUrl!, name: `${char.name} · ${o.name}` })} />
+                              )}
+                              <Button size="small" type="primary" ghost icon={<PictureOutlined />}
+                                loading={generatingOutfit === `${char.name}:${o.id}`}
+                                onClick={() => generateOutfitImage(char.name, o.id)}
+                                style={{ fontSize: 'var(--fs-micro)', marginTop: 4, width: '100%' }}>
+                                {o.imageUrl ? '重新生成此套参考图' : '生成此套参考图'}
+                              </Button>
+                            </div>
+                          ))}
+                          <Button size="small" block icon={<PlusOutlined />} onClick={() => addOutfit(char.name)}
+                            style={{ fontSize: 'var(--fs-micro)' }}>
+                            新增服装
+                          </Button>
+                        </div>
+                      </Panel>
+                    </Collapse>
+                  )}
                 </div>
               ))}
             </div>
@@ -1353,7 +1864,7 @@ return (
         )}
 
         {/* 批量生成按钮 — 仅商业模型显示, Flash 免费模型由用户逐镜生成 */}
-        {storyboard && selectedShots > 0 && !batchGenerating && !isFlashModel && (
+        {storyboard && effectiveSbView === 'shots' && selectedShots > 0 && !batchGenerating && !isFlashModel && (
           <Button type="primary" size="large" icon={<VideoCameraOutlined />} onClick={batchGenerate}
             style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: 'var(--radius-md)' }}>
             批量生成 ({selectedShots} 镜)
@@ -1362,7 +1873,7 @@ return (
 
         {/* 2026-10-12 B-4: 失败重试入口 — 原来批量跑完有失败镜头只能
             一集一集展开、一个一个点「重试」。这里汇总成一键重跑。 */}
-        {storyboard && !batchGenerating && (() => {
+        {storyboard && effectiveSbView === 'shots' && !batchGenerating && (() => {
           const failed = storyboard.episodes.flatMap((ep, epIdx) =>
             ep.shots.filter(s => s.status === 'failed').map(s => ({ epIdx, shotId: s.id })));
           if (failed.length === 0) return null;
@@ -1378,16 +1889,41 @@ return (
             />
           );
         })()}
-        {storyboard && isFlashModel && (
+        {storyboard && effectiveSbView === 'shots' && isFlashModel && (
           <Alert type="info" showIcon style={{ fontSize: 'var(--fs-micro)' }}
             message="当前为 Flash 免费模型, 有速率限制"
             description="请逐镜点击「生成」按钮, 一个一个生成。切换到商业模型可批量生成。" />
         )}
 
+        {/* 2026-10-17: 已确认剧本 (只读快照) — 分镜阶段仍可回看; 「重新审核/拆解」回到剧本门 */}
+        {storyboard?.script && effectiveSbView === 'shots' && (
+          <Collapse size="small">
+            <Panel key="approved-script" header={
+              <Space>
+                <FileOutlined />
+                <span style={{ fontSize: 'var(--fs-sm)' }}>已确认剧本 · {storyboard.script.title}</span>
+                <Tag style={{ fontSize: 'var(--fs-micro)' }}>{storyboard.script.episodes.length} 集</Tag>
+              </Space>
+            }>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflow: 'auto', paddingRight: 4 }}>
+                <Button size="small" icon={<EditOutlined />} onClick={() => setSbView('script')} style={{ width: 'fit-content' }}>
+                  重新审核 / 重新拆解
+                </Button>
+                {storyboard.script.episodes.map((ep, i) => (
+                  <div key={i}>
+                    <div style={{ fontWeight: 600, fontSize: 'var(--fs-sm)' }}>第 {ep.index || i + 1} 集 · {ep.title}</div>
+                    <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.6 }}>{ep.text}</div>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          </Collapse>
+        )}
+
         {/* 分集列表 — 2026-10-12 布局简化: 默认只展开第一集。
             原为全部展开 (episodes.map), 10 集剧本一屏放不下, 用户要先滚很久
             才能看到别的 —— 信息过载是"不简洁明了"的主因。 */}
-        {storyboard && (
+        {storyboard && effectiveSbView === 'shots' && (
           <Collapse defaultActiveKey={storyboard.episodes.length > 0 ? [String(storyboard.episodes[0].index)] : []}>
             {storyboard.episodes.map((ep, epIdx) => (
               <Panel key={ep.index} header={
@@ -1482,6 +2018,51 @@ return (
                             {shot.characters?.map((c, i) => <Tag key={i} color="purple" style={{ fontSize: 'var(--fs-micro)' }}>{c}</Tag>)}
                           </div>
                         )}
+                        {/* 2026-10-17: 服装行 —— 每个有服装库的出场角色一个下拉。
+                            选具体服装 = 本镜换装; 「沿用上一镜」= 不标注 (继承最近一次显式值)。 */}
+                        {(() => {
+                          const resolvedCostume = resolveShotCostumes(storyboard, epIdx, shotIdx);
+                          const withOutfits = (shot.characters || []).filter(n =>
+                            (storyboard.characters.find(c => c.name === n)?.outfits?.length || 0) > 0);
+                          if (!withOutfits.length) return null;
+                          const missingChangeRef = withOutfits.filter(n => {
+                            const r = resolvedCostume[n];
+                            if (!r?.changed) return false;
+                            const ch = storyboard.characters.find(c => c.name === n);
+                            return !ch?.outfits?.find(o => o.id === r.outfitId)?.imageUrl;
+                          });
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>👕 服装</span>
+                              {withOutfits.map(name => {
+                                const ch = storyboard.characters.find(c => c.name === name)!;
+                                const explicit = shot.costume?.[name];
+                                const r = resolvedCostume[name];
+                                return (
+                                  <Space key={name} size={2}>
+                                    <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{name}</span>
+                                    <Select size="small" style={{ width: 130 }}
+                                      value={explicit || '__inherit__'}
+                                      options={[
+                                        { value: '__inherit__', label: r ? `沿用 (${r.name})` : '沿用上一镜' },
+                                        ...(ch.outfits || []).map(o => ({ value: o.id, label: o.name })),
+                                      ]}
+                                      onChange={(v) => updateShotCostume(epIdx, shot.id, name, v === '__inherit__' ? undefined : v)}
+                                    />
+                                    {r?.changed && <Tag color="warning" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>换装</Tag>}
+                                  </Space>
+                                );
+                              })}
+                              {missingChangeRef.length > 0 && (
+                                <Tooltip title={`${missingChangeRef.join('、')} 本镜换了装, 但这套服装没有参考图 — 目前只靠提示词约束。可在角色卡里为该套服装生成参考图。`}>
+                                  <Tag color="warning" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>
+                                    ⚠ {missingChangeRef.join('、')} 换装无参考图
+                                  </Tag>
+                                </Tooltip>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <TextArea value={shot.prompt} onChange={e => updateShotPrompt(epIdx, shot.id, e.target.value)}
                           autoSize={{ minRows: 2, maxRows: 6 }} style={{ fontSize: 'var(--fs-sm)' }} disabled={shot.status === 'generating'} />
                         {/* 2026-10-13: 台词/独白改为可编辑 — 提交时会内联进视频 prompt 做音画同步,
@@ -1763,6 +2344,25 @@ return (
             「跳过直接生成」则本镜只靠场景图/角色图生成 (会标 ⚠ 无衔接, 动作可能接不上)。
           </div>
         </div>
+      </Modal>
+
+      {/* 2026-10-17: 继续优化剧本 — 把当前剧本 + 这条指令交给同一个 /v1/video/script */}
+      <Modal
+        open={refineOpen}
+        title="优化剧本"
+        width={520}
+        okText="优化"
+        cancelText="取消"
+        confirmLoading={refining}
+        onOk={refineScript}
+        onCancel={() => { if (!refining) setRefineOpen(false); }}
+      >
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8, lineHeight: 1.6 }}>
+          说清要改什么 (会返回**完整**修订版, 你在上面手改的内容也会一起带上):
+          <br />例: 第2集冲突不够, 加一场雨夜对峙; 结尾别开放式; 女主性格再冷一点。
+        </div>
+        <TextArea value={refineText} onChange={e => setRefineText(e.target.value)}
+          placeholder="优化要求..." autoSize={{ minRows: 4, maxRows: 10 }} />
       </Modal>
 
       {/* 场景精编器 — 全屏 */}

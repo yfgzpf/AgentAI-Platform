@@ -96,8 +96,12 @@ describe('分镜: 对白/独白内联进视频 prompt', () => {
 
   it('★ 提交体不得再直接发 shot.prompt (那条路径丢了台词)', () => {
     expect(code).not.toMatch(/prompt:\s*shot\.prompt,/);
-    const used = code.match(/prompt:\s*buildSubmitPrompt\(shot\)/g) || [];
+    // 2026-10-17: 两条提交路径改为传"解析过服装"的镜头副本 (shotForPrompt)。
+    // 意图不变: 必须经 buildSubmitPrompt 拼装 (不得直接发原始 prompt)。
+    const used = code.match(/prompt:\s*buildSubmitPrompt\(/g) || [];
     expect(used.length, '单镜 + 批量两条提交路径都要用').toBeGreaterThanOrEqual(2);
+    const resolved = code.match(/buildSubmitPrompt\(shotForPrompt\)/g) || [];
+    expect(resolved.length, '两处提交都传解析过服装的镜头').toBeGreaterThanOrEqual(2);
   });
 
   it('★ monologue 是 Shot 的一等字段, 且可在镜卡里编辑', () => {
@@ -151,9 +155,10 @@ describe('分镜: 剧本模型跟随所选', () => {
     expect(gw).toContain('callScriptLLM');
     expect(gw).toContain('getAgentAIRouter');
     expect(gw).toMatch(/scriptProvider, scriptModel, systemPrompt/);
-    // storyboard + next-episode 都取该参数
-    const destructs = gw.match(/scriptProvider, scriptModel \} = req\.body/g) || [];
-    expect(destructs.length, 'storyboard + next-episode 两处解构').toBeGreaterThanOrEqual(2);
+    // 2026-10-17: storyboard 的解构多了可选 `script`, 原"到 } 为止"的精确断言会误判。
+    // 意图不变: 至少两条剧本路径从 req.body 取 scriptProvider/scriptModel。
+    const destructs = gw.match(/scriptProvider,\s*scriptModel[^}]*\}\s*=\s*req\.body/g) || [];
+    expect(destructs.length, 'script/storyboard/next-episode 至少两处解构').toBeGreaterThanOrEqual(2);
   });
 
   it('★ 剧本提示词要求充分输出对白, 并含 monologue 字段', () => {
