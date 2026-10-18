@@ -1597,6 +1597,46 @@ function buildOcrFailureHint(imagePath: string, error: string, candidates: strin
   return lines.join('\n');
 }
 
+/**
+ * 2026-10-19: wsl_scan 失败的可执行建议 (blob = e.message + stdout + stderr 合并串)
+ *
+ * 为什么需要: 实锤渗透任务里 wsl_scan 一失败, AI 就绕道手写脚本 (probe8.js → ...)
+ *   且再也不用 Kali —— 因为失败信息只有底层 execFile 错误, **不带下一步动作**。
+ * 三条路 (按根因分类):
+ *   ① WSL/Kali 没装 → 让用户装 + 现在就用 enum_subdomains/http_replay 顶替
+ *   ② Kali 装了但扫描器没装 → apt install 命令 + 顶替
+ *   ③ 其他 → 简短通用建议 (不啰嗦)
+ * 顶替方案是关键: AI 不能卡在"环境不全就停工", 也不能绕去写脚本。
+ *
+ * 导出供测试共用 (与 shouldTripToolBreaker 同一惯例: 判定/构造提取纯函数,
+ * 测试直接调真实实现, 不在测试里复写逻辑)。
+ */
+export function buildWslScanAdvice(blob: string): string {
+  const lines: string[] = ['', '--- 下一步怎么办 ---'];
+  const wslMissing = /没有安装分发版|未安装|does not exist|不存在|WSL|wsl|distributions|registerdistribution|Windows Subsystem/i.test(blob)
+    && /distribution|分发|发行|distro/i.test(blob);
+  const toolMissing = /command not found|not found|未找到命令|No such file/i.test(blob);
+  if (wslMissing) {
+    lines.push('根因: WSL / kali-linux 发行版没装 (或没初始化), wsl_scan 无法执行。');
+    lines.push('1. 【告诉用户】需要他本人在 Windows 终端执行: wsl --install -d kali-linux');
+    lines.push('   (Agent 环境的 wsl.exe 被程序黑名单挡, 装不了, 这不是 AI 偷懒)');
+    lines.push('2. 【不要停工】这一步先用 enum_subdomains (子域枚举) + http_replay (请求重放看响应差异)');
+    lines.push('   顶替扫描, 把侦察和验证阶段推进下去; Kali 装好后再补 wsl_scan。');
+  } else if (toolMissing) {
+    lines.push('根因: kali-linux 里没有这个扫描器 (apt 没装)。');
+    lines.push('1. 【告诉用户】需要他本人在 WSL Kali 里执行: apt-get update && apt-get install -y nmap nuclei sqlmap ffuf gobuster nikto subfinder httpx');
+    lines.push('2. 【不要停工】先用 enum_subdomains + extract_js_endpoints + http_replay 顶替,');
+    lines.push('   这些不依赖 Kali; 装好后再回来跑 wsl_scan。');
+  } else {
+    lines.push('先确认 target 是授权范围内的 host (list_scope 查看), 再检查 tool 是否在支持的 8 个扫描器内');
+    lines.push('(nmap/nuclei/sqlmap/ffuf/gobuster/nikto/subfinder/httpx), args 需为参数数组。');
+    lines.push('如果持续失败, 换 enum_subdomains / http_replay 等其他手段推进, 不要反复重试同一条命令。');
+  }
+  lines.push('3. 无论哪种情况, 都不要改用 run_command 手搓脚本来"代替"扫描器 ——');
+  lines.push('   手搓脚本火力弱且极易死循环烧额度 (实锤: probe8.js → getcaptcha.js → probe_pay10.js)。');
+  return lines.join('\n');
+}
+
 // 2026-10-11 阶段2 轻档: 收紧到 ToolHandlerLike (强类型 ctx/返回值),
 // 之前 Record<string, (args: any, ctx?: any) => any> — args/ctx/返回值全 any,
 // 消费侧 (registry.dispatch / index.ts register) 拿到的是 any, 无类型保障。
@@ -3471,10 +3511,12 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
     } catch (e: any) {
       const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
       const se = e.stderr ? `\nSTDERR:\n${String(e.stderr).slice(0, 2000)}` : '';
-      // 超时也要给 AI 换路子的可执行建议 (P1 看门狗)
+      const blob = `${e.message || ''}${so}${se}`;
+      // 2026-10-19: 失败必须"可行动" —— 否则 AI 试一次失败就绕道写脚本, 且再也不用 Kali
+      //   (实锤: wsl_scan 报个底层 execFile 错误, AI 从此只写 probe*.js)。
       const advice = e.timedOut
         ? `\n\n⚠️ 别原样重试同一条扫描。换路子: 缩小范围 (--top-ports 代替全端口 / 只扫 1 个域) 、加大 timeout_ms、或换更快的工具 (httpx/subfinder 比 nmap 快一个量级)。`
-        : '';
+        : buildWslScanAdvice(blob);
       return { success: false, output: `wsl_scan 失败: ${e.message}${so}${se}${advice}` };
     }
   },

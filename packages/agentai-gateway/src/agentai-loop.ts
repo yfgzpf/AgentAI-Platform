@@ -26,6 +26,7 @@ import { hookCapture } from './hook-capture.js';
 import { AGENT_SYSTEM_IDENTITY } from './system-prompt.js';
 import { buildLiteSystemPrompt, detectTaskType, extractKeywords } from './system-prompt-lite.js';
 import { getRelevantTools, buildToolsFragment, TOOL_GROUPS } from './tool-groups.js';
+import { SECURITY_OPS_TOOLS, TOOL_DEVIATION_DIRECTIVE, shouldTripToolDeviation } from './security-playbook.js';
 import { userModel } from './user-model.js';
 import { recallEvolution, extractPatterns } from './evolution.js';
 import { trackTempFile, cleanupTempFiles, isTempFile } from './temp-file-tracker.js';
@@ -580,6 +581,15 @@ private _stuckEmitted = new Set<string>();
 private _toolFailTracker = new Map<string, number>();
 /** 已按工具级熔断播报过的工具 (边沿触发, 不每轮重复刷) */
 private _toolStuckEmitted = new Set<string>();
+/**
+ * 2026-10-19: security 任务下"连续多少批工具调用完全不含 security_ops 专用工具"。
+ * 富哥实锤: 渗透任务里 AI 只写脚本 (probe8→getcaptcha→probe_pay10) 不碰 wsl_scan。
+ * 工具管道/taskType/描述三层都没问题, 缺的是"用错了要被拽回来"的闭环 —— 本字段即闭环判据。
+ * 含任一 security_ops 工具 (含 grant_scope/list_scope 这类授权动作) 即清零。
+ */
+private _consecutiveGenericBatches = 0;
+/** 偏离纠正指令是否已播报 (边沿触发, 一次 run 只纠正一次, 不每轮刷屏) */
+private _toolDeviationEmitted = false;
 
 /**
  * 2026-10-11 新增: 本次任务累计工具调用次数
@@ -1905,6 +1915,22 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
       }
     } catch (e: any) { logger.warn(e?.message || e); }
 
+    // === 2.9 渗透任务工作流 Playbook (2026-10-19) ===
+    // 根因: 工具管道/taskType/工具描述三层都验证过没问题 (见 security-playbook.ts 头注),
+    //   但**主对话 system prompt 零渗透引导** — batch_pentest 的子智能体有方法论,
+    //   主对话没有 → AI 挖洞时按训练直觉走"最熟的路": 写脚本 + web_fetch,
+    //   wsl_scan/http_replay 一个不碰 (实锤: probe8.js → getcaptcha.js → probe_pay10.js)。
+    // 修法: taskType==='security' 时注入五阶段工作流 + 工具选择铁律。
+    // ⚠️ 强模型也注入 (不像 evolution/curriculum 那样门控): 这是"任务流程"不是"经验",
+    //   与模型强弱无关; 且只有 security 任务才注入, 不增加其他任务的注入体积。
+    if (this._taskType === 'security') {
+      try {
+        const { SECURITY_PLAYBOOK } = await import('./security-playbook.js');
+        systemMsgs.push({ role: 'system', content: SECURITY_PLAYBOOK });
+        track('security:playbook', 25);
+      } catch { /* playbook 注入失败不影响主流程 */ }
+    }
+
     // === 3. 用户模型 (Honcho 4维度) ===
     try {
       const profile = userModel.buildSystemPromptFragment(this.opts.userId);
@@ -2648,6 +2674,8 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
   this._stuckEmittedTool.clear(); // 2026-10-17: 按工具名记的播报记录同样按任务归零
   this._toolFailTracker.clear();  // 2026-10-17: 工具级失败计数按任务隔离
   this._toolStuckEmitted.clear(); // 2026-10-17: 工具级熔断播报记录按任务隔离
+  this._consecutiveGenericBatches = 0; // 2026-10-19: 工具偏离计数按任务隔离
+  this._toolDeviationEmitted = false;  // 2026-10-19: 偏离播报边沿按任务隔离
   this._toolCallCount = 0;     // 2026-10-11: 工具调用预算按任务归零
   this._iterCapWarned = false; // 2026-10-11: 迭代上限软着陆标记按任务归零
   // ═══ 2026-10-12: 死循环护栏的计数器必须按任务隔离 ═══
@@ -4962,6 +4990,26 @@ if (isComplexTask) {
         // (见 _iterToolStartIdx 声明处的说明)
         this._iterToolStartIdx = this.context.appendOnlyLog.filter(m => m.role === 'tool').length;
         const rawResults = await this.dispatchToolCalls(res.toolCalls);
+        // ═══ 2026-10-19: security 任务工具偏离检测 (用错了要被拽回来) ═══
+        // 实锤: 渗透任务 AI 连写 probe8.js → getcaptcha.js → probe_pay10.js, wsl_scan 一个不碰。
+        //   根因不在工具管道 (3c4710f 已修), 而在"没人告诉它走错了"。
+        // 判据: 本批调用完全不含 security_ops 工具 (含授权类) → 累加; 含任一 → 清零。
+        // 触发后一次 run 只纠正一次 (边沿), 指令是"换回专用工具 + 看工作流到哪个阶段"。
+        if (this._taskType === 'security') {
+          const batchNames = res.toolCalls.map((tc: any) => tc.name || tc.function?.name || '');
+          const usedSecurityOps = batchNames.some((n: string) => SECURITY_OPS_TOOLS.has(n));
+          if (usedSecurityOps) {
+            this._consecutiveGenericBatches = 0;
+          } else {
+            this._consecutiveGenericBatches++;
+            if (shouldTripToolDeviation(this._consecutiveGenericBatches) && !this._toolDeviationEmitted) {
+              this._toolDeviationEmitted = true;
+              logger.warn(`[loop] 🔀 工具偏离: security 任务已连续 ${this._consecutiveGenericBatches} 批只用通用工具 (${batchNames.join(',')}), 注入纠正指令`);
+              this.directives.add('tool_deviation', TOOL_DEVIATION_DIRECTIVE, 'high');
+              this.emit('tool:deviation', { consecutiveBatches: this._consecutiveGenericBatches, tools: batchNames });
+            }
+          }
+        }
         // ═══ 2026-10-11 工具调用总预算 (G3) ═══
         // 与 _capabilityTier 无关, 对所有 tier 生效。超限不硬 break —— 注入收尾指令
         // 并置 _hardStopNext, 让 AI 在下一轮产出总结后自然退出 (见循环顶部消费点)。
