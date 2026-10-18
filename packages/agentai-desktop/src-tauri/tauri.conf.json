@@ -45,8 +45,7 @@
       "resources/gateway-dist": "gateway-dist",
       "resources/lite.html": "lite.html",
       "scripts/install-deps.bat": "scripts/install-deps.bat",
-      "../../agentai-skills": "agentai-skills",
-      "../../agentai-vscode/agentai-vscode-0.1.0-alpha.1.vsix": "agentai-vscode.vsix"
+      "../../agentai-skills": "agentai-skills"
     },
     "icon": [
       "icons/32x32.png",

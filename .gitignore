@@ -185,3 +185,6 @@ packages/agentai-desktop/src-tauri/resources/gateway-dist-backup-*/
 /tmp/
 # PowerShell 重定向事故产物 ($null 是 Windows 保留名, 会让 git 报错)
 $null
+
+# 测试产物 (含绝对路径, 不入库)
+packages/agentai-gateway/vt-report.json

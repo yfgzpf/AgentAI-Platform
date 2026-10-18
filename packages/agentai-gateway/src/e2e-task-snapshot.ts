@@ -32,6 +32,13 @@ let passed = 0;
 let failed = 0;
 const results: Array<{ name: string; ok: boolean; detail?: string }> = [];
 
+/**
+ * 2026-10-18: 去掉写死的 `F:\agentai-platform` —— e2e 要能任意盘符/任意克隆目录跑。
+ * 默认取仓库根 (本文件在 packages/agentai-gateway/src, 编译后在 dist, 上三级都是仓库根);
+ * 需要覆盖时设环境变量 E2E_WORKSPACE。
+ */
+const TEST_WORKSPACE = process.env.E2E_WORKSPACE || path.resolve(__dirname, '..', '..', '..');
+
 function check(name: string, ok: boolean, detail?: string) {
   results.push({ name, ok, detail });
   if (ok) {
@@ -73,7 +80,7 @@ async function main() {
   const mgr = getOrCreateSnapshot(taskId, {
     sessionId,
     userId: testUserId,
-    workspace: 'F:\\agentai-platform',
+    workspace: TEST_WORKSPACE,
     goal: '实现长任务快照与恢复系统',
   });
   check('任务已创建', mgr !== null);
@@ -148,7 +155,7 @@ async function main() {
   const init2 = mgr2.init({
     sessionId: 'session-2', // 新 session
     userId: testUserId,
-    workspace: 'F:\\agentai-platform',
+    workspace: TEST_WORKSPACE,
     goal: '实现长任务快照与恢复系统', // 同一目标
   });
   check('新会话接管成功', init2.sessionId === 'session-2');
@@ -191,7 +198,7 @@ async function main() {
   const mgr3 = getOrCreateSnapshot(abandonedTaskId, {
     sessionId: 'session-old',
     userId: testUserId,
-    workspace: 'F:\\agentai-platform',
+    workspace: TEST_WORKSPACE,
     goal: '过时的任务',
   });
   // 修改最后更新时间为 2 小时前

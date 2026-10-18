@@ -3,6 +3,13 @@
  * 流程: 打开页面 → 关 Onboarding → 选代码编辑器 → 点「打开文件夹」→ 输入路径 → 看到树 → 点文件 → 右侧打开
  */
 import { test, expect } from '@playwright/test';
+import * as path from 'path';
+
+/**
+ * 2026-10-18: 去掉写死的 `F:\agentai-platform\...` ——
+ * e2e 必须能在任意机器/任意盘符/任意克隆目录跑, 否则分发后 CI 必然红。
+ */
+const FIXTURE_DIR = path.resolve(__dirname, '..', 'src', 'components');
 
 test.describe('FileTree (Trae 风格)', () => {
   const skipOnboarding = async (page: any) => {
@@ -86,7 +93,7 @@ test.describe('FileTree (Trae 风格)', () => {
     await page.locator('button:has-text("打开文件夹")').first().click();
     await page.waitForTimeout(400);
     const pathInput = page.locator('input[placeholder*="agentai"]').first();
-    await pathInput.fill('F:\\agentai-platform\\packages\\agentai-gui\\src\\components');
+    await pathInput.fill(FIXTURE_DIR);
     await page.locator('.ant-modal button:has-text("打开")').click();
     await page.waitForTimeout(1500);
     await expect(page.locator('.ant-tree-node-content-wrapper:has-text("Editor.tsx")').first()).toBeVisible({ timeout: 5000 });
@@ -101,7 +108,7 @@ test.describe('FileTree (Trae 风格)', () => {
     await page.locator('button:has-text("打开文件夹")').first().click();
     await page.waitForTimeout(400);
     const pathInput = page.locator('input[placeholder*="agentai"]').first();
-    await pathInput.fill('F:\\agentai-platform\\packages\\agentai-gui\\src\\components');
+    await pathInput.fill(FIXTURE_DIR);
     await page.locator('.ant-modal button:has-text("打开")').click();
     await page.waitForTimeout(1500);
     await page.locator('.ant-tree-node-content-wrapper:has-text("Editor.tsx")').first().click();
@@ -120,7 +127,7 @@ test.describe('FileTree (Trae 风格)', () => {
     await page.locator('button:has-text("打开文件夹")').first().click();
     await page.waitForTimeout(400);
     const pathInput = page.locator('input[placeholder*="agentai"]').first();
-    await pathInput.fill('F:\\agentai-platform\\packages\\agentai-gui\\src\\components');
+    await pathInput.fill(FIXTURE_DIR);
     await page.locator('.ant-modal button:has-text("打开")').click();
     await page.waitForTimeout(1500);
 
@@ -128,7 +135,7 @@ test.describe('FileTree (Trae 风格)', () => {
     const resp = await page.evaluate(async () => {
       const r = await fetch('http://127.0.0.1:18789/v1/files/touch', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: 'F:\\agentai-platform\\packages\\agentai-gui\\src\\components\\_E2E_TEST_DELETE_ME.ts', content: '// e2e' }),
+        body: JSON.stringify({ path: path.join(FIXTURE_DIR, '_E2E_TEST_DELETE_ME.ts'), content: '// e2e' }),
       });
       return await r.json();
     });
