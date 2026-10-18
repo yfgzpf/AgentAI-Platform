@@ -73,7 +73,7 @@ function writeState(ws: string, s: CurriculumState): void {
 export interface DistillRoundOpts {
   /** 任务目标 (一句话, 缺省用 ledger.userGoal) */
   goal?: string;
-  taskType: 'coding' | 'research' | 'media' | 'industry' | 'general';
+  taskType: 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general';
   /** 本轮判定"有效"的技术路线 (一句话摘要)。空 = 本轮无明确有效路线, 跳过沉淀 */
   technique: string;
   /** 下一轮该聚焦什么 (一句话)。空 = 自动 */

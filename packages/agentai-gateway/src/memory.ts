@@ -14,6 +14,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { createReadStream } from 'fs';
+import readline from 'readline';
 import { WorkspaceManager } from './workspace-manager.js';
 
 export interface MemoryEntry {
@@ -295,7 +297,7 @@ const compressedCooldowns = new Map<string, number>(); // filePath → lastCompr
 // P0 修复: 压缩防重入锁 — 避免并发写入导致 EPERM 死循环
 const compressingFiles = new Set<string>();
 
-async function compressMemoryFile(filePath: string): Promise<void> {
+export async function compressMemoryFile(filePath: string): Promise<void> {
   // 防重入: 如果该文件正在压缩, 跳过
   if (compressingFiles.has(filePath)) return;
   // P0 修复: 冷却期检查 — 5 分钟内已压缩过的文件不再触发
@@ -303,6 +305,16 @@ async function compressMemoryFile(filePath: string): Promise<void> {
   if (lastCompressed && Date.now() - lastCompressed < COMPRESS_COOLDOWN_MS) return;
   compressingFiles.add(filePath);
   try {
+    // ★ 2026-10-17 P0-2: 大文件不做"尾部读 + 整体覆写"式压缩。
+    //   窗口外条目会被静默蒸发 (位置截断 ≠ 压缩, 见 cleanupOldMemory 头注释)。
+    //   缩容交给 cleanupOldMemory 的流式清理 (30 天 + 1000 条), 回到窗口内
+    //   再走本函数做重要性精压。跳过不进冷却 — 缩容后下次写入应能立即重试。
+    const cst = await fs.stat(filePath).catch(() => null);
+    if (cst && cst.isFile() && cst.size > TAIL_READ_MAX_BYTES) {
+      console.warn(`[memory:compress] skip oversized file ${(cst.size / 1024 / 1024).toFixed(1)}MB > 4MB: ${path.basename(filePath)} (等 cleanupOldMemory 流式缩容)`);
+      return;
+    }
+
     const { evaluateBatch, generateSummary } = await import('./memory-importance.js');
 
     // ★ 2026-10-17 P0: 有界尾部读取 — 原 readFile 整读在大文件上抛
@@ -562,9 +574,59 @@ export async function readMemory(opts: {
  *      只被 writeMemory 双写追加, 没有任何机制 prune
  * 现在: 有界尾部读取 + 排队原子重写 + 真实条数上限, 且由
  * `startMemoryCleanupLoop()` 每 6h 驱动 (index.ts / app.ts 启动处接线)。
+ *
+ * ═══ 2026-10-17 P0-2 补丁: 大文件流式路径 ═══
+ * 尾部读 (4MB 窗口) + 整体覆写 (atomicRewrite) 的组合在**超过窗口大小**的文件上
+ * 会把窗口外条目静默蒸发 — 不是"清理", 是"截断": 窗口外的真实记忆 (哪怕在保留期
+ * 内) 连评估都不会参与。实测最接近红线的: `user.jsonl` 5.0MB/10,581 条 (用户主
+ * 记忆), 一旦无参 cleanup 扫到它, 头部 ~1MB 的真实条目直接蒸发。小文件 (<4MB)
+ * readTailLines 等于全读, 语义不受影响; 大文件必须走 streamFilterFile 流式全量
+ * 过滤 (读用 readline 流不载入全文字符串, survivors ≤1000 条很小可直接拼写)。
  */
 const MAX_MEMORY_ENTRIES_PER_FILE = 1000;
 const MEMORY_RETENTION_DAYS = 30;
+
+/**
+ * 大文件 (>TAIL_READ_MAX_BYTES) 的流式全量清理 — 见 cleanupOldMemory 头注释 P0-2。
+ * 读: readline 流逐行 (不把整个文件载入字符串, 避开 512MB 字符串上限);
+ * 判: cutoff 保留期过滤 + 坏行原样保留 + 超上限按 ts 取最新 maxKeep 条;
+ * 写: survivors ≤ maxKeep 条, 拼字符串走 atomicRewrite (rename 原子替换)。
+ */
+async function streamFilterFile(
+  filePath: string,
+  cutoff: number,
+  maxKeep: number,
+): Promise<{ deleted: number; rewritten: boolean }> {
+  const rl = readline.createInterface({
+    input: createReadStream(filePath, { encoding: 'utf-8' }),
+    crlfDelay: Infinity,
+  });
+  const kept: Array<{ ts: number; line: string }> = [];
+  let deleted = 0;
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.ts >= cutoff) {
+        kept.push({ ts: entry.ts, line });
+      } else {
+        deleted++;
+      }
+    } catch {
+      kept.push({ ts: 0, line }); // 坏行保留 — 与尾部读路径同语义
+    }
+  }
+  if (deleted === 0) return { deleted: 0, rewritten: false };
+  let finalLines = kept;
+  if (kept.length > maxKeep) {
+    const sorted = [...kept].sort((a, b) => a.ts - b.ts);
+    finalLines = sorted.slice(sorted.length - maxKeep);
+    deleted += kept.length - finalLines.length;
+  }
+  const newContent = finalLines.map(k => k.line).join('\n') + '\n';
+  await atomicRewrite(filePath, newContent);
+  return { deleted, rewritten: true };
+}
 
 export async function cleanupOldMemory(
   userId?: string,
@@ -598,11 +660,17 @@ export async function cleanupOldMemory(
 
   for (const file of files) {
     try {
-      // ★ 2026-10-17 P0: 有界尾部读取 + 排队原子重写。
-      //   原实现整读 readFile — 在 1.6GB 的 default.jsonl 上抛 Invalid string
-      //   length 被 catch 吞掉, 清理"成功"返回 deleted=0, 文件永远不缩。
-      //   尾部窗口 (4MB ≈ 8k 条) 已远超 MAX_MEMORY_ENTRIES_PER_FILE(1000) 上限,
-      //   "保留期内 + 最新 1000 条" 的语义不受影响 (被窗口截掉的只可能更旧)。
+      const st = await fs.stat(file).catch(() => null);
+      if (!st || !st.isFile()) continue;
+      if (st.size > TAIL_READ_MAX_BYTES) {
+        // ★ 2026-10-17 P0-2: 大文件必须流式全量过滤。
+        //   尾部读窗口 + 整体覆写 = 位置截断: 窗口外的真实记忆 (哪怕在保留期内)
+        //   连评估都不参与就被蒸发。实测红线: user.jsonl 5.0MB/10,581 条。
+        const r = await streamFilterFile(file, cutoff, MAX_MEMORY_ENTRIES_PER_FILE);
+        deleted += r.deleted;
+        continue;
+      }
+      // 小文件 (<4MB): 尾部读等于全读, 语义不受影响, 保持原路径。
       const lines = (await readTailLines(file)).filter(l => l.trim());
       const kept: Array<{ ts: number; line: string }> = [];
       for (const line of lines) {
@@ -635,15 +703,20 @@ export async function cleanupOldMemory(
     }
   }
 
-  // ★ 2026-10-17 P0: 清扫 atomicAppendFile 回退路径泄漏的 tmp 残留。
-  //   实测用户目录攒了 10,931 个 0 字节 `*.jsonl.*.tmp` (旧实现随机 tmp 名 +
-  //   rename 失败不清理)。只删"确定是本模块产生的模式 + 1 小时以上 + ≤1MB"的
-  //   文件 — 保守边界, 不碰任何 .jsonl 本体。
+  // ★ 2026-10-17 P0: 清扫本模块回退路径产生的 tmp 残留。
+  //   ⚠️ 范围严格限定: 只匹配**新代码的确定性 tmp 名** (.jsonl.tmp /
+  //   .jsonl.rewrite.tmp / .jsonl.prune.tmp / .jsonl.cleanup.tmp /
+  //   .jsonl.compress.tmp) — 这些只可能由当前版本的 atomicAppendFile /
+  //   atomicRewrite / pruneMemoryFile 创建 (每文件最多 1 个, 失败即 unlink,
+  //   残留只可能是进程被硬杀), 且只删 1 小时以上 + ≤1MB 的 (在用的必是秒级)。
+  //   **不匹配**旧版的随机名 `*.jsonl.<8hex>.tmp` (2026-10-17 实测用户目录
+  //   攒了 10,931 个) — 那是历史遗留物, 删它们需要用户明确同意 (见汇报),
+  //   自动清理绝不未经同意动用户目录里的历史文件。
   try {
     const entries = await fs.readdir(userDir);
     const tmpCutoff = Date.now() - 60 * 60 * 1000;
     for (const name of entries) {
-      if (!/\.jsonl(\.[0-9a-f]+)?\.tmp$|\.jsonl\.(cleanup|compress|rewrite)\.tmp$/.test(name)) continue;
+      if (!/\.jsonl\.(tmp|rewrite\.tmp|prune\.tmp|cleanup\.tmp|compress\.tmp)$/.test(name)) continue;
       const p = path.join(userDir, name);
       try {
         const st = await fs.stat(p);

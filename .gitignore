@@ -165,3 +165,21 @@ PulseFlow
 # 注意: 不要用 references/ 整体忽略 —— 6 个参考文件是有意提交的。
 references/**/node_modules/
 references/**/.cache/
+
+# ===== 2026-10-18 打包前清理: 生成物 / agent 工作文件 / 嵌套仓库 (曾经误提交) =====
+# 编译产物: 已在上面 dist/** 覆盖, 但历史上曾被 --force 提交 (471 个), 已 untrack
+packages/*/dist/
+# 3D 模型生成脚本 (运行时产物, 每次生成名字带 hash)
+/models/
+# 数据分析输出
+/analysis_results/
+# zcode agent 的 anchors/plans 工作文件 (非源码)
+/.zcode/
+# creatorhub 是独立 git 仓库 (含自己的 .git), 父仓曾留一个无 .gitmodules 的孤儿 gitlink
+/creatorhub/
+# 打包脚本产生的 gateway 资源备份目录
+packages/agentai-desktop/src-tauri/resources/gateway-dist-backup-*/
+# 本地临时校验目录 (CSS/产物校验时生成)
+/tmp/
+# PowerShell 重定向事故产物 ($null 是 Windows 保留名, 会让 git 报错)
+$null

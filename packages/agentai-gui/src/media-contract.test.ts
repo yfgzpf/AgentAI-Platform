@@ -512,3 +512,53 @@ describe('分镜: 尾帧衔接 (上一镜尾帧随参考图发送)', () => {
   });
 });
 
+// ════════════════════════════════════════════════════════════════════
+// 3D 建模 (Model3DGen) — 密钥不得进 URL (2026-10-12 安全修复)
+// ════════════════════════════════════════════════════════════════════
+
+describe('3D: 轮询密钥走 body 不进 URL', () => {
+  const code = stripComments(src('components/Model3DGen.tsx'));
+
+  it('★ 不得再用 URLSearchParams 拼密钥到 query', () => {
+    expect(code).not.toMatch(/params\.set\(['"](apiKey|secretId|secretKey)['"]/);
+  });
+
+  it('★ 轮询必须打 POST /query (密钥走 JSON body)', () => {
+    expect(code).toContain("/v1/3d-generate/${taskId}/query");
+    expect(code).toMatch(/method:\s*'POST'/);
+    expect(code).toMatch(/body\.apiKey\s*=\s*arkKey/);
+  });
+});
+
+
+// ════════════════════════════════════════════════════════════════════════
+// 3D 建模画布 (Scene3DViewer GLB 模式) — CDN 必须走 jsdelivr (2026-10-12)
+// ════════════════════════════════════════════════════════════════════════
+
+describe('3D 画布: GLB 模板 CDN 约束', () => {
+  const code = stripComments(src('components/Scene3DViewer.tsx'));
+
+  it('★ three CDN 必须用 jsdelivr (Tauri CSP script-src 白名单有它, 没有 cdnjs)', () => {
+    expect(code).toContain('https://cdn.jsdelivr.net/npm/three@');
+    // tools.ts:763 给 AI 的 3D 工具约定用的是 cdnjs r128, 桌面壳里会被 CSP 拦。
+    // 自建模板绝不能抄那个写法。
+    expect(code).not.toContain('cdnjs.cloudflare.com');
+  });
+
+  it('★ 必须挂 GLTFLoader + OrbitControls (否则只有模型不能转)', () => {
+    expect(code).toContain('GLTFLoader');
+    expect(code).toContain('OrbitControls');
+  });
+
+  it('★ GLB 链接注入必须防 HTML 结构破坏 (JSON.stringify)', () => {
+    // 2026-10-12: 外链会先被改写为 gateway 代理地址 (loadUrl),
+    // 防注入的保证在于 stringify 的是**最终注入 HTML 的那个变量**
+    expect(code).toMatch(/JSON\.stringify\(loadUrl\)/);
+  });
+
+  it('Model3DGen 已接入 Scene3DViewer 的 GLB 模式', () => {
+    const m3d = stripComments(src('components/Model3DGen.tsx'));
+    expect(m3d).toContain("from './Scene3DViewer'");
+    expect(m3d).toMatch(/<Scene3DViewer scene=\{null\} glbUrl=/);
+  });
+});

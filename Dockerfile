@@ -83,8 +83,30 @@ COPY package.json ./
 COPY packages/agentai-gateway/rules.json ./gateway/rules.json
 
 # 数据持久化目录
-RUN mkdir -p /app/data /app/logs /app/.agentai/memory && \
-    chown -R agentai:agentai /app
+# 2026-10-16 部署加固: 补全 AgentAI_HOME 下的全部标准子目录。
+# 此前只建了 memory，而 checkpoints / tasks / worktrees / config / cache
+# 靠各模块首次写入时自行 mkdir —— 目录不存在 + 非 root 用户 = 首次写入 EACCES。
+# 显式预建并 chown，避免能力在容器里静默失效。
+# 说明: 这些目录已由 docker-compose.yml 挂载为命名卷，镜像内建目录只为
+# 保证单容器 `docker run` 场景（无 compose）同样可用。
+RUN mkdir -p /app/data /app/logs \
+      /app/.agentai/memory \
+      /app/.agentai/checkpoints \
+      /app/.agentai/tasks \
+      /app/.agentai/worktrees \
+      /app/.agentai/config \
+      /app/.agentai/cache \
+      /app/.agentai/sessions \
+      /app/.agentai/skills \
+    && chown -R agentai:agentai /app
+
+# ⚠️ 关于 Git worktree 隔离能力在容器内的可用性:
+# 镜像已装 git（第 63 行），但**镜像内不含 .git 目录**（只 COPY 了 dist 产物），
+# 因此 worktreeCapability() 会返回 NOT_A_GIT_REPO —— 这是预期行为，不是 bug。
+# 若需要容器内 worktree 隔离，两种方式:
+#   1. 挂载宿主仓库: -v /host/repo:/workspace/repo 挂载进容器（容器内即为 git 仓库）
+#   2. 把 .git 一并 COPY 进镜像（仅适合 CI 内的临时仓库，不适合生产）
+# 前端/CLI 可通过 GET /v1/system/capabilities 查当前环境的实际可用性。
 
 USER agentai
 
@@ -92,7 +114,8 @@ EXPOSE 18789
 
 ENV NODE_ENV=production \
     PORT=18789 \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    AGENTAI_HOME=/app/.agentai
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:18789/v1/health || exit 1

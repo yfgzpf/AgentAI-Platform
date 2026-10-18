@@ -15,6 +15,8 @@ import { Card, Tag, Empty, Input, InputNumber, Button, Space, message as antdMsg
 import { PlusOutlined, DeleteOutlined, LockOutlined, SafetyCertificateOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, ClockCircleOutlined, ImportOutlined, BugOutlined, WarningOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { GATEWAY_HTTP } from '../services/config';
 import { useProfileStore } from '../store';
+import { SrcPlatformImporter } from './SrcPlatformImporter';
+import { AuthAttestationPanel } from './AuthAttestationPanel';
 
 interface ScopeTarget { host: string; source: string; }
 
@@ -359,6 +361,12 @@ export const ScopeManager: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* ═══════════ 2026-10-16 SRC 平台导入 (归属 + 授权目标 + 禁止项 一次提取) ═══════════ */}
+      <SrcPlatformImporter onChanged={() => void load()} />
+
+      {/* ═══════════ 2026-10-16 授权声明 (声明一次, AI 不再反复核实授权真伪) ═══════════ */}
+      <AuthAttestationPanel onChanged={() => void load()} />
 
       {/* ═══════════ 2026-10-15 P0-2: AI 授权提案待确认区 (人类确认才生效) ═══════════ */}
       {pending.length > 0 && (

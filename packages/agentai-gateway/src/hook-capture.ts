@@ -198,7 +198,24 @@ export class HookCaptureEngine {
     }
 
     const callId = args.__callId || `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const duration = result.durationMs || 0;
+    // P0 修复 (2026-10-17): 调用方传进来的是 registry.dispatch 的元素
+    //   `{ id, name, result: ToolResult }`, 而本函数按**扁平** ToolResult
+    //   ({success, output, durationMs}) 读 → success 恒 undefined / duration 恒 0,
+    //   日志失真把排查引向"工具执行失败"的方向 (实机事故: write_file 明明
+    //   success=true 写盘成功, 日志却报 success: undefined)。
+    //   兼容两种形状: 有嵌套 result 就解包, 扁平就直读。
+    const raw: any = result as any;
+    const tr: ToolResult = (raw && raw.result && typeof raw.result === 'object')
+      ? (raw.result as ToolResult)
+      : (raw as ToolResult);
+    const duration = tr.durationMs || raw?.durationMs || 0;
+    const success = tr.success;
+    const outputLength = tr.output?.length ?? raw?.output?.length ?? 0;
+    // 输出摘要: 排查时能一眼看到失败原因 (截断防日志刷屏)
+    const outPreview = (tr.output || raw?.output || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120);
 
     // 触发PostToolUse Hook
     await hooksManager.trigger('PostToolUse', {
@@ -208,19 +225,22 @@ export class HookCaptureEngine {
       timestamp: Date.now(),
       toolName,
       toolArgs: args,
-      toolResult: result,
+      toolResult: tr,
       callId,
       originalContext: context,
       metadata: {
         callId,
         duration,
-        success: result.success,
-        errorType: result.structuredError?.type,
-        outputLength: result.output?.length || 0
+        success,
+        errorType: tr.structuredError?.type,
+        outputLength
       }
     });
 
-    console.log(`[HookCapture] Tool executed: ${toolName}, duration: ${duration}ms, success: ${result.success}`);
+    console.log(
+      `[HookCapture] Tool executed: ${toolName}, duration: ${duration}ms, success: ${success}` +
+      `${success === false ? ` | output: ${outPreview}` : ''}`
+    );
   }
 
   // ═══════════════════════════════════════════════════════

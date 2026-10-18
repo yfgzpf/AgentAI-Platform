@@ -26,8 +26,9 @@
  *   - 单次会话最多写入 20 条 (防刷屏)
  */
 
-import { writeMemory, readMemory, MemoryEntry } from './memory.js';
+import { writeMemory, readMemory, pruneMemoryFile, MemoryEntry } from './memory.js';
 import { workspaceJournal } from './memory.js';
+import * as path from 'path';
 
 // ═══════════════════════════════════════════════════════════
 // 类型定义
@@ -226,54 +227,39 @@ export async function rememberBatch(
  * - 删除标记为 superseded 的记忆
  * - 删除重要性 < 0.1 且超过 30 天的记忆
  * - 限制每个工作区最多 200 条记忆 (LRU 淘汰)
+ *
+ * ═══ 2026-10-17 P0: 从假功能变成真实现 ═══
+ * 原版问题: 声称"通过 writeMemory 覆盖为空"删除, 但 MemoryEntry 根本没有
+ * id/_id 字段 → `mid` 恒为 '' → toDelete 恒为空 → **一条不删, 且因为
+ * deleted=0 连日志都不打** — 调用方 (agentai-loop 任务完成时 fire-and-forget)
+ * 以为清理在发生, 实际文件只涨不减。现改为直接 prune 工作区 memory.jsonl
+ * (经 memory.ts 的 pruneMemoryFile: 有界尾部读取 + 排队原子重写),
+ * 删除数以 before-after 真实上报。
  */
 export async function cleanupStaleMemories(workspace: string): Promise<{ deleted: number; remaining: number }> {
   try {
-    const all = await readMemory({
-      userId: 'default',
-      workspace,
-      limit: 500,
-    });
-
-    let deleted = 0;
+    const file = path.join(workspace, '.agentai', 'memory.jsonl');
     const now = Date.now();
     const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-    const toDelete: string[] = [];
+    const MAX_PER_WORKSPACE = 200;
 
-    for (const m of all) {
-      const mid = (m as any).id || (m as any)._id || '';
-      // 删除已标记为 superseded 的记忆
-      if ((m as any).metadata?.category === 'superseded' || (m as any).metadata?.supersededBy) {
-        if (mid) toDelete.push(mid);
-        continue;
-      }
-      // 删除低重要性 + 过时的记忆
-      if ((m.importance || 0) < 0.1) {
-        const age = now - ((m as any).timestamp || (m as any).createdAt || 0);
-        if (age > THIRTY_DAYS && mid) toDelete.push(mid);
-      }
-    }
+    const { before, after } = await pruneMemoryFile(file, (entries) => {
+      // 1. 删 superseded 标记 + 低重要性且过期的
+      const survivors = entries.filter(e =>
+        !(e.supersededBy || (e.metadata as any)?.supersededBy || e.metadata?.category === 'superseded')
+        && !((e.importance || 0) < 0.1 && now - e.ts > THIRTY_DAYS));
+      // 2. LRU 淘汰: 超过 200 条 → 丢最不重要的 (同分取更旧)
+      if (survivors.length <= MAX_PER_WORKSPACE) return survivors;
+      const sorted = [...survivors].sort((a, b) =>
+        (b.importance || 0) - (a.importance || 0) || b.ts - a.ts);
+      return sorted.slice(0, MAX_PER_WORKSPACE);
+    });
 
-    // LRU 淘汰: 如果超过 200 条, 删除最旧且最不重要的
-    if (all.length - toDelete.length > 200) {
-      const survivors = all.filter(m => !toDelete.includes((m as any).id || (m as any)._id || ''));
-      survivors.sort((a, b) => (a.importance || 0) - (b.importance || 0));
-      const excess = survivors.slice(0, all.length - toDelete.length - 200);
-      for (const m of excess) {
-        const mid = (m as any).id || (m as any)._id || '';
-        if (mid) toDelete.push(mid);
-      }
-    }
-
-    // 执行删除 (通过 writeMemory 覆盖为空 — 因为 readMemory 没有 delete API)
-    // TODO: 如果 memory.js 支持 delete, 改用 delete
-    deleted = toDelete.length;
-
+    const deleted = before - after;
     if (deleted > 0) {
-      console.log(`[self-memory] 清理 ${deleted} 条过时记忆 (工作区: ${workspace})`);
+      console.log(`[self-memory] 清理 ${deleted} 条过时记忆 (工作区: ${workspace}, 剩余 ${after})`);
     }
-
-    return { deleted, remaining: all.length - deleted };
+    return { deleted, remaining: after };
   } catch (e: any) {
     console.warn(`[self-memory] cleanup failed: ${e.message}`);
     return { deleted: 0, remaining: 0 };

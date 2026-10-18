@@ -74,6 +74,10 @@ grant_scope({ target: "m.example.com",      max_rps: 5 })
 
 确认后用这些 `grant_scope` 授权，再进 `pentest-workflow` 挖洞。
 
+### 3b. 资产展开 (授权后)
+
+平台只给根域 (如 `*.example.com`) 时，授权后可用 **`enum_subdomains({domain})`** 查 crt.sh 证书透明日志把资产清单展开成真实子域列表，并按授权状态分组 (in_scope 可直接测 / 未授权需补提案) —— 赏金 80% 的洞在没人管的子域上，这步是"挑目标"的延伸。子域里的 admin/dev/test 类优先看，支付/生产类照黑名单排除。
+
 ### 4. 平台特化提示
 
 | 平台 | scope 页位置 | 注意 |

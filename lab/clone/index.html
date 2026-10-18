@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 户型生成（本地复刻 Demo）</title>
+<style>
+:root{
+  --bg:#1a1f2b;
+  --card:#ffffff;
+  --card-shadow:0 20px 60px rgba(0,0,0,.35);
+  --primary:#2f9e44;
+  --primary-hover:#2b8a3c;
+  --text:#1f2933;
+  --text-sub:#7b8794;
+  --border:#e3e8ef;
+  --tab-active:#111827;
+}
+*{margin:0;padding:0;box-sizing:border-box;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+html,body{width:100%;height:100%;overflow:hidden}
+body{
+  background:var(--bg);
+  position:relative;
+}
+/* 背景场景（AI 生成图替代原站的 WebGL 实时渲染） */
+.scene-bg{
+  position:fixed;inset:0;
+  background:url('assets/bg-livingroom.png') center center / cover no-repeat;
+}
+.scene-bg::after{ /* 压暗一层，突出中间弹窗 */
+  content:"";position:absolute;inset:0;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,.10) 0%, rgba(0,0,0,.45) 100%);
+}
+/* 左上角标签 */
+.badge-ai{
+  position:fixed;top:28px;left:32px;z-index:5;
+  display:flex;align-items:center;gap:10px;color:#fff;
+}
+.badge-ai .dot{width:34px;height:34px;border-radius:9px;background:rgba(255,255,255,.16);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center}
+.badge-ai .dot svg{width:20px;height:20px}
+.badge-ai .txt{font-size:15px;font-weight:600;letter-spacing:2px;text-shadow:0 1px 4px rgba(0,0,0,.5)}
+.badge-ai .sub{font-size:11px;color:rgba(255,255,255,.75);letter-spacing:1px}
+/* 居中弹窗 */
+.modal{
+  position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+  z-index:10;width:880px;max-width:92vw;
+  background:var(--card);border-radius:18px;box-shadow:var(--card-shadow);
+  overflow:hidden;
+}
+.modal-head{
+  display:flex;align-items:center;justify-content:center;gap:44px;
+  padding:22px 30px 14px;position:relative;
+}
+.modal-head .title{
+  position:absolute;left:30px;top:24px;font-size:17px;font-weight:700;color:var(--text);
+}
+.tabs{display:flex;gap:34px}
+.tab{
+  background:none;border:none;cursor:pointer;
+  font-size:16px;color:var(--text-sub);padding:6px 2px;position:relative;
+  transition:color .15s;
+}
+.tab.active{color:var(--tab-active);font-weight:700;font-size:17px}
+.tab.active::after{
+  content:"";position:absolute;left:0;right:0;bottom:-6px;height:3px;border-radius:2px;background:var(--tab-active);
+}
+.close-btn{
+  position:absolute;right:18px;top:20px;width:30px;height:30px;border:none;background:none;
+  font-size:20px;color:var(--text-sub);cursor:pointer;border-radius:6px;
+}
+.close-btn:hover{background:#f1f3f5;color:var(--text)}
+/* 视图区 */
+.view{padding:10px 30px 26px;min-height:430px}
+.view[hidden]{display:none}
+/* 上传视图 */
+.dropzone{
+  width:560px;margin:14px auto 0;
+  border:2px dashed var(--border);border-radius:14px;
+  padding:56px 24px;text-align:center;cursor:pointer;
+  transition:border-color .15s, background .15s;
+}
+.dropzone:hover,.dropzone.drag{border-color:var(--primary);background:#f4faf4}
+.dz-icon{width:64px;height:64px;margin:0 auto 18px;color:#b9c2cc}
+.dz-main{font-size:15px;color:var(--text);font-weight:600;margin-bottom:6px}
+.dz-sub{font-size:13px;color:var(--text-sub);margin-bottom:14px}
+.dz-file{
+  display:inline-flex;align-items:center;gap:8px;
+  background:#eef6f0;color:var(--primary);font-size:13px;font-weight:600;
+  padding:8px 18px;border-radius:8px;
+}
+.dz-preview{max-width:160px;margin:0 auto 12px;border:1px solid var(--border);border-radius:8px;display:none}
+/* 案例视图 */
+.cases-top{display:flex;align-items:center;justify-content:space-between;margin:8px 0 14px}
+.cases-top h3{font-size:14px;color:var(--text-sub);font-weight:500}
+.search{
+  display:flex;align-items:center;gap:8px;
+  width:280px;height:38px;padding:0 14px;
+  border:1px solid var(--border);border-radius:9px;background:#fafbfc;
+}
+.search svg{width:16px;height:16px;color:var(--text-sub);flex:none}
+.search input{border:none;outline:none;background:none;font-size:13px;width:100%;color:var(--text)}
+.grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
+  max-width:600px;margin:0 auto;
+}
+.cell{cursor:pointer}
+.thumb{
+  border:2px solid transparent;border-radius:10px;overflow:hidden;background:#f5f6f8;
+  aspect-ratio:4/3;position:relative;transition:transform .12s;
+}
+.cell:hover .thumb{transform:scale(1.02)}
+.cell.selected .thumb{border-color:var(--primary)}
+.cell.selected .thumb::after{
+  content:"";position:absolute;right:8px;top:8px;width:20px;height:20px;border-radius:50%;
+  background:var(--primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='white' d='M6.2 11.2 3 8l-1.4 1.4 4.6 4.6 8-8L12.8 4z'/%3E%3C/svg%3E") center/11px no-repeat;
+}
+.thumb svg{width:100%;height:100%;display:block}
+.cell .name{font-size:12px;color:var(--text-sub);margin-top:7px;text-align:center}
+.cell.selected .name{color:var(--primary);font-weight:600}
+.empty{grid-column:1/-1;text-align:center;color:var(--text-sub);font-size:13px;padding:40px 0}
+.footer{display:flex;justify-content:center;padding:18px 0 4px}
+.btn-primary{
+  width:200px;height:44px;border:none;border-radius:10px;cursor:pointer;
+  background:var(--primary);color:#fff;font-size:15px;font-weight:600;letter-spacing:2px;
+  transition:background .15s, opacity .15s;
+}
+.btn-primary:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary:not(:disabled):hover{background:var(--primary-hover)}
+.toast{
+  position:fixed;bottom:34px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:rgba(17,24,39,.92);color:#fff;font-size:13px;padding:10px 20px;border-radius:8px;
+  opacity:0;pointer-events:none;transition:.25s;z-index:99;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="scene-bg"></div>
+
+<div class="badge-ai">
+  <div class="dot">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+      <path d="M12 2v3M4.2 5.6l2.1 2.1M2 12h3M19.8 5.6l-2.1 2.1M22 12h-3"/><circle cx="12" cy="14" r="6"/>
+    </svg>
+  </div>
+  <div>
+    <div class="txt">AI生成</div>
+    <div class="sub">LOCAL REPRO · DEMO</div>
+  </div>
+</div>
+
+<div class="modal" role="dialog" aria-label="上传户型">
+  <div class="modal-head">
+    <div class="title">上传户型</div>
+    <div class="tabs">
+      <button class="tab active" data-view="upload">上传户型</button>
+      <button class="tab" data-view="cases">户型案例</button>
+    </div>
+    <button class="close-btn" aria-label="关闭">&times;</button>
+  </div>
+
+  <!-- 上传视图 -->
+  <div class="view" id="view-upload">
+    <div class="dropzone" id="dropzone">
+      <svg class="dz-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+        <rect x="3" y="4" width="18" height="14" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/>
+        <path d="m3 15 5-4 4 3 4-3 5 4"/>
+        <path d="M12 18v4m0 0-2-2m2 2 2-2"/>
+      </svg>
+      <div class="dz-main" id="dzMain">上传户型图</div>
+      <div class="dz-sub">点击或拖拽上传 · 支持 JPG / PNG / PDF，≤ 20MB</div>
+      <div class="dz-file" id="dzFile" hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>
+        <span id="dzFileName"></span>
+      </div>
+      <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.pdf" hidden>
+    </div>
+  </div>
+
+  <!-- 案例视图 -->
+  <div class="view" id="view-cases" hidden>
+    <div class="cases-top">
+      <h3>选择参考户型（共 <span id="caseCount">0</span> 套）</h3>
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="searchInput" type="text" placeholder="搜索户型名称 / 居室数" autocomplete="off">
+      </div>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="footer">
+      <button class="btn-primary" id="confirmBtn" disabled>确 认</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== 程序化生成户型 SVG 缩略图（不依赖任何外部素材） ===== */
+function makePlan(seed){
+  const W=200,H=150;
+  const rand=(function(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}})(seed);
+  let p='';
+  // 外框
+  const mx=8,my=8,w=W-16,h=H-16;
+  p+='<rect x="'+mx+'" y="'+my+'" width="'+w+'" height="'+h+'" fill="#fff" stroke="#37474f" stroke-width="2.5"/>';
+  // 内部分隔（竖墙）
+  const nV=1+Math.floor(rand()*2);
+  for(let i=1;i<=nV;i++){
+    const x=mx+w*i/(nV+1)+(rand()*14-7);
+    const gap=rand()>0.5? 1:0;
+    p+='<line x1="'+x+'" y1="'+(my+20*gap)+'" x2="'+x+'" y2="'+(my+h-20*gap)+'" stroke="#37474f" stroke-width="2"/>';
+  }
+  // 横墙（客厅/卧室）
+  const nH=rand()>0.4?1:2;
+  for(let i=1;i<=nH;i++){
+    const y=my+h*i/(nH+1)+(rand()*12-6);
+    const x1=mx+w*rand()*0.4;
+    p+='<line x1="'+x1+'" y1="'+y+'" x2="'+(mx+w)+'" y2="'+y+'" stroke="#37474f" stroke-width="1.6"/>';
+  }
+  // 门（留缺口示意：画一段浅色覆盖模拟门洞 + 弧线）
+  for(let d=0;d<2;d++){
+    const dx=mx+w*(0.2+rand()*0.6);
+    p+='<path d="M '+dx+' '+(my+h)+' A 14 14 0 0 0 '+(dx+14)+' '+(my+h-14)+'" fill="none" stroke="#8b9aa8" stroke-width="1" stroke-dasharray="3 2"/>';
+    p+='<line x1="'+dx+'" y1="'+(my+h)+'" x2="'+(dx+14)+'" y2="'+(my+h)+'" stroke="#fff" stroke-width="3"/>';
+  }
+  // 房间名
+  const names=['客厅','主卧','次卧','厨房','卫生间','书房'];
+  for(let r=0;r<2+Math.floor(rand()*2);r++){
+    p+='<text x="'+(mx+12+w*rand()*0.7)+'" y="'+(my+26+h*rand()*0.7)+'" font-size="9" fill="#90a4ae" font-family="sans-serif">'+names[Math.floor(rand()*names.length)]+'</text>';
+  }
+  __result = '<svg viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg" style="background:#f5f6f8">'+p+'</svg>';
+}
+
+const CASES=[
+  {name:'阳光三房 · 89㎡',seed:11},{name:'南北通透 · 120㎡',seed:22},
+  {name:'紧凑两居 · 65㎡',seed:33},{name:'四居横厅 · 143㎡',seed:44},
+  {name:'LOFT 复式 · 58㎡',seed:55},{name:'一居室 · 42㎡',seed:66},
+  {name:'三室两厅 · 108㎡',seed:77},{name:'别墅一层 · 210㎡',seed:88},
+  {name:'边套户型 · 96㎡',seed:99},
+];
+
+const grid=document.getElementById('grid');
+let selected=null;
+
+function render(list){
+  grid.innerHTML='';
+  if(!list.length){
+    grid.innerHTML='<div class="empty">未找到匹配的户型</div>';
+    return;
+  }
+  list.forEach(c=>{
+    const el=document.createElement('div');
+    el.className='cell'+(selected===c.name?' selected':'');
+    el.innerHTML='<div class="thumb">'+makePlan(c.seed)+'</div><div class="name">'+c.name+'</div>';
+    el.onclick=()=>{selected=c.name;render(list);};
+    grid.appendChild(el);
+  });
+}
+function refresh(){
+  const q=document.getElementById('searchInput').value.trim();
+  const list=q?CASES.filter(c=>c.name.includes(q)):CASES;
+  document.getElementById('caseCount').textContent=list.length;
+  render(list);
+  document.getElementById('confirmBtn').disabled=!selected;
+}
+document.getElementById('searchInput').addEventListener('input',refresh);
+refresh();
+
+/* ===== Tab 切换 ===== */
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('view-upload').hidden=(t.dataset.view!=='upload');
+    document.getElementById('view-cases').hidden=(t.dataset.view!=='cases');
+  };
+});
+
+/* ===== 拖拽上传（模拟，纯本地） ===== */
+const dz=document.getElementById('dropzone'),fi=document.getElementById('fileInput');
+dz.onclick=()=>fi.click();
+fi.onchange=()=>showFile(fi.files[0]);
+['dragover','dragenter'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag');}));
+['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag');}));
+dz.addEventListener('drop',e=>showFile(e.dataTransfer.files[0]));
+function showFile(f){
+  if(!f)return;
+  document.getElementById('dzMain').textContent='已选择文件';
+  document.getElementById('dzFile').hidden=false;
+  document.getElementById('dzFileName').textContent=f.name;
+  toast('文件已就绪（本地演示，未上传服务器）');
+}
+
+/* ===== 确认按钮 ===== */
+document.getElementById('confirmBtn').onclick=function(){
+  toast('已选择「'+selected+'」· 本地演示结束 ✓');
+};
+
+/* ===== toast ===== */
+let tt;
+function toast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.classList.add('show');
+  clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2400);
+}
+</script>
+</body>
+</html>

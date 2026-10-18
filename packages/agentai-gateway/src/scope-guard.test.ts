@@ -195,7 +195,9 @@ describe('行为: wsl_scan 授权闸门 + grant_scope 直接授权', () => {
     expect(r.data?.granted).toBe(true);
     // scope.json 立即含 admin.test.com, max_rps 改成 3
     const scope = JSON.parse(fsMod.readFileSync(nodePath.join(tmpWs2, '.agentai', 'scope.json'), 'utf8'));
-    expect(scope.targets).toContain('admin.test.com');
+    // targets 是 {host, source} 对象数组 (2026-10-16 起, 不再是裸字符串 — 归属不能被洗掉)
+    expect(scope.targets.map((t: any) => t.host)).toContain('admin.test.com');
+    expect(scope.targets.find((t: any) => t.host === 'admin.test.com')).toHaveProperty('source');
     expect(scope.max_rps).toBe(3);
     // 立即生效: wsl_scan 对该目标可过授权闸门
     const r2 = await EXTRA_HANDLERS['scope_guard']({ target: 'https://admin.test.com', action: 'check_scope' }, ctx);
@@ -209,7 +211,7 @@ describe('行为: wsl_scan 授权闸门 + grant_scope 直接授权', () => {
     expect(r1.success).toBe(true);
     expect(r1.data?.granted).toBe(false); // 已授权 → 非新增
     const scope = JSON.parse(fsMod.readFileSync(nodePath.join(tmpWs2, '.agentai', 'scope.json'), 'utf8'));
-    expect(scope.targets.filter((t: string) => t === 'admin.test.com').length).toBe(1);
+    expect(scope.targets.filter((t: any) => t?.host === 'admin.test.com').length).toBe(1);
   });
 
   it('list_scope 返回当前授权范围 (2026-10-16 拆提案制, 不再展示 pending)', async () => {
@@ -263,15 +265,21 @@ describe('契约: 2026-10-15 P0/P1 修复接线', () => {
   });
 
   it('grant_scope 直接写 scope.json (2026-10-16 回退: 拆提案制, 给网址即授权)', () => {
-    // handler 体直接 writeFileSync scope.json, 不再走 proposeScope/pending
+    // handler 体直接落盘 scope.json, 不再走 proposeScope/pending
     const grantBody = toolsCode.slice(
       toolsCode.indexOf('grant_scope: async'),
       toolsCode.indexOf('list_scope: async'),
     );
-    expect(grantBody).toMatch(/writeFileSync/);
+    // 2026-10-16 修正: 实现已从 writeFileSync 换成 readScopeWithSource/writeScopeWithSource
+    //   (原 writeFileSync(string[]) 会把面板标注的 {host, source} 降级成裸字符串, 抹掉归属)
+    expect(grantBody).toMatch(/writeScopeWithSource/);
+    expect(grantBody).toMatch(/readScopeWithSource/);
     expect(grantBody).toMatch(/readScope\(ws\)/);
     expect(grantBody).not.toMatch(/proposeScope/);
     expect(grantBody).not.toMatch(/scope-pending/);
+    // 不得引用已删除的局部变量 (2026-10-16 ReferenceError 回归锁)
+    expect(grantBody).not.toMatch(/existing\.targets/);
+    expect(grantBody).toMatch(/next\.map\(t => t\.host\)/);
   });
 
   it('wsl_scan 有参数级 shell 元字符安检 + argv 数组化 (不走 cmd /c 拼串)', () => {
@@ -316,6 +324,23 @@ describe('行为: grant_scope 直接授权 (2026-10-16 回退, 拆提案制)', (
     // wsA 已有 example.com → 子域 api.example.com 判定为已覆盖, granted=false
     const r3 = await EXTRA_HANDLERS['grant_scope']({ target: 'api.example.com' }, ctx);
     expect(r3.data?.granted).toBe(false);
+  });
+
+  // ⚠️ 2026-10-16 回归锁: grant_scope 曾因**没在本handler 内 import** readScopeWithSource/
+  //   writeScopeWithSource 而一调必抛 ReferenceError, 被外层 catch 吞成 "grant_scope 失败",
+  //   表现为"AI 说授权了但实际没授权" —— 极难从日志察觉(失败被catch 静默)。
+  //   修法: 在 handler 内 await import。这条断言直接扫源码防止再次漏import。
+  it('grant_scope handler 内自带 readScopeWithSource/writeScopeWithSource 的 import', () => {
+    const grantBody = toolsCode.slice(
+      toolsCode.indexOf('grant_scope: async'),
+      toolsCode.indexOf('list_scope: async'),
+    );
+    expect(grantBody).toMatch(
+      /readScopeWithSource[\s\S]{0,120}writeScopeWithSource[\s\S]{0,80}await import\('\.\/pentest-scope-guard\.js'\)/,
+    );
+    // 不许引用任何已删除/不存在的局部变量
+    expect(grantBody).not.toMatch(/existing\.targets/);
+    expect(grantBody).not.toMatch(/oldExisting/);
   });
 });
 
@@ -635,9 +660,113 @@ describe('行为: enum_subdomains 域名解析', () => {
   it('*.example.com 通配符形式自动取根域 (打 crt.sh; 网络不可用 → 明确报错, 不静默)', async () => {
     const { EXTRA_HANDLERS } = await import('./tools.ts');
     const ctx = { userId: 'u', workspace: wsB, abortSignal: new AbortController().signal } as any;
+    // 30s 超时: 该用例真打 crt.sh 外部网络, 实测 5~9s 波动;
+    // 用默认 10s 会在网络稍慢时随机失败 (假阴性, 与被测逻辑无关)。
     const r = await EXTRA_HANDLERS['enum_subdomains']({ domain: '*.example.com' }, ctx);
     // 沙箱/离线 → crt.sh 不可达 → success:false 但输出含 crt.sh 上下文 (证明走到了网络层)
     // 在线 → success:true 且有分组数据。两种都算"逻辑正确", 但不允许"域名解析错误"
     expect(r.output).not.toMatch(/无法解析根域/);
+  }, 30_000);
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// 2026-10-17 授权范围: 全局默认 + 工作区覆盖 (换工作区不必重新授一遍权)
+// ════════════════════════════════════════════════════════════════════════
+describe('授权范围: 全局默认 + 工作区覆盖', () => {
+  const gwDir = nodePath.join(ROOT, 'packages', 'agentai-gateway');
+  const wsG1 = nodePath.join(gwDir, '.scope-guard-test-ws-global-a');
+  const wsG2 = nodePath.join(gwDir, '.scope-guard-test-ws-global-b');
+  const homeG = nodePath.join(gwDir, '.scope-guard-test-home');
+  const prevHome = process.env.AGENTAI_HOME;
+  rmSync(wsG1, { recursive: true, force: true });
+  rmSync(wsG2, { recursive: true, force: true });
+  rmSync(homeG, { recursive: true, force: true });
+  mkdirSync(nodePath.join(wsG1, '.agentai'), { recursive: true });
+  mkdirSync(nodePath.join(wsG2, '.agentai'), { recursive: true });
+  mkdirSync(homeG, { recursive: true });
+  // 全局默认授权: a.com + b.com
+  writeFileSync(nodePath.join(homeG, 'scope.json'),
+    JSON.stringify({ targets: [{ host: 'a.com', source: 'global' }, { host: 'b.com', source: 'global' }], max_rps: 5 }));
+  process.env.AGENTAI_HOME = homeG;
+
+  // ⚠️ hook 超时给 60s: 同文件前面的 wsl_scan 用例真调 wsl.exe, 沙箱按 Program Blacklist
+  //   拦下后子进程清理会拖慢 teardown; 全量并发跑时 10s 默认值不够 (实测假超时)。
+  afterAll(() => {
+    if (prevHome === undefined) delete process.env.AGENTAI_HOME; else process.env.AGENTAI_HOME = prevHome;
+    for (const d of [wsG1, wsG2, homeG]) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* 清理失败不影响判定 */ }
+    }
+  }, 60_000);
+
+  it('G1: 全局 scope 文件落在 AGENTAI_HOME 下 (不走 homedir, 桌面版/Docker 才不会丢)', () => {
+    const guardSrc = src('packages/agentai-gateway/src/pentest-scope-guard.ts');
+    expect(guardSrc).toContain('export function globalScopeFilePath(): string');
+    expect(guardSrc).toContain('resolveAgentAiHome()');
+    expect(guardSrc).not.toMatch(/os\.homedir\(\)/);
+  });
+
+  it('G2: extend 模式 (默认) — 空 workspace 也能读到全局默认授权', async () => {
+    const { readScope, isTargetInScope, readScopeMode } = await import('./pentest-scope-guard.js');
+    expect(readScopeMode(wsG1)).toBe('extend');
+    const targets = readScope(wsG1);
+    expect(targets).toContain('a.com');
+    expect(targets).toContain('b.com');
+    // 生效判定同样吃全局默认 — 这才是"换工作区不必重新授权"的意义
+    expect(isTargetInScope(wsG1, 'a.com')).toBe(true);
+    expect(isTargetInScope(wsG1, 'sub.a.com')).toBe(true);
+    expect(isTargetInScope(wsG1, 'evil-a.com')).toBe(false); // 无后缀绕过
+  });
+
+  it('G3: 工作区追加与全局合并去重 (同 host 保留 workspace 的 source)', async () => {
+    const { readScopeWithSource, readWorkspaceScopeTargets, readGlobalScopeTargets } = await import('./pentest-scope-guard.js');
+    writeFileSync(nodePath.join(wsG1, '.agentai', 'scope.json'),
+      JSON.stringify({ targets: [{ host: 'c.com', source: 'manual' }, { host: 'a.com', source: 'manual' }], max_rps: 5 }));
+    const merged = readScopeWithSource(wsG1);
+    const hosts = merged.map(t => t.host);
+    expect(hosts).toEqual(expect.arrayContaining(['a.com', 'b.com', 'c.com']));
+    // 去重: a.com 只出现一次, 且用 workspace 的 source
+    expect(hosts.filter(h => h === 'a.com')).toHaveLength(1);
+    expect(merged.find(t => t.host === 'a.com')!.source).toBe('manual');
+    // 分层读要能分开 (前端标"全局/本工作区"用)
+    expect(readWorkspaceScopeTargets(wsG1).map(t => t.host)).toEqual(['c.com', 'a.com']);
+    expect(readGlobalScopeTargets().map(t => t.host)).toEqual(['a.com', 'b.com']);
+  });
+
+  it('G4: override 模式 — 工作区清单完全取代全局 ("这个项目只许打这几个")', async () => {
+    const { readScope, isTargetInScope, readScopeMode, writeScopeWithSource } = await import('./pentest-scope-guard.js');
+    writeScopeWithSource(wsG2, [{ host: 'only.com', source: 'manual' }], { scope_mode: 'override' }, 'workspace');
+    expect(readScopeMode(wsG2)).toBe('override');
+    const targets = readScope(wsG2);
+    expect(targets).toEqual(['only.com']);
+    expect(targets).not.toContain('a.com'); // 全局默认被完全顶掉
+    expect(isTargetInScope(wsG2, 'only.com')).toBe(true);
+    expect(isTargetInScope(wsG2, 'a.com')).toBe(false);
+  });
+
+  it('G5: 安全不变量 — 全局默认不放宽 deny 硬闸门 (deny 优先于 allow 无条件生效)', async () => {
+    const { isTargetInScope } = await import('./pentest-scope-guard.js');
+    const { upsertPlatform, confirmPlatform, removePlatform } = await import('./src-platforms.js');
+    // 建一个把 a.com 列为禁止项的平台 → 即使全局授权了 a.com 也必须拒
+    const { platform } = upsertPlatform(wsG1, {
+      id: 'deny-test', name: 'deny-test', hosts: [], deny: ['a.com'],
+      forbiddenActions: [], rewards: [], confirmed: false, ts: Date.now(),
+    });
+    confirmPlatform(wsG1, platform.id);
+    expect(isTargetInScope(wsG1, 'a.com')).toBe(false);
+    // 清理, 避免污染同文件其他用例
+    removePlatform(wsG1, platform.id);
+  });
+
+  it('G6: routes 层不再自己 path.join 读 scope.json (中文 Windows 路径吞反斜杠的坑)', () => {
+    const routeSrc = codeOnly(src('packages/agentai-gateway/src/routes/pentest-scope.ts'));
+    // 本地 readScope 必须委托 guard 的合并实现
+    expect(routeSrc).toContain('function readScope(ws: string): { targets: string[]; max_rps: number; mode:');
+    expect(routeSrc).toContain('readScopeWithSource(ws)');
+    expect(routeSrc).toContain('globalScopeFilePath()');
+    // 写作用域参数 + 模式端点
+    expect(routeSrc).toContain("function writeWhere(req: any): 'workspace' | 'global'");
+    expect(routeSrc).toContain("pentestScopeRouter.post('/v1/pentest/scope/mode'");
+    // 不允许再出现旧的裸 path.join 读法 (注释里引用该坑说明是允许的, 故走 codeOnly)
+    expect(routeSrc).not.toMatch(/path\.join\(ws, '\.agentai', 'scope\.json'\)/);
   });
 });

@@ -38,9 +38,6 @@ const xuanji = new Xuanji({
 // 速率限制器: 动态区分内部/外部调用
 const limiter = new RateLimiter();
 
-/** monorepo 根目录 (gateway 在 packages/agentai-gateway, 向上两级) */
-const PROJECT_ROOT = path.resolve(process.cwd(), '..', '..');
-
 export interface ChatRouterDeps {
   router: AgentAIRouter;
   registry: ToolRegistry;
@@ -79,18 +76,24 @@ export function createChatRouter(deps: ChatRouterDeps): Router {
   const activeLoops = new Map<string, { loop: AgentAILoop; abort: () => void }>();
 
   /**
-   * 迭代轮数「天花板」— 2026-10-12
+   * 迭代轮数「最后保险」— 2026-10-17 富哥拍板: 全部放宽
    * ============================================================
-   * 修复前: 本文件 5 处 loop 构造都写死 `maxIterations: 30` (普通对话路径更是只有 10)。
-   *   而 AgentAILoop 的 G4 闸门用的就是这个值 ⇒ 它**冒充了模型预算**, 把能力层算出的
-   *   autonomous=90 / guided=70 / supervised=50 全部压掉 (能力层那个值原先只打印、不生效)。
-   *   症状: 用户显式选 DeepSeek 4.1 (能力层认定 90 轮) 做长任务, 实际 30 轮就被要求收尾。
-   * 现在: loop 内部取 `min(能力层值, opts.maxIterations)` (见 agentai-loop.ts「能力层的迭代预算
-   *   真正生效」), 所以这里传的语义是**上限封顶**而非模型预算。90 = autonomous 档的上界,
-   *   即"不额外限制", 真正的轮数交给能力层裁决。
-   * 有意设置小预算的调用方 (subagent 10 / goal-runner 20 / master-controller 20) 不受影响 —— min 只会收紧。
+   * 富哥原话: "渗透任务的步数一定要很久才能拿到结果, 未完成用户肯定是说继续,
+   *   系统应该以上下文来评判" ⇒ **不再有任何有意义的迭代上限**。
+   *
+   * 本常量只是"防失控"的最后保险 (10 万轮 ≈ 不可能在单次会话触及),
+   * 不是业务上限 —— 真正的判停依据是**上下文/进度**, 见 agentai-loop.ts:
+   *   1. 工具级死循环熔断 (同工具连续失败≥6 → 强制换路) —— 拦真死循环;
+   *   2. idle 进度超时 (10 分钟无任何工具活动) —— 卡住才停, 有进展就续;
+   *   3. 用户说"继续" → 跨会话 task-snapshot 恢复, 而非系统强杀;
+   *   4. 绝对墙钟 (12h) —— 纯最后保险, 正常长任务远不到。
+   *
+   * 历史: 旧版 `min(能力层值, opts)` 把 autonomous=80/90 当成硬上限, 导致渗透任务
+   *   跑到 90/90 被强杀 (富哥实机事故)。现该钳制已从 agentai-loop.ts 移除,
+   *   此处的 opts.maxIterations 即为唯一生效值 (subagent 10 / goal-runner 20 等
+   *   自身小预算调用方不受影响, 因为它们显式传值, 不依赖本常量)。
    */
-  const MAX_ITERATION_CEILING = 90;
+  const MAX_ITERATION_CEILING = 100000;
 
   // 待审批计划存储 — 规划模式审批后等待用户确认
   const pendingPlans = new Map<string, { execPlan: any; message: string; userId: string; workspace: string; sessionId: string; profile?: any; model?: string; displayModel: string }>();
@@ -235,7 +238,7 @@ const tryActivateIndustry = async (reqBody: any) => {
 
 
   r.post('/v1/chat', async (req: Request, res: Response) => {
-    const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile, taskId: requestTaskId, auto, contextInject, mode } = req.body;
+    const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile, taskId: requestTaskId, auto, contextInject, mode, sessionId: requestSessionId } = req.body;
     // SSE 断线恢复: 前端重试时带 _retry + _receivedDelta
     const isRetry = !!(req.body as any)._retry;
     const receivedDelta: string = (req.body as any)._receivedDelta || '';
@@ -264,10 +267,21 @@ const tryActivateIndustry = async (reqBody: any) => {
 
     // 速率限制检查 (内部调用使用更高限制)
     const isInternalReq = !!_internal;
-    const rl = limiter.check(userId, isInternalReq);
+    // 2026-10-17 P0: 桌面端(Tauri 打包)是**单人本地应用**, 不存在多租户争抢。
+    //   原限制 (外部 20 RPM / 并发 2) 是按公网多用户设计的, 套到本地单用户上
+    //   表现为"连发两条就 HTTP 429, 后台根本没跑" —— 实机被坑过。
+    //   AGENTAI_DESKTOP 由 Tauri spawn_gateway 注入 (lib.rs:296)。
+    const isDesktop = process.env.AGENTAI_DESKTOP === '1';
+    const rl = limiter.check(userId, isInternalReq || isDesktop);
     if (!rl.allowed) {
       res.setHeader('Retry-After', String(rl.retryAfter || 60));
-      return res.status(429).json({ error: rl.reason, retryAfter: rl.retryAfter });
+      return res.status(429).json({
+        error: rl.reason,
+        retryAfter: rl.retryAfter,
+        // 供前端区分"本地限流"与"模型服务限流", 不再只显示裸 HTTP 429
+        scope: 'gateway-local',
+        hint: '本地网关限流, 请求未发出到模型服务',
+      });
     }
 
     try {
@@ -732,6 +746,13 @@ const sendEvent = (event: string, data: any) => {
             modelConfig: selected.baseURL ? { baseURL: selected.baseURL, modelName: selected.subModel || '', provider: selected.provider } : modelConfig,
             activeFile,
             taskId: requestTaskId,  // 长任务快照: 透传 taskId, 支持跨会话恢复
+            // 2026-10-16 会话级 checkpoint 归属: 用**前端会话 id**而非 loop 自带的随机 sessionId,
+            // 否则每次请求都散成新目录, GUI 无法按会话列出可回退的轮次。
+            checkpointSessionId: requestSessionId,
+            // 2026-10-16 工作区隔离: 见文件末尾说明。isolation:'worktree' 时本回合
+            // 在独立 git worktree 里执行, 并行会话改不到彼此的文件。
+            isolation: (req.body?.isolation === 'worktree' ? 'worktree' : 'none') as 'worktree' | 'none',
+            isolationLabel: req.body?.isolationLabel,
             contextInject: contextInject || undefined,
             mode: mode || 'auto',  // 运行模式: auto/planning/review/readonly
           });
@@ -909,6 +930,12 @@ const sendEvent = (event: string, data: any) => {
         });
         loop.on('tool:result', (info: any) => {
           sendEvent('tool_result', { callId: info.callId, name: info.name, result: info.result, ok: info.ok, durationMs: info.durationMs, data: info.data });
+        });
+        // 2026-10-17 P0: 长耗时工具执行期间的心跳。
+        // 不加这个, `run_command` 跑几分钟不发任何事件 → 前端 idle 计时器
+        // (ChatView.tsx 5 分钟) 判定无响应 → abort 掐掉正在干活的后端连接。
+        loop.on('tool:heartbeat', (info: any) => {
+          sendEvent('tool_heartbeat', { callId: info.callId, name: info.name, pending: info.pending, retry: info.retry || 0 });
         });
         // 推理过程: LLM调工具前的思考内容 → 前端展示为可折叠卡片
         loop.on('reasoning', (info: any) => {
@@ -1306,6 +1333,9 @@ req.on('close', () => {
           }
 
           const response = await loop.run(runMessage);
+          // 2026-10-16: 如实回报隔离实况。前端据此提示"本次改动已隔离 / 隔离未生效及原因"，
+          // 避免用户误以为开了隔离就一定安全（虚假安全感比明说失败更危险）。
+          const isolationStatus = loop.getIsolationStatus?.();
 
           // 注销loop追踪
           activeLoops.delete(sessionId || 'default');
@@ -1486,6 +1516,12 @@ req.on('close', () => {
             thinkingBudget: thinking ? 4096 : undefined,
             activeFile,
             taskId: requestTaskId,  // 长任务快照: 透传 taskId
+            checkpointSessionId: requestSessionId,  // 2026-10-16 会话级 checkpoint 归属会话
+            // 2026-10-16 工作区隔离: 前端传 isolation:'worktree' 时, 本回合在独立
+            // git worktree 里执行, 并行会话改不到彼此的文件。
+            // 隔离失败会在响应的 isolation 字段如实上报, 不静默假装生效。
+            isolation: (req.body?.isolation === 'worktree' ? 'worktree' : 'none') as 'worktree' | 'none',
+            isolationLabel: req.body?.isolationLabel,
             contextInject: contextInject || undefined,
           });
         } else {
@@ -1508,6 +1544,12 @@ req.on('close', () => {
             thinking: !!thinking,
             thinkingBudget: thinking ? 4096 : undefined,
             taskId: requestTaskId,  // 长任务快照: 透传 taskId
+            checkpointSessionId: requestSessionId,  // 2026-10-16 会话级 checkpoint 归属会话
+            // 2026-10-16 工作区隔离: 前端传 isolation:'worktree' 时, 本回合在独立
+            // git worktree 里执行, 并行会话改不到彼此的文件。
+            // 隔离失败会在响应的 isolation 字段如实上报, 不静默假装生效。
+            isolation: (req.body?.isolation === 'worktree' ? 'worktree' : 'none') as 'worktree' | 'none',
+            isolationLabel: req.body?.isolationLabel,
           });
         }
         sessionManager.set(sessionKey, { loop, userId, workspace, callCount: 1 });

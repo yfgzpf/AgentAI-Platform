@@ -10,7 +10,7 @@ export interface LitePromptContext {
     userName?: string;
     industry?: string;
     role?: string;
-    taskType?: 'coding' | 'research' | 'media' | 'industry' | 'general';
+    taskType?: 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general';
     workspace?: string;
     evolutionPatterns?: string[];
 }
@@ -127,8 +127,15 @@ ${ctx.evolutionPatterns.slice(0, 3).map(p => `- ${p}`).join('\n')}
     return parts.join('\n');
 }
 
-export function detectTaskType(userMessage: string): 'coding' | 'research' | 'media' | 'industry' | 'general' {
+export function detectTaskType(userMessage: string): 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general' {
     const lower = userMessage.toLowerCase();
+    // 2026-10-17 新增 security (渗透/安全任务)。**必须放在最前面**:
+    //   挖洞类 prompt 极容易被下面的规则抢走 —— "分析 tycredit 的越权漏洞"
+    //   会被 research 的 /分析/ 命中, "修复这个 SQL 注入"会被 coding 的 /修复/ 命中,
+    //   结果安全任务拿到 4~5 的工具预算, 远不够一轮并发多探针。
+    if (lower.match(/挖洞|渗透|攻防|src|众测|漏洞|越权|idor|ssrf|rce|xss|sql\s*注入|扫描器|nmap|nuclei|sqlmap|subfinder|授权范围|攻击面|侦察|子域名|指纹|提权|渗透测试|安全测试|护网/)) {
+        return 'security';
+    }
     if (lower.match(/代码|编程|修改|重构|调试|bug|error|fix|修复|写|创建|删除|文件|目录|git|npm|pip/)) {
         return 'coding';
     }

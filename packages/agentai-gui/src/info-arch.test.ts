@@ -148,10 +148,15 @@ describe('系统下拉分段 (2026-10-11)', () => {
   });
 
   it('NavGroupDropdown 支持段头渲染, 且由 p.section 透传', () => {
-    expect(clean).toMatch(/section\?:\s*string/);
-    expect(clean).toMatch(/showSection/);
+    // 2026-10-12: 实现本体搬至 app/NavGroupDropdown.tsx (App.tsx 瘦身第一批),
+    // 此处同时断言「实现存在」与「App.tsx 已接线」, 防搬走后就没人引用。
+    const nav = stripComments(src('app/NavGroupDropdown.tsx'));
+    expect(nav).toMatch(/section\?:\s*string/);
+    expect(nav).toMatch(/showSection/);
+    expect(nav).toContain('role="menuitem"');
+    // 段标题的透传发生在 App.tsx 组装 NavGroupItem 时 (section: p.section)
     expect(clean).toMatch(/section:\s*p\.section/);
-    expect(clean).toContain('role="menuitem"');
+    expect(clean).toContain('NavGroupDropdown');
   });
 });
 
@@ -160,16 +165,23 @@ describe('系统下拉分段 (2026-10-11)', () => {
 // ════════════════════════════════════════════════════════════════════════
 
 describe('免费内置模型提示条可关闭 (2026-10-11)', () => {
+  // 2026-10-12: FeatureGuide 本体搬至 app/FeatureGuide.tsx (App.tsx 瘦身第一批),
+  // 故断言目标改为新文件, 并加一条「App.tsx 仍引用它」防接线断掉。
+  const guide = stripComments(src('app/FeatureGuide.tsx'));
   const clean = stripComments(src('App.tsx'));
 
+  it('App.tsx 已引用搬出的 FeatureGuide', () => {
+    expect(clean).toContain('import { FeatureGuide }');
+  });
+
   it('有关闭入口 + localStorage 记忆', () => {
-    expect(clean).toContain('data-testid="nag-dismiss"');
-    expect(clean).toContain('agentai.nag.freeModelDismissed');
+    expect(guide).toContain('data-testid="nag-dismiss"');
+    expect(guide).toContain('agentai.nag.freeModelDismissed');
     // 关闭后必须短路返回 children (否则关不掉)
-    expect(clean).toMatch(/isActivated \|\| !page\.requireSubscription \|\| dismissed/);
+    expect(guide).toMatch(/isActivated \|\| !page\.requireSubscription \|\| dismissed/);
   });
 
   it('localStorage 取值有 try/catch (隐私模式不能炸)', () => {
-    expect(clean).toMatch(/try\s*\{\s*return localStorage\.getItem\(NAG_KEY\)/);
+    expect(guide).toMatch(/try\s*\{\s*return localStorage\.getItem\(NAG_KEY\)/);
   });
 });

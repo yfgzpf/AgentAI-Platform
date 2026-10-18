@@ -54,7 +54,7 @@ export interface EvolutionEntry {
   /** 关联的工作空间 */
   workspace?: string;
   /** 2026-06-24 新增: 任务类型（用于智能召回） */
-  taskType?: 'coding' | 'research' | 'media' | 'industry' | 'general';
+  taskType?: 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general';
   /** 2026-06-24 新增: 行业（用于智能召回） */
   industry?: string;
   /** 2026-06-24 新增: 错误类型（用于智能召回） */
@@ -317,7 +317,7 @@ export function readEvolutionForContext(opts: { userId?: string; workspace?: str
  * 2026-08-28 增强: 支持有效性过滤 — 优先召回已验证有效的规则，过滤低效噪声
  */
 export function recallEvolution(criteria: {
-  taskType?: 'coding' | 'research' | 'media' | 'industry' | 'general';
+  taskType?: 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general';
   industry?: string;
   errorType?: 'TypeError' | 'ReferenceError' | 'SyntaxError' | 'NetworkError' | 'FileSystemError' | 'PermissionError' | 'TimeoutError' | 'UnknownError';
   keywords?: string[];

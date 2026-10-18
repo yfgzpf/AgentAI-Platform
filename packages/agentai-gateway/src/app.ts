@@ -29,6 +29,9 @@ import { filesRouter } from './routes/files.js';
 import { pentestScopeRouter } from './routes/pentest-scope.js';
 import { sessionCheckpointRouter } from './routes/session-checkpoint.js';
 import { systemCapabilityRouter } from './routes/system-capability.js';
+// 2026-10-17 环境体检: 一次性告知"缺什么 / 能不能自动装 / 怎么装"
+//   (node/python/git/playwright/WSL/nmap/nuclei/sqlmap) —— 只读检测, 绝不自动执行安装
+import envCheckRouter from './routes/env-check.js';
 import { createQQRouter } from './routes/qq.js';
 import { createChannelRouter } from './routes/channel.js';
 import { createCustomerRouter } from './routes/customer.js';
@@ -64,6 +67,7 @@ import { startTaskCleanupLoop } from './task-snapshot.js';
 import { createSkillsRouter } from './routes/skills.js';
 import { startSkillWatcher } from './skills/watcher.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
+import { startMemoryCleanupLoop } from './memory.js';
 import { getSessionManager } from './session-manager.js';
 import { createModelsRouter } from './routes/models.js';
 import { createAutomationRouter } from './routes/automation.js';
@@ -106,7 +110,9 @@ app.use(cors({
       'Content-Type', 'Authorization', 'X-Requested-With',
       'X-Video-Api-Key', 'X-Video-Base-Url',
     ],
-    exposedHeaders: ['Content-Type'],
+    // 2026-10-17: 补Content-Disposition —— 前端要靠它拿到下载文件名
+    // (图片/证据另存为)。不暴露的话跨源 fetch 读不到, <a download> 只能靠猜名字。
+    exposedHeaders: ['Content-Type', 'Content-Disposition', 'Content-Length'],
   }));
   // ===== 中间件顺序（2026-10-06 调整）=====
   // 原顺序: express.json({limit:`50mb`}) → authMiddleware
@@ -222,6 +228,7 @@ app.use(cors({
 app.use(sessionCheckpointRouter);
 // 2026-10-16 打包/部署加固: 环境能力探测 (git/worktree/checkpoint 可用性 + 存储路径)
 app.use('/v1/system/capabilities', systemCapabilityRouter);
+app.use('/v1/system', envCheckRouter);
 app.use(createBrowserRouter());
 app.use('/v1/browser/engine', createBrowserEngineRouter(deps.io));
 app.use(parseFileRouter);
@@ -899,6 +906,7 @@ export function startBackgroundJobs(skillsDir: string, io?: IOServer, deps?: Rec
   }
 
   startEvolutionCleanupLoop();
+  startMemoryCleanupLoop();
   startTaskCleanupLoop();
   getSessionManager();
 

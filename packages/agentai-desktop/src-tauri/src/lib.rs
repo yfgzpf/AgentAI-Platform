@@ -145,8 +145,12 @@ fn validate_gateway_dir(gw_dir: &PathBuf) -> Result<(), String> {
         );
         
         // 自动运行 npm install
+        // 2026-10-16: 与 build-for-desktop.mjs 保持一致 —— 不再传 --ignore-scripts。
+        // 打包时已剥离 install 钩子（否则会因缺少 scripts/ 直接失败），
+        // 原生模块（better-sqlite3 / playwright）需要正常编译，
+        // --ignore-scripts 会让 .node 缺失，把"安装期失败"推迟成"启动期崩溃"。
         let npm_result = Command::new("npm")
-            .args(&["install", "--production", "--no-optional", "--ignore-scripts"])
+            .args(&["install", "--production", "--no-optional"])
             .current_dir(&gw_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

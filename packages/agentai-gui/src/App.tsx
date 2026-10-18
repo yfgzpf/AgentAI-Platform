@@ -61,6 +61,9 @@ import { GuideModal } from './components/GuideModal';
 import { BrandLogo } from './components/BrandLogo';  // 品牌标唯一出口 (标题栏原用栅格 favicon, 已统一)
 import { StatusBar } from './components/StatusBar';
 import { GitStatusBar } from './components/GitStatusBar';
+// 2026-10-17 环境体检面板: 一屏看清"缺什么 / 能不能自动装 / 怎么装"
+//   (SetupWizard 偏首次启动向导; 本面板是随时可查的完整清单, 且**不含任何自动安装动作**)
+import { EnvCheckPanel } from './components/EnvCheckPanel';
 import { SimpleGitPanel } from './components/SimpleGitPanel';  // 使用简化版 Git 面板
 import { TerminalPanel, terminalTaskManager, TerminalTask } from './components/TerminalPanel';  // 终端任务面板
 import { IdentityOnboarding } from './components/IdentityOnboarding';
@@ -193,6 +196,8 @@ export const App: React.FC = () => {
   const [setupWizardVisible, setSetupWizardVisible] = useState(false);
   const [splashVisible, setSplashVisible] = useState(true);
   const [gitPanelVisible, setGitPanelVisible] = useState(false);
+  // 2026-10-17: 环境体检抽屉
+  const [envPanelVisible, setEnvPanelVisible] = useState(false);
   const [terminalPanelVisible, setTerminalPanelVisible] = useState(false);
   const [terminalTasks, setTerminalTasks] = useState<TerminalTask[]>([]);
   const { fontSize, setFontSize } = useFontSizeStore();
@@ -532,6 +537,13 @@ export const App: React.FC = () => {
     const stored = getLocalProfile();
     return !!stored?.name && !!stored?.industry;
   });
+
+  /* --- 2026-10-17 环境体检面板: StatusBar 按钮 → 打开弹窗 (用事件解耦, 避免 StatusBar 依赖 App 状态) --- */
+  useEffect(() => {
+    const open = () => setEnvPanelVisible(true);
+    window.addEventListener('agentai:open-env-check', open);
+    return () => window.removeEventListener('agentai:open-env-check', open);
+  }, []);
 
   /* --- 首次启动环境检测 (仅 Tauri 桌面端打包后生效) --- */
   useEffect(() => {
@@ -1313,6 +1325,17 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
 
       {/* ═══ 7.5 环境检测向导 (缺失依赖时弹出) ═══ */}
       <SetupWizard visible={setupWizardVisible} onClose={() => setSetupWizardVisible(false)} />
+
+      {/* ═══ 7.6 环境体检面板 (随时可查的完整依赖清单, 只读不安装) ═══ */}
+      <Modal
+        open={envPanelVisible}
+        onCancel={() => setEnvPanelVisible(false)}
+        footer={null}
+        width={560}
+        title="环境体检"
+      >
+        <EnvCheckPanel onClose={() => setEnvPanelVisible(false)} />
+      </Modal>
 
       {/* ═══ 8. 联系开发者二维码弹窗 ═══ */}
       <Modal

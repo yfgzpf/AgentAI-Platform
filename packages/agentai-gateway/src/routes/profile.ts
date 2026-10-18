@@ -14,6 +14,7 @@ import { userModel } from '../user-model.js';
 import { industryEngine } from '../industry-engine.js';
 import { WorkspaceManager } from '../workspace-manager.js';
 import { currentRequestWorkspace } from '../request-scope.js';
+import { writeWorkspaceProfile } from '../workspace-profile.js';
 
 let _industryEngine: any = industryEngine;
 
@@ -79,21 +80,15 @@ export function createProfileRouter(): Router {
         userModel.setIdentity(uid, { questionnaire });
       }
 
-      // 开发偏好持久化到项目 .agentai/profile.json
+      // 开发偏好持久化到工作区画像 (批 2-B: 经 workspace-profile 单一模块原子写;
+      // 旧的裸 path.join 直写 .agentai/profile.json 已废弃 — 读方 readDevPrefs 自动兼容旧文件)
       const { devPrefs } = req.body || {};
       if (devPrefs && typeof devPrefs === 'object') {
         try {
           // 2026-10-06: 请求级工作区（原来读全局单例 → 在 A 项目保存开发偏好，
           // 文件却落到 B 项目的 .agentai/profile.json）
           const ws = currentRequestWorkspace() || WorkspaceManager.getInstance().projectDir;
-          const profileDir = path.join(ws, '.agentai');
-          if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
-          const profilePath = path.join(profileDir, 'profile.json');
-          let existing: any = {};
-          try { existing = JSON.parse(fs.readFileSync(profilePath, 'utf-8')); } catch { /* new file */ }
-          existing.devPrefs = devPrefs;
-          existing.updatedAt = Date.now();
-          fs.writeFileSync(profilePath, JSON.stringify(existing, null, 2), 'utf-8');
+          writeWorkspaceProfile(ws, { devPrefs });
           console.log(`[profile] devPrefs saved: ${JSON.stringify(devPrefs).slice(0, 100)}`);
         } catch (e: any) { console.warn('[profile] devPrefs save failed:', e?.message); }
       }

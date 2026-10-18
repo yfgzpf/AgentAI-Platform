@@ -1,6 +1,10 @@
 import { AgentAILoop } from './agentai-loop.js';
 import { AgentAIRouter } from './llm-router.js';
 import { ToolRegistry } from './tool-registry.js';
+// ★ V2.0 P0: 渗透四角色 (Planner/Recon/Exploit/Validator) + 分层模型路由
+import {
+  PENTEST_ROLE_TYPES, PENTEST_ROLE_DEFS, resolvePentestRoleModel, isPentestRole,
+} from './pentest/roles.js';
 
 // 2026-07-26 移除免费模型限制: AgentAI (Agnes AI) 不是弱模型, 与商业模型同等对待
 // 所有模型均可调用子智能体, 不再区分强弱模型
@@ -82,6 +86,9 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
 - 每次工具调用前一句话说明目的, 调用后一句话总结发现。
 
 工作流程:
+0. **经验召回 (开工必做)**: 先 search_pentest_experience({host:根域}) + search_vulns({target:根域}) ——
+   看这个资产/同类资产以前成功过什么、失败过什么; 每个目标收尾时调 record_pentest_experience
+   把**成败都记下来** (成功写手法, 失败写被什么拦住), 下一个目标直接复用。
 1. 授权: 先 list_scope 看当前范围; 目标没授权就 grant_scope({target}) **直接生效**
    (写 scope.json, 无需面板确认)。⚠️ 只在用户**明确给了这个目标**时才授权 —— 别自作主张扩大范围,
    越界目标 (out-of-scope / 支付 / 生产 / 没在用户清单里的) 一律不碰。授权后 scope_guard.check_scope 校验再继续
@@ -547,6 +554,8 @@ const SUBAGENT_TOOLS: Record<string, string[]> = {
     'wsl_scan', 'grant_scope', 'list_scope',
     // 2026-10-16 第一梯队 (审查报告第二问): 资产发现 (子域枚举) + 攻击面展开 (JS端点) + 深度利用 (HTTP重放)
     'enum_subdomains', 'extract_js_endpoints', 'http_replay',
+    // 2026-10-18 经验闭环: 开工先召回历史成败 + 收尾固化经验 (富哥: 不固化=每个目标从零开始)
+    'search_pentest_experience', 'record_pentest_experience', 'search_vulns',
   ],
   'fix-verifier': [
     'read_file', 'search_content', 'run_code', 'run_command',
@@ -590,6 +599,23 @@ const SUBAGENT_TOOLS: Record<string, string[]> = {
   'tcm_wellness': ['read_file', 'search_content', 'web_search', 'write_file'],
 };
 
+// ===== V2.0 P0: 渗透四角色注册 (Planner/Recon/Exploit/Validator) =====
+// 提示词与工具白名单集中在 pentest/roles.ts, 这里并入统一表 → 复用既有
+// spawn_subagent 分发链路 (含 runSubagent 的模型继承与 dispatch 层 scope 闸门)。
+for (const _role of PENTEST_ROLE_TYPES) {
+  SUBAGENT_PROMPTS[_role] = PENTEST_ROLE_DEFS[_role].prompt;
+  SUBAGENT_TOOLS[_role] = PENTEST_ROLE_DEFS[_role].tools;
+}
+
+/** 各 provider 的密钥环境变量 — 子智能体换模型时判断"这个 provider 到底能不能用" */
+const PROVIDER_KEY_ENV: Record<string, string> = {
+  agentai: 'AGENTAI_API_KEY', zhipu: 'ZHIPU_API_KEY',
+  dxnt: 'DXNT_API_KEY', sensenova: 'SENSENOVA_API_KEY',
+  longcat: 'LONGCAT_API_KEY', deepseek: 'DEEPSEEK_API_KEY',
+  alrc: 'ALRC_API_KEY', openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+};
+
 export async function runSubagent(
   type: string,
   task: string,
@@ -620,17 +646,11 @@ export async function runSubagent(
   const providerStats = (router as any)?.providers?.get(parentModel);
   if (parentModel && providerStats?.tripped) {
     // 尝试所有可用 provider (不区分免费/商业)
-    const allProviders = ['agentai', 'zhipu', 'dxnt', 'sensenova', 'longcat', 'deepseek', 'alrc', 'openai'];
-    const keyMap: Record<string, string> = {
-      agentai: 'AGENTAI_API_KEY', zhipu: 'ZHIPU_API_KEY',
-      dxnt: 'DXNT_API_KEY', sensenova: 'SENSENOVA_API_KEY',
-      longcat: 'LONGCAT_API_KEY', deepseek: 'DEEPSEEK_API_KEY',
-      alrc: 'ALRC_API_KEY', openai: 'OPENAI_API_KEY',
-    };
+    const allProviders = Object.keys(PROVIDER_KEY_ENV);
     for (const alt of allProviders) {
       if (alt === parentModel) continue;
       const altStats = (router as any)?.providers?.get(alt);
-      const envKey = keyMap[alt];
+      const envKey = PROVIDER_KEY_ENV[alt];
       if (altStats && !altStats.tripped && envKey && process.env[envKey]) {
         subModel = alt;
         subModelName = ''; // 换 provider 后父模型名不适用, 走该 provider 的默认/环境模型
@@ -638,6 +658,28 @@ export async function runSubagent(
         break;
       }
     }
+  }
+
+  // ═══ V2.0 P0: 四角色分层模型路由 ═══
+  // 富哥定调「模型用就用, 没用就用本模型」:
+  //   角色 env (PENTEST_<ROLE>_MODEL=provider[:modelName]) 且 provider 可用 → 用;
+  //   否则原样回退 (父模型 / 上面的熔断切换结果), 角色照常工作、绝不因缺强模型不可用。
+  // 只影响 planner/recon/exploit/validator 四个渗透角色, 其他子智能体行为完全不变。
+  if (isPentestRole(type)) {
+    const isUsable = (prov: string): boolean => {
+      const keyEnv = PROVIDER_KEY_ENV[prov];
+      const st = (router as any)?.providers?.get(prov);
+      const hasKey = keyEnv ? !!process.env[keyEnv] : true;
+      return hasKey && !(st && st.tripped);
+    };
+    const pick = resolvePentestRoleModel(type, subModel, subModelName, isUsable);
+    if (pick.source === 'env') {
+      console.log(`[subagent] ${type} 使用偏好模型 ${pick.model}${pick.modelName ? ':' + pick.modelName : ''}`);
+    } else if ((process.env[`PENTEST_${type.replace(/^pentest_/, '').toUpperCase()}_MODEL`] || '').trim()) {
+      console.log(`[subagent] ${type} 偏好模型不可用 → 回退本模型 ${pick.model}`);
+    }
+    subModel = pick.model;
+    subModelName = pick.modelName;
   }
 
   const loop = new AgentAILoop(router, subRegistry, [], {

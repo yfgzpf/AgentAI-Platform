@@ -31,7 +31,8 @@ import { computeCapabilities, getCapabilitiesById, type ModelCapability, type Ca
 
 // ===== 类型定义 =====
 
-export type TaskType = 'coding' | 'research' | 'media' | 'industry' | 'general';
+// 2026-10-17 新增 security: 渗透/漏洞挖掘任务型 (见 system-prompt-lite.ts detectTaskType)
+export type TaskType = 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general';
 
 /** 单个「模型 × 任务类型」的运行时统计 */
 export interface RuntimeStats {
@@ -162,6 +163,9 @@ const TASK_WEIGHTS: Record<TaskType, { success: number; toolCall: number; qualit
   media:    { success: 0.20, toolCall: 0.15, quality: 0.45, latency: 0.20 },
   general:  { success: 0.30, toolCall: 0.20, quality: 0.30, latency: 0.20 },
   industry: { success: 0.25, toolCall: 0.25, quality: 0.35, latency: 0.15 },
+  // 2026-10-17: 渗透/漏洞挖掘 — 最看重工具调用成功率与产出质量 (多步链路容错率低),
+  //   延迟权重最低 (扫描类任务天然慢, 不该因此惩罚模型)
+  security: { success: 0.30, toolCall: 0.40, quality: 0.25, latency: 0.05 },
 };
 
 // ===== 单例 =====

@@ -39,6 +39,44 @@ import { getOrCreateSnapshot, formatResumeContext, findResumableTasks, isWorthSn
 import { beginTurn, trackFile } from './session-checkpoint.js';
 import { buildIdeContext } from './ide-state.js';
 import { buildMemoryContext, initProjectMemory, readProjectMemory } from './project-memory.js';
+
+/**
+ * 2026-10-17 富哥拍板「全部放宽」: **不再有任何迭代上限**。
+ * 旧版曾为 security(渗透) 设过 200 迭代天花板, 但那是"盲数" —— 真正的长任务
+ * 可能远超 200 轮 (探测→验证→取证→写报告)。现在迭代上限已从架构移除,
+ * 判停改由「上下文/进度」裁决 (工具级熔断 + idle 超时 + 用户继续 + 绝对墙钟)。
+ * 故 SECURITY_ITERATION_CEILING 常量与对应抬高逻辑一并删除, 避免留下"可重新卡死"的陷阱。
+ */
+
+/**
+ * 2026-10-17 P0: 工具级连续失败阈值 (同工具跨参数)。
+ * 单独提为模块级常量, 便于测试直接引用真实值 (而不是在测试里复写一份)。
+ */
+export const TOOL_FAIL_BREAKER = 6;
+
+/**
+ * 2026-10-17 P0: 工具级熔断判定 (纯函数, 供生产代码与测试共用)。
+ *
+ * 判定"这个工具这条路走不通了" — 与 sig (同参数) 维度正交:
+ *   sig 维度   : 同一个 `tool::{args}` 连续失败 → 可能是参数没调对;
+ *   工具维度   : 同一个工具连续失败 (参数随便换) → 目标就是不接受你, 换参数没用。
+ * 实机事故: 渗透任务 write_file 换文件名重试 51 次, sig 每次都新 → 同参数熔断
+ *   永不触发 → 只能烧光 90 轮迭代预算被强杀。
+ *
+ * @param toolName    工具名
+ * @param failN       该工具在本任务内累计连续失败次数 (跨参数)
+ * @param probeExempt 该工具是否属于"换参数=换探测目标"的正常工具
+ * @returns true = 应熔断 (强制换工具族/换思路)
+ */
+export function shouldTripToolBreaker(
+  toolName: string,
+  failN: number,
+  probeExempt: boolean,
+): boolean {
+  if (probeExempt) return false;       // 探测类工具换参数是正常工作流
+  return failN >= TOOL_FAIL_BREAKER;    // 连续失败达阈值 = 这条路走不通
+}
+import { readDevPrefs } from './workspace-profile.js';
 import { MemoryManager } from './memory-manager.js';
 import { recordCall } from './usage-stats.js';
 import { getTaskSupervisor } from './task-supervisor.js';
@@ -54,12 +92,137 @@ const CTX_TOTAL_BUDGET_CHARS = 60_000;
 /** priority >= 此值的注入可被预算仲裁丢弃 (0=必保留 10=重要 20=增强 30=可选) */
 const CTX_PRIORITY_DROP_THRESHOLD = 30;
 
-// ═══ 工具调用预算 (2026-10-11) ═══
+// ═══ 工具调用预算 (2026-10-11 设立, 2026-10-17 富哥拍板放宽) ═══
 // 之前只有 token 压力预警 + 60 分钟墙钟超时, 没有"工具调用总量"上限:
 // 死循环/弱模型可在预算内空转, 单请求产生大量付费调用。
 // 超限后不硬 break, 而是注入总结指令 + 复用 _hardStopNext 软着陆 (见循环顶部消费点)。
-// 200 次 ≈ 90 轮 × 每轮 ~2 个工具, 对正常长任务足够宽松。
-const TOOL_CALL_BUDGET = 200;
+// 2026-10-17: 富哥明确"预算控制清掉" + "渗透任务步数一定要很久才能拿到结果"
+//   ⇒ 旧值 200 ≈ 100 轮, 会系统性打断正常深挖 (如扫描 200+ 主机属合法操作)。
+//   现改为 10 万 (纯最后保险, 单次会话远触及不到); 真正拦死循环的是工具级熔断,
+//   不是这个总量预算。
+const TOOL_CALL_BUDGET = 100000;
+
+/** 上游临时不可用(429/超时/5xx)时的最大退避重试次数 (2026-10-17) */
+const PROVIDER_WAIT_MAX_RETRY = 4;
+
+/** 按任务类型的每轮工具并发上限 (2026-10-17: 新增 security, 渗透任务一轮要并发多探针) */
+const TASK_TOOL_CONCURRENCY: Record<string, number> = {
+  coding: 5, research: 6, media: 6, industry: 4, security: 12, general: 5,
+};
+/** security 的硬上限 —— AI 一次放几十个子任务会打爆目标/触发限流, 必须封顶 */
+const TASK_TOOL_CONCURRENCY_MAX = 12;
+
+/** ═══ 行业↔任务对齐表 (2026-10-17, "任务优先于行业"根因修复) ═══
+ *  行业框架只在**与本轮任务天然同源**时才完整注入, 否则降级为一句优先级声明。
+ *  实锤坑: 用户在「澳彩项目」工作区里挖洞, workspace 存的行业(ecommerce/decoration/...)
+ *  被无条件注入, 且措辞是"优先使用该行业的专业术语和框架" —— 方向正好相反,
+ *  AI 被拽回业务话术, 表现为"不进挖洞, 进项目"。
+ *  security 一律不对齐: 渗透任务与任何行业框架都不同源。 */
+const INDUSTRY_FULL_INJECT: Record<string, string[]> = {
+  industry: ['industry', 'general', 'research'],   // 行业任务本身
+  general: ['industry', 'general', 'research'],    // 闲聊/问答: 行业语境有帮助
+  research: ['industry', 'general', 'research'],   // 调研: 行业语境有帮助
+  coding: ['developer'],                           // 开发者行业与写码同源
+  media: ['comic'],                                // 漫画行业与媒体创作同源
+  security: [],                                    // 渗透与任何行业框架都不同源
+};
+/** 该行业是否与本轮任务同源 (同源 → 完整注入; 不同源 → 只给"任务优先"声明) */
+function isIndustryTaskAligned(taskType: string, industryId: string): boolean {
+  if (!industryId || industryId === 'general') return true;
+  const allowed = INDUSTRY_FULL_INJECT[taskType] || ['industry', 'general'];
+  return allowed.includes(industryId);
+}
+
+/** 代码项目标记文件 (用于判断"写码任务 vs 工作区内容"是否同源)
+ *  ⚠️ 2026-10-17 补 Python 全套 + .py 源码兜底: 原 13 个标记在纯 Python 项目上全不命中
+ *    (实测 /f/澳彩AI: 无 package.json/go.mod/pyproject.toml, 但根目录一堆 .py),
+ *    导致 coding 任务被误判"工作区无代码项目标记" → 冲突 → 工作区画像被错误降级。 */
+const CODE_PROJECT_MARKERS = ['package.json', 'tsconfig.json', 'jsconfig.json', 'go.mod', 'Cargo.toml', 'pyproject.toml', 'requirements.txt', 'setup.py', 'setup.cfg', 'Pipfile', 'pom.xml', 'build.gradle', 'composer.json', 'Gemfile', 'mix.exs'];
+
+/** 工作区根目录有没有 .py 源码 (无标记文件的传统 py 项目兜底, 只读一层不递归) */
+function workspaceHasPythonSource(workspace: string): boolean {
+  try {
+    return fsSync.readdirSync(workspace).some(e => e.toLowerCase().endsWith('.py'));
+  } catch { return false; }
+}
+
+/** ═══ 工作区↔任务冲突检测 (2026-10-17) ═══
+ *  实锤场景: 用户在「澳彩项目」工作区里挖洞 → AI 不进挖洞, 进澳彩项目。
+ *  根因: workspace 目录 listing / project_rules / subdir-memory 是**无条件注入**的,
+ *  而它们排在 4 段业务注入之后, 权重压不住; 更糟的是 listing 里那些业务文件名
+ *  本身就在把模型往项目主题上拽。
+ *  现在: 任务与工作区内容不同源时, **拒绝注入**完整工作区画像, 只给一句优先级声明。
+ *  ⚠️ 不改变任何文件访问权限 — 只是不主动把工作区内容塞进上下文, AI 需要时仍可显式读取。 */
+function detectWorkspaceTaskConflict(taskType: string, workspace: string, messageText: string): { conflict: boolean; reason: string } {
+  if (!workspace) return { conflict: false, reason: '' };
+  const msg = (messageText || '').toLowerCase();
+  const wsNorm = workspace.toLowerCase().replace(/\\/g, '/');
+  // ① 用户显式提到工作区本身 (目录名出现在诉求里) → 任务就是冲着它来的
+  const base = wsNorm.split('/').filter(Boolean).pop() || '';
+  if (base.length > 2 && msg.includes(base)) return { conflict: false, reason: '任务显式提到本工作区' };
+  // ② 目标是本机/回环 → 工作区内容可能正是靶子
+  if (/127\.0\.0\.1|localhost|::1|0\.0\.0\.0|本机|本地服务/.test(msg)) return { conflict: false, reason: '目标为本机' };
+
+  switch (taskType) {
+    case 'security':
+      // 渗透/挖洞的目标在外部授权范围, 与本地工作区内容天然不同源
+      return { conflict: true, reason: '渗透任务目标在外部授权范围, 与本地工作区内容不同源' };
+    case 'coding': {
+      // 写码任务但工作区不是代码项目 → 冲突 (如在装修/电商工作区里写代码)
+      // ⚠️ 标记文件之外必须加 .py 源码兜底: 澳彩项目那种"一堆 .py 但没有任何
+      //    package.json/go.mod/pyproject.toml"的传统 Python 项目, 只看标记会全落空。
+      try {
+        const hasMarker = CODE_PROJECT_MARKERS.some(m => fsSync.existsSync(pathSync.join(workspace, m)))
+          || workspaceHasPythonSource(workspace);
+        if (!hasMarker) return { conflict: true, reason: '写码任务但工作区无任何代码项目标记' };
+      } catch { /* 探测失败按不冲突处理, 保持原行为 */ }
+      return { conflict: false, reason: '' };
+    }
+    default:
+      return { conflict: false, reason: '' };
+  }
+}
+
+/** ═══ 上下文仲裁策略 (2026-10-17, 批 2-C 收敛) ═══
+ *  把此前散在 4 处的两次判定收敛成**每轮一次**的决策对象:
+ *    ① industryAligned      — §3 行业注入 + §3.5 行业 KB RAG (不同 industry 来源, 同一张对齐表)
+ *    ② workspaceConflict    — §6 工作区画像 + §6.3 项目规则
+ *  为什么收敛 (不只是"好看"):
+ *   · detectWorkspaceTaskConflict 内部要 existsSync × 15 + readdirSync 探工作区,
+ *     在 §6 / §6.3 被**完整跑了两遍** — 纯浪费, 且两遍之间工作区若变化会自相矛盾。
+ *   · 4 处门控靠"复制一致"维护。将来加第 5 处注入点 (工作区 README / 子目录 listing) 时
+ *     极易漏掉门控 — 澳彩挖洞跑偏当年就是这么复发的。
+ *  现在: 每轮 run 开头定稿一次缓存, 后面全是查表; 判定逻辑单一真源。 */
+export interface ContextPolicy {
+  taskType: string;
+  /** opts.industryId 与本轮任务是否同源 (同源 → 完整注入行业框架) */
+  industryAligned: boolean;
+  /** 行业完整注入允许集 (auto-detect 采纳判定用) */
+  industryFullInject: string[];
+  /** 任意 industryId 与本轮任务是否同源 (§3.5 的 userModel 行业走这条) */
+  alignedFor: (industryId: string) => boolean;
+  /** 工作区↔任务是否冲突 (冲突 → 拒绝注入完整工作区画像/项目规则) */
+  workspaceConflict: boolean;
+  workspaceConflictReason: string;
+  /** 冲突时替换完整画像的一句优先级声明 (单一文案真源) */
+  workspaceDowngradeNotice: string;
+}
+
+export function computeContextPolicy(taskType: string, workspace: string, industryId: string, messageText: string): ContextPolicy {
+  const wsConflict = detectWorkspaceTaskConflict(taskType, workspace, messageText);
+  return {
+    taskType,
+    industryAligned: isIndustryTaskAligned(taskType, industryId),
+    industryFullInject: INDUSTRY_FULL_INJECT[taskType] || ['industry', 'general'],
+    alignedFor: (id: string) => isIndustryTaskAligned(taskType, id),
+    workspaceConflict: wsConflict.conflict,
+    workspaceConflictReason: wsConflict.reason,
+    workspaceDowngradeNotice: wsConflict.conflict
+      ? `# 上下文优先级: 任务 > 工作区\n当前任务与工作区 \`${workspace}\` 的内容不同源 (${wsConflict.reason})。\n**请以任务本身为唯一主线**: 不要主动读取/列举/分析该工作区的文件, 不要使用它的项目规则或业务上下文, 也不要把话题带回该项目。\n如确需操作该目录里的某个文件, 先用绝对路径精确定位, 并且只在用户明确要求时进行。`
+      : '',
+  };
+}
+
 import { recordToolCall, finalizeSessionAnalytics } from './tool-call-analytics.js';
 import { getFourDiagnosesSystem } from './qihuang/four-diagnoses.js';
 import { buildRemoteContext, isRemoteSessionActive, getActiveRemoteSession, detectRemoteIntent } from './remote/ai-integration.js';
@@ -337,6 +500,20 @@ private _startupSessionInjected = false;
 private _hardStopNext = false;  // v3.1 死循环硬停标志: 下一轮 LLM 响应后立即退出
 private _hardStopCount = 0;     // v3.1 硬停次数: 超过 2 次直接 force break (防 AI 忽视指令)
 
+/**
+ * 2026-10-17 P0: 卡死播报的"已播报"记录, **按【工具名】** 而非 sig。
+ *
+ * 事故现场 (富哥实机截图): `enum_subdomains 疑似卡死 (3 次调用)` 连播十几次。
+ * 根因是 2026-10-16 两处修复互相打架形成振荡:
+ *   ① 陈旧剔除里 `this._stuckEmitted.delete(sig)` (模型换参数就把"已播报"删掉)
+ *   ② 边沿触发判 `!this._stuckEmitted.has(sig)`
+ * 于是模型在几个域名之间来回试时, 每次切回原参数就重播一次。
+ *
+ * 语义修正: "这个工具在这个任务里已经提醒过卡死了" —— **按工具记一次就够了**,
+ * 模型换参数重试并不构成"新的卡死事实"。同一任务同一工具只播报一次。
+ */
+private _stuckEmittedTool = new Set<string>();
+
 /** P0 修复: 跨轮次工具调用历史 — 防止 AI 续点后重复调用相同工具+相同参数 */
 private _toolCallHistory = new Set<string>();
 
@@ -378,6 +555,31 @@ private _failTracker = new Map<string, number>();
  *      模型换方案后旧失败已不连续); ② 用本集合保证同一 sig 只播报一次。
  */
 private _stuckEmitted = new Set<string>();
+
+/**
+ * 2026-10-17 P0 新增: 工具级连续失败计数 (不论参数)
+ * ============================================================
+ * 事故现场 (富哥实机日志): 渗透任务 deepseek 连跑 90 轮被迭代上限强杀,
+ * `pain-sense 连续失败 51 次` —— AI 陷入死循环:
+ *   probe8.js → getcaptcha.js → probe_pay10.js → ...
+ * 每轮**换文件名/换参数**重试同一个目标, 直到烧光 90 步预算。
+ *
+ * 为什么原有熔断拦不住:
+ *   ① 计数维度是 `sig = tool::{args}` (同工具+**同参数**);
+ *   ② AI 的重试策略恰恰是**换参数**(换文件名是最典型的),
+ *      → 每轮 sig 都是新键 → 计数从 0 重来 → "连续失败 3 次换方案"永不触发;
+ *   ③ 于是唯一兜底只剩 maxIterations, 而"被迫耗尽预算"对用户等于
+ *      "干正事的深挖被误杀"(渗透/审计这类本就慢的任务受害最重)。
+ *
+ * 修法: 增加**工具维度**的失败计数 (同工具连续失败 ≥ N 次, 参数随便换),
+ * 触发时强制换工具族 + 换方案。语义上这是"这条路走不通了"的信号 ——
+ * 换文件名不改变"目标端点拒绝了你"这个事实。
+ * 阈值 6: 单工具合法重试(瞬时错误)不会被误伤, 但无限换参数试探会被拦下。
+ * 生命周期 = 一次 run() (与 _failTracker 同步在 run() 开头 clear)。
+ */
+private _toolFailTracker = new Map<string, number>();
+/** 已按工具级熔断播报过的工具 (边沿触发, 不每轮重复刷) */
+private _toolStuckEmitted = new Set<string>();
 
 /**
  * 2026-10-11 新增: 本次任务累计工具调用次数
@@ -508,8 +710,28 @@ private _emotionHistory: Array<{ emotion: string; intensity: number; ts: number 
   private directives = new SystemDirectiveManager();
 
   /** 当前任务类型和行业 (由 buildImmutablePrefix 检测, 主循环中使用) */
-  private _taskType: 'coding' | 'research' | 'media' | 'industry' | 'general' = 'general';
+  private _taskType: 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general' = 'general';
   private _userIndustry: string = 'general';
+
+  /** 上下文仲裁策略 (批 2-C): 每轮 ensureContext 首次使用时定稿缓存, 之后全是查表 */
+  private _ctxPolicy: ContextPolicy | null = null;
+
+  /**
+   * 取本轮上下文仲裁策略 (行业对齐 + 工作区冲突, 单一真源)。
+   * 首次调用时用当前 taskType/workspace/industryId + 用户消息定稿; _taskType 在
+   * ensureContext 开头 (security 棘轮之后) 已最终确定, 之后不再变, 缓存安全。
+   */
+  private getContextPolicy(messageText?: string): ContextPolicy {
+    if (!this._ctxPolicy) {
+      this._ctxPolicy = computeContextPolicy(
+        this._taskType,
+        this.opts.workspace || '',
+        this.opts.industryId || '',
+        messageText || '',
+      );
+    }
+    return this._ctxPolicy;
+  }
   
   /** 强制调用的技能 (由 skillAutoInvoker 设置) */
   private _forceSkill: string | null = null;
@@ -578,6 +800,10 @@ private _forbiddenResponseCount: number = 0;
   private _smartSwitcher: any = null;
   private _lastSwitchTime = 0; // 上次自动切换时间戳 (ms), 防死循环
   private _switchedProviders = new Set<string>(); // 本轮已尝试过的 provider, 防重复切换
+  // 2026-10-17: 上游临时繁忙(429/超时/5xx)时的退避重试计数。
+  // 事故: DeepSeek 额度充足却因短暂繁忙导致整个长任务被判死 + 误报"检查 API Key"。
+  // 现在退避重试 PROVIDER_WAIT_MAX_RETRY 次 (5/10/20/30s), 只有鉴权失败才立即报错。
+  private _providerWaitRetry = 0;
 
   /** 工作流编排器: 模块化技能拼装 (SenseNova 风格) */
   private workflowOrchestrator: WorkflowOrchestrator | null = null;
@@ -772,7 +998,7 @@ private _forbiddenResponseCount: number = 0;
     this.registry = registry;
     this.initialMessages = initialMessages;
     this.opts = {
-      maxIterations: opts.maxIterations ?? 90,
+      maxIterations: opts.maxIterations ?? 100000, // 2026-10-17: 默认即"最后保险"值, 不沉默成 90 盲上限
       userId: opts.userId,
       workspace: opts.workspace,
       sessionId: opts.sessionId ?? '',  // v3.2 修复: Required<LoopOptions> 缺少此字段
@@ -1003,17 +1229,14 @@ private _forbiddenResponseCount: number = 0;
         this.opts.thinking = rt.thinking;
         this.opts.thinkingBudget = rt.thinkingBudget;
       }
-      // ═══ 2026-10-12: 能力层的迭代预算真正生效 ═══
-      // 修复前: `rt.maxIterations` (autonomous 90 / guided 70 / supervised 50) **只被打印,
-      //   从不写回** —— 主循环 G4 闸门 (:2825) 与超时块 (:3119) 用的是调用方传入的
-      //   `opts.maxIterations`, 而 routes/chat.ts 把它写死成 30 (显式选模型) / 10 (普通对话)。
-      //   结果: 用户显式选了 DeepSeek 4.1 (能力层认定 autonomous=90 轮), 实际天花板仍是 30 轮;
-      //   日志里那句 `maxIter=90` 是误导性的 —— 这正是"强模型也做不完长任务"的第 2 个来源
-      //   (第 1 个是死循环护栏误杀, 见 commit f69a6ac)。
-      // 语义: 能力层给出该模型"应得"的轮数, `opts.maxIterations` 降级为**上限封顶**。
-      //   取 min 保证只可能**收紧**、不可能突破调用方的许可 —— 于是 subagent(10) / goal-runner(20)
-      //   等有意设置小预算的调用方行为完全不变, 只有 chat.ts 的武断值被放开。
-      this.opts.maxIterations = Math.min(rt.maxIterations, this.opts.maxIterations);
+      // ═══ 2026-10-12 → 2026-10-17 富哥拍板: 迭代上限彻底放开 ═══
+      // 历史: 旧版 `this.opts.maxIterations = Math.min(rt.maxIterations, opts)` 把能力层
+      //   autonomous=80/90 当成**硬上限**, 导致渗透等长任务跑到 80~90 轮被强杀 (富哥实机事故)。
+      // 现决定: **迭代上限不再由能力层钳制**。`opts.maxIterations` 即为唯一生效值 ——
+      //   chat.ts 传 10 万 (最后保险, 实际上不限), subagent(10)/goal-runner(20) 等显式小预算
+      //   调用方传自己的值, 均不受能力层干扰。
+      // 判停改由「上下文/进度」裁决: 工具级死循环熔断 + idle 进度超时 + 用户"继续"恢复 + 绝对墙钟。
+      // 能力层 rt.maxIterations 仅用于下方日志展示, 不再写回 this.opts。
       // 上下文压缩阈值存储供压缩逻辑使用
       (this as any)._contextCompressThreshold = rt.contextCompressThreshold;
 
@@ -1066,13 +1289,33 @@ private _forbiddenResponseCount: number = 0;
     // P0 修复: 任务隔离 — 每轮重新检测 _taskType, 不固化在 immutable prefix 里
     // 之前: _taskType 在 buildImmutablePrefix 中设置一次后就不再更新 → "报价表"任务串味到后续所有对话
     // 现在: 每次 run() 开始时更新 _taskType (主循环中使用最新值)
-    this._taskType = taskType;
+    //
+    // ═══ 2026-10-17 security 粘性 (重要) ═══
+    // 实锤坑: _taskType 每轮从**用户最新那一句**重算, 而长任务里用户说的往往是
+    //   "继续" / "把这 7 个域的子域枚举出来" / "没卡住我接着干" —— detectTaskType 全部判成 general,
+    //   于是整个挖洞任务大部分轮次都拿不到 security 的工具并发上限(12) 而退回 5。
+    // 现在: 一旦识别为 security 就**保持**; 只有明确检测到其他具体类型才允许改判。
+    // (单向棘轮: security 是最"黏"的任务型, 因为它跨轮最久、最不该掉档)
+    if (taskType === 'security') {
+      this._taskType = 'security';
+    } else if (this._taskType === 'security' && (taskType === 'general' || taskType === 'research')) {
+      // 本轮这句看不出新类型 (多半只是"继续"), 维持 security 不掉档
+      this._taskType = 'security';
+    } else {
+      this._taskType = taskType;
+    }
+    // 批 2-C: _taskType 每轮可能改判 (security 棘轮/掉档) → 上下文仲裁策略缓存必须
+    // 在本轮重新定稿, 否则第二轮换了任务类型还在用第一轮的冲突判定 (比不缓存更糟)。
+    this._ctxPolicy = null;
+    // ═══ 2026-10-17 富哥拍板「全部放宽」: 迭代上限已从架构移除, 此处不再做任何抬高/钳制。
+    // 昔日曾为 security 设 200 天花板, 现与全局逻辑一并删除 —— 渗透等长任务可一直跑到
+    // 自然完成或用户说"继续"(跨会话恢复), 不再被盲数卡死。判停见工具级熔断 + idle 超时。
     // P0 修复: 优先使用请求传入的 industryId, 其次从 userModel 读取
     // 原因: userModel.identity.industry 是全局的, 不随 workspace 变化
     // 如果用户在装修工作区设了行业="construction", 切到代码工作区后还是 "construction" → 误注入装修技能
     const userIndustry = this.opts.industryId || 'general';
     // 存储到实例变量, 主循环中使用 (工具按需过滤)
-    this._taskType = taskType;
+    // 注意: 这里**不能**再写 `this._taskType = taskType` —— 会覆盖掉上面 security 棘轮的判定结果
     this._userIndustry = userIndustry;
     const userRole = userModel.get(this.opts.userId).identity.role || '助手';
     const userName = userModel.get(this.opts.userId).identity.name || this.opts.userId || '用户';
@@ -1221,9 +1464,11 @@ private _forbiddenResponseCount: number = 0;
         evolutionPatterns
       });
       systemMsgs.push({ role: 'system', content: litePrompt });
+      track('identity:lite', 0);
     } else {
       // 完整版 system prompt（保留原有逻辑）
       systemMsgs.push({ role: 'system', content: AGENT_SYSTEM_IDENTITY });
+      track('identity:full', 0);
     }
 
     // P0 修复: 注入实时日期 — AI 不知道当前日期会导致:
@@ -1236,15 +1481,18 @@ private _forbiddenResponseCount: number = 0;
     const _weekStr = _weekDays[_now.getDay()];
     const _timeStr = `${String(_now.getHours()).padStart(2, '0')}:${String(_now.getMinutes()).padStart(2, '0')}`;
     systemMsgs.push({ role: 'system', content: `# 当前时间\n今天是 ${_dateStr}（星期${_weekStr}）\n当前时间: ${_timeStr}\n\n重要: 你必须使用这个日期作为"今天"的基准。不要猜测日期, 不要使用训练数据中的日期。所有涉及"今天/昨天/本周/最新"的操作都以这个日期为准。` });
+    track('datetime', 0);
 
     // 技能调用指令注入（高优先级，位于身份之后）
     if (skillInvocationBlock) {
       systemMsgs.push({ role: 'system', content: skillInvocationBlock });
+      track('skill-invocation', 0);
     }
 
     // 进化记忆注入（两种 prompt 模式均注入，位于身份之后）
     if (evolutionSystemBlock) {
       systemMsgs.push({ role: 'system', content: evolutionSystemBlock });
+      track('evolution-memory', 20);
     }
 
     // === 1.5 工具定义按需加载 ===
@@ -1254,10 +1502,12 @@ private _forbiddenResponseCount: number = 0;
         const allToolNames = this.registry.list().map(t => t.name);
         const toolsFragment = buildToolsFragment(allToolNames, this.registry);
         systemMsgs.push({ role: 'system', content: toolsFragment });
+        track('tools', 0);
       } else {
         const relevantTools = getRelevantTools(taskType, userIndustry, this.registry);
         const toolsFragment = buildToolsFragment(relevantTools, this.registry);
         systemMsgs.push({ role: 'system', content: toolsFragment });
+        track('tools', 0);
       }
     }
 
@@ -1266,6 +1516,7 @@ private _forbiddenResponseCount: number = 0;
     const ideCtx = buildIdeContext(this.opts.workspace || undefined);
     if (ideCtx) {
       systemMsgs.push({ role: 'system', content: ideCtx });
+      track('ide-context', 10);
     }
 
 // === 1.7 项目记忆 (统一 MemoryManager, 合并 5→1) ===
@@ -1280,6 +1531,7 @@ const memCtx = await mm.buildContext({
 });
 if (memCtx) {
   systemMsgs.push({ role: 'system', content: memCtx });
+  track('memory-manager', 20);
 }
 
 // === Project Memory 上下文 (2026-09-04 接线) ===
@@ -1290,6 +1542,7 @@ if (this.opts.workspace) {
     const pmCtx = buildMemoryContext(this.opts.workspace);
     if (pmCtx && pmCtx.length > 45) {
       systemMsgs.push({ role: 'system', content: pmCtx });
+      track('project-memory', 20);
     }
   } catch (e) { logger.warn('[ctx:project-memory] 项目记忆加载失败, 本轮不注入', e); }
 }
@@ -1307,6 +1560,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
     const wmCtx = wm.buildWorldContext(keywords, 6);
     if (wmCtx) {
       systemMsgs.push({ role: 'system', content: wmCtx });
+      track('world-memory', 30);
     }
   } catch (e) { logger.warn('[ctx:world-memory] 世界记忆加载失败, 本轮不注入', e); }
 }
@@ -1341,6 +1595,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
       if (ctxParts.length > 0) {
         const taskCtx = '# Agent 任务上下文\n' + ctxParts.join('\n');
         systemMsgs.push({ role: 'system', content: taskCtx });
+        track('agent-task-board', 20);
       }
     } catch (e) { logger.warn('[ctx:task-store] 任务存储不可用, 本轮不注入任务上下文', e); }
 
@@ -1349,6 +1604,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
     const remoteCtx = buildRemoteContext();
     if (remoteCtx) {
       systemMsgs.push({ role: 'system', content: remoteCtx });
+      track('remote-context', 20);
       logger.info(`🌐 已注入远程环境上下文: ${getActiveRemoteSession()?.environment.name}`);
     }
 
@@ -1369,6 +1625,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
       const projectDocs = this.readProjectDocs();
       if (projectDocs) {
         systemMsgs.push({ role: 'system', content: projectDocs });
+        track('project-docs', 20);
       }
     } catch (e) {
       logger.warn('读取项目说明文件失败:', e);
@@ -1419,13 +1676,9 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
         }
         ctxParts.push(emotionStr);
       }
-      // 开发偏好
+      // 开发偏好 (批 2-B: 经 workspace-profile 单一模块读, 内部兼容旧 .agentai/profile.json)
       try {
-        const profileFile = path.join(this.opts.workspace || process.cwd(), '.agentai', 'profile.json');
-        let devPrefs: any = null;
-        if (fs.existsSync(profileFile)) {
-          try { devPrefs = JSON.parse(fs.readFileSync(profileFile, 'utf-8'))?.devPrefs; } catch {}
-        }
+        let devPrefs: any = readDevPrefs(this.opts.workspace || process.cwd());
         if (!devPrefs && (this as any)._requestProfile?.devPrefs) devPrefs = (this as any)._requestProfile.devPrefs;
         if (devPrefs && typeof devPrefs === 'object') {
           const dp: string[] = [];
@@ -1447,6 +1700,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
       } catch {}
       if (ctxParts.length > 0) {
         systemMsgs.push({ role: 'system', content: `# 用户上下文\n${ctxParts.join('\n')}` });
+        track('user-context', 10);
       }
     } catch (e: any) { logger.warn('user context optional failed:', e?.message || e); }
 
@@ -1482,6 +1736,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
           role: 'system',
           content: `# 当前客户档案\n姓名: ${customer.name}\n意向: ${intentMap[customer.intent] || '未知'}\n标签: ${customer.tags.join(', ') || '无'}\n行业: ${customer.industry || '未指定'}\n备注: ${customer.notes || '无'}\n最近沟通:\n${journeyText}\n\n提示: 请基于客户档案和历史沟通记录, 提供个性化回复。如需安排跟进, 可使用 follow_up_customer 工具。`,
         });
+        track('customer-profile', 20);
       }
     } catch (e) { logger.warn('[ctx:customer] 客户档案加载失败, 本轮不注入', e); }
 
@@ -1491,8 +1746,21 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
       let industryId = this.opts.industryId || '';
       let industrySkillsStr = '';
 
-      // auto-detect 仅在无显式行业时触发, 且不再写入单例
-      if (!industryId || industryId === 'general') {
+      // ═══ 2026-10-17 任务优先于行业 ═══
+      // 实锤场景: 用户在「澳彩项目」工作区里挖洞, workspace/profile 里存的行业把
+      //   "# 当前行业: xxx 优先使用该行业的专业术语和框架" 一路注入, AI 被拽回
+      //   业务话术, 任务跑偏成"澳彩项目分析"。
+      // 原则: **任务类型才是本轮的最高优先级上下文**, 行业只是术语参考。
+      // 行业↔任务天然同源时才给完整行业框架, 否则只给一句优先级声明。
+      // 批 2-C: 判定走每轮一次定稿的 ctxPolicy (§3.5/§6/§6.3 共用同一张表)
+      const ctxPolicy = this.getContextPolicy(typeof userMessage === 'string' ? userMessage : '');
+      const fullInjectIndustries = ctxPolicy.industryFullInject;
+      const industryIsTaskAligned = ctxPolicy.industryAligned;
+
+      // auto-detect: 无显式行业时触发; **任务驱动时也允许重检测**
+      // (原死角: profile/workspace 一旦存了行业如 decoration, 这个分支永远进不去,
+      //  挖洞任务被行业框架带偏且没有任何纠正机会)
+      if (!industryId || industryId === 'general' || !industryIsTaskAligned) {
         try {
           const { insightAccumulator } = await import('./insight-accumulator.js');
           const latestUserMsg = messages.filter(m => m.role === 'user' && typeof m.content === 'string').pop();
@@ -1505,10 +1773,15 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
                 comic: 'comic', real_estate: 'real_estate', legal: 'legal', manufacturing: 'manufacturing',
               };
               const mappedId = idMap[detected.industryId] || detected.industryId;
-              industryId = mappedId;  // 仅赋值局部变量, 不调 activate()
-              logger.info(`[industry] auto-detected: ${detected.industryId} → ${mappedId} (confidence: ${(detected.confidence * 100).toFixed(0)}%)`);
+              // 任务驱动时, 只有检测结果与本轮任务同源才采纳 (否则保持工作区行业, 只降级注入)
+              const adoptDetected = industryIsTaskAligned || fullInjectIndustries.includes(mappedId);
+              if (adoptDetected) {
+                industryId = mappedId;  // 仅赋值局部变量, 不调 activate()
+                logger.info(`[industry] auto-detected: ${detected.industryId} → ${mappedId} (confidence: ${(detected.confidence * 100).toFixed(0)}%, taskType=${this._taskType})`);
+              }
               // 动态注册行业技能到 ToolRegistry (无状态, 不改单例)
-              try {
+              // 未采纳的行业不注册工具也不建议切换 —— 挖洞任务不该被塞一嘴装修报价工具
+              if (adoptDetected) try {
                 const { industryEngine } = await import('./industry-engine.js');
                 const config = industryEngine.getConfig(mappedId);
                 if (config) {
@@ -1530,10 +1803,11 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
                 if (detected.confidence > 0.7 && this.opts.industryId !== mappedId) {
                   const profile = insightAccumulator.getIndustryProfile(detected.industryId);
                   const industryName = profile?.industryName || config?.label || mappedId;
-                  systemMsgs.push({
-                    role: 'system',
-                    content: `[行业建议] 检测到您的问题可能与「${industryName}」行业高度相关(置信度${Math.round(detected.confidence * 100)}%)。\n当前行业模式为"通用", 建议切换到「${industryName}」模式以获得更专业的工具和知识支持。\n您可以通过以下方式之一:\n1. 直接回复 "切换到${industryName}" \n2. 在设置中更改行业偏好\n3. 忽略此建议继续使用通用模式\n\n已自动为您加载 ${industryName} 行业的专用工具。`,
-                  });
+          systemMsgs.push({
+            role: 'system',
+            content: `[行业建议] 检测到您的问题可能与「${industryName}」行业高度相关(置信度${Math.round(detected.confidence * 100)}%)。\n当前行业模式为"通用", 建议切换到「${industryName}」模式以获得更专业的工具和知识支持。\n您可以通过以下方式之一:\n1. 直接回复 "切换到${industryName}" \n2. 在设置中更改行业偏好\n3. 忽略此建议继续使用通用模式\n\n已自动为您加载 ${industryName} 行业的专用工具。`,
+          });
+          track('industry:suggested', 30);
                   this.emit('industry:suggested', { suggestedIndustry: mappedId, confidence: detected.confidence, industryName });
                 }
               } catch {}
@@ -1550,41 +1824,33 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
 
       // 注入行业 system prompt (使用无状态方法, 不读单例)
       if (industryId && industryId !== 'general') {
-        try {
-          const { industryEngine } = await import('./industry-engine.js');
-          const frag = (industryEngine as any).buildSystemPromptFragmentFor(industryId);
-          if (frag) systemMsgs.push({ role: 'system', content: frag });
-        } catch {}
-
-        systemMsgs.push({
-          role: 'system',
-          content: `# 当前行业: ${industryId}\n用户处于「${industryId}」行业模式。优先使用该行业的专业术语和框架。${industrySkillsStr ? `\n行业技能: ${industrySkillsStr}` : ''}`,
-        });
-
-        // ★ 注入行业洞察 prompt
-        try {
-          const { insightAccumulator } = await import('./insight-accumulator.js');
-          const reverseIdMap: Record<string, string> = {
-            developer: 'software_dev', medical: 'healthcare',
-            decoration: 'decoration', ecommerce: 'ecommerce', education: 'education',
-            comic: 'comic', real_estate: 'real_estate', legal: 'legal', manufacturing: 'manufacturing',
-          };
-          const insightId = reverseIdMap[industryId] || industryId;
-          const insightFrag = insightAccumulator.buildInsightPrompt(insightId);
-          if (insightFrag) {
-            systemMsgs.push({ role: 'system', content: insightFrag });
-          }
-        } catch (e: any) { /* insight prompt optional */ }
-      } else {
-        // 无显式行业: 从 userModel 回退
-        let userModelIndustry = '';
-        try { userModelIndustry = userModel.get(this.opts.userId).identity.industry || ''; } catch {}
-        const effectiveIndustry = userModelIndustry || '未知';
-        if (effectiveIndustry !== '未知' && effectiveIndustry !== 'general') {
+        if (!industryIsTaskAligned) {
+          // ═══ 任务优先于行业 (2026-10-17) ═══
+          // 行业与本轮任务不同源 → **不注入完整行业框架/洞察**, 只给一句优先级声明。
+          // 原实现无条件注入, 措辞还是"优先使用该行业的专业术语和框架"(方向相反),
+          // 用户在澳彩项目里挖洞时 AI 直接被拽回业务话术, 这就是"不进挖洞进项目"的根因。
           systemMsgs.push({
             role: 'system',
-            content: `# 当前行业: ${effectiveIndustry}\n用户处于「${effectiveIndustry}」行业模式。优先使用该行业的专业框架。`,
+            content: `# 上下文优先级: 任务 > 行业\n当前任务类型为「${this._taskType}」, **请以任务本身为唯一主线**。用户所处行业为「${industryId}」, 仅作为术语参考: 除非任务内容明确涉及该行业, 否则不要使用行业框架、行业技能、行业洞察, 也不要主动把话题带回该行业的业务场景。`,
           });
+          track('industry:downgrade', 0);
+        } else {
+          try {
+            const { industryEngine } = await import('./industry-engine.js');
+            const frag = (industryEngine as any).buildSystemPromptFragmentFor(industryId);
+            if (frag) {
+              systemMsgs.push({ role: 'system', content: frag });
+              track('industry:fragment', 20);
+            }
+          } catch {}
+
+          systemMsgs.push({
+            role: 'system',
+            content: `# 当前行业: ${industryId}\n用户处于「${industryId}」行业模式。请在**不偏离当前任务**的前提下使用该行业的专业术语和框架; 若任务内容与行业无关, 以任务为准。${industrySkillsStr ? `\n行业技能: ${industrySkillsStr}` : ''}`,
+          });
+          track('industry:current', 20);
+
+          // ★ 注入行业洞察 prompt
           try {
             const { insightAccumulator } = await import('./insight-accumulator.js');
             const reverseIdMap: Record<string, string> = {
@@ -1592,12 +1858,49 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
               decoration: 'decoration', ecommerce: 'ecommerce', education: 'education',
               comic: 'comic', real_estate: 'real_estate', legal: 'legal', manufacturing: 'manufacturing',
             };
-            const insightId = reverseIdMap[effectiveIndustry] || effectiveIndustry;
+            const insightId = reverseIdMap[industryId] || industryId;
             const insightFrag = insightAccumulator.buildInsightPrompt(insightId);
             if (insightFrag) {
               systemMsgs.push({ role: 'system', content: insightFrag });
+              track('industry:insight', 20);
             }
-          } catch (e: any) { logger.warn(e?.message || e); }
+          } catch (e: any) { /* insight prompt optional */ }
+        }
+      } else {
+        // 无显式行业: 从 userModel 回退
+        let userModelIndustry = '';
+        try { userModelIndustry = userModel.get(this.opts.userId).identity.industry || ''; } catch {}
+        const effectiveIndustry = userModelIndustry || '未知';
+        if (effectiveIndustry !== '未知' && effectiveIndustry !== 'general') {
+          // 同样按任务对齐度分流: 不对齐时只给优先级声明
+          const userModelAligned = !effectiveIndustry || effectiveIndustry === 'general' || fullInjectIndustries.includes(effectiveIndustry);
+          if (!userModelAligned) {
+            systemMsgs.push({
+              role: 'system',
+              content: `# 上下文优先级: 任务 > 行业\n当前任务类型为「${this._taskType}」, **请以任务本身为唯一主线**。用户所处行业为「${effectiveIndustry}」仅作为术语参考, 除非任务明确涉及, 否则不要使用行业框架或把话题带回该行业业务场景。`,
+            });
+            track('industry:downgrade', 0);
+          } else {
+            systemMsgs.push({
+              role: 'system',
+              content: `# 当前行业: ${effectiveIndustry}\n用户处于「${effectiveIndustry}」行业模式。请在**不偏离当前任务**的前提下使用该行业的专业框架; 若任务内容与行业无关, 以任务为准。`,
+            });
+            track('industry:current', 20);
+            try {
+              const { insightAccumulator } = await import('./insight-accumulator.js');
+              const reverseIdMap: Record<string, string> = {
+                developer: 'software_dev', medical: 'healthcare',
+                decoration: 'decoration', ecommerce: 'ecommerce', education: 'education',
+                comic: 'comic', real_estate: 'real_estate', legal: 'legal', manufacturing: 'manufacturing',
+              };
+              const insightId = reverseIdMap[effectiveIndustry] || effectiveIndustry;
+              const insightFrag = insightAccumulator.buildInsightPrompt(insightId);
+              if (insightFrag) {
+                systemMsgs.push({ role: 'system', content: insightFrag });
+                track('industry:insight', 20);
+              }
+            } catch (e: any) { logger.warn(e?.message || e); }
+          }
         }
       }
     } catch (e: any) { logger.warn(e?.message || e); }
@@ -1607,6 +1910,7 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
       const profile = userModel.buildSystemPromptFragment(this.opts.userId);
       if (profile && !profile.includes('0,')) {
         systemMsgs.push({ role: 'system', content: profile });
+        track('user-model-profile', 10);
       }
     } catch (e: any) { logger.warn('user model optional:', e?.message || e); }
 
@@ -1614,6 +1918,12 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
     try {
       const userIndustry = userModel.get(this.opts.userId).identity.industry;
       if (userIndustry && userIndustry !== 'general') {
+        // 2026-10-17: 与 §3 同一套门控 —— 行业与本轮任务不同源时不注入行业知识库,
+        //   否则挖洞任务会被塞一嘴行业话术 (澳彩项目挖洞跑偏的第三条注入路径)
+        // 批 2-C: 经 ctxPolicy.alignedFor 走同一张对齐表 (userModel 行业与 opts.industryId 不同源, 分别判定)
+        if (!this.getContextPolicy().alignedFor(userIndustry)) {
+          logger.info(`[industry] KB RAG skipped: industry=${userIndustry} not aligned with taskType=${this._taskType}`);
+        } else {
         const { getKnowledgeBase } = await import('./industry-knowledge-base.js');
         const kb = getKnowledgeBase();
         const stats = kb.getStats();
@@ -1626,7 +1936,9 @@ if (this.opts.workspace && keywords && keywords.length > 0) {
           const frag = kb.buildSystemPromptFragment(query, userIndustry, 3);
           if (frag) {
             systemMsgs.push({ role: 'system', content: frag });
+            track('industry-kb-rag', 30);
           }
+        }
         }
       }
     } catch (e: any) { logger.warn('knowledge base optional:', e?.message || e); }
@@ -1890,6 +2202,7 @@ try {
                   role: 'system',
                   content: `# 上次会话 (${ageStr})\n用户目标: ${lastSession.userGoal}\n使用工具: ${tools}\n修改文件: ${files}\n结果摘要: ${lastSession.summary}\n\n如果用户说"继续上次"或"接着做"，参考以上信息。`,
                 });
+                track('last-session', 30);
               }
             }
           }
@@ -1904,6 +2217,17 @@ try {
       try {
         const dirPath = this.opts.workspace;
         if (fsSync.existsSync(dirPath)) {
+          // ═══ 2026-10-17 工作区↔任务冲突门控 ═══
+          // 任务与工作区内容不同源 (典型: 在澳彩项目里挖洞) → **拒绝注入完整工作区画像**,
+          //   只给一句"任务优先"声明。原实现无条件注入 listing + subdir-memory + 最近文件,
+          //   那些业务文件名本身就在把模型往项目主题上拽, 这就是"不进挖洞进项目"的直接推手。
+          // 批 2-C: 判定取 run 开头定稿的 ctxPolicy — 与 §6.3 共用, 不再重复探测工作区。
+          const wsConflict = this.getContextPolicy();
+          if (wsConflict.workspaceConflict) {
+            systemMsgs.push({ role: 'system', content: wsConflict.workspaceDowngradeNotice });
+            track('workspace-conflict-downgrade', 0);
+            logger.info(`[ctx:workspace] 冲突降级: taskType=${this._taskType} ws=${dirPath} reason=${wsConflict.workspaceConflictReason}`);
+          } else {
           const entries = fsSync.readdirSync(dirPath).slice(0, 15);
           const listing = entries.map((e: string) => {
             const full = pathSync.join(dirPath, e);
@@ -1916,6 +2240,7 @@ try {
             role: 'system',
             content: `\n# Workspace: ${dirPath}\n你正在此目录工作。文件操作默认使用相对路径（如 "src/index.ts"）。\n\n## ⚠️ 任务归属判断 (先于动手)\n动手前先问一句: 这个任务跟当前工作区 (dirPath) 的内容有关吗?\n- **有关** (改/读它里面的代码、配置、文档) → 就地操作, 用相对路径。\n- **无关** (要新建独立的东西: 新报告/新脚本/新文件夹/新分析产出, 跟 dirPath 里的东西没关系) → **不要在当前工作区里乱建文件/打转**。改为自建一个专属目录再写, 例如:\n  - 用户指定了目标目录 → 就写到那里 (用绝对路径)\n  - 没指定 → 用临时/产出目录, 如 \`${pathSync.join(dirPath, 'output', '<task-slug>')}\` 或 \`${pathSync.join(dirPath, '.agentai', 'scratch')}\` (相对路径), 别散落在工作区根目录污染它\n- 如果反复尝试都在原地打转 (同一目录里新建/改名/再试 >2 次没推进) → **停下来**, 先 ask_user 确认该把产出放哪, 或明确改个目录再动手, 别硬绕。\n\n## 跨目录访问\n- 用户要求访问其他目录/盘时, 可以使用绝对路径 (如 "D:\\Projects\\my-project\\file.txt")\n- 系统目录(Windows/System32/Program Files)被安全拦截\n- 不要主动告诉用户"我只能访问工作区" — 你可以访问用户指定的任何非系统目录\n\n## 顶层目录:\n${listing || '(空)'}\n\n> ⚡ 仅展示顶层前15项。需要查看深层结构请调用 \`list_directory\` 或 \`directory_tree\`。`,
           });
+          track('workspace:listing', 20);
 
           // 子目录记忆
           try {
@@ -1923,6 +2248,7 @@ try {
             const mem = buildSubdirMemorySection(dirPath);
             if (mem) {
               systemMsgs.push({ role: 'system', content: `\n${mem}\n\n使用 \`read_file\` 查看完整规则。` });
+              track('workspace:subdir-memory', 20);
             }
           } catch (e: any) { logger.warn('sub-memory read optional:', e?.message || e); }
 
@@ -1959,8 +2285,10 @@ try {
                 role: 'system',
                 content: `# 最近生成的文件 (24h内)\n${recentFiles.slice(0, 15).join('\n')}\n\n用户说"上次那个文件"时，优先在这些文件中查找。可用 read_file 查看内容。`,
               });
+              track('workspace:recent-files', 30);
             }
           } catch { /* recent files scan optional */ }
+          } // end else (工作区与任务同源 → 完整注入)
         }
       } catch (e: any) { logger.warn(e?.message || e); }
     }
@@ -1968,15 +2296,24 @@ try {
     // === 6.3 项目规则文件自动加载/生成 (跨会话项目规范) ===
     // 每次会话自动检测 .trae/rules/project_rules.md
     // 存在 → 加载到上下文；不存在 → LLM 根据项目特征自动生成
+    // 2026-10-17: 与 §6 同一套冲突门控 — 任务与工作区不同源时项目规则也不注入
+    //   (澳彩项目里挖洞, project_rules 里的"这是博彩项目, 回复用行业话术"比 listing 更致命)
+    // 批 2-C: 与 §6 共用同一张定稿的 ctxPolicy, 不再二次探测工作区
     if (this.opts.workspace) {
       try {
-        const { ensureProjectRules } = await import('./project-rules-initializer.js');
-        const rules = await ensureProjectRules(this.opts.workspace, this.router);
-        if (rules && rules.trim().length > 0) {
-          systemMsgs.push({
-            role: 'system',
-            content: `\n# 项目规则 (来自 .trae/rules/project_rules.md)\n${rules}`,
-          });
+        const wsConflict63 = this.getContextPolicy();
+        if (wsConflict63.workspaceConflict) {
+          logger.info(`[ctx:project-rules] 冲突跳过: taskType=${this._taskType} ws=${this.opts.workspace} reason=${wsConflict63.workspaceConflictReason}`);
+        } else {
+          const { ensureProjectRules } = await import('./project-rules-initializer.js');
+          const rules = await ensureProjectRules(this.opts.workspace, this.router);
+          if (rules && rules.trim().length > 0) {
+            systemMsgs.push({
+              role: 'system',
+              content: `\n# 项目规则 (来自 .trae/rules/project_rules.md)\n${rules}`,
+            });
+            track('project-rules', 10);
+          }
         }
       } catch (e: any) { logger.warn('project rules init optional:', e?.message || e); }
     }
@@ -2259,7 +2596,11 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
     } else {
       this._checkpointId = null;
     }
-    this._taskType = detectTaskType(msgText);
+    // 2026-10-17: security 单向棘轮 — 长任务里用户说的多是"继续/枚举这7个域"这类短句,
+    //   detectTaskType 会判成 general, 导致挖洞任务中途掉出 security 并发上限(12→5)。
+    //   与 buildImmutablePrefix 里的棘轮保持一致。
+    const _t = detectTaskType(msgText);
+    this._taskType = (_t === 'security' || this._taskType === 'security') ? 'security' : _t;
   // ═══ 2026-10-11 P0: 先算 tier 再建上下文 — buildImmutablePrefix 依赖 _capabilityTier
   // 做分层门控 (强模型精简注入), 之前 tier 在 ensureContext 之后才算, 导致首跑时
   // tier 恒为默认 'supervised', 所有 tier 分支 (lite prompt / 全量工具 / 分层注入)
@@ -2304,6 +2645,9 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
   this._skippedToolCalls = []; // 清空上一轮遗留的跳过记录
   this._failTracker.clear();   // 2026-10-11: 失败计数按任务隔离 (不跨 run 累积)
   this._stuckEmitted.clear();  // 2026-10-16: 卡死播报同样按任务隔离, 否则跨 run 漏播
+  this._stuckEmittedTool.clear(); // 2026-10-17: 按工具名记的播报记录同样按任务归零
+  this._toolFailTracker.clear();  // 2026-10-17: 工具级失败计数按任务隔离
+  this._toolStuckEmitted.clear(); // 2026-10-17: 工具级熔断播报记录按任务隔离
   this._toolCallCount = 0;     // 2026-10-11: 工具调用预算按任务归零
   this._iterCapWarned = false; // 2026-10-11: 迭代上限软着陆标记按任务归零
   // ═══ 2026-10-12: 死循环护栏的计数器必须按任务隔离 ═══
@@ -2413,8 +2757,17 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
 
     const startedAt = Date.now();
     let lastToolActivityAt = Date.now(); // 工具活动时间戳
-    const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10分钟无工具活动才超时 (慢 LLM 友好)
-    const ABSOLUTE_MAX_MS = 60 * 60 * 1000; // 60分钟绝对上限
+    const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10分钟无工具活动才超时 (慢 LLM 友好, 有进展就续)
+    // 2026-10-17 富哥拍板放宽: 绝对墙钟从 60 分钟 → 12 小时。
+    // 旧 60 分钟墙钟会把正常深挖/长扫描当成"失控"硬切; 现 12h 仅作"纯最后保险"
+    // (正常长任务远不到), 真正判停靠 idle 进度超时(上下文评判)而非盲墙钟。
+    const ABSOLUTE_MAX_MS = 12 * 60 * 60 * 1000; // 12小时绝对上限 (最后保险)
+    // 2026-10-17: 迭代上限已放到 10 万 (实际上不限), 但循环内的"早期阶段"启发式
+    //   (`iteration < maxIterations * 0.5/0.7`) 原本以 ~90 轮预算为前提 —— 直接沿用会
+    //   变成"永远处于早期阶段", 导致软提示在几千轮后仍反复触发 (甚至拦住自然收尾)。
+    //   故用 bounded horizon 保留原意: ≤90 轮时与旧行为完全一致, >90 时把窗口封在 45/63 轮。
+    //   (尾部总结/反思的 `maxIterations - 1` / `* 0.7` 不受影响 —— 它们恒真反而更利于确保收尾。)
+    const EARLY_PHASE_HORIZON = Math.min(this.opts.maxIterations, 90);
 
     // v3.2 修复: 提前声明 messageText/messageContent, 供下面的 task-snapshot 块使用
     // 之前 messageText 在 1426 才声明, 但 1390 就被使用 → TS 报错
@@ -3073,6 +3426,11 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
       this.emit('loop:iteration', { n: this.iteration });
       // 2026-10-11: 每轮续期「用户任务进行中」心跳 → 自动化 cron 持续让路 (见 runtime-activity.ts)
       touchUserTask();
+      // 2026-10-17: 每轮迭代也是"任务有进展"的信号, 必须续 idle 计时器。
+      // 事故: 原先 lastToolActivityAt 只在工具**执行完成**时更新, 于是
+      //   AI 连续几轮纯思考/生成长报告 (无工具调用) 时 idleTime 一路涨到 10 分钟
+      //   → 触发"10分钟无工具活动"超时 → 挖洞任务在十几步被误判为卡死而收口。
+      lastToolActivityAt = Date.now();
 
       // ═══ 2026-10-11 独立迭代硬闸 (G4) ═══
       // 之前唯一的迭代上限判断埋在下面的超时块内 —— 没超时 = 无上限。
@@ -3111,9 +3469,15 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
             'low');
         }
         if (pressure.level === 'critical' || pressure.level === 'overflow') {
-          // 紧急: 注入指令让 AI 立即总结
+          // 紧急 (2026-10-17 修正): 上一版直接说"不要再调用工具, 立即总结"
+          // → AI 在长任务中途自己收摊, 用户看到的是「十几步就停」且没有任何报错。
+          // 现在改成**先压缩再继续**: 真的压不动了 (overflow) 才要求收尾,
+          // critical 只是提醒"把结论写进 memory 以免丢失, 然后继续干活"。
           this.directives.add('token_pressure',
-            `[SYSTEM] 上下文压力 ${(pressure.pressure * 100).toFixed(0)}% (${pressure.label}). ${pressure.advice}. 必须立即生成本轮总结, 列出已完成工作和待办项, 不要再调用工具。`,
+            pressure.level === 'overflow'
+              ? `[SYSTEM] 上下文已溢出 (${(pressure.pressure * 100).toFixed(0)}%). 本轮请只做一件事: 把已获得的结论/凭证/失败点压缩写进记忆, 然后输出阶段总结。`
+              : `[SYSTEM] 上下文压力偏高 (${(pressure.pressure * 100).toFixed(0)}%, ${pressure.label})。${pressure.advice}。` +
+                `**任务不要停** —— 请把已获得的关键结论(发现的资产/凭证/漏洞线索)写进记忆, 旧的原始输出可以丢弃, 然后继续下一步。`,
             'high');
           this.emit('token:pressure', { pressure: pressure.pressure, level: pressure.level });
         } else if (pressure.level === 'warning') {
@@ -3348,7 +3712,7 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
       const idleTime = Date.now() - lastToolActivityAt;
       const totalTime = Date.now() - startedAt;
       if (idleTime > IDLE_TIMEOUT_MS || totalTime > ABSOLUTE_MAX_MS) {
-        const reason = totalTime > ABSOLUTE_MAX_MS ? '60分钟绝对上限' : '10分钟无工具活动';
+        const reason = totalTime > ABSOLUTE_MAX_MS ? `${Math.round(ABSOLUTE_MAX_MS / 60000)}分钟绝对上限` : '10分钟无工具活动';
         // 不强制结束 — 让 AI 自己决定是总结还是继续
         this.directives.add('timeout', `[SYSTEM] 已运行 ${Math.round(totalTime / 60000)} 分钟 (${reason})。如果长任务仍在执行中, 请检查进度后继续; 如果确实无法继续, 请总结当前进展。`, 'high');
         // ═══ 2026-07-15: 超时前强制持久化 task-snapshot (供跨会话恢复) ═══
@@ -3364,13 +3728,20 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
         }
         // 发送超时事件 — chat.ts 可监听后转发 SSE 给前端
         this.emit('timeout', { reason, totalMinutes: Math.round(totalTime / 60000), iteration: this.iteration });
-        // B1 优化: 动态迭代上限 — 根据模型上下文窗口调整
-        // 1M 模型可以更多轮 (token 充裕), 32K 模型必须快速收尾
+        // B1 动态迭代上限 (2026-10-17 修正): 上一版在这里把迭代砍到 30~50,
+        //   等于"超时提醒"之后又立刻判死刑 → 挖洞任务在十几步就被硬切,
+        //   用户看到的是「AI 自己不动了」而不是「超时了」。
+        // 实测事故: 挖洞子任务稳定停在 ~16 步, 上下文还远没到窗口上限。
+        // 现在语义: 超时**只提醒不降级**。真正该生效的是超时前那两行 directive,
+        //   AI 自己决定收尾还是继续; 只有绝对上限(60min)才允许收口。
+        // 动态上限保留但只在**绝对上限**分支生效, 且不再低于调用方给的预算。
         const ctxWindow = this.getModelContextWindow();
-        const dynamicMax = ctxWindow >= 500_000 ? 50 : ctxWindow >= 200_000 ? 40 : 30;
-        const effectiveMax = Math.min(dynamicMax, this.opts.maxIterations);
-        // 再给 2 轮机会让 AI 决定
-        if (this.iteration > effectiveMax - 2) break;
+        if (totalTime > ABSOLUTE_MAX_MS) {
+          const dynamicMax = ctxWindow >= 500_000 ? 50 : ctxWindow >= 200_000 ? 40 : 30;
+          const effectiveMax = Math.min(dynamicMax, this.opts.maxIterations);
+          // 再给 2 轮机会让 AI 决定
+          if (this.iteration > effectiveMax - 2) break;
+        }
       }
 
       // 检查是否被中断 — 同时检查代际: 如果被新 run() 取代也要退出
@@ -3696,9 +4067,26 @@ if (isComplexTask) {
 
       // ═══ 长任务超时降级: 上一轮超时后, 减少工具数+压缩上下文, 避免再次超时 ═══
       if (llmTimedOut) {
-        logger.warn(`[loop] timeout degradation: reducing tools ${requestTools.length} → 8, compressing context`);
-        const coreToolNames = ['read_file', 'write_file', 'list_directory', 'search_content', 'ask_user', 'run_code', 'directory_tree', 'web_search'];
-        requestTools = requestTools.filter((t: any) => coreToolNames.includes(t.name || t.function?.name || ''));
+        // 2026-10-17: 原来是无脑砍到 8 个文件类工具 (read/write/list/search/ask_user/run_code/
+        //   tree/web_search) —— 对挖洞任务是灾难: wsl_scan/enum_subdomains/http_replay/
+        //   report_vulnerability 全被砍掉, 超时一次后 AI 只剩"读文件"能力, 再也扫不动。
+        // 改为"基础工具集 + 按任务类型的必保留工具", 砍的是数量不是能力。
+        const DEGRADE_CORE_BASE = ['read_file', 'write_file', 'edit_file', 'list_directory', 'search_content', 'ask_user', 'run_code', 'directory_tree', 'web_search', 'web_fetch', 'remember', 'recall_memory', 'plan_task', 'update_plan'];
+        const DEGRADE_EXTRA_BY_TASK: Record<string, string[]> = {
+          // 渗透: 扫描/枚举/重放/上报/证据 一个都不能少 (scope_guard 是授权闸门也保留)
+          security: ['wsl_scan', 'enum_subdomains', 'extract_js_endpoints', 'http_replay', 'batch_pentest', 'scope_guard', 'grant_scope', 'list_scope', 'report_vulnerability', 'save_evidence', 'run_background', 'wait_for_job', 'stop_job'],
+          coding: ['run_background', 'wait_for_job', 'stop_job', 'execute_command', 'git_status'],
+          research: ['search_content', 'web_search', 'web_fetch', 'summarize_url', 'browser_navigate'],
+          media: ['generate_image', 'generate_video', 'generate_diagram'],
+          industry: ['web_search', 'web_fetch', 'write_file'],
+          general: ['run_background', 'wait_for_job', 'stop_job'],
+        };
+        const degradeCore = new Set<string>([...DEGRADE_CORE_BASE, ...(DEGRADE_EXTRA_BY_TASK[this._taskType] || DEGRADE_EXTRA_BY_TASK.general)]);
+        const beforeDegrade = requestTools.length;
+        const degraded = requestTools.filter((t: any) => degradeCore.has(t.name || t.function?.name || ''));
+        // 兜底: 万一过滤后空了 (工具名对不上), 退回降级前的集合, 不能给 AI 零工具
+        requestTools = degraded.length > 0 ? degraded : requestTools;
+        logger.warn(`[loop] timeout degradation: taskType=${this._taskType} tools ${beforeDegrade} → ${requestTools.length} (核心集降级, 保留 ${degradeCore.size} 个能力位)`);
         // 激进压缩上下文: 只保留最近 6 条 + system, 然后重新消毒避免切断 assistant→tool 配对
         if (messages.length > 12) {
           const systemMsgs = messages.filter(m => m.role === 'system');
@@ -4017,11 +4405,44 @@ if (isComplexTask) {
       // 现在: 显式选定的模型失败 → 如实报错并给出可选动作, 不替用户做决定。
       if (res?.provider === 'none' && this.opts.userPickedModel) {
         const sel = `${this.opts.model}${this.opts.modelName ? ':' + this.opts.modelName : ''}`;
-        logger.warn(`[loop] 🔒 用户显式选定的模型不可用, 按锁定策略不自动切换 (model=${sel})`);
-        this.emit('model:lock-refused', { model: this.opts.model, subModel: this.opts.modelName || null, reason: '所选模型全部 provider 不可用' });
+        const lastErr: string = String((res as any)?.error || (res as any)?.lastError || '');
+        // ═══ 2026-10-17 修正: 要区分「临时繁忙/限流」与「鉴权失效」。
+        //   事故: DeepSeek 额度充足, 只是上游短暂繁忙(429/超时), 上一版逻辑却**当场返回错误**,
+        //   用户看到「[任务已中断]」+ "请检查 API Key" —— 误导性极强 (Key 没问题, 是繁忙)。
+        //   现在: 临时性失败 → **退避后原地重试**; 只有 401/403 (Key 失效) 才立即失败, 等也没用。
+        const authFailed = /401|403|unauthorized|forbidden|invalid.*key|authentication/i.test(lastErr);
+        const transient = !authFailed && (
+          /429|rate.?limit|too many requests|timeout|timed out|abort|econnreset|econnrefused|50[023]|overloaded|busy|繁忙|暂时不可用|network|socket/i.test(lastErr)
+          || !lastErr // 拿不到原因 → 一律当临时性 (宁可多试几次, 别误杀长任务)
+        );
+
+        if (transient && this._providerWaitRetry < PROVIDER_WAIT_MAX_RETRY) {
+          // 退避 5s/10s/20s/30s (封顶), 期间发心跳喂前端 idle 计时器
+          const waitMs = Math.min(5_000 * Math.pow(2, this._providerWaitRetry), 30_000);
+          this._providerWaitRetry++;
+          logger.warn(`[loop] ⏳ 所选模型 ${sel} 临时不可用 (${lastErr.slice(0, 80) || '原因未提供'}), ${waitMs / 1000}s 后重试 (第 ${this._providerWaitRetry}/${PROVIDER_WAIT_MAX_RETRY} 次)`);
+          this.emit('model:wait-retry', { model: sel, attempt: this._providerWaitRetry, max: PROVIDER_WAIT_MAX_RETRY, waitMs });
+          const hb = setInterval(() => {
+            this.emit('tool:heartbeat', { callId: 'provider_wait', name: 'model_retry', pending: 1, retry: this._providerWaitRetry });
+          }, 30_000);
+          (hb as any).unref?.();
+          try { await new Promise(r => setTimeout(r, waitMs)); }
+          finally { clearInterval(hb); }
+
+          if (this._aborted) {
+            return { content: '[任务已中断]', provider: 'aborted', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const }, iterations: this.iteration, durationMs: Date.now() - startedAt };
+          }
+          this.trippedCount = 0; // 重试期间清空熔断计数
+          continue; // 原地重试同一模型, 不切模型 (用户显式选定)
+        }
+
+        logger.warn(`[loop] 🔒 所选模型不可用, 按锁定策略不自动切换 (model=${sel}, transient=${transient}, authFailed=${authFailed})`);
+        this.emit('model:lock-refused', { model: this.opts.model, subModel: this.opts.modelName || null, reason: authFailed ? '所选模型鉴权失败' : '所选模型反复临时不可用' });
         return {
-          content: `你选定的模型 **${sel}** 当前不可用 (上游无响应 / 限流中 / 密钥失效)。\n\n`
-            + `按当前设置, 系统不会自动换成别的模型。可选: ①稍后重试 ②在模型选择器里换一个模型 ③检查该 provider 的 API Key。`,
+          content: authFailed
+            ? `你选定的模型 **${sel}** 鉴权失败 (401/403)。这属于 **API Key 问题, 等也没用** —— 请到设置页检查该 provider 的 Key 是否有效或额度是否耗尽。`
+            : `你选定的模型 **${sel}** 连续 ${PROVIDER_WAIT_MAX_RETRY} 次临时不可用 (上游繁忙/限流, 已自动退避重试)。\n\n`
+              + `**这不是额度问题** —— 多来自上游服务短暂过载。任务进度已保留, 可直接重试继续; 若频繁出现建议在模型选择器里换一个 provider。`,
           provider: 'none' as any,
           usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
           iterations: this.iteration,
@@ -4092,6 +4513,9 @@ if (isComplexTask) {
         }
       } else if (res?.provider) {
         // 任何有效响应 (即使是降级到其他 provider) 都重置计数 + 切换记录
+        // 2026-10-17: 同时清空退避重试计数 —— 否则上游短暂繁忙一次, 后续每次失败都会
+        // 直接吃满 PROVIDER_WAIT_MAX_RETRY 的额度, 长任务照样被误杀。
+        this._providerWaitRetry = 0;
         this.trippedCount = 0;
         this._switchedProviders.clear();
         this._lastSwitchTime = 0;
@@ -4130,13 +4554,30 @@ if (isComplexTask) {
       // ═══ P0: 工具调用预算 — 控制每轮工具调用总数 ═══
       // 问题: AI 一轮调用 8+ 工具, 产生冗余和混乱
       // 修复: 根据任务类型设定每轮工具上限, 超出则截断
-      const TOOL_BUDGET: Record<string, number> = { coding: 5, research: 4, general: 4, industry: 3 };
-      const toolLimit = TOOL_BUDGET[this._taskType] || 5;
+      // 2026-10-17 二次修正 (富哥反馈: 渗透任务 AI 一次放十几个子任务, 8 个不够):
+      //   语义改为「**AI 放多少就收多少, 只留一道防爆封顶**」。
+      //   为什么不按类型卡死小数字:
+      //     - 卡死小数字 = 逼 AI 分批, 白耗迭代 (挖洞一轮要并发跑枚举/指纹/端口/端点)
+      //     - AI 自己的规划是有逻辑的, 截断它等于替它做技术决策
+      //   为什么仍要封顶 (不能真·无限收):
+      //     - 一轮几十个工具会同时打向目标 → 触发目标侧限流/风控, 反而全失败
+      //     - 大量 tool 消息瞬间塞爆上下文 → token critical → 长任务提前收口
+      //     - 单轮耗时被最长那个工具拖住, 心跳压力成倍上升
+      //   折中: 按类型给"建议上限", 但比AI 实际放的宽松; 只有明显超量才截,
+      //   且截断时**明确告知被砍掉的是哪些**, 让 AI 下一轮补上。
+      const taskLimit = Math.min(TASK_TOOL_CONCURRENCY[this._taskType] || 5, TASK_TOOL_CONCURRENCY_MAX);
+      // AI 实际放的 <= 建议上限 → 一律全收, 不做任何截断
+      const toolLimit = Math.max(taskLimit, 0);
       if (hasTools && res.toolCalls.length > toolLimit) {
         const truncated = res.toolCalls.slice(0, toolLimit);
-        logger.warn(`[loop] 工具预算: 截断 ${res.toolCalls.length} → ${truncated.length} (上限 ${toolLimit}, 任务=${this._taskType})`);
+        const dropped = res.toolCalls.slice(toolLimit).map((c: any) => c.function?.name || c.name || '?');
+        logger.warn(`[loop] 工具并发封顶: 截断 ${res.toolCalls.length} → ${truncated.length} (上限 ${toolLimit}, 任务=${this._taskType}, 丢弃=${dropped.join(',')})`);
         this.directives.add('tool_budget',
-          `[SYSTEM] 本轮工具调用 ${res.toolCalls.length} 个超过预算 ${toolLimit}, 已截断。请优先执行最重要的 ${truncated.length} 个, 其余留到下一轮。`,
+          `[SYSTEM] 你本轮一次提交了 ${res.toolCalls.length} 个工具调用，超过并发上限 ${toolLimit}, 已执行前 ${truncated.length} 个。`
+          + `被推迟的是: ${dropped.join(', ')}。\n`
+          + `如果这些是**互相独立**的探测（不同子域/不同端点/不同工具），请分批提交（每批 ≤ ${toolLimit} 个）—— `
+          + `一次性全打会同时压向同一目标, 容易触发限流导致整批失败, 反而更慢。\n`
+          + `如果它们有**依赖关系**（前一步结果决定后一步参数），就应该串行分轮提交。`,
           'medium');
         res.toolCalls = truncated;
       }
@@ -4687,11 +5128,22 @@ if (isComplexTask) {
             }
             // 成功 → 重置
             duplicateTracker.delete(sig);
+            // 2026-10-17 P0: 工具级失败计数也归零 (该工具这条路走通了)
+            this._toolFailTracker.delete(r.name);
+            this._toolStuckEmitted.delete(r.name); // 允许后续再次失败时重新播报
  // 灵魂层: PainSense 记录成功
  try { (await import('./soul/index.js')).getPainSense().feelJoy(); } catch {}
  // 价值向量: 从成功中学习 (更大胆、更自主)
  try { (await import('./soul/index.js')).getValueSystem().learnFromSuccess({}); } catch {}
           } else {
+          // ═══ 2026-10-17 P0: 工具级连续失败累加 (不论参数) ═══
+          // 同参数熔断 (sig=tool::args) 拦不住"换文件名/换参数重试"这类死循环:
+          // 实机渗透任务 90 轮烧光预算 (probe8→getcaptcha→probe_pay10…, 连续失败 51 次)。
+          // 工具维度才是"这条路走不通"的正确判据 —— 换文件名不改变目标拒绝了你这个事实。
+          // 未知工具名 (幻觉) 不计入: 重试不存在的工具永远不会有不同结果。
+          if (!(sigResolved && /Unknown tool|tool not found|no tool named/i.test(r.output || ''))) {
+            this._toolFailTracker.set(r.name, (this._toolFailTracker.get(r.name) || 0) + 1);
+          }
           // 2026-10-16: 参数反查不到 → 不累加失败计数(见 sig 构造处的说明)
           if (sigResolved) {
           // 2026-10-16 P0 修复: 未知工具名 = 模型幻觉, **不计入重复失败**
@@ -4884,19 +5336,50 @@ if (isComplexTask) {
         //      模型换参数后旧 sig 不该继续占着计数。
         //   ② 边沿触发: 同一 sig 只在**首次**达到阈值时播报一次。
         //      原来只要 count>=3 就每轮 emit, 于是此后每条消息都带这个前缀。
+        //
+        // ⚠️⚠️ 2026-10-17 P0 再修 (实机事故: `enum_subdomains 疑似卡死(3 次调用)`
+        // 连播十几次, 而模型其实在正常汇报"已确认 tycredit.com" —— 它根本没卡死):
+        //   10-16 的两处修复**互相打架形成振荡**: ①里删 `_stuckEmitted`,
+        //   ②里读 `_stuckEmitted`。模型在几个参数间来回试(换不同子域名 = 正常探测)时:
+        //     换参数 → ①把"已播报"删了 → 换回来 → ②认为首次 → 又播 → 每轮重播。
+        //   本次改法(三处):
+        //   A. 剔除时**只清计数, 不清播报记录** (播报记录改为按工具名存 _stuckEmittedTool)
+        //   B. 边沿触发**按工具名**判定: 一个任务内同一工具只播一次, 换参数不再重播
+        //   C. 探测类工具直接豁免 —— 见 PROBE_EXEMPT_TOOLS
         for (const sig of [...duplicateTracker.keys()]) {
           if (!seenSigsThisRound.has(sig)) {
-            duplicateTracker.delete(sig);
-            this._stuckEmitted.delete(sig);
+            duplicateTracker.delete(sig);   // 2026-10-17: 只清计数, 不再碰播报记录
           }
         }
+        // 2026-10-17 P0-3: 探测类工具豁免"同参数连续失败"判定。
+        // 语义依据: 这些工具**换参数 = 换了探测目标**, 属于正常工作流
+        // (扫不同子域名 / 试不同端点 / 重放不同请求), 不是"同参数死循环"。
+        // ⚠️ 注意: 这跟 L5261 的 LOOP_EXEMPT_TOOLS 是**两套** —— 后者只服务
+        //   死循环硬停, tool:stuck 这条路从来不读它。别指望往那儿加名字能生效。
+        const PROBE_EXEMPT_TOOLS = new Set([
+          'enum_subdomains', 'http_replay', 'wsl_scan', 'extract_js_endpoints',
+          'save_evidence', 'report_vulnerability', 'grant_scope', 'scope_guard',
+          'browser_navigate', 'browser_click', 'browser_extract', 'browser_evaluate',
+          'browser_screenshot', 'browser_screenshot_full', 'browser_type',
+          'list_windows', 'window_control', 'desktop_automate',
+          'send_message', 'pentest_rate_limit',
+        ]);
         for (const [sig, count] of duplicateTracker) {
           if (count >= 3) {
             const [toolName] = sig.split('::');
-            // 边沿触发: 已播报过就只保留 directive(让模型换方案), 不再往前端推消息
-            const firstReport = !this._stuckEmitted.has(sig);
+            // 探测类工具: 只保留 directive 引导换方案, **不播报、不计数**
+            if (PROBE_EXEMPT_TOOLS.has(toolName)) {
+              this.directives.add('dup_fail',
+                `[SYSTEM] ${toolName} 已连续失败 ${count} 次。换一个探测目标或换一种手法, 不要用同样的方式继续试。`,
+                'medium');
+              continue;
+            }
+            // 边沿触发: **按工具名**判定 (2026-10-17)。同一任务内同一工具只播报一次,
+            // 模型换参数重试不构成"新的卡死事实", 因此不再随参数切换反复播报。
+            const firstReport = !this._stuckEmittedTool.has(toolName);
             if (firstReport) {
-              this._stuckEmitted.add(sig);
+              this._stuckEmittedTool.add(toolName);
+              this._stuckEmitted.add(sig); // 保留旧字段写入, 兼容既有测试契约
               this.emit('tool:stuck', { tool: toolName, count });
             }
             this.directives.add('dup_fail', `[SYSTEM] ${toolName} 已连续失败 ${count} 次。请停止重试，改用其他工具或方案。`, 'high');
@@ -4930,6 +5413,35 @@ if (isComplexTask) {
             } // firstReport
             break; // 只触发一次
           }
+        }
+
+        // ═══ 2026-10-17 P0: 工具级熔断 (跨参数) — 同参数熔断的兜底 ═══
+        // 实机事故: 渗透任务连写 probe8/getcaptcha/probe_pay10 死循环 90 轮被强杀。
+        // 换文件名/换参数 = 新 sig → 上面的同参数熔断每次都从 0 数, 永不触发。
+        // 这里按**工具名**判定: 同一工具连续失败 ≥6 次 (参数随便换) = 这条路走不通,
+        // 强制换工具族 + 换思路, 不再让 AI 把预算耗在同一个失败动作上。
+        // 阈值 6: 单工具的合法重试(瞬时错误/换目标探测)不会被误伤。
+        // ⚠️ 探测类工具豁免 —— 扫不同子域名/端点换参数是正常工作流, 不算卡死。
+        //
+        // ⚠️ 事件名用 **`tool:breaker`** 而不是 `tool:stuck`: 后者的既有契约是
+        //   "一个任务内同一工具只 emit 1 次"(runtime-guard.test.ts 两个用例锁死,
+        //   专治 2026-10-16 的振荡事故)。若这里也发 tool:stuck, 两条熔断路径
+        //   在同一次 run 里会各发一次 → 同一工具 emit 2 次 → 打破该契约。
+        //   语义上也该分开: tool:stuck = 同参数卡死; tool:breaker = 跨参数路走不通。
+        for (const [toolName, failN] of this._toolFailTracker) {
+          if (!shouldTripToolBreaker(toolName, failN, PROBE_EXEMPT_TOOLS.has(toolName))) continue;
+          const firstToolReport = !this._toolStuckEmitted.has(toolName);
+          if (firstToolReport) {
+            this._toolStuckEmitted.add(toolName);
+            this.emit('tool:breaker', { tool: toolName, count: failN, scope: 'tool-level' });
+          }
+          this.directives.add('tool_fail_breaker',
+            `[SYSTEM] 工具 ${toolName} 已连续失败 ${failN} 次(每次参数都不同也没用)。` +
+            `换文件名/微调参数解决不了这个问题——目标没有变, 它一直拒绝你。` +
+            `必须换工具族或换思路: 比如从"${toolName}"切换到另一类手段, ` +
+            `或重新审视这个目标是否真的可达。如果目标本身有问题(不存在/已修复/需授权), ` +
+            `直接说明并给出结论, 不要继续在这里反复试探。`,
+            'high');
         }
 
         // ═══ 自主修复闭环: 检测工具错误模式并自动注入修复指令 ═══
@@ -5451,7 +5963,7 @@ if (isComplexTask) {
       // 2026-10-11 决策: 强模型有意跳过 (非 bug) — autonomous 模型自带停止/追问判断,
       // 外部元认知循环注入的"停止/继续"指令反而可能与模型自身判断冲突 (见 AGENTS.md
       // 元认知门控条目)。此门控保留, 已确认为有意设计, 非技术债。弱模型保留。
-      if (this._capabilityTier !== 'autonomous' && this.iteration < this.opts.maxIterations * 0.5) {
+      if (this._capabilityTier !== 'autonomous' && this.iteration < EARLY_PHASE_HORIZON * 0.5) {
       try {
         if (!this.metaLoop) {
           const { MetaCognitiveLoop } = await import('./meta/meta-cognitive-loop.js');
@@ -5586,14 +6098,14 @@ if (this._capabilityTier !== 'autonomous') {
         // ═══ 认知边界自检: 生成自我提问 ═══
         // 即使置信度不是极低, 也检查是否有越界表现
         const selfQuestions = ConfidenceEstimator.generateSelfQuestions(responseText, messageText);
-        if (selfQuestions.length > 0 && boundaryScore < 0.5 && this.iteration < this.opts.maxIterations * 0.7) {
+        if (selfQuestions.length > 0 && boundaryScore < 0.5 && this.iteration < EARLY_PHASE_HORIZON * 0.7) {
           this.directives.add('boundary_check', `[SYSTEM] 在提交回复前, 请先自问:\n${selfQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n如果发现问题, 请修正回复或调用工具补充信息。`, 'medium');
           this.emit('confidence:boundary', { score: boundaryScore, questions: selfQuestions });
           // 不 continue — 延迟到任务后处理, 不中断 AI 回复
         }
 
         // 低置信度 → 区分: 知识不足(搜索) vs 需求不明确(追问用户)
-        if (report.overallScore < 0.4 && this.iteration < this.opts.maxIterations * 0.7) {
+        if (report.overallScore < 0.4 && this.iteration < EARLY_PHASE_HORIZON * 0.7) {
           // 检测是否为需求不明确 (回复中包含反问/不确定用户意图的词汇)
           const needsClarification = /你(想要|希望|需要|指的是|是想|是要)|不确定你(的|想)|请(告诉|说明|确认|明确)|which|what do you|clarify/i.test(responseText);
           if (needsClarification) {
@@ -5620,7 +6132,7 @@ if (this._capabilityTier !== 'autonomous') {
       // ═══ P0-3.1+3.2: 知识边界检测 + 自我提问 (防幻觉, 接入已有但未调用的方法) ═══
       // 2026-10-11 决策: 强模型有意跳过 (非 bug) — autonomous 模型自带幻觉自检能力。
       // 此门控保留, 已确认为有意设计。弱模型保留: 防止弱模型幻觉
-      if (this._capabilityTier !== 'autonomous' && this.iteration < this.opts.maxIterations * 0.5) {
+      if (this._capabilityTier !== 'autonomous' && this.iteration < EARLY_PHASE_HORIZON * 0.5) {
       try {
         const { ConfidenceEstimator } = await import('./meta/confidence-estimator.js');
         const responseText = res.content || '';
@@ -5632,7 +6144,7 @@ if (this._capabilityTier !== 'autonomous') {
           m.role === 'tool' && typeof m.content === 'string' && m.content.includes('read_file')
         );
         const boundaryScore = ConfidenceEstimator.assessKnowledgeBoundary(responseText, hasSearched, hasReadFile);
-        if (boundaryScore < 0.5 && this.iteration < this.opts.maxIterations * 0.7) {
+        if (boundaryScore < 0.5 && this.iteration < EARLY_PHASE_HORIZON * 0.7) {
           const selfQuestions = ConfidenceEstimator.generateSelfQuestions(responseText, messageText);
           if (selfQuestions.length > 0) {
             this.directives.add('boundary_p0', `[SYSTEM] 自检发现以下问题, 请验证后再回复:\n${selfQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`, 'medium');
@@ -5668,7 +6180,7 @@ if (this._capabilityTier !== 'autonomous') {
       const isInfoRequest = /解释|说明|为什么|如何|怎么|什么是|区别|比较|对比|帮我分析|分析一下|原因|总结|列出|概述|介绍|讲讲|含义|意思|原理|导致.*原因|给我.*方案|推荐/i.test(userMessageStr)
         || /[?？]$/.test(userMessageStr.trim());
 
-      if (hasPriorTools && len > 60 && this.iteration < this.opts.maxIterations * 0.5) {
+      if (hasPriorTools && len > 60 && this.iteration < EARLY_PHASE_HORIZON * 0.5) {
         const isUserChitChat = messageText.trim().length < 10;
         const isDescriptive = /我(看到|发现|了解|注意到|观察到|查看了|分析了)|让我(先|来)|这是|看起来|似乎|大概|目前|现状|情况/i.test(text);
         const hasAction = /已(创建|修改|写入|删除|安装|执行|生成)|成功|✅|完成/i.test(text);
@@ -5695,7 +6207,7 @@ if (this._capabilityTier !== 'autonomous') {
 
       // 规则3: 长回复但无工具 + 非闲聊 + 非告别 + 早期迭代 → 提示使用工具
       // 强模型跳过 — 它自己决定是否需要工具
-      if (this._capabilityTier !== 'autonomous' && len > 200 && !hasPriorTools && this.iteration < this.opts.maxIterations * 0.5 && !isChitChat && !isGoodbye && !isInfoRequest) {
+      if (this._capabilityTier !== 'autonomous' && len > 200 && !hasPriorTools && this.iteration < EARLY_PHASE_HORIZON * 0.5 && !isChitChat && !isGoodbye && !isInfoRequest) {
         this.directives.add('no_tools', '[SYSTEM] 请调用工具执行操作 (如 read_file/write_file/run_code), 或明确说"回答完毕"。', 'medium');
         continue;
       }
@@ -6935,7 +7447,15 @@ try {
     // 做目标提取 + isTargetInScope 校验, 越界即拒 (与 Hook 拒绝同路, AI 收到 tool 错误)。
     // 设计: loopback (127.0.0.1/localhost) 免授权; 抓不到 host 的纯本地命令放行;
     // wsl_scan 自带闸门不重复拦。
-    if (this.opts.subagentType === 'pentest') {
+    // ★ V2.0 P0: 四角色中「会碰目标」的三个 (recon/exploit/validator) 继承同一 scope 闸门,
+    //   与既有 pentest 角色同源, 安全边界不放宽。
+    //   Planner 刻意不在此列 —— 它不持任何攻击工具, web_fetch 只用于查公开资料,
+    //   不应因为"目标授权"而连 NVD/文档都读不了。
+    const _isScopeGatedPentestRole = this.opts.subagentType === 'pentest'
+      || this.opts.subagentType === 'pentest_recon'
+      || this.opts.subagentType === 'pentest_exploit'
+      || this.opts.subagentType === 'pentest_validator';
+    if (_isScopeGatedPentestRole) {
       const PENTEST_SCOPE_GATED = new Set(['run_command', 'browser_navigate', 'web_fetch']);
       for (const c of callsToDispatchFiltered) {
         if (!PENTEST_SCOPE_GATED.has(c.name)) continue;
@@ -6961,7 +7481,31 @@ try {
 
       // 发射 tool:start 事件 (仅被批准的)
     for (const c of callsToDispatchFinal) this.emit('tool:start', { callId: c.id, name: c.name, args: c.args });
-    let results = callsToDispatchFinal.length > 0 ? await this.registry.dispatch(callsToDispatchFinal, ctx) : [];
+    let results: any[] = [];
+    if (callsToDispatchFinal.length > 0) {
+      // ═══ 2026-10-17 P0: 长耗时工具执行期间发心跳 ═══
+      // 事故: `run_command python probe_foos.py` 这类工具内部跑几分钟且**不发任何 SSE**,
+      //   前端 idle 计时器 (ChatView.tsx:664, 5 分钟) 到点判定"无响应" → controller.abort()
+      //   把**正在正常干活的后端**连接掐掉, 用户看到"任务被强制中止"。
+      //   心跳每 30 秒一发, 期间任何工具调用都能续上前端的 idle 计时器。
+      const HEARTBEAT_MS = 30_000;
+      const pendingIds = new Set(callsToDispatchFinal.map(c => c.id));
+      const hb = setInterval(() => {
+        if (pendingIds.size === 0) return;
+        for (const c of callsToDispatchFinal) {
+          if (pendingIds.has(c.id)) {
+            this.emit('tool:heartbeat', { callId: c.id, name: c.name, pending: pendingIds.size });
+          }
+        }
+      }, HEARTBEAT_MS);
+      // unref: 不阻止进程退出 (Node 定时器默认会拖住 event loop)
+      (hb as any).unref?.();
+      try {
+        results = await this.registry.dispatch(callsToDispatchFinal, ctx);
+      } finally {
+        clearInterval(hb);
+      }
+    }
 
     // 自动重试: 失败的工具最多重试 2 次 (仅限可重试的临时错误)
     const retryableErrors = /timeout|ECONNREFUSED|ECONNRESET|ETIMEDOUT|network|503|429|rate.limit/i;
@@ -6978,7 +7522,17 @@ try {
       if (failedCalls.length === 0) break;
       console.log(`[tool-retry] retry ${retry + 1}: ${failedCalls.map(c => c.name).join(', ')}`);
       await new Promise(r => setTimeout(r, 1000 * (retry + 1))); // 1s, 2s 退避
-      const retryResults = await this.registry.dispatch(failedCalls, ctx);
+      // 重试同样可能长时间静默 (超时类错误最容易触发) → 同样包心跳
+      const retryHb = setInterval(() => {
+        for (const c of failedCalls) this.emit('tool:heartbeat', { callId: c.id, name: c.name, pending: failedCalls.length, retry });
+      }, 30_000);
+      (retryHb as any).unref?.();
+      let retryResults: any[];
+      try {
+        retryResults = await this.registry.dispatch(failedCalls, ctx);
+      } finally {
+        clearInterval(retryHb);
+      }
       // 合并重试结果
       for (const rr of retryResults) {
         const idx = results.findIndex(x => x.id === rr.id);

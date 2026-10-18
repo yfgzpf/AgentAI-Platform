@@ -447,6 +447,20 @@ export const StatusBar: React.FC = () => {
 
       <span style={{ flex: 1 }} />
 
+      {/* 2026-10-17 环境体检入口: 一屏看清缺什么/能不能自动装/怎么装 */}
+      <span
+        onClick={() => window.dispatchEvent(new CustomEvent('agentai:open-env-check'))}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          cursor: 'pointer', color: 'var(--muted-2)',
+          marginRight: 8, fontSize: 'var(--fs-sm)',
+        }}
+        title="环境体检 — 检测 Node/Python/Git/Playwright/WSL/nmap/nuclei/sqlmap"
+      >
+        <span style={{ fontSize: 'var(--fs-micro)' }}>🩺</span>
+        <span style={{ fontSize: 'var(--fs-micro)' }}>环境体检</span>
+      </span>
+
       {/* Music player toggle */}
       <span
         onClick={() => setMusicOpen(v => !v)}

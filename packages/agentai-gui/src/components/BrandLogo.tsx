@@ -17,9 +17,18 @@ interface BrandLogoProps {
   size?: number;
   /** 是否带光晕动画 (欢迎页用) */
   glow?: boolean;
+  /**
+   * 是否播放「描边画出」入场动画 (2026-10-12)
+   * ----------------------------------------------------
+   * 两条流线从无到有被"画"出来, 再交点脉冲亮起 —— 呼应 Pulse/Flow 语义。
+   * 仅欢迎页/启动页开启: 标题栏那枚 20px 小标每次都播会变成闪烁噪音。
+   * 实现走 CSS class (agentai-theme.css 的 .pf-logo-draw),
+   * **不碰路径数据与渐变 id** —— brand.test.ts 对二者有逐字断言。
+   */
+  animate?: boolean;
 }
 
-export const BrandLogo: React.FC<BrandLogoProps> = ({ size = 56, glow = false }) => {
+export const BrandLogo: React.FC<BrandLogoProps> = ({ size = 56, glow = false, animate = false }) => {
   // 渐变 id 必须**逐实例唯一**: 本组件同时出现在标题栏 / 启动页 / 编辑器侧聊 (同一 DOM 多实例),
   // 固定 id 会让所有 url(#pf-grad) 都解析到文档里第一个 <defs>, 该实例一旦卸载/隐藏引用即失效。
   // useId() 返回值含 ':' (React 内部格式), 用在 url(#...) 里需先剥掉。
@@ -27,7 +36,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ size = 56, glow = false })
   const gradId = `pf-grad-${uid}`;
   const gradId2 = `pf-grad-2-${uid}`;
   return (
-    <div style={{
+    <div className={animate ? 'pf-logo-draw' : undefined} style={{
       width: size, height: size,
       position: 'relative',
       filter: glow ? 'drop-shadow(0 4px 20px rgba(205,122,58,0.35))' : 'none',
@@ -66,9 +75,9 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ size = 56, glow = false })
           fill="none"
         />
 
-        {/* 交叠点 — 脉冲圆点 */}
-        <circle cx="32" cy="32" r="4" fill="#E89055" />
-        <circle cx="32" cy="32" r="2" fill="#fff" opacity="0.9" />
+        {/* 交叠点 — 脉冲圆点 (animate 时随流线画完后亮起) */}
+        <circle className="pf-logo-dot" cx="32" cy="32" r="4" fill="#E89055" />
+        <circle className="pf-logo-dot" cx="32" cy="32" r="2" fill="#fff" opacity="0.9" />
       </svg>
     </div>
   );

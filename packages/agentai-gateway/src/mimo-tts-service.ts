@@ -52,6 +52,8 @@ export class MimoTtsService {
   constructor() {
     // 内置密钥（项目级别）+ 环境变量覆盖（用户级别）
     // 优先级: 环境变量 > 内置密钥
+    // ⚠️ 打包时 build-for-desktop.mjs 会从**产物**里剥离此内置值 (安装包不带 key),
+    //    终端用户通过 MIMO_API_KEY 配置; 源码保留便于开发/自用 (2026-10-18 富哥定调)。
     const BUILT_IN_KEY = 'sk-cp5szr1336c4uhfnwdbjpl4p8x9ydelvaz6wl42qv57vne49';
     this.apiKey = process.env.MIMO_API_KEY || BUILT_IN_KEY;
     this.baseUrl = process.env.MIMO_BASE_URL || 'https://api.xiaomimimo.com/v1';

@@ -1471,6 +1471,53 @@ interface ImageSegment {
   filePath?: string;
 }
 
+/** 图片实际可加载的 src: base64 优先, 否则用网关绝对地址 url。 */
+const srcOf = (s: ImageSegment): string => (s.base64 ? `data:image/png;base64,${s.base64}` : (s.url || ''));
+
+/** 建议的下载文件名: 优先用 filePath 的末段(证据截图本身就是这个名)。 */
+const downloadNameOf = (s: ImageSegment, idx: number): string => {
+  const base = (s.filePath || s.url || '').split(/[\\/]/).pop()?.split('?')[0] || '';
+  if (base && /\.(png|jpe?g|gif|webp|bmp|ico)$/i.test(base)) return base;
+  return `screenshot-${idx + 1}.png`;
+};
+
+/**
+ * 保存图片到本地 (2026-10-17)。
+ * 实机反馈"无法在线打开还要去复制打开" —— 赏金平台提交要附件, 之前没有保存入口。
+ *
+ * 两种数据形态都要支持:
+ *   - 跨源 http(s) URL (证据截图走网关 18789, 与 GUI 不同源) →
+ *     fetch 成blob 再用 objectURL 触发 <a download>。
+ *     ⚠️ 必须 fetch 而不是直接 <a href download>, 因为跨源时浏览器会忽略
+ *     download 属性, 变成页面跳转。
+ *   - dataURL (base64 内联) → 直接解码成 blob, 同一套代码路径。
+ * 失败时降级: 新窗口打开原图, 至少让人能右键另存。
+ */
+async function downloadImage(src: string, filename: string): Promise<void> {
+  try {
+    let blob: Blob;
+    if (src.startsWith('data:')) {
+      blob = await (await fetch(src)).blob();
+    } else {
+      const r = await fetch(src);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      blob = await r.blob();
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // 立刻 revoke 会让部分浏览器下载失败, 延后释放
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  } catch {
+    // 降级: 新窗口打开, 用户可自行右键另存
+    window.open(src, '_blank', 'noopener');
+  }
+}
+
 const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
   const [expanded, setExpanded] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -1508,14 +1555,19 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
           <polyline points="21 15 16 10 5 21"/>
         </svg>
         <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--fg-2)', flex: 1 }}>
-          浏览器截图 ({segments.length}张)
+          {/* 2026-10-17: 原来写死"浏览器截图", 但save_evidence 落盘的证据截图
+              也走同一个ImageGallery → 标题会答非所问。按内容自适应。 */}
+          {(() => {
+            const isEvidence = segments.some((s: any) => /证据截图/.test(String(s.alt || '')) || /\.agentai[\\/]evidence/i.test(String(s.filePath || '')));
+            return isEvidence ? `证据截图 (${segments.length}张)` : `浏览器截图 (${segments.length}张)`;
+          })()}
         </span>
         {!expanded && (
           <div style={{ display: 'flex', gap: 4 }}>
             {segments.slice(0, 3).map((img, i) => (
               <img
                 key={i}
-                src={img.base64 ? `data:image/png;base64,${img.base64}` : img.url}
+                src={srcOf(img)}
                 alt=""
                 style={{ width: 24, height: 24, borderRadius: 'var(--radius-sm)', objectFit: 'cover', opacity: 0.7 }}
               />
@@ -1546,7 +1598,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
                 }}
               >
                 <img
-                  src={img.base64 ? `data:image/png;base64,${img.base64}` : img.url}
+                  src={srcOf(img)}
                   alt={img.alt || `截图 ${i + 1}`}
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   loading="lazy"
@@ -1575,9 +1627,7 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
           }}
         >
           <img
-            src={segments[selectedIndex].base64
-              ? `data:image/png;base64,${segments[selectedIndex].base64}`
-              : segments[selectedIndex].url}
+            src={srcOf(segments[selectedIndex])}
             alt={segments[selectedIndex].alt || `截图 ${selectedIndex + 1}`}
             style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 'var(--radius-md)', objectFit: 'contain' }}
             onClick={e => e.stopPropagation()}
@@ -1600,6 +1650,23 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
               style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
             >
               下一张 →
+            </button>
+            {/* 2026-10-17: 补「另存为 / 新窗口打开」。
+                实机反馈"无法在线打开还要去复制打开" —— 之前只有翻页,
+                想拿原图去提交平台只能自己复制路径。这里给出直达动作。 */}
+            <button
+              onClick={(e) => { e.stopPropagation(); window.open(srcOf(segments[selectedIndex]), '_blank', 'noopener'); }}
+              title="在新窗口/浏览器标签打开原图"
+              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
+            >
+              🔗 打开原图
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); downloadImage(srcOf(segments[selectedIndex]), downloadNameOf(segments[selectedIndex], selectedIndex)); }}
+              title="保存到本地(赏金平台提交附件用)"
+              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
+            >
+              💾 保存
             </button>
           </div>
         </div>
@@ -1665,21 +1732,7 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
               onClick={async (e) => {
                 e.stopPropagation();
                 if (!src) return;
-                try {
-                  const response = await fetch(src as string);
-                  const blob = await response.blob();
-                  const urlObj = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = urlObj;
-                  a.download = (alt || 'image') + '.png';
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(urlObj);
-                } catch {
-                  // fallback: 直接打开链接
-                  window.open(src, '_blank');
-                }
+                await downloadImage(src, downloadNameOf({ url, base64, alt, filePath }, 0));
               }}
               style={{ padding: '8px 20px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--accent)', color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-md)', fontWeight: 500 }}
             >
@@ -1709,7 +1762,7 @@ export const ImageCard: React.FC<{
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
 
-  const src = base64 ? `data:image/png;base64,${base64}` : url;
+  const src = srcOf({ url, base64, alt, filePath });
 
   return (
     <div className="bubble-enter" style={{
@@ -1729,6 +1782,30 @@ export const ImageCard: React.FC<{
         </svg>
         <span>{alt || '截图/图片'}</span>
         {filePath && <span style={{ marginLeft: 'auto' }}>{filePath}</span>}
+        {/* 2026-10-17: 补打开/保存入口。实机反馈"无法在线打开还要去复制打开" ——
+            这个卡片原先只能看, 想拿原图去提交平台必须自己复制路径。 */}
+        <button
+          onClick={() => window.open(src, '_blank', 'noopener')}
+          title="在新窗口打开原图"
+          style={{
+            marginLeft: filePath ? 8 : 'auto', padding: '2px 8px', fontSize: 'var(--fs-micro)',
+            borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
+            background: 'var(--bg)', color: 'var(--fg-2)', cursor: 'pointer',
+          }}
+        >
+          🔗 打开
+        </button>
+        <button
+          onClick={() => downloadImage(src, downloadNameOf({ url, base64, alt, filePath }, 0))}
+          title="保存到本地(提交平台附件用)"
+          style={{
+            padding: '2px 8px', fontSize: 'var(--fs-micro)',
+            borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
+            background: 'var(--bg)', color: 'var(--fg-2)', cursor: 'pointer',
+          }}
+        >
+          💾 保存
+        </button>
       </div>
       <div style={{ padding: 8, display: 'flex', justifyContent: 'center', background: 'var(--bg)', minHeight: 120 }}>
         {error ? (

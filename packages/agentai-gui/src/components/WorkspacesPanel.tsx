@@ -47,6 +47,30 @@ const WorkspacesPanel: React.FC = () => {
     }
   };
 
+  // 批 2-B (2026-10-17): 真创建工作区 — 调 gateway 建目录 + .agentai/ 骨架 + 画像,
+  // 建完只进清单 + 告知, **不自动切换** (与 create_workspace 工具同一语义:
+  // 创建是创建, 切换是用户显式动作, 别顺手把当前会话的工作区偷走)。
+  const handleCreate = async () => {
+    const name = window.prompt('新工作区名称（将创建在当前工作区目录下）', '');
+    if (!name || !name.trim()) return;
+    const gw = (window as any).__AGENTAI_GATEWAY__ || 'http://127.0.0.1:18789';
+    try {
+      const res = await fetch(`${gw}/v1/workspace/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), parent: currentWs || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      reg.upsert(data.path);
+      const ts = data.profile?.techStack;
+      const stackHint = ts?.language ? `（${ts.language}${ts.framework ? ' + ' + ts.framework : ''}）` : '';
+      msgApi.success(`已创建工作区：${data.path}${stackHint}${data.created ? '' : '（目录已存在，已补初始化）'}`);
+    } catch (e: any) {
+      msgApi.error(`创建工作区失败：${e?.message || e}`);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--panel)' }}>
       {contextHolder}
@@ -82,8 +106,8 @@ const WorkspacesPanel: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px 8px', color: 'var(--muted-2)', fontSize: 'var(--fs-micro)' }}>
           <span>工作区清单 ({items.length})</span>
           <button
-            title="新建工作区 (选择文件夹)"
-            onClick={() => msgApi.info('请在下方「工作区」选择条或编辑器里选择新工作区，会自动加入清单')}
+            title="新建工作区 (在当前工作区目录下创建)"
+            onClick={handleCreate}
             style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, fontSize: 'var(--fs-micro)', padding: 0 }}
           >
             <PlusOutlined /> 新建

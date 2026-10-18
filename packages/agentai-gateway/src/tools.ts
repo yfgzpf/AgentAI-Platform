@@ -26,13 +26,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { spawnSync } from 'child_process';
 import { readMemory, writeMemory } from './memory.js';
 import { getGlobalSandbox } from './sandbox/index.js';
 // 2026-10-15 P0/P1 修复: 渗透授权/限频/参数安检共用模块 (与 agentai-loop 的 pentest 闸门、
 // routes/pentest-scope.ts 的确认端点同源, 防止三处逻辑漂移)
 import {
   isTargetInScope, readScope, pentestRateLimit,
-  assertSafeScanArg, auditLog,
+  assertSafeScanArg, assertSafeToolArgs, getTargetMode, auditLog,
 } from './pentest-scope-guard.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { ReadTracker } from './tools/read-tracker.js';
@@ -82,6 +83,35 @@ const DANGEROUS_CMD_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\b(reg\s+add|reg\s+delete)\b/i, reason: '修改注册表' },
   { pattern: /\bnetsh\b.*\b(firewall|advfirewall)\b.*\b(set|delete|disable)\b/i, reason: '修改防火墙规则' },
 ];
+
+/**
+ * 批量泄露保护 (2026-10-18): JSON 列表型响应只保留前 N 条。
+ * 富哥定的红线: "发现能拉数据, 最多拉 3 条作证明, 立刻断开".
+ * 仅当响应是顶层数组或 {data:[...]}/{items:[...]} 时生效;
+ * HTML / 单对象 / 纯文本原样返回 —— 不误伤正常取证。
+ */
+export function capListBody(body: string, maxItems = 3): { body: string; note?: string } {
+  const t = String(body || '').trim();
+  if (!t || (t[0] !== '[' && t[0] !== '{')) return { body };
+  try {
+    const j = JSON.parse(t);
+    let arr: any[] | null = null;
+    let wrapKey = '';
+    if (Array.isArray(j)) arr = j;
+    else if (j && Array.isArray(j.data)) { arr = j.data; wrapKey = 'data'; }
+    else if (j && Array.isArray(j.items)) { arr = j.items; wrapKey = 'items'; }
+    if (!arr || arr.length <= maxItems) return { body };
+    const capped = Array.isArray(j)
+      ? arr.slice(0, maxItems)
+      : { ...j, [wrapKey]: arr.slice(0, maxItems) };
+    return {
+      body: JSON.stringify(capped, null, 2),
+      note: `\n⚠️ 列表共 ${arr.length} 条, 已截断为前 ${maxItems} 条 (取证足够, 防批量泄露)`,
+    };
+  } catch {
+    return { body }; // 非 JSON → 原样
+  }
+}
 
 const PYTHON_DANGEROUS_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\bimport\s+subprocess\b/, reason: 'subprocess module' },
@@ -531,6 +561,27 @@ function withTimeout<T>(p: Promise<T>, ms: number, label = ''): Promise<T> {
   });
 }
 
+// ═══ 2026-10-17 P0: 进程树终止 (spawn shell:true 超时失效的唯一正解) ═══
+//
+// 事故: `run_command python probe_focus.py` 永远"执行中" → 前端 5 分钟超时 abort。
+// 实锤根因: spawn(cmd, [], { timeout, shell:true }) 里, Node 的 timeout **只杀 shell 包装
+// 进程 (cmd.exe)**, 真正的业务进程是**孙进程**, 它继续跑并**继承 stdout 管道句柄**
+// → child.on('close') 永不触发 → Promise 永不 resolve。
+// 实测: timeout:5000 + python sleep(600), 观察 12s 既没 close 也没 error。
+//
+// 对策: 超时后必须**杀整棵进程树**。Windows 用 taskkill /T (Tree), POSIX 用进程组 kill。
+function killProcessTree(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    if (process.platform === 'win32') {
+      // /T = 连子孙一起杀, /F = 强制。这是 Windows 上唯一可靠的方式。
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    } else {
+      try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+  } catch { /* 进程可能已退出, 忽略 */ }
+}
+
 function getWs(): string {
   try {
     const ws = currentRequestWorkspace() || WorkspaceManager.getInstance().projectDir || process.cwd();
@@ -910,11 +961,37 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   // list_scope: 查当前授权范围
   { name: 'list_scope', description: '【查当前渗透测试授权范围】列出 .agentai/scope.json 的 targets + max_rps。用户问"现在能测哪些目标 / 授权范围是什么"时调本工具。',
     parameters: { type: 'object', properties: {}, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  // ===== 2026-10-18 经验固化与召回 (富哥: 挖成功了要固化, 下个目标要能检索) =====
+  { name: 'search_pentest_experience', description: '【渗透经验召回】开工前查历史成功/失败经验 (按目标根域/漏洞类型/技术栈)。返回可复用手法与教训; 无经验时返回"暂无", 不影响继续。打新目标前先调它。',
+    parameters: { type: 'object', properties: {
+      host: { type: 'string', description: '目标 host 或根域 (如 u51.com, 可召回其子域经验)' },
+      vulnType: { type: 'string', description: '漏洞类型 (auth_bypass/idor/ssrf/...) ' },
+      tech: { type: 'string', description: '技术栈关键词 (zuul/spring/graphql...)' },
+      limit: { type: 'number', description: '最多返回几条 (默认 5, 上限 20)' },
+    }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'record_pentest_experience', description: '【渗透经验固化】每个目标收尾时记录一条经验 (成功/失败都要记), 供后续目标检索复用。成功写清手法+命中点; 失败写清试了什么/被什么拦住/下次怎么换。',
+    parameters: { type: 'object', properties: {
+      kind: { type: 'string', enum: ['success', 'failure'], description: '成功还是失败' },
+      target: { type: 'string', description: '目标 host' },
+      vulnType: { type: 'string', description: '漏洞类型 (可选)' },
+      technique: { type: 'string', description: '用了什么手法 (一句话)' },
+      outcome: { type: 'string', description: '结果 (命中/未命中/被 WAF 拦)' },
+      lesson: { type: 'string', description: '可复用教训 (最重要: 下次同类目标怎么打)' },
+      techStack: { type: 'array', items: { type: 'string' }, description: '技术栈指纹 (可选)' },
+      scope: { type: 'string', enum: ['workspace', 'global'], description: '写到哪里: workspace=本项目(默认); global=全局库(所有项目共用, 适合通用教训)' },
+    }, required: ['kind', 'target', 'lesson'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'search_vulns', description: '【漏洞库召回】查本工作区历史漏洞 (vulns.jsonl), 支持按目标根域/漏洞类型/等级过滤。打新目标前先查"同类资产以前出过什么洞", 避免重复劳动。',
+    parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '目标 host 或根域 (查 u51.com 能召回 api.u51.com 等子域)' },
+      vulnType: { type: 'string' }, severity: { type: 'string' },
+      limit: { type: 'number', description: '默认 5, 上限 20' },
+    }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆 (不传 key 或 key="*" 清空全部)\n- all: 一键清理所有跨会话数据 (项目记忆+上轮摘要+会话日志+AI记忆+对话历史)\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除单条项目记忆\n- forget({type:"project_memory"}) — 清空全部项目记忆\n- forget({type:"all"}) — 一键清理所有跨会话知识库 (全新开始)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory','all'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名 (不传或 "*" 清空全部)' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'create_workspace', description: '【新建工作区 (AI 主动)】在允许根内创建一个新的工作区目录, 自动建 `.agentai/` 骨架并初始化画像 (技术栈探测, 落 workspace-profile.json)。\n\n🔑 触发场景:\n- 用户说"新建一个工作区/项目目录/给 X 单开一个目录"\n- 当前任务需要一个独立目录 (新报告/新项目/挖洞成果库), 而不应污染当前工作区时 — 比"在当前工作区里乱建文件"干净 (见 Workspace 注入里的任务归属判断)\n\n⚙️ 参数: name (单段目录名, 不能含路径分隔符/Windows 保留字符) + parent (可选, 父目录, 缺省=当前工作区; 必须在允许根内)。\n\n⚠️ 边界 (与 GUI 侧栏「新建」按钮同一语义):\n- **只创建, 不切换**当前会话的工作区 — 建完明确告知路径, 是否切换由用户决定 (或在侧栏清单里点选)\n- parent 越界 (不在允许根内) 直接拒绝\n- 目录已存在 → 不报错, 补建骨架 + 画像 (幂等, 可安全重试)\n\n💡 示例:\ncreate_workspace({ name: "bounty-2026" }) → ✅ 已创建工作区: <当前工作区>/bounty-2026\ncreate_workspace({ name: "report-q4", parent: "F:/work" }) → 在指定父目录下建', parameters: { type: 'object', properties: { name: { type: 'string', description: '工作区目录名 (单段, 不含路径分隔符/保留字符)' }, parent: { type: 'string', description: '可选, 父目录绝对路径 (缺省=当前工作区; 必须在允许根内)' } }, required: ['name'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'remember_this', description: '【AI 主动结构化记忆 / 长期知识沉淀】\n主动将关键发现/决策/教训/项目事实写入项目记忆, 跨会话复用。比 remember 更结构化, 支持分类、重要性、去重。\n\n⚠️ 关键区别:\n- remember = 简单键值记忆 (key-value)\n- remember_this = 结构化记忆 (5 类分类 + 重要性 1-5 + entityId 去重)\n- evolve_prompt = 永久行为规则\n\n🔑 5 类记忆分类:\n- bug_fix: Bug 修复 (症状→根因→方案)\n- decision: 关键决策 (选择+理由)\n- pattern: 代码/架构模式\n- user_preference: 用户偏好\n- project_fact: 项目事实\n\n💡 触发场景:\n- 修复一个 bug → remember_this(category:bug_fix)\n- 做出技术选型 → remember_this(category:decision)\n- 发现项目规律 → remember_this(category:pattern)\n- 用户表达偏好 → remember_this(category:user_preference)\n- 确认项目约束 → remember_this(category:project_fact)\n\n📝 示例:\n- remember_this({category:"bug_fix", title:"PowerShell不支持&&", content:"...", entityId:"bug:ps:&&", importance:4})\n- remember_this({category:"decision", title:"使用BM25而非向量检索", content:"...", entityId:"decision:bm25", importance:5})', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['bug_fix','decision','pattern','user_preference','project_fact'], description: '记忆分类' }, title: { type: 'string', description: '简短标题 (展示用)' }, content: { type: 'string', description: '核心内容 (详细描述)' }, entityId: { type: 'string', description: '实体ID (用于去重, 如 "bug:llm-router:comments")' }, importance: { type: 'number', minimum: 1, maximum: 5, description: '重要性 1-5 (5=必须记住, <3 不写入)' }, tags: { type: 'array', items: { type: 'string' }, description: '标签 (可选)' } }, required: ['category','title','content','entityId','importance'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'session_manage', description: '【AI 自主管理对话会话】\n查看、删除、归档对话历史。AI 可以自主管理会话生命周期，避免记忆过载或清理无关历史。\n\n🔑 触发场景:\n- 用户说"删除某天的对话"/"清理旧会话"/"忘记上次"\n- AI 判断某些会话已无关，需要清理\n- 会话过多导致性能下降\n\n🛠️ 5 种 action:\n- list = 列出所有会话 (返回 session_id, 创建时间, 最后活跃, 消息数)\n- delete = 删除指定 session (完全删除，不可恢复)\n- archive = 归档 session (从活跃列表移除，但保留数据)\n- summary = 获取指定 session 的摘要\n- cleanup_old = 清理 N 天前的所有会话\n\n💡 示例:\n- session_manage({action:"list"}) — 查看所有会话\n- session_manage({action:"delete", session_id:"xxx"}) — 删除某会话\n- session_manage({action:"cleanup_old", older_than_days:7}) — 清理 7 天前的会话', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['list','delete','archive','summary','cleanup_old'], description: '操作类型' }, session_id: { type: 'string', description: 'delete/archive/summary 时需要' }, older_than_days: { type: 'number', description: 'cleanup_old 时指定天数' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'high' },
-  { name: 'spawn_subagent', description: '创建子智能体执行独立任务。适用场景：(1)需要并行处理多个独立子任务 (2)需要深度探索代码库而不影响主对话 (3)需要独立搜索调研 (4)医疗行业下可调用中医专业角色 (5)**完成关键步骤后 spawn 一个 verifier 独立复核** (信息隔离: 看不到你的推理, 只按验收条件+工具证据判 PASS/FAIL/UNRESOLVED, 防自我欺骗) (6)**看到陌生软件/网页想搞懂怎么做的 → 调 reverse-engineer** (REA 工作流, 读懂思路不抄代码) (7)**前端落地页做完想查设计反模式 → 调 design-review** (Impeccable 方法论 LLM 审) (8)**接手不熟项目想快速摸清弱点 → 调 explorer** (BRS/DRS 两阶段, 数据驱动不靠猜)。子智能体有独立上下文，结果自动汇总回主对话。长任务建议先 plan_task 分解，再对独立子任务各 spawn 一个子智能体。\n\n📋 可用类型:\n- 通用: explore/research/review/security-review/battle/architect/frontend/backend/tester/tech-writer/performance/pentest/fix-verifier/verifier/reverse-engineer/design-review/explorer\n- 中医(仅medical行业): tcm_diagnostic(辨证专家)/tcm_classic(古籍检索)/tcm_case(医案匹配)/tcm_herb(药材查询)/tcm_wellness(养生调理)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['explore','research','review','security-review','battle','architect','frontend','backend','tester','tech-writer','performance','pentest','fix-verifier','verifier','reverse-engineer','design-review','explorer','tcm_diagnostic','tcm_classic','tcm_case','tcm_herb','tcm_wellness'], description: 'explore=代码探索, research=搜索调研, review=代码审查, security-review=安全审查, battle=多Agent竞争, architect=架构师, frontend=前端工程师, backend=后端工程师, tester=测试工程师, tech-writer=技术写作, performance=性能专家, pentest=渗透测试, fix-verifier=修复验证, verifier=独立验证者 (信息隔离: 按验收条件+工具证据判 PASS/FAIL/UNRESOLVED), reverse-engineer=逆向复刻 (REA 工作流, 读懂思路不抄代码, 配合 rea:* MCP 工具), design-review=前端设计反模式审查 (Impeccable 方法论, 只指出问题不改代码), explorer=广度→深度探索 (RSIAgent BRS/DRS, 数据驱动发现项目弱点), tcm_diagnostic=中医辨证, tcm_classic=古籍检索, tcm_case=医案匹配, tcm_herb=药材查询, tcm_wellness=养生调理' }, task: { type: 'string', description: '子智能体要完成的具体任务描述。verifier 类型时应给出明确的验收条件 (要核对什么), 例如: "验证: 1) X 功能已改对 2) 测试全绿 3) 无回归"。reverse-engineer 类型时应说明"目标功能 + 用户的技术栈 + 希望复刻的范围"。design-review 类型时应说明"哪个前端目录/组件要查"。' }, numAgents: { type: 'number', description: 'Number of competing agents (battle mode only, default 3)' } }, required: ['type','task'] }, parallelSafe: false, riskLevel: 'medium' },
+  { name: 'spawn_subagent', description: '创建子智能体执行独立任务。适用场景：(1)需要并行处理多个独立子任务 (2)需要深度探索代码库而不影响主对话 (3)需要独立搜索调研 (4)医疗行业下可调用中医专业角色 (5)**完成关键步骤后 spawn 一个 verifier 独立复核** (信息隔离: 看不到你的推理, 只按验收条件+工具证据判 PASS/FAIL/UNRESOLVED, 防自我欺骗) (6)**看到陌生软件/网页想搞懂怎么做的 → 调 reverse-engineer** (REA 工作流, 读懂思路不抄代码) (7)**前端落地页做完想查设计反模式 → 调 design-review** (Impeccable 方法论 LLM 审) (8)**接手不熟项目想快速摸清弱点 → 调 explorer** (BRS/DRS 两阶段, 数据驱动不靠猜)。子智能体有独立上下文，结果自动汇总回主对话。长任务建议先 plan_task 分解，再对独立子任务各 spawn 一个子智能体。\n\n📋 可用类型:\n- 通用: explore/research/review/security-review/battle/architect/frontend/backend/tester/tech-writer/performance/pentest/fix-verifier/verifier/reverse-engineer/design-review/explorer\n- 渗透四角色 (V2.0): pentest_planner(规划/业务逻辑建模, 不碰目标)/pentest_recon(资产与入口侦察)/pentest_exploit(最小PoC执行+取证)/pentest_validator(独立复核+误报过滤)。深度挖洞建议按 planner→recon→exploit→validator 依次 spawn\n- 中医(仅medical行业): tcm_diagnostic(辨证专家)/tcm_classic(古籍检索)/tcm_case(医案匹配)/tcm_herb(药材查询)/tcm_wellness(养生调理)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['explore','research','review','security-review','battle','architect','frontend','backend','tester','tech-writer','performance','pentest','pentest_planner','pentest_recon','pentest_exploit','pentest_validator','fix-verifier','verifier','reverse-engineer','design-review','explorer','tcm_diagnostic','tcm_classic','tcm_case','tcm_herb','tcm_wellness'], description: 'explore=代码探索, research=搜索调研, review=代码审查, security-review=安全审查, battle=多Agent竞争, architect=架构师, frontend=前端工程师, backend=后端工程师, tester=测试工程师, tech-writer=技术写作, performance=性能专家, pentest=渗透测试(单角色全流程), pentest_planner=渗透规划者(业务逻辑建模+攻击链, 不碰目标), pentest_recon=渗透侦察者(子域/端口/端点发现), pentest_exploit=渗透执行者(最小PoC+取证), pentest_validator=渗透验证者(独立复核/误报过滤), fix-verifier=修复验证, verifier=独立验证者 (信息隔离: 按验收条件+工具证据判 PASS/FAIL/UNRESOLVED), reverse-engineer=逆向复刻 (REA 工作流, 读懂思路不抄代码, 配合 rea:* MCP 工具), design-review=前端设计反模式审查 (Impeccable 方法论, 只指出问题不改代码), explorer=广度→深度探索 (RSIAgent BRS/DRS, 数据驱动发现项目弱点), tcm_diagnostic=中医辨证, tcm_classic=古籍检索, tcm_case=医案匹配, tcm_herb=药材查询, tcm_wellness=养生调理' }, task: { type: 'string', description: '子智能体要完成的具体任务描述。verifier 类型时应给出明确的验收条件 (要核对什么), 例如: "验证: 1) X 功能已改对 2) 测试全绿 3) 无回归"。reverse-engineer 类型时应说明"目标功能 + 用户的技术栈 + 希望复刻的范围"。design-review 类型时应说明"哪个前端目录/组件要查"。' }, numAgents: { type: 'number', description: 'Number of competing agents (battle mode only, default 3)' } }, required: ['type','task'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'run_team', description: '【AI 团队协作】启动预设 AI 团队执行复杂任务。团队由多个角色 Agent 组成, 支持并行/串行/审查三种工作流, 结果自动综合。\n\n可用团队:\n- code-review: 代码审查团队 (架构师+安全专家+性能专家, 并行)\n- feature-dev: 功能开发团队 (架构师+前端+后端+测试, 串行)\n- docs: 文档团队 (技术写作+校对, 串行)\n- debug: 调试团队 (探索+审查+安全, 并行)\n- security-audit: 安全审计团队 (漏洞扫描+架构安全+代码探索, 并行)\n- refactor: 重构团队 (架构师+前端+后端+测试, 串行)\n\n适用场景: 需要多角色协作的复杂任务, 如全面代码审查、全栈功能开发、系统性重构等。\n不适用: 简单单步任务用 spawn_subagent, 独立调研用 spawn_subagent(research)。', parameters: { type: 'object', properties: { teamId: { type: 'string', enum: ['code-review','feature-dev','docs','debug','security-audit','refactor'], description: '团队 ID' }, task: { type: 'string', description: '团队要完成的任务描述' } }, required: ['teamId','task'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'share_port', description: '【公网分享本地端口】将本地端口通过 localtunnel 隧道暴露为公网 URL, 任何人访问该 URL 都会转发到你的 localhost。无需注册, 完全免费。\n\n🔑 触发场景 (用户提到以下关键词时主动使用):\n- "公网分享"/"分享给他人"/"远程访问"/"外网访问"\n- "把 localhost 分享出去"/"让别人打开"\n- "Webhook 测试"/"在线演示"/"远程预览"\n- "把我的开发服务器分享出去"\n\n🛠️ 4 种 action:\n- create: 创建隧道 (返回公网 URL, 必填: port)\n- list: 列出所有活跃隧道\n- close: 关闭指定隧道 (必填: tunnel_id)\n- close_all: 关闭所有隧道\n\n💡 典型用法:\n- share_port({action:"create", port:3000}) → 返回 https://xxx.loca.lt 公网URL\n- share_port({action:"list"}) → 查看所有隧道\n- share_port({action:"close", tunnel_id:"tun_xxx"}) → 关闭\n\n⚠️ 安全:\n- 仅 1024-65535 端口 (拒绝 22/3389 等系统端口)\n- 首次使用需安装 localtunnel 包 (npm_install)\n- 隧道 URL 仅返回给当前用户, 不会写入日志\n\n不适用: 内网穿透用 frp/ngrok, 这个仅用于临时分享。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['create','list','close','close_all'], description: 'create=创建隧道, list=列出隧道, close=关闭指定, close_all=关闭全部' }, port: { type: 'number', description: '本地端口号 (create 时必填, 1024-65535)' }, subdomain: { type: 'string', description: '可选: 指定子域名 (如 myapp → myapp.loca.lt)' }, tunnel_id: { type: 'string', description: 'close 时必填' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'spec_generate', description: '为模糊需求生成结构化 PRD。当用户请求模糊时（如"帮我做一个功能"），调用此工具生成包含用户故事、目标、边界、验收标准、测试标准的 PRD 文档。生成后展示给用户确认，确认后调用 plan_task 拆分子任务。', parameters: { type: 'object', properties: { request: { type: 'string', description: '用户原始需求描述' } }, required: ['request'] }, parallelSafe: true, riskLevel: 'low' },
@@ -2528,24 +2605,67 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       }
 
       // 普通命令: 用 spawn + shell:true (支持 && | 等管道)
+      // ⚠️ 2026-10-17 P0: **不能再依赖 spawn 的 timeout 选项**。
+      //   shell:true 时它只杀 cmd.exe, 业务进程是孙进程且继承 stdout 管道
+      //   → close 永不触发 → Promise 永挂 (已实测: timeout 5s, 观察 12s 无 close 无 error)。
+      //   现在自建计时器, 到点**杀整棵进程树**并主动 resolve, 保证工具一定返回。
+      const TIMED_OUT_MARK = '__AGENTAI_CMD_TIMEOUT__';
       const output = await new Promise<string>((resolve, reject) => {
         const child = spawn(command, [], {
-          cwd, timeout, encoding: 'utf-8', shell: true,
+          cwd, encoding: 'utf-8', shell: true,
           windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
         });
         let stdout = '', stderr = '';
+        let settled = false;
+        let timer: any = null;
+        const finish = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          if (timer) { clearTimeout(timer); timer = null; }
+          fn();
+        };
+        if (timeout > 0 && Number.isFinite(timeout)) {
+          timer = setTimeout(() => {
+            // 杀树, 否则孙进程继续跑并持有管道, 事件永不触发
+            killProcessTree(child.pid);
+            finish(() => resolve(TIMED_OUT_MARK));
+          }, timeout);
+          (timer as any).unref?.();
+        }
         child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
         child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
-        child.on('error', (err: any) => { err.stdout = stdout; err.stderr = stderr; reject(err); });
+        child.on('error', (err: any) => {
+          err.stdout = stdout; err.stderr = stderr;
+          finish(() => reject(err));
+        });
         child.on('close', (code: number) => {
-          if (code !== 0) {
-            const e: any = new Error(`exit code ${code}`);
-            e.stdout = stdout; e.stderr = stderr; e.code = code;
-            reject(e); return;
-          }
-          resolve(stdout + (stderr ? `\nSTDERR:\n${stderr}` : ''));
+          finish(() => {
+            if (code !== 0) {
+              const e: any = new Error(`exit code ${code}`);
+              e.stdout = stdout; e.stderr = stderr; e.code = code;
+              reject(e); return;
+            }
+            resolve(stdout + (stderr ? `\nSTDERR:\n${stderr}` : ''));
+          });
         });
       });
+
+      // 超时: 不当异常抛出, 而是返回**带明确指令的结构化结果**,
+      // 让 AI 知道"这条路子走不通, 换方法"而不是干等 (2026-10-17 P1 看门狗)。
+      if (output === TIMED_OUT_MARK) {
+        const secs = Math.round(timeout / 1000);
+        return {
+          success: false,
+          output:
+            `⏱ 命令超时 (超过 ${secs}s), 已强制终止整棵进程树 (pid 及其子孙全部结束, 不再残留后台进程)。\n\n` +
+            `被终止命令: ${command.slice(0, 300)}\n\n` +
+            `⚠️ 别再原样重试同一条命令 —— 它已经被证明跑不完。请立刻换路子:\n` +
+            `  1) 长任务改用 run_background({ command }) 后台跑, 再用 wait_for_job / job_output 轮询结果;\n` +
+            `  2) 自己写的 python 脚本里给每个请求加 socket 超时 + 重试上限 (URLError 通常是没设 timeout 导致永久挂住);\n` +
+            `  3) 拆小目标、减少单次扫描范围 (比如先只探 1 个域而不是 7 个);\n` +
+            `  4) 换用更快的工具 (wsl_scan 的 nmap -sV --top-ports 而不是全端口)。`,
+        };
+      }
       return { success: true, output: (output || '').slice(0, 5000) || '(ok, no output)' };
     } catch (e: any) {
       const so = e.stdout ? `\nSTDOUT:\n${e.stdout}` : '';
@@ -2556,7 +2676,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   },
   job_output: async (args) => { const j = bgJobs.get(args.jobId); return { success: !!j, output: j ? (j.output || '').slice(-(args.tailLines || 80) * 80) : 'Not found' }; },
   wait_for_job: async (args) => { const j = bgJobs.get(args.jobId); if (!j) return { success: false, output: 'Not found' }; const start = Date.now(); while (j.running && Date.now() - start < (args.timeoutMs || 5000)) await new Promise(r => setTimeout(r, 200)); return { success: !j.running, output: j.output || '' }; },
-  stop_job: async (args) => { try { const j = bgJobs.get(args.jobId); if (!j) return { success: false, output: 'Not found' }; const { execSync } = await import('child_process'); execSync(`taskkill /F /PID ${j.pid}`, { stdio: 'ignore' }); return { success: true, output: 'Stopped' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
+  stop_job: async (args) => { try { const j = bgJobs.get(args.jobId); if (!j) return { success: false, output: 'Not found' }; killProcessTree(j.pid); const job = bgJobs.get(args.jobId); if (job) job.running = false; return { success: true, output: 'Stopped (含子孙进程)' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   list_jobs: async () => ({ success: true, output: [...bgJobs.entries()].map(([id, j]) => `#${id}: running=${j.running}`).join('\n') || '(none)' }),
   remember: async (args, ctx) => {
     try {
@@ -2636,6 +2756,53 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
     } catch (e: any) { return { success: false, output: `scope_guard 失败: ${e.message}` }; }
   },
   // ===== 2026-10-14 赏金漏洞落盘 (HexStrike 文章 P2: 验证过的发现可跨会话召回) =====
+  // ===== 2026-10-18 经验固化与召回 (失败也不抛错, 不影响主线) =====
+  search_pentest_experience: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { searchExperience, searchVulns, formatExperienceBrief } = await import('./pentest/experience.js');
+      const exps = searchExperience(ws, { host: args.host, vulnType: args.vulnType, tech: args.tech, limit: args.limit });
+      const vulns = searchVulns(ws, { target: args.host, vulnType: args.vulnType, limit: args.limit });
+      return {
+        success: true,
+        output: formatExperienceBrief(exps, vulns) || '📭 暂无历史经验/同类漏洞 (新目标, 从零开始即可)。',
+        data: { experiences: exps, vulns },
+      };
+    } catch (e: any) {
+      return { success: true, output: `📭 暂无历史经验 (检索失败: ${e.message}) —— 不影响继续。` };
+    }
+  },
+  record_pentest_experience: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { recordExperience } = await import('./pentest/experience.js');
+      const rec = recordExperience(ws, {
+        kind: args.kind === 'success' ? 'success' : 'failure',
+        target: String(args.target || ''),
+        vulnType: args.vulnType,
+        technique: args.technique,
+        outcome: args.outcome,
+        lesson: String(args.lesson || ''),
+        techStack: args.techStack,
+        source: 'manual',
+        scope: args.scope === 'global' ? 'global' : 'workspace',
+      });
+      return { success: true, output: `✅ 经验已固化: [${rec.kind}] ${rec.target} — ${rec.lesson.slice(0, 120)}`, data: rec };
+    } catch (e: any) { return { success: false, output: `record_pentest_experience 失败: ${e.message}` }; }
+  },
+  search_vulns: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { searchVulns } = await import('./pentest/experience.js');
+      const vulns = searchVulns(ws, { target: args.target, vulnType: args.vulnType, severity: args.severity, limit: args.limit });
+      if (vulns.length === 0) return { success: true, output: '📭 无匹配的历史漏洞。', data: { vulns: [] } };
+      const lines = [`📚 历史漏洞 ${vulns.length} 条:`];
+      for (const v of vulns) lines.push(`- ${v.target} [${v.severity || '?'}/${v.vulnType || '?'}] ${v.title}${v.status ? ` (${v.status})` : ''}`);
+      return { success: true, output: lines.join('\n'), data: { vulns } };
+    } catch (e: any) {
+      return { success: true, output: `📭 漏洞库读取失败 (${e.message}) —— 不影响继续。` };
+    }
+  },
   report_vulnerability: async (args, ctx) => {
     try {
       const ws = (ctx as any)?.workspace || getWs();
@@ -2731,6 +2898,22 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       // 追加到 JSONL (与 memory.jsonl 同构, 跨会话可召回)
       const file = path.join(vulnsDir, 'vulns.jsonl');
       fs.appendFileSync(file, JSON.stringify(record) + '\n');
+      // 2026-10-18: 挖到即固化经验 (富哥: "挖成功了应该固化, 打下一个目标时能检索")
+      // 纯本地派生, 不额外调 LLM; 失败静默, 绝不影响落库。
+      try {
+        const { recordExperience } = await import('./pentest/experience.js');
+        const pocFirst = String(args.poc || '').split('\n').map((s: string) => s.trim()).find(Boolean) || '';
+        recordExperience(ws, {
+          kind: 'success',
+          target: String(args.target || ''),
+          vulnType: String(args.vulnType || 'unknown'),
+          technique: pocFirst.slice(0, 300),
+          outcome: `${args.severity || '?'} / ${String(args.title || '')}`.slice(0, 300),
+          lesson: `命中 ${args.vulnType || 'unknown'} @ ${args.target}: ${args.title || ''}。可复用手法: ${pocFirst.slice(0, 200)}`,
+          evidencePaths,
+          source: 'auto',
+        });
+      } catch { /* 经验固化失败不影响落库 */ }
       return {
         success: true,
         output: `✅ 漏洞已落盘: ${id} [${status}]\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${platform ? `平台: ${platform}${platformAuto ? ' (由目标自动反查)' : ''}${platformTrusted ? '' : ' **(不可信: 凭印象填的, 无法核对)**'}\n` : '⚠️ 平台: 未识别 —— 该目标不属于任何已确认的 SRC 平台, 请确认是否要提交或换平台\n'}${platformWarn ? `${platformWarn}\n` : ''}证据文件: ${evidencePaths.length ? evidencePaths.join(', ') : '(仅文本证据)'}\n路径: ${file}\n下次同类目标可直接召回这条参考。${status === 'unverified' ? '\n提示: 复现验证通过后可更新为 verified (赏金平台提交需 verified)。' : ''}`,
@@ -3067,15 +3250,39 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       }
       // 4. <script src> 外链 (可再深入一层分析)
       for (const m of text.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)) found.scriptSrcs.add(m[1]);
+      // 5. 密钥/敏感信息扫描 (2026-10-18) — 纯字符串分析, 不发任何请求
+      // 富哥: "前端源码里藏着很多高危的钥匙" —— AK/SK 泄露本身就是高危。
+      const secretHits = new Map<string, { type: string; preview: string }>();
+      const SECRET_PATTERNS: { type: string; re: RegExp }[] = [
+        { type: 'AWS AccessKey', re: /\bAKIA[0-9A-Z]{16}\b/g },
+        { type: '阿里云 AccessKey', re: /\bLTAI[0-9A-Za-z]{12,}\b/g },
+        { type: '腾讯云 SecretId', re: /\bAKID[0-9A-Za-z]{13,}\b/g },
+        { type: '私钥', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
+        { type: '内网地址', re: /\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}\b/g },
+        { type: '疑似密钥赋值', re: /(?:api[_-]?key|secret|access[_-]?key|token)\s*[:=]\s*["'`]([A-Za-z0-9_\-]{12,})["'`]/gi },
+      ];
+      const maskSecret = (v: string) => (v.length <= 8 ? v.slice(0, 3) + '***' : v.slice(0, 6) + '***');
+      for (const p of SECRET_PATTERNS) {
+        p.re.lastIndex = 0;
+        for (const m of text.matchAll(p.re)) {
+          const val = String((m as any)[1] || m[0]);
+          const preview = maskSecret(val); // 只回显前 6 位, 防二次泄露
+          const key = p.type + '::' + preview;
+          if (!secretHits.has(key) && secretHits.size < 30) secretHits.set(key, { type: p.type, preview });
+        }
+      }
+      const secrets = [...secretHits.values()];
+
       const dedup = (s: Set<string>) => [...s].filter(Boolean).slice(0, 100);
       const result = {
         absoluteUrls: dedup(found.absoluteUrls),
         apiPaths: dedup(found.apiPaths),
         fetchCalls: dedup(found.fetchCalls),
         scriptSrcs: dedup(found.scriptSrcs),
+        secrets,
       };
       const total = result.absoluteUrls.length + result.apiPaths.length + result.fetchCalls.length + result.scriptSrcs.length;
-      if (total === 0) {
+      if (total === 0 && secrets.length === 0) {
         return { success: true, output: `📭 未从 ${source === 'content' ? '提供的内容' : source} 提取到端点 (可能是纯静态页/SSR 无接口/内容已截断)。`, data: { ...result, total: 0 } };
       }
       const lines = [
@@ -3084,6 +3291,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         result.fetchCalls.length ? `\n📡 fetch/axios 调用 (${result.fetchCalls.length}):\n${result.fetchCalls.map(p => `  ${p}`).join('\n')}` : '',
         result.absoluteUrls.length ? `\n🔗 绝对 URL (${result.absoluteUrls.length}):\n${result.absoluteUrls.slice(0, 30).map(p => `  ${p}`).join('\n')}` : '',
         result.scriptSrcs.length ? `\n📜 script 外链 (可再抓来深入, ${result.scriptSrcs.length}):\n${result.scriptSrcs.slice(0, 20).map(p => `  ${p}`).join('\n')}` : '',
+        secrets.length ? `\n🔑 疑似密钥/敏感信息 (${secrets.length}, 仅显示前 6 位):\n${secrets.map(s => `  [${s.type}] ${s.preview}`).join('\n')}` : '',
         `\n💡 对可疑端点用 http_replay 逐个试 (未授权/改 id/换 token), 命中后用 report_vulnerability 落盘。`,
       ].filter(Boolean).join('\n');
       return { success: true, output: lines, data: { ...result, total } };
@@ -3116,6 +3324,17 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           : '';
         return { success: false, output: `❌ http_replay 越界: ${u.hostname} 不在授权范围${hint}。重放未授权目标的请求 = 未授权访问 — 先 grant_scope({target}) 直接授权 (立即生效)。` };
       }
+      // ①.5 只读模式 (2026-10-18): readonly 目标禁止写方法 —— 越权"只看不改"
+      // 富哥红线: "测试越权时只允许 GET 验证能不能看到别人数据, 绝不能改密码/删订单"。
+      const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+      if (WRITE_METHODS.has(method) && getTargetMode(ws, u.hostname) === 'readonly') {
+        return {
+          success: false,
+          output: `🔒 ${u.hostname} 处于只读授权模式 (scope.json mode="readonly"), 已拒绝 ${method}。\n` +
+            `越权/IDOR 验证请只用 GET/HEAD 读取别人数据 (如 GET /api/order/detail?id=123); ` +
+            `不要修改/删除别人的数据。确需写操作请让用户在授权面板把该目标改为 full。`,
+        };
+      }
       // ② CRLF 头注入防护: header 名/值含 \r \n 一律拒绝
       const headers: Record<string, string> = {};
       const rawHeaders = args.headers && typeof args.headers === 'object' ? args.headers : {};
@@ -3139,17 +3358,20 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const t0 = Date.now();
       const resp = await httpRequestRaw(method, u, headers, body, { follow, timeoutMs, maxRedirects: 3, isTargetInScope: (h: string) => isTargetInScope(ws, h) });
       const durationMs = Date.now() - t0;
-      const bodyTxt = resp.body.length > 6000 ? resp.body.slice(0, 6000) + `\n…[截断, 共 ${resp.body.length} 字符]` : resp.body;
+      // 批量泄露保护: JSON 列表只回前 N 条 (默认 3, 上限 10)
+      const capped = capListBody(resp.body, Math.min(Math.max(Number(args.max_items) || 3, 1), 10));
+      const bodyTxt = capped.body.length > 6000 ? capped.body.slice(0, 6000) + `\n…[截断, 共 ${capped.body.length} 字符]` : capped.body;
       const lines = [
         `📡 ${method} ${u.toString()} → ${resp.status} ${resp.statusText} (${durationMs}ms)`,
         resp.redirects.length ? `↪ 重定向链: ${resp.redirects.join(' → ')}` : '',
         `\n响应头:\n${Object.entries(resp.headers).slice(0, 25).map(([k, v]) => `  ${k}: ${v}`).join('\n')}`,
         `\n响应体 (${resp.body.length} 字符):\n${bodyTxt}`,
+        capped.note || '',
       ].filter(Boolean).join('\n');
       return {
         success: resp.status > 0,
         output: lines,
-        data: { status: resp.status, headers: resp.headers, body: resp.body.slice(0, 6000), redirects: resp.redirects, durationMs, target: u.hostname },
+        data: { status: resp.status, headers: resp.headers, body: capped.body.slice(0, 6000), redirects: resp.redirects, durationMs, target: u.hostname },
       };
     } catch (e: any) { return { success: false, output: `http_replay 失败: ${e.message}` }; }
   },
@@ -3179,6 +3401,8 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         assertSafeScanArg(tool);
         for (const a of extra) assertSafeScanArg(a);
         assertSafeScanArg(targetHost!);
+        // 2026-10-18: 工具级危险参数拦截 (sqlmap --dump/--os-shell/--file-read 等一律拒)
+        assertSafeToolArgs(tool, extra);
       } catch (e: any) {
         return { success: false, output: e.message };
       }
@@ -3187,11 +3411,23 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       // 5. argv 数组直调 wsl.exe (不走 cmd /c, 少一层 shell 解析; 数组化 + 黑名单双保险)
       const argv = ['-d', 'kali-linux', '--', tool, ...extra, targetHost!];
       const timeoutMs = Math.min(Number(args.timeout_ms) || 60_000, 180_000);
+      // ⚠️ 2026-10-17 P2: execFile 的 timeout 也只杀直接子进程 (wsl.exe),
+      //   Kali 里的 nmap/sqlmap 是它的孙进程, 会继续跑并占用 wsl 会话。
+      //   到点必须**杀进程树**, 否则后台堆积一堆僵尸扫描器。
+      let wslChild: any = null;
       const out = await new Promise<string>((resolve, reject) => {
-        execFile('wsl', argv, {
+        const timer = setTimeout(() => {
+          killProcessTree(wslChild?.pid);
+          const e: any = new Error(`扫描超时 (超过 ${Math.round(timeoutMs / 1000)}s), 已强制终止 wsl 进程树`);
+          e.timedOut = true;
+          reject(e);
+        }, timeoutMs + 5000);
+        (timer as any).unref?.();
+        wslChild = execFile('wsl', argv, {
           timeout: timeoutMs + 5000, maxBuffer: 5 * 1024 * 1024,
           windowsHide: true, encoding: 'utf-8',
         }, (err: any, so: any, se: any) => {
+          clearTimeout(timer);
           if (err) { const e: any = new Error(String(err.message)); e.stdout = so; e.stderr = se; reject(e); return; }
           resolve(String(so ?? '') + (se ? `\nSTDERR:\n${se}` : ''));
         });
@@ -3201,7 +3437,11 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
     } catch (e: any) {
       const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
       const se = e.stderr ? `\nSTDERR:\n${String(e.stderr).slice(0, 2000)}` : '';
-      return { success: false, output: `wsl_scan 失败: ${e.message}${so}${se}` };
+      // 超时也要给 AI 换路子的可执行建议 (P1 看门狗)
+      const advice = e.timedOut
+        ? `\n\n⚠️ 别原样重试同一条扫描。换路子: 缩小范围 (--top-ports 代替全端口 / 只扫 1 个域) 、加大 timeout_ms、或换更快的工具 (httpx/subfinder 比 nmap 快一个量级)。`
+        : '';
+      return { success: false, output: `wsl_scan 失败: ${e.message}${so}${se}${advice}` };
     }
   },
   // ===== 2026-10-15 授权对话化: grant_scope / list_scope (免手写 scope.json) =====
@@ -3723,6 +3963,42 @@ ${violations.map(v => `• ${v}`).join('\n')}
       return { success: r.success, output: r.message, data: { archivePath: r.archivePath, skillName: r.skillName } };
     } catch (e: any) { return { success: false, output: `export_skill_package 失败: ${e.message}` }; }
   },
+  // ===== 批 2-B (2026-10-17): AI 主动新建工作区 =====
+  // 与 GUI 侧栏「新建」按钮、POST /v1/workspace/create 同一语义:
+  //   只创建不切换 / 限定允许根 / 建完明确告知 / 幂等。
+  create_workspace: async (args) => {
+    try {
+      const name = typeof args?.name === 'string' ? args.name.trim() : '';
+      if (!name) {
+        return { success: false, output: 'create_workspace 需要 name 参数 (工作区目录名, 单段, 不能含路径分隔符)' };
+      }
+      const parent = typeof args?.parent === 'string' && args.parent.trim()
+        ? args.parent.trim()
+        : (currentRequestWorkspace() || undefined);   // 缺省父目录 = 请求级工作区 (与 getWs 同口径, 不用全局单例)
+      const wm = WorkspaceManager.getInstance();
+      const result = wm.createProjectDir(name, parent);
+      const { readWorkspaceProfile } = await import('./workspace-profile.js');
+      const profile = readWorkspaceProfile(result.path);
+      const ts = profile?.techStack;
+      const lines: string[] = [
+        result.created
+          ? `✅ 已创建工作区: ${result.path}`
+          : `ℹ️ 目录已存在, 已补初始化骨架与画像: ${result.path}`,
+      ];
+      if (ts) {
+        lines.push(`   技术栈: ${ts.language}${ts.framework ? ' + ' + ts.framework : ''}${ts.packageManager ? ` (${ts.packageManager})` : ''}`);
+      }
+      lines.push(`   画像: ${result.path}/.agentai/workspace-profile.json`);
+      lines.push('   ⚠️ **未切换**当前工作区 — 是否切换由用户决定 (用户可在侧栏清单点选, 或回复"切换到该工作区")。');
+      lines.push('   该目录已在允许根内, 可直接用 read_file/write_file/list_directory 等文件工具操作。');
+      return {
+        success: true,
+        output: lines.join('\n'),
+        data: { path: result.path, created: result.created, existed: result.existed },
+      };
+    } catch (e: any) { return { success: false, output: `create_workspace 失败: ${e.message}` }; }
+  },
+
   forget: async (args) => {
     try {
       const type = args.type || 'memory';
@@ -3760,22 +4036,46 @@ ${violations.map(v => `• ${v}`).join('\n')}
           return { success: true, output: '⚠️ 上轮会话摘要不存在' };
         }
         case 'project_memory': {
-          const { readProjectMemory, initProjectMemory } = await import('./project-memory.js');
+          const { readProjectMemory, initProjectMemory, saveProjectMemory, detectTechStack } = await import('./project-memory.js');
           const pm = readProjectMemory(ws);
           // P0 修复: 支持 key="*" 或不传 key → 清空全部项目记忆
           if (!args.key || args.key === '*' || args.key === 'all') {
-            const keys = Object.keys(pm);
-            if (keys.length === 0) return { success: true, output: '⚠️ 项目记忆已为空' };
-            // 保留结构, 清空数据
-            initProjectMemory(ws, {});
-            return { success: true, output: `✅ 已清空全部项目记忆 (${keys.length} 条): ${keys.join(', ')}` };
+            if (!pm) return { success: true, output: '⚠️ 项目记忆已为空' };
+            const cleared = (pm.fixPatterns?.length || 0) + (pm.knownIssues?.length || 0)
+              + (pm.facts?.length || 0) + (pm.preferences?.customRules?.length || 0);
+            if (cleared === 0) return { success: true, output: '⚠️ 项目记忆已为空 (无修复模式/已知问题/项目事实/自定义规则)' };
+            // 保留结构, 清空数据。
+            // ⚠️ initProjectMemory 仅接受 workspace 单参 — 旧代码传第二参被 JS 静默忽略,
+            //    "删单条"分支因此把整份记忆重置了, 却还回报"✅ 已删除项目记忆: xxx" (假成功)。
+            initProjectMemory(ws);
+            return { success: true, output: `✅ 已清空全部项目记忆 (修复模式/已知问题/项目事实/自定义规则 共 ${cleared} 条; 技术栈将在下次读取时重新探测)` };
           }
-          if (args.key && pm[args.key]) {
-            delete pm[args.key];
-            initProjectMemory(ws, pm);
-            return { success: true, output: `✅ 已删除项目记忆: ${args.key}` };
+          if (!pm) return { success: false, output: '⚠️ 项目记忆不存在, 无需删除' };
+          // 单条删除: 把目标字段重置为空值, 不 delete 顶层键 —
+          // 删掉 techStack/preferences 会让 buildMemoryContext 等读方直接崩溃 (mem.techStack.language / mem.preferences.customRules.length)
+          // 兼容 schema 示例里的中文键名 (forget({type:"project_memory", key:"技术栈"}))
+          const KEY_ALIASES: Record<string, string> = {
+            '技术栈': 'techStack', 'techstack': 'techStack',
+            '偏好': 'preferences', 'preference': 'preferences', 'preferences': 'preferences',
+            '修复模式': 'fixPatterns', 'fixpatterns': 'fixPatterns',
+            '已知问题': 'knownIssues', 'knownissues': 'knownIssues',
+            '项目事实': 'facts', 'fact': 'facts', 'facts': 'facts',
+          };
+          const field = KEY_ALIASES[args.key] || KEY_ALIASES[String(args.key).toLowerCase()];
+          const validFields = ['techStack', 'preferences', 'fixPatterns', 'knownIssues', 'facts'];
+          if (!field || !validFields.includes(field)) {
+            return { success: false, output: `未找到项目记忆: ${args.key} (可用键: ${validFields.join(' / ')}; 也可用中文: 技术栈/偏好/修复模式/已知问题/项目事实)` };
           }
-          return { success: false, output: `未找到项目记忆: ${args.key}` };
+          if (field === 'techStack') {
+            // 技术栈是自动探测的, "删除" = 重新探测
+            pm.techStack = detectTechStack(ws);
+          } else if (field === 'preferences') {
+            pm.preferences = { customRules: [] };
+          } else {
+            (pm as any)[field] = [];
+          }
+          saveProjectMemory(ws, pm);
+          return { success: true, output: `✅ 已删除项目记忆: ${field}${field === args.key ? '' : ` (${args.key})`}` };
         }
         // P0 新增: 一键清理所有记忆 (跨会话知识库)
         case 'all': {
@@ -3788,10 +4088,10 @@ ${violations.map(v => `• ${v}`).join('\n')}
           try {
             const { readProjectMemory, initProjectMemory } = await import('./project-memory.js');
             const pm = readProjectMemory(ws);
-            const pmKeys = Object.keys(pm);
-            if (pmKeys.length > 0) {
-              initProjectMemory(ws, {});
-              results.push(`项目记忆: 清空 ${pmKeys.length} 条`);
+            // ⚠️ initProjectMemory 仅接受 workspace 单参 (旧代码第二参被静默忽略)
+            if (pm) {
+              initProjectMemory(ws);
+              results.push('项目记忆: 已清空');
             }
           } catch (e: any) { results.push(`项目记忆: 跳过 (${e.message})`); }
 

@@ -20,6 +20,20 @@
   font: inherit;
 }
 
+/* ═══ 控件防溢出基线 (2026-10-18) ═══
+ * 富哥反馈"控件溢出严重"。这里用 :where() 低优先级补一层通用约束,
+ * 只收口常见溢出源 (长 URL/token、宽表格、大弹窗、图片撑破),
+ * 不覆盖组件自身的精确样式 (inline style / AntD CSS-in-JS 优先级更高)。
+ * 注意: 这是"兜底", 具体页面仍应自查固定宽高与 nowrap。
+ */
+:where(img, video, canvas) { max-width: 100%; height: auto; }
+:where(pre) { max-width: 100%; overflow: auto; }
+:where(pre, code) { overflow-wrap: anywhere; }
+:where(.ant-modal) { max-width: calc(100vw - 24px); }
+:where(.ant-table-wrapper, .ant-table-content) { max-width: 100%; overflow-x: auto; }
+:where(.ant-drawer-content-wrapper) { max-width: 100vw; }
+:where(.ant-card-body, .ant-form-item-control, .ant-space-item) { min-width: 0; }
+
 /* ═══ CSS 变量回退保护 ═══
  * 如果任何 CSS 变量未定义，使用 var() 的 fallback 值
  * 语法: var(--variable, fallback-value)

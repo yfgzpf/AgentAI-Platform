@@ -15,9 +15,24 @@ services:
       - agentai-data:/app/data          # SQLite数据库 + 进化记忆
       - agentai-memory:/app/.agentai/memory  # 记忆系统
       - agentai-logs:/app/logs          # 日志
+      # 2026-10-16 部署加固: 此前只挂了 memory 子目录，而 checkpoints / tasks /
+      # worktrees / config 都落在**未挂卷的容器可写层** → 容器重建即全丢。
+      # 后果: 会话级 rewind 能力在容器里等于不存在（用户会以为是功能 bug）。
+      - agentai-checkpoints:/app/.agentai/checkpoints   # 会话 checkpoint/rewind
+      - agentai-tasks:/app/.agentai/tasks               # 长任务快照
+      - agentai-worktrees:/app/.agentai/worktrees       # Git worktree 隔离
+      - agentai-config:/app/.agentai/config             # 授权范围/审批策略/worktrees.json
+      - agentai-cache:/app/.agentai/cache               # 缓存
     environment:
       - NODE_ENV=production
       - DATABASE_URL=/app/data/agentai.db
+      # 显式声明数据根: 容器内 os.homedir()=/app，但显式声明更清晰，
+      # 且与 /v1/system/capabilities 报告的 storage.aiHomeSource 对得上（排障友好）
+      - AGENTAI_HOME=/app/.agentai
+      # 保持默认 30 天保留; 如需更短释放磁盘, 改这里即可
+      - SESSION_CHECKPOINT_RETENTION_DAYS=${SESSION_CHECKPOINT_RETENTION_DAYS:-30}
+    # 多副本部署注意: 6 小时清理定时器已加跨进程锁 (.cleanup.lock)，共享卷下
+    # 只会有一个实例执行清理，不会互相 rmSync 对方正在用的会话。
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:18789/v1/health"]
@@ -66,6 +81,17 @@ volumes:
   agentai-data:
     driver: local
   agentai-memory:
+    driver: local
+  # 2026-10-16 新增（部署加固）—— 缺任一项都可能导致对应能力在容器重建后失效
+  agentai-checkpoints:
+    driver: local
+  agentai-tasks:
+    driver: local
+  agentai-worktrees:
+    driver: local
+  agentai-config:
+    driver: local
+  agentai-cache:
     driver: local
   agentai-logs:
     driver: local

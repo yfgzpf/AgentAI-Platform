@@ -821,13 +821,13 @@ const filteredTree = filterTree(tree, searchQ);
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div>
             <div style={{ color: 'var(--muted)', fontSize: 'var(--fs-sm)', marginBottom: 6 }}>
-              <BulbOutlined /> 输入完整路径, 例: <code>F:\agentai-platform</code>
+              <BulbOutlined /> 输入完整路径, 例: <code>C:\Users\me\projects\my-app</code>
             </div>
             <Space.Compact style={{ width: '100%' }}>
               <Input
                 size="large"
                 prefix={<FolderOpenOutlined />}
-                placeholder="F:\agentai-platform\packages\agentai-gui"
+                placeholder="C:\Users\me\projects\my-app\src"
                 value={pathInput}
                 onChange={e => setPathInput(e.target.value)}
                 onPressEnter={() => { setCustomPath(pathInput); loadWorkspace(pathInput); setOpenFolderModal(false); }}

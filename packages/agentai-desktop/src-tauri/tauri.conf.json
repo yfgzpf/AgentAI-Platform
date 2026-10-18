@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PulseFlow",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.pulseflow.platform",
   "build": {
     "frontendDist": "../../agentai-gui/dist",
@@ -76,7 +76,7 @@
   },
   "plugins": {
     "updater": {
-      "active": true,
+      "active": false,
       "endpoints": [
         "https://github.com/PulseFlowAI/pulseflow-platform/releases/latest/download/latest.json",
         "https://gitee.com/api/v5/repos/PulseFlowAI/pulseflow-platform/releases/latest"

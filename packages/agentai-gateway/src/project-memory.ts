@@ -77,14 +77,58 @@ function getMemoryPath(workspace: string): string {
   return path.join(workspace, MEMORY_FILE);
 }
 
-/** 检测项目技术栈 */
-export function detectTechStack(workspace: string): ProjectMemory['techStack'] {
-  const pkgPath = path.join(workspace, 'package.json');
-  const tsConfigPath = path.join(workspace, 'tsconfig.json');
-  const goModPath = path.join(workspace, 'go.mod');
-  const cargoPath = path.join(workspace, 'Cargo.toml');
-  const pyProjectPath = path.join(workspace, 'pyproject.toml');
+/** Python 项目标记文件 (2026-10-17 补全: 原来只认 pyproject.toml) */
+const PYTHON_MARKERS = ['pyproject.toml', 'requirements.txt', 'setup.py', 'setup.cfg', 'Pipfile', 'environment.yml', 'conda.yaml'];
+/** 包管理器锁文件 → 包管理器 */
+const PYTHON_PKG_MANAGERS: Array<[string, string]> = [
+  ['poetry.lock', 'poetry'],
+  ['Pipfile.lock', 'pipenv'],
+  ['environment.yml', 'conda'],
+  ['conda.yaml', 'conda'],
+  ['requirements.txt', 'pip'],
+];
+/** Python 依赖名 → 框架/数据库 (从 requirements.txt / pyproject 的纯文本里 grep) */
+const PYTHON_DEP_HINTS: Array<[RegExp, string]> = [
+  [/django/i, 'Django'],
+  [/fastapi/i, 'FastAPI'],
+  [/flask/i, 'Flask'],
+  [/tornado/i, 'Tornado'],
+  [/scrapy/i, 'Scrapy'],
+  [/pandas|numpy|scipy|sklearn|scikit-learn/i, '数据科学 (pandas/numpy)'],
+  [/torch|tensorflow/i, 'ML (torch/tf)'],
+  [/psycopg|^pg\b|asyncpg/i, 'PostgreSQL'],
+  [/pymysql|mysqlclient/i, 'MySQL'],
+  [/pymongo/i, 'MongoDB'],
+  [/\bredis\b/i, 'Redis'],
+];
 
+/** 读一个文本依赖文件的内容 (不存在/读失败 → '') */
+function readTextIfExists(file: string): string {
+  try { return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : ''; } catch { return ''; }
+}
+
+/** 扫工作区根目录有没有 .py 文件 (兜底: 无任何标记文件的传统 py 项目) */
+function hasPythonSource(workspace: string): boolean {
+  try {
+    return fs.readdirSync(workspace).some(e => e.toLowerCase().endsWith('.py'));
+  } catch { return false; }
+}
+
+/**
+ * 检测项目技术栈。
+ *
+ * ═══ 2026-10-17 重写: 互斥优先级判定 (Python > Go > Rust > Node) ═══
+ * 原实现的三个坑 (实测 /f/澳彩AI 全中):
+ *   ① 一串顺序 `if` 且**非互斥** — 带 Node 工具链的 py 项目 (package.json 只用来放
+ *      black/eslint 配置) 会先被判成 TypeScript, 后面探到 pyproject 也只是"后写覆盖",
+ *      顺序稍有变化结论就翻;
+ *   ② Python 只认 `pyproject.toml` — `requirements.txt`/`setup.py`/`Pipfile`/`*.py`
+ *      完全不探测 → 传统 py 项目 `language` 恒为 `'unknown'` (系统根本不知道那是 Python);
+ *   ③ 探测结果没有任何地方复用, 技术栈被 4 处独立探测且互不同步 (见 workspace-profile)。
+ *
+ * 现在: 先按优先级定主语言 (只定一次, 不再互相覆盖), 再按主语言补细节。
+ */
+export function detectTechStack(workspace: string): ProjectMemory['techStack'] {
   let language = 'unknown';
   let framework: string | undefined;
   let runtime = 'unknown';
@@ -93,13 +137,45 @@ export function detectTechStack(workspace: string): ProjectMemory['techStack'] {
   let testFramework: string | undefined;
   let databases: string[] = [];
 
-  try {
-    if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-      language = hasFile(workspace, 'tsconfig.json') ? 'TypeScript' : 'JavaScript';
-      runtime = `Node ${process.version}`;
+  const pyProject = readTextIfExists(path.join(workspace, 'pyproject.toml'));
+  const pyReqs = readTextIfExists(path.join(workspace, 'requirements.txt'));
+  const pyDepText = `${pyProject}\n${pyReqs}`;
 
-      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+  try {
+    // ── 优先级 1: Python (标记文件 或 根目录有 .py 源码) ──
+    if (PYTHON_MARKERS.some(m => fs.existsSync(path.join(workspace, m))) || hasPythonSource(workspace)) {
+      language = 'Python';
+      runtime = `Python ${process.env.PYTHON_VERSION || '3.x'}`;
+      // 框架 / 数据库: 从依赖文本里 grep (不 import, 不执行)
+      const frameworks: string[] = [];
+      for (const [re, name] of PYTHON_DEP_HINTS) if (re.test(pyDepText)) frameworks.push(name);
+      framework = frameworks[0];
+      if (frameworks.length > 1) framework = frameworks.join(' + ');
+      // 包管理器: 锁文件优先, 回退 pip
+      const pm = PYTHON_PKG_MANAGERS.find(([f]) => fs.existsSync(path.join(workspace, f)));
+      packageManager = pm ? pm[1] : 'pip';
+      if (/\bpytest\b/i.test(pyDepText)) testFramework = 'pytest';
+      else if (/\bunittest\b/i.test(pyDepText)) testFramework = 'unittest';
+      for (const [, db] of PYTHON_DEP_HINTS) {
+        if (['PostgreSQL', 'MySQL', 'MongoDB', 'Redis'].includes(db) && !databases.includes(db)) databases.push(db);
+      }
+    }
+    // ── 优先级 2: Go ──
+    else if (fs.existsSync(path.join(workspace, 'go.mod'))) {
+      language = 'Go';
+      try { runtime = execSync('go version', { encoding: 'utf-8', timeout: 3000 }).trim().split(' ')[2] || 'go'; } catch { /* go 未安装, 保持 unknown */ }
+    }
+    // ── 优先级 3: Rust ──
+    else if (fs.existsSync(path.join(workspace, 'Cargo.toml'))) {
+      language = 'Rust';
+      try { runtime = execSync('rustc --version', { encoding: 'utf-8', timeout: 3000 }).trim() || 'rust'; } catch { /* rustc 未安装 */ }
+    }
+    // ── 优先级 4: Node ──
+    else if (fs.existsSync(path.join(workspace, 'package.json'))) {
+      const pkg = JSON.parse(readTextIfExists(path.join(workspace, 'package.json')) || '{}');
+      language = fs.existsSync(path.join(workspace, 'tsconfig.json')) ? 'TypeScript' : 'JavaScript';
+      runtime = `Node ${process.version}`;
+      const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
 
       // 检测框架
       if (deps['next']) framework = 'Next.js';
@@ -130,21 +206,7 @@ export function detectTechStack(workspace: string): ProjectMemory['techStack'] {
       else if (deps['webpack']) buildTool = 'Webpack';
       else if (deps['tsup'] || deps['unbuild']) buildTool = 'tsup';
     }
-
-    if (fs.existsSync(goModPath)) {
-      language = 'Go';
-      runtime = execSync('go version', { encoding: 'utf-8', timeout: 3000 }).trim().split(' ')[2] || 'go';
-    }
-    if (fs.existsSync(cargoPath)) {
-      language = 'Rust';
-      runtime = execSync('rustc --version', { encoding: 'utf-8', timeout: 3000 }).trim() || 'rust';
-    }
-    if (fs.existsSync(pyProjectPath)) {
-      language = 'Python';
-      runtime = `Python ${process.env.PYTHON_VERSION || '3.x'}`;
-    }
-
-  } catch {}
+  } catch { /* 探测失败 → 保持已判定的主语言, 细节留 unknown */ }
 
   return {
     language,
@@ -156,10 +218,6 @@ export function detectTechStack(workspace: string): ProjectMemory['techStack'] {
     databases: databases.length > 0 ? databases : undefined,
     detectedAt: Date.now(),
   };
-}
-
-function hasFile(dir: string, filename: string): boolean {
-  return fs.existsSync(path.join(dir, filename));
 }
 
 /** 读取项目记忆 */

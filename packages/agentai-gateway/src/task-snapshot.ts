@@ -25,6 +25,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
+import { resolveAgentAiHome } from './workspace-manager.js';
 
 // ===== 类型定义 =====
 
@@ -156,7 +157,17 @@ export interface TaskLogEntry {
 
 // ===== 路径管理 =====
 
-const TASKS_ROOT = path.join(os.homedir(), '.agentai', 'tasks');
+/**
+ * 任务存储根目录（每次调用时解析，不在模块加载时求值）
+ * 2026-10-16: 原为模块级 const `path.join(os.homedir(), '.agentai', 'tasks')`。
+ * 两个问题:
+ *   1. 绕过 AGENTAI_HOME → 桌面版落在 %USERPROFILE%，Docker 落在未挂卷目录（重建即丢）
+ *   2. 模块加载时求值 → 进程启动后才设的 AGENTAI_HOME 不生效
+ * 改为惰性函数，调用方请改用 `tasksRoot()`。
+ */
+export function tasksRoot(): string {
+  return path.join(resolveAgentAiHome(), 'tasks');
+}
 
 /**
  * 可靠删除目录 (跨平台, Windows 沙箱友好)
@@ -213,7 +224,7 @@ export function deleteDirReliable(dir: string): { ok: boolean; method: string; e
 }
 
 function getTaskDir(taskId: string): string {
-  return path.join(TASKS_ROOT, taskId);
+  return path.join(tasksRoot(), taskId);
 }
 
 function ensureDir(dir: string): boolean {
@@ -610,14 +621,14 @@ staleThresholdMs?: number;
 /** 是否过滤掉无效任务 (trivial goal), 默认 true */
 filterTrivial?: boolean;
 } = {}): TaskMeta[] {
-  if (!fs.existsSync(TASKS_ROOT)) return [];
+  if (!fs.existsSync(tasksRoot())) return [];
   const now = Date.now();
   const stale = opts.staleThresholdMs ?? 30 * 60 * 1000; // 默认 30 分钟
   const filterTrivial = opts.filterTrivial ?? true;
   const result: TaskMeta[] = [];
 
-  for (const taskId of fs.readdirSync(TASKS_ROOT)) {
-    const taskDir = path.join(TASKS_ROOT, taskId);
+  for (const taskId of fs.readdirSync(tasksRoot())) {
+    const taskDir = path.join(tasksRoot(), taskId);
     try {
       if (!fs.statSync(taskDir).isDirectory()) continue;
     } catch { continue; }
@@ -681,7 +692,7 @@ export function markTaskStatus(taskId: string, status: 'completed' | 'failed' | 
   if (note) snap.contextSummary = note;
   if (status === 'completed') snap.currentStage = 'done';
   try {
-    const taskDir = path.join(TASKS_ROOT, taskId);
+    const taskDir = path.join(tasksRoot(), taskId);
     fs.writeFileSync(
       path.join(taskDir, 'snapshot.json'),
       JSON.stringify(snap, null, 2)
@@ -884,7 +895,7 @@ export function cleanupTasks(opts: CleanupOptions = {}): CleanupResult {
     byReason: { expired: 0, trivial: 0, overLimit: 0, staleRunning: 0, corrupt: 0 },
   };
 
-  if (!fs.existsSync(TASKS_ROOT)) return result;
+  if (!fs.existsSync(tasksRoot())) return result;
 
   const now = Date.now();
   const ageCutoff = now - maxAgeDays * 24 * 60 * 60 * 1000;
@@ -894,8 +905,8 @@ export function cleanupTasks(opts: CleanupOptions = {}): CleanupResult {
   const allMeta: Array<{ taskId: string; taskDir: string; meta: TaskMeta }> = [];
   const corruptDirs: string[] = [];
 
-  for (const taskId of fs.readdirSync(TASKS_ROOT)) {
-    const taskDir = path.join(TASKS_ROOT, taskId);
+  for (const taskId of fs.readdirSync(tasksRoot())) {
+    const taskDir = path.join(tasksRoot(), taskId);
     try {
       if (!fs.statSync(taskDir).isDirectory()) continue;
     } catch { continue; }
@@ -999,24 +1010,80 @@ export function cleanupTasks(opts: CleanupOptions = {}): CleanupResult {
 
 let cleanupTimer: NodeJS.Timeout | null = null;
 
+/**
+ * 跨进程清理锁（2026-10-16 部署加固）
+ * ---------------------------------------------------------------------------
+ * 背景: 原本 startTaskCleanupLoop 无条件启动、无实例选主。多副本部署
+ * （K8s / docker-compose --scale / PM2 cluster）共享同一个数据卷时，
+ * 各实例每 6 小时**并发**对同一批目录执行 `rmSync(recursive, force)`：
+ *   - ENOTEMPTY 竞争：一个删到一半另一个也在删 → 报错噪音
+ *   - 理论上还可能删掉其他实例正在使用的会话（判定只看 mtime，不看归属）
+ *
+ * 锁实现: 原子 O_EXCL 创建 `<lock>.lock`，写入本进程 pid + 时间戳。
+ * 锁本身带 TTL（默认 6h，略小于清理周期），进程崩溃留下的死锁会被自动过期，
+ * 不会永久阻塞清理。
+ * @returns true = 本进程抢到锁，应当执行清理
+ */
+function tryAcquireCleanupLock(ttlMs = 6 * 60 * 60 * 1000): boolean {
+  const lockFile = path.join(resolveAgentAiHome(), '.cleanup.lock');
+  try {
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+
+    // 读旧锁：存在且未过期 → 别人正在跑，直接放弃
+    if (fs.existsSync(lockFile)) {
+      try {
+        const st = fs.statSync(lockFile);
+        if (Date.now() - st.mtimeMs < ttlMs) return false;
+        // 过期死锁 → 删掉重抢
+        fs.rmSync(lockFile, { force: true });
+      } catch { /* 读锁失败就当它不存在 */ }
+    }
+
+    // O_EXCL 保证原子性：多个进程同时创建，只有一个成功
+    const fd = fs.openSync(lockFile, 'wx');
+    try {
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+    } finally {
+      fs.closeSync(fd);
+    }
+    return true;
+  } catch {
+    // 抢锁失败（已被别人占 / 目录只读）→ 不清理。宁可磁盘涨也不互删。
+    return false;
+  }
+}
+
 /** 启动定时清理 (每 6 小时执行一次, 启动时立即执行一次) */
 export function startTaskCleanupLoop(): void {
   if (cleanupTimer) return;
+  /** 2026-10-16: 会话级 checkpoint 存储清扫 ——
+   *  与任务快照共用这一个定时器, 不另起 (省一个 setInterval, 也省一处生命周期管理)。
+   *  会话废弃后它的 blobs 没人再管, 不清扫就是磁盘只涨不跌。 */
+  const sweepCheckpoints = () => {
+    try {
+      // 动态 import: session-checkpoint 与 task-snapshot 无依赖关系, 但避免顶层环
+      import('./session-checkpoint.js')
+        .then(m => m.sweepOldSessionsOnce())
+        .catch(() => { /* 失败不打扰任务清理 */ });
+    } catch { /* ignore */ }
+  };
+  const runCleanup = () => {
+    // 多副本共享卷时只让一个实例干活（单副本部署下总是抢到，无行为变化）
+    if (!tryAcquireCleanupLock()) return;
+    try {
+      const r = cleanupTasks({});
+      if (r.removed > 0) {
+        console.log(`[task-snapshot] cleanup: removed ${r.removed} tasks (expired=${r.byReason.expired}, trivial=${r.byReason.trivial}, overLimit=${r.byReason.overLimit}, stale=${r.byReason.staleRunning}, corrupt=${r.byReason.corrupt})`);
+      }
+    } catch (e: any) {
+      console.warn('[task-snapshot] cleanup failed:', e?.message);
+    }
+    sweepCheckpoints();
+  };
   // 启动时立即清理一次
-  try {
-    const r = cleanupTasks({});
-    if (r.removed > 0) {
-      console.log(`[task-snapshot] initial cleanup: removed ${r.removed} tasks (expired=${r.byReason.expired}, trivial=${r.byReason.trivial}, overLimit=${r.byReason.overLimit}, stale=${r.byReason.staleRunning}, corrupt=${r.byReason.corrupt})`);
-    }
-  } catch (e: any) {
-    console.warn('[task-snapshot] initial cleanup failed:', e?.message);
-  }
+  runCleanup();
   // 每 6 小时清理一次
-  cleanupTimer = setInterval(() => {
-    try { cleanupTasks({}); } catch (e: any) {
-      console.warn('[task-snapshot] scheduled cleanup failed:', e?.message);
-    }
-  }, 6 * 60 * 60 * 1000);
+  cleanupTimer = setInterval(runCleanup, 6 * 60 * 60 * 1000);
 }
 
 /** 停止定时清理 */
@@ -1027,4 +1094,3 @@ export function stopTaskCleanupLoop(): void {
   }
 }
 
-export { TASKS_ROOT };

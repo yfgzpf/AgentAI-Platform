@@ -10,7 +10,7 @@ import {
   listAllTasks,
   loadTaskSnapshot,
   deleteDirReliable,
-  TASKS_ROOT,
+  tasksRoot,
 } from './task-snapshot.js';
 import * as fs from 'fs';
 import * as http from 'http';
@@ -73,9 +73,9 @@ async function main() {
 
   // 准备: 清理旧测试任务 (强制清理, 避免前次测试残留)
   const testUserId = 'e2e-api-user';
-  if (fs.existsSync(TASKS_ROOT)) {
-    for (const id of fs.readdirSync(TASKS_ROOT)) {
-      const taskDir = `${TASKS_ROOT}/${id}`;
+  if (fs.existsSync(tasksRoot())) {
+    for (const id of fs.readdirSync(tasksRoot())) {
+      const taskDir = `${tasksRoot()}/${id}`;
       let shouldClean = false;
       try {
         const m = JSON.parse(fs.readFileSync(`${taskDir}/meta.json`, 'utf-8'));

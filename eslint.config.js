@@ -116,6 +116,22 @@ export default [
       // === react-hooks/recommended 核心规则 ===
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+
+      // === 内联 style 治理 (2026-10-12, 前端审美审查处方) ===
+      // 存量: gui 全仓 3361 处 style={{...}} —— 直接 error 会一次性挂掉整个 lint,
+      // 故存量全局 warn (IDE 可见、CI 不挡), 新代码目录 error (见下方 overrides)。
+      // 目标: 存量随重构逐步清偿, 新文件零容忍。
+      'react/forbid-dom-props': ['warn', { forbid: ['style'] }],
+    },
+  },
+
+  // ===== 新代码零容忍: chat/ 拆分目录 (2026-10-12 审美审查产物) =====
+  // ChatView 2454 行拆分产生的新文件一律禁止内联 style, 从源头止住 token 反弹。
+  // 该目录尚不存在, 拆分落地后自动生效; eslint 对空 glob 不报错。
+  {
+    files: ['packages/agentai-gui/src/components/chat/**/*.{ts,tsx}'],
+    rules: {
+      'react/forbid-dom-props': ['error', { forbid: ['style'] }],
     },
   },
 

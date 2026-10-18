@@ -22,11 +22,15 @@ export interface ApiStreamHandlers {
   onSubagentError?: (info: { id: string; error: string }) => void;
   onSubagentProgress?: (info: { id: string; event: string; iteration?: number; step?: number; description?: string; toolName?: string; result?: string }) => void;
   onToolStuck?: (info: { tool: string; count: number }) => void;
+  /** 2026-10-17 P0: 长耗时工具执行期间每 30s 发一次心跳, 用于续上 idle 计时器 */
+  onToolHeartbeat?: (info: { callId: string; name: string; pending?: number; retry?: number }) => void;
   onMemoryAuto?: (info: { written: number; skipped: number }) => void;
   onWidgetShow?: (info: { widgetType: string; content: any }) => void;
   onProgress?: (info: { step: string; percent?: number; description?: string; toolCount?: number; successCount?: number; failCount?: number }) => void;
   onDone?: (info: { provider?: string; content?: string; usage?: any; displayModel?: string }) => void;
   onError?: (err: string) => void;
+  /** 2026-10-17: 非致命提示 (如本地限流即将自动重试), 只告知不报错 */
+  onNotice?: (info: { kind: string; text: string; retryAfterSec?: number }) => void;
 }
 
 /**
@@ -237,7 +241,42 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
         body: JSON.stringify(reqBody),
         signal,
       });
-      if (!resp.ok) { handlers.onError?.(`HTTP ${resp.status}`); return; }
+      if (!resp.ok) {
+        // 2026-10-17 P0: 原来只丢 `HTTP ${status}`, 把响应体和 Retry-After 全丢了 →
+        //   用户只看到裸文案 "HTTP 429", 既不知道是自己发太快, 也不知道要等多久。
+        //   现在: ①读错误体拿 reason/retryAfter ②对 429 退避后重试(不占用用户一次输入)
+        const retryAfterHeader = resp.headers.get('Retry-After');
+        let detail = '';
+        try { detail = await resp.text(); } catch { /* body 可能已消费 */ }
+        let parsed: any = {};
+        try { parsed = detail ? JSON.parse(detail) : {}; } catch { /* 非 JSON 就保留原文 */ }
+        const retryAfterSec = Number(retryAfterHeader || parsed.retryAfter || 0) || 0;
+
+        if (resp.status === 429 && retries < MAX_RETRIES) {
+          // 网关本地限流 (rate-limit.ts: 外部 20 RPM / 并发 2)。
+          // 这是**我们自己**造的 429, 不是模型服务返回的 —— 等一下重发即可,
+          // 不该把错误抛给用户让他自己再点一次。
+          const waitMs = Math.min(Math.max(retryAfterSec, 1) * 1000, 60_000);
+          retries++;
+          console.warn(`[api] 命中本地限流 (429), ${waitMs}ms 后自动重试 (${retries}/${MAX_RETRIES})`);
+          handlers.onNotice?.({
+            kind: 'rate_limit',
+            text: `请求过快, 等待 ${Math.ceil(waitMs / 1000)} 秒后自动重试…`,
+            retryAfterSec: Math.ceil(waitMs / 1000),
+          });
+          if (signal?.aborted) return;
+          await new Promise(r => setTimeout(r, waitMs));
+          continue;
+        }
+        const reason = parsed.error || parsed.reason || (detail && !detail.startsWith('<') ? detail.slice(0, 120) : '');
+        const hint = resp.status === 429
+          ? `本地限流 (每分钟请求数超限), 请稍候再试${retryAfterSec ? ` (约 ${retryAfterSec}s)` : ''}`
+          : resp.status === 401 || resp.status === 403 ? '鉴权失败, 请检查 API Key 配置'
+            : resp.status === 404 ? '接口不存在, 网关版本可能不匹配'
+              : '';
+        handlers.onError?.(`HTTP ${resp.status}${reason ? ` — ${reason}` : ''}${hint ? `\n${hint}` : ''}`);
+        return;
+      }
       if (!resp.body) { handlers.onError?.('No response body'); return; }
 
       reader = resp.body.getReader();
@@ -290,6 +329,7 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
               case 'subagent_error': handlers.onSubagentError?.(data); break;
               case 'subagent_progress': handlers.onSubagentProgress?.(data); break;
 case 'tool_stuck': handlers.onToolStuck?.(data); break;
+case 'tool_heartbeat': handlers.onToolHeartbeat?.(data); break; // 2026-10-17 P0: 长耗时工具心跳, 喂 idle 计时器
 case 'widget_show': handlers.onWidgetShow?.(data); break;
 case 'progress': handlers.onProgress?.(data); break;
 // 灵魂层事件: 注入为特殊 segment + dispatch 全局事件

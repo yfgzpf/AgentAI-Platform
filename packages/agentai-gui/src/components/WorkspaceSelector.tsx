@@ -276,7 +276,7 @@ export const WorkspaceSelector: React.FC = () => {
             if (value.trim() && value.trim() !== workspace) applyWorkspace(value);
             else setEditing(false);
           }}
-          placeholder="F:\agentai-platform"
+          placeholder="C:\Users\me\projects\my-app"
           style={{ flex: 1, fontSize: 'var(--fs-sm)', fontFamily: 'monospace' }}
           suffix={
             <span style={{ display: 'flex', gap: 2 }}>

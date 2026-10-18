@@ -25,7 +25,7 @@ import {
   formatResumeContext,
   cleanupOldTasks,
   generateTaskId,
-  TASKS_ROOT,
+  tasksRoot,
 } from './task-snapshot.js';
 
 let passed = 0;
@@ -45,13 +45,13 @@ function check(name: string, ok: boolean, detail?: string) {
 
 async function main() {
   console.log('═══ Task Snapshot E2E ═══\n');
-  console.log(`Tasks root: ${TASKS_ROOT}\n`);
+  console.log(`Tasks root: ${tasksRoot()}\n`);
 
   // 1. 准备: 清理旧测试
   const testUserId = 'e2e-test-user';
-  if (fs.existsSync(TASKS_ROOT)) {
-    for (const id of fs.readdirSync(TASKS_ROOT)) {
-      const dir = path.join(TASKS_ROOT, id);
+  if (fs.existsSync(tasksRoot())) {
+    for (const id of fs.readdirSync(tasksRoot())) {
+      const dir = path.join(tasksRoot(), id);
       try {
         const metaPath = path.join(dir, 'meta.json');
         if (fs.existsSync(metaPath)) {
@@ -109,7 +109,7 @@ async function main() {
 
   // 4. 验证磁盘文件存在
   console.log('\n[3] 验证磁盘持久化');
-  const taskDir = path.join(TASKS_ROOT, taskId);
+  const taskDir = path.join(tasksRoot(), taskId);
   check('任务目录存在', fs.existsSync(taskDir));
   const snapFile = path.join(taskDir, 'snapshot.json');
   check('snapshot.json 存在', fs.existsSync(snapFile));
@@ -195,7 +195,7 @@ async function main() {
     goal: '过时的任务',
   });
   // 修改最后更新时间为 2 小时前
-  const dir3 = path.join(TASKS_ROOT, abandonedTaskId);
+  const dir3 = path.join(tasksRoot(), abandonedTaskId);
   const snap3 = mgr3.getSnapshot();
   snap3.lastUpdatedAt = Date.now() - 2 * 60 * 60 * 1000;
   fs.writeFileSync(path.join(dir3, 'snapshot.json'), JSON.stringify(snap3, null, 2));
@@ -217,7 +217,7 @@ async function main() {
   // 会覆盖我们手动设置的 100 天前时间戳。
   // 早前步骤的 setTimeout(500ms) 早已 fire, 无残留风险。
   // 修改为 100 天前
-  const dir4 = path.join(TASKS_ROOT, taskId);
+  const dir4 = path.join(tasksRoot(), taskId);
   const finalSnap2 = JSON.parse(fs.readFileSync(path.join(dir4, 'snapshot.json'), 'utf-8'));
   finalSnap2.lastUpdatedAt = Date.now() - 100 * 24 * 60 * 60 * 1000;
   finalSnap2.endedAt = finalSnap2.lastUpdatedAt;
@@ -236,7 +236,7 @@ async function main() {
   fs.writeFileSync(path.join(dir4, 'meta.json'), JSON.stringify(finalMeta, null, 2));
   const removed = cleanupOldTasks(30);
   check('清理至少 1 个', removed >= 1, `removed=${removed}`);
-  check('完成的任务已清理', !fs.existsSync(path.join(TASKS_ROOT, taskId)));
+  check('完成的任务已清理', !fs.existsSync(path.join(tasksRoot(), taskId)));
 
   // 14. 错误处理
   console.log('\n[13] 错误处理');
@@ -255,8 +255,8 @@ async function main() {
   }
 
   // 清理: 删除剩余的 abandoned 任务
-  if (fs.existsSync(path.join(TASKS_ROOT, abandonedTaskId))) {
-    fs.rmSync(path.join(TASKS_ROOT, abandonedTaskId), { recursive: true, force: true });
+  if (fs.existsSync(path.join(tasksRoot(), abandonedTaskId))) {
+    fs.rmSync(path.join(tasksRoot(), abandonedTaskId), { recursive: true, force: true });
   }
 
   // 总结

@@ -174,6 +174,22 @@ export interface ChatResponse {
   toolCalls?: ToolCall[];
   finishReason?: string;
   iterations?: number;
+  /**
+   * 2026-10-16 工作区隔离实况（前端据此提示用户）
+   * - requested: 是否请求了 worktree 隔离
+   * - applied: 是否真的生效（false 时 workspace 仍是原目录）
+   * - workspace: 实际执行目录
+   * - note: 未生效的原因（未装 git / 非仓库等）
+   *
+   * 为什么要显式上报: 用户看到"我开了隔离"就默认文件改动被隔离了。
+   * 若隔离静默失败，用户会误判并行安全 —— 虚假的安全感比明说失败更危险。
+   */
+  isolation?: {
+    requested: 'worktree';
+    applied: boolean;
+    workspace?: string;
+    note?: string;
+  };
   /** DeepSeek thinking 模式下返回的推理内容, 多轮工具调用必须保留 */
   reasoningContent?: string;
   usage: {
@@ -1802,10 +1818,14 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
         if (m.role === 'assistant' && (msg.content === null || msg.content === undefined)) {
           msg.content = '';
         }
-        // ═══ 自动检测: reasoning_content 根据流式响应是否出现过决定 ═══
+        // ═══ 自动检测: reasoning_content 根据流式响应是否出现过决定═══
         // 如果该 provider 的流式响应中从未返回过 reasoning_content → 清理历史残留
         // 如果返回过 → 保留 (例如 DeepSeek thinking 模式)
-        if (!this._hasReasoningSupport.get(id)) {
+        // ⚠️ DeepSeek 例外: 官方协议要求带 tool_calls 的 assistant 必须回传
+        //   reasoning_content (缺失即400), 与"该轮是否恰好吐了思考"无关。
+        //   所以 deepseek 永不删 —— 上面的预检测已把它置为 true, 这里再加
+        //   一道硬保护, 防止任何路径把标志重置后误删导致间歇性 400。
+        if (!isDeepSeekModel && !this._hasReasoningSupport.get(id)) {
           delete msg.reasoning_content;
         }
         // 3. tool 消息 content 统一转为 string (所有 provider 兼容)
@@ -1837,6 +1857,38 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
     }
 
     const hasToolRequest = req.tools && req.tools.length > 0;
+    // ═══ DeepSeek thinking 协议自愈 (2026-10-16 二次修复, 22:45 三次校准)═══
+    //
+    // 现象: 间歇性 400 "The `reasoning_content` in the thinking mode must be
+    //      passed back to the API", 重试无效 (400 是确定性重放)。
+    //
+    // ⚠️ 校准记录 (重要 —— 我在这个 bug 上猜错了两次, 别再重犯):
+    //   第1次假设: 只有"带 tool_calls 的 assistant"需要回传 → 只补了这类。
+    //   实测仍 400 (msgs=39 user=3 asst=4 tool=2)。
+    //   第2次才发现: 官方规则是 **thinking 模式下所有 assistant 消息都要回传**,
+    //      不只是带工具调用的那些 —— 纯文本 assistant 一样会触发。
+    //   且"该轮是否真的吐了思考"与"要不要回传"是**两件事**: 只要本会话
+    //      曾以 thinking 模式跑过, 该 assistant 就必须带这个字段。
+    // 因此这里对**所有** assistant 消息兜底, 而不是按需补。
+    //
+    // 处理: 缺失时补 '' (DeepSeek 接受空串表示"本轮无思考内容")。
+    //      远优于摘掉 tool_calls —— 摘了模型会以为自己没调过工具 → 重复调用。
+    if (isDeepSeekModel && Array.isArray(bodyObj.messages)) {
+      let healed = 0;
+      let toolCallHealed = 0;
+      for (const m of bodyObj.messages as any[]) {
+        if (m?.role !== 'assistant') continue;
+        if (m.reasoning_content === undefined || m.reasoning_content === null) {
+          if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) toolCallHealed++;
+          m.reasoning_content = '';
+          healed++;
+        }
+      }
+      if (healed > 0) {
+        console.warn(`[router] ⚠️ deepseek thinking 自愈: 补齐 ${healed} 条 assistant 的 reasoning_content (其中带工具调用 ${toolCallHealed} 条) — 避免 400`);
+      }
+    }
+
     // ═══ DeepSeek V4: 思考模式 + 工具调用的正确参数 ═══
     // DeepSeek 从 V3.2 开始支持 thinking 模式下调用工具
     // 必须同时发送 extra_body.thinking.type + reasoning_effort，缺一不可
@@ -1942,6 +1994,35 @@ if (id === 'sensenova') {
           console.error(`  - 模型名称: ${modelName}`);
           console.error(`  - 请求体: ${JSON.stringify({...bodyObj, messages: `[${bodyObj.messages.length} messages]`}).slice(0, 500)}`);
         }
+
+        // ═══ 2026-10-16: 400 请求结构快照落盘 (拿证据, 不再猜) ═══
+        // 背景: reasoning_content 这个 400 我已修两次仍未根除, 第三次不能再靠推断 ——
+        //   必须能看到"实际发出去的那份 messages 到底长什么样"。
+        // 这里把每条消息的 role / 是否带 tool_calls / reasoning_content 的**存在性与类型**
+        // (不记录内容 —— 里面有用户代码和凭据) 打到日志。
+        // 下次复发时, 扫一眼这段就能定位是哪条消息缺字段, 而不是再猜一轮。
+        if (r.status === 400 && /reasoning_content|thinking mode/i.test(errText)) {
+          const msgs = (bodyObj.messages as any[]) || [];
+          const shape = msgs.map((m: any, i: number) => ({
+            i,
+            role: m?.role,
+            hasToolCalls: Array.isArray(m?.tool_calls) && m.tool_calls.length > 0,
+            toolCallCount: Array.isArray(m?.tool_calls) ? m.tool_calls.length : 0,
+            hasToolCallId: !!m?.tool_call_id,
+            rc: m?.reasoning_content === undefined ? 'MISSING'
+              : m?.reasoning_content === null ? 'NULL'
+              : `len=${String(m.reasoning_content).length}`,
+            // 内容截断到 40 字: 能看出形态(如"[历史摘要]"), 不会泄露代码
+            preview: String(m?.content ?? '').slice(0, 40),
+          }));
+          console.error(`[router] 🔍 reasoning_content 400 快照 (${msgs.length} msgs):`);
+          for (const s of shape) {
+            console.error(`  [${s.i}] ${s.role} toolCalls=${s.toolCallCount} toolCallId=${s.hasToolCallId} rc=${s.rc} | ${s.preview}`);
+          }
+          console.error(`[router] 🔍 thinking 模式: ${JSON.stringify(bodyObj.extra_body)} reasoning_effort=${(bodyObj as any).reasoning_effort}`);
+          console.error(`[router] 🔍 上游原话: ${errText.slice(0, 300)}`);
+        }
+
         throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
       }
 

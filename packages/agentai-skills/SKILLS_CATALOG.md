@@ -142,6 +142,7 @@
 - cad-control - CAD 控制
 
 ### 🏗️ 建筑 (construction/, decoration/)
+- **self-built-house-planner** (新) - 手绘图/测绘图转规范建筑平面图（地块反算 / 合规校核 / 轴网出图 / 平面剖面 / 正式汇报）
 - cscec-project-manager - 中建项目经理
 - requirement-interview - 需求访谈
 - quotation-generator - 报价生成

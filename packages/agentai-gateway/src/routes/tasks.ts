@@ -23,7 +23,7 @@ import {
   cleanupTasks,
   formatResumeContext,
   deleteDirReliable,
-  TASKS_ROOT,
+  tasksRoot,
 } from '../task-snapshot.js';
 
 export function createTasksRouter(): Router {
@@ -54,7 +54,7 @@ export function createTasksRouter(): Router {
         success: true,
         count: tasks.length,
         tasks,
-        tasksRoot: TASKS_ROOT,
+        tasksRoot: tasksRoot(),
       });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -199,7 +199,7 @@ export function createTasksRouter(): Router {
       const { id } = req.params;
       if (!id) return res.status(400).json({ success: false, error: 'Missing task ID' });
 
-      const taskDir = path.join(TASKS_ROOT, id);
+      const taskDir = path.join(tasksRoot(), id);
       if (!fs.existsSync(taskDir)) {
         return res.status(404).json({ success: false, error: 'Task not found' });
       }

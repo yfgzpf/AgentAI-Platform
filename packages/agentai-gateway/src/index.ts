@@ -8,6 +8,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';  // v3.2 修复: ESM 兼容 __dirname/__filename
 import { createApp, createServerHandle, startBackgroundJobs } from './app.js';
 import { AgentAIRouter } from './llm-router.js';
@@ -44,7 +45,7 @@ import { industryEngine } from './industry-engine.js';
 import { skillOrchestrator } from './skill-orchestrator.js';
 import { createQQRouter, setQQIO } from './routes/qq.js';
 import { setWechatIO } from './routes/wechat.js';
-import { WorkspaceManager } from './workspace-manager.js';
+import { WorkspaceManager, detectMonorepoRoot } from './workspace-manager.js';
 import { createVoiceRouter } from './routes/voice.js';
 import { memoryRouter } from './routes/sessions.js';
 import { mossTtsService } from './moss-tts-service.js';
@@ -676,13 +677,25 @@ try {
   console.warn('[evolution] cleanup loop failed to start:', e?.message || e);
 }
 
+// 2026-10-17 P0: JSONL 记忆文件清理循环 (cleanupOldMemory 此前零调用方,
+// 用户级记忆文件无限增长 — 实测 default.jsonl 1.6GB)
+try {
+  const { startMemoryCleanupLoop } = await import('./memory.js');
+  startMemoryCleanupLoop();
+} catch (e: any) {
+  console.warn('[memory] cleanup loop failed to start:', e?.message || e);
+}
+
 // ===== 初始化 AI 工作目录管理器 (跨平台路径解析) =====
-// 默认项目根目录 = dist/index.js 所在目录 → packages/agentai-gateway → 向上两级到 monorepo 根
-// 运行时由前端传入 workspace 参数时动态更新
-const _defaultProjectRoot = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:\/)/, '$1')),  // dist/
-  '..', '..', '..',  // → agentai-platform 根
-);
+// 默认项目根目录 (2026-10-17 P0 分发安全修正):
+//   原实现 = dist/../../.. — 把"gateway 一定跑在 monorepo 里"当成普适事实。
+//   分发安装后 dist 在 <安装目录>/resources/... 下, ../../.. 拼出的是系统路径
+//   (甚至盘根), 而 projectDir 同时是 allowed root → AI 拿到整盘读写权。
+//   现: AGENTAI_WORKSPACE 环境变量 > 探测到的真 monorepo 根 (带标记验证,
+//   只有开发机命中) > 用户主目录下的 AgentAI 工作区 (GUI 里用户可自选覆盖)。
+const _defaultProjectRoot = process.env.AGENTAI_WORKSPACE
+  ? path.resolve(process.env.AGENTAI_WORKSPACE)
+  : (detectMonorepoRoot(process.cwd()) || path.join(os.homedir(), 'AgentAI'));
 const wm = new WorkspaceManager({ projectDir: _defaultProjectRoot });
 wm.init();
 console.log(`[workspace] AI work dir: ${wm.aiWorkDir}`);
@@ -866,6 +879,41 @@ function tryListenWithRetry(): void {
   httpServer.listen({ port: PORT, host: HOST, exclusive: false } as any, async () => {
     console.log(`[agentai-gateway] listening on http://${HOST}:${PORT}`);
     console.log(`[agentai-gateway] ${registry.list().length} tools registered`);
+
+    // ═══ 2026-10-16: 编译产物陈旧检测 (dist vs src) ═══
+    // 事故背景: 修了 deepseek 400 的三道防线、源码正确、测试全绿, 但 400 依旧复现 ——
+    //   因为 `npm start` 跑 `node dist/index.js`, 只改 src 不 build 就等于没改。
+    //   那种"改了却没生效"极难自查, 所以启动时主动比对并喊出来。
+    // 代价: 一次 src 全量哈希 (约 200 个文件, 几十毫秒), 换来故障可定位。
+    try {
+      const { createHash } = await import('node:crypto');
+      const { readdirSync, readFileSync, existsSync, statSync } = await import('node:fs');
+      const distDir = path.join(__dirname);
+      const srcDir = path.resolve(__dirname, '..', 'src');
+      const stampFile = path.join(distDir, '.build-stamp.json');
+      const listTs = (dir: string, acc: string[] = []): string[] => {
+        for (const name of readdirSync(dir)) {
+          const p = path.join(dir, name);
+          if (statSync(p).isDirectory()) listTs(p, acc);
+          else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) acc.push(p);
+        }
+        return acc;
+      };
+      if (existsSync(stampFile) && existsSync(srcDir)) {
+        const h = createHash('sha256');
+        for (const f of listTs(srcDir).sort()) h.update(readFileSync(f));
+        const nowHash = h.digest('hex').slice(0, 16);
+        const built = JSON.parse(readFileSync(stampFile, 'utf-8'));
+        if (built.hash !== nowHash) {
+          console.warn(
+            `\n[agentai-gateway] 🚨⚠️ 警告: 运行的是**旧编译产物**! dist构建于 ${built.builtAt}, ` +
+            `而 src 已有改动 (hash ${built.hash} → ${nowHash})。\n` +
+            `[agentai-gateway]    你的代码修改**不会生效**, 请执行: cd packages/agentai-gateway && npm run build\n`
+          );
+        }
+      }
+    } catch { /* 检测失败不影响启动 */ }
+
     eaddrRetryCount = 0; // 重置计数
 
     // 2026-10-16 CVE 盯哨调度器: 启动即挂 (每 6h 被动盯哨, 用户零操作;

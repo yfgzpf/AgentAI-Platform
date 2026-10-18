@@ -27,6 +27,9 @@
 
   --success: #22c55e;
   --success-soft: rgba(34, 197, 94, 0.14);
+  /* 2026-10-12: ImageStudio 原把 linear-gradient(135deg,#10b981,#059669)
+     抄了 4 遍 (空态CTA / AI头像 ×2 / 发送按钮)。收成 token, 改一处即全站生效。 */
+  --grad-success: linear-gradient(135deg, #10b981, #059669);
   --warning: #eab308;
   --warning-soft: rgba(234, 179, 8, 0.16);
   --danger: #ef4444;
@@ -93,7 +96,7 @@
      (1.2/1.3/1.4/1.5/1.6/1.7/1.8 七种)、272 处裸 fontWeight、~70 处裸 fontFamily
      (5 种不同的 monospace 排序)。三者原先**一个 token 都没有** → 语义相同的行高
      在不同文件落到不同值, 是"看着不齐"的隐性来源。
-     这三组只在 `:root` 声明一次即可 —— :root 恒匹配, 其余主题块无需重定义。 */
+     这三组只在 `:root` 声明一次即可 —— :root 恒匹配, 其余主题块无需重定义。
      ⚠️ 反僵尸: 本档只列**当前真有消费点**的档位 (见 styles/shell.css 的页面排版块)。
      `--radius-lg` 当年"定义了却零消费"就是这个项目付过的学费 —— 不预留"以后可能用得上"的档。
      `--fw-medium(500)` 因为暂无诚实消费点, **有意不定义**; 需要时连同消费点一起加。 */
@@ -107,8 +110,9 @@
 
   /* ── 页面壳尺度 (2026-10-12) ──────────────────────────────────────
      外壳恒为 标题栏 36 + 状态栏 24 = 60px。原先它只以**魔法数字**形式散落在
-     `calc(100vh - 44/48/140px)` 里 (三个不同的猜测值), 且正确值 60 只写在注释里。
-     这里立唯一常量源, 并由 .app-titlebar / .app-statusbar / --chrome-h 真实消费
+     裸 100vh 的 calc 猜测里 (44/48/140px 三个值), 且正确值 60 只写在注释里。
+     2026-10-11 收敛: 全库裸 calc(100vh - N) 已归零, 唯一正确值由 --chrome-h (60px)
+     承载, 并由 .app-titlebar / .app-statusbar 真实消费
      (反僵尸: 定义即必须被消费, 由 shell.test.ts 断言)。 */
   --titlebar-h: 36px;
   --statusbar-h: 24px;
@@ -1180,6 +1184,134 @@ html, body {
 .msg-enter { animation: msgSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 .bubble-enter { animation: bubbleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
+/* ====================== Panel 级入场动画 (2026-10-12 零依赖动效) ======================
+ * 背景: PulseFlowSidebar / RightPanel 等面板在 App.tsx 里是条件硬切
+ * ({visible && <Panel/>}), 收起/展开瞬间发生, 无过渡 —— 体感生硬。
+ * 不引入 motion 库 (pnpm virtual-store 配置不允许单包 add, 全仓重装风险
+ * 大于收益; 且原生 CSS 已足够覆盖入场场景), 用与 Thread 同一缓动曲线
+ * cubic-bezier(0.16, 1, 0.3, 1) 保持全站动效语汇一致。
+ */
+@keyframes pfPanelIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.pf-panel-enter { animation: pfPanelIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* Tab 内容切换淡入 — 侧栏 Sessions/Files/Tasks 硬切时给内容区一次轻过渡 */
+@keyframes pfFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.pf-fade-in { animation: pfFadeIn 0.2s ease forwards; }
+
+/* ====================== MessageList 样式 (2026-10-12 第二批拆分) ======================
+ * 从 ChatView.tsx 摘出的消息列表样式。原为内联 style, 因 components/chat/ 目录
+ * eslint 禁内联 style (react/forbid-dom-props: error) 故全部转 class。
+ * 取值与原内联逐值一致, 仅容器由 style 对象变为 class。
+ */
+.chat-summary-bar {
+  display: flex; align-items: center; gap: 6;
+  padding: 4px 12px; margin: 4px 0;
+  background: var(--panel); border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  font-size: var(--fs-micro); color: var(--muted-2);
+  overflow-x: auto; white-space: nowrap;
+}
+.chat-summary-title { flex-shrink: 0; font-weight: 600; color: var(--muted); }
+.chat-summary-chip {
+  flex-shrink: 0; padding: 1px 6px;
+  background: var(--bg-2); border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.chat-summary-count { flex-shrink: 0; opacity: 0.5; }
+.msg-emotion-row { padding: 0 16px 4px; display: flex; justify-content: flex-end; }
+.msg-system-row { padding: 8px 16px; }
+
+/* ====================== 媒体页 Tab (2026-10-12 布局简化) ======================
+ * VideoGen/ImageStudio 原来各写各的手内联 button tab (同段样式抄两遍 +
+ * 硬编码 #6366f1)。收成一个 class, 激活态走 --accent token。
+ */
+.media-tab {
+  display: 'inline-flex'; align-items: 'center'; gap: 6;
+  padding: 8px 20px; font-size: var(--fs-md); font-weight: 600;
+  background: transparent; border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted); cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.media-tab:hover { color: var(--fg-2); background: var(--card-hover); }
+.media-tab.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-bottom-color: var(--accent);
+}
+
+/* ====================== 品牌标描边入场 (2026-10-12) ======================
+ * BrandLogo 的 animate 模式: 两条流线被"画"出来 → 交点脉冲亮起。
+ * 只加 class, 不改路径数据/渐变 id (brand.test.ts 对二者有逐字断言)。
+ * dasharray 取 60 > 两条流线实际长度 (约 45), 保证整条被完全画出。
+ */
+@keyframes pfLogoDraw {
+  from { stroke-dashoffset: 60; opacity: 0.35; }
+  to   { stroke-dashoffset: 0;  opacity: 1; }
+}
+@keyframes pfLogoDot {
+  from { opacity: 0; transform: scale(0.4); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.pf-logo-draw path {
+  stroke-dasharray: 60;
+  stroke-dashoffset: 60;
+  animation: pfLogoDraw 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.pf-logo-draw path:nth-of-type(2) { animation-delay: 0.16s; }
+.pf-logo-draw circle {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pfLogoDot 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.72s forwards;
+}
+/* 无障碍: 用户偏好减少动效时不播 (元素回到完整可见状态) */
+@media (prefers-reduced-motion: reduce) {
+  .pf-logo-draw path,
+  .pf-logo-draw circle { animation: none; stroke-dashoffset: 0; opacity: 1; transform: none; }
+}
+
+/* ====================== 脉象波形 PulseLine (2026-10-12) ======================
+ * 望闻问切之「切」: AI 生成中, 消息流末尾浮现一条起伏细波。
+ * 只在 active 时挂载 → 不占静止态空间, 也不需要 display 切换。
+ */
+.pulse-line {
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  opacity: 0.55;
+  transition: opacity 0.3s ease;
+}
+.pulse-line-svg { width: 100%; height: 100%; display: block; }
+.pulse-line-path {
+  stroke: var(--accent);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+.pulse-line-path-b {
+  stroke: var(--accent-strong);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+/* 横向漂移: 两波相位不同 → 视觉上像脉搏在走 */
+@keyframes pulseLineDrift {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-120px); }
+}
+.pulse-line-path-a { animation: pulseLineDrift 1.5s linear infinite; }
+.pulse-line-path-b { animation: pulseLineDrift 2.3s linear infinite reverse; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-line-path-a,
+  .pulse-line-path-b { animation: none; }
+}
+
 /* ====================== 微交互增强 ====================== */
 
 /* Composer 输入框聚焦光晕 — 通过 :focus-within 让整个容器获得光晕 */
@@ -1418,4 +1550,100 @@ html, body {
 @keyframes badgePulse {
   0%, 100% { box-shadow: 0 0 0 0 currentColor; }
   50% { box-shadow: 0 0 0 6px transparent; }
+}
+
+/* ═══════════════ 2026-10-16 会话级 rewind 面板 (/rewind) ═══════════════
+   风格全走 CSS 变量 (AGENTS.md 铁律: 前端禁硬编码颜色)。
+   语义: 列出本会话每一轮 (checkpoint) + 该轮改动文件数, 选中先 dryRun 预览,
+          用户确认才真回滚 —— 破坏性操作必须先看见"会动哪些文件"。 */
+.rewind-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+.rewind-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--fg-2);
+}
+.rewind-panel-warn {
+  font-size: var(--fs-micro);
+  color: var(--muted-2);
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(250, 173, 20, 0.08);
+  border: 1px solid rgba(250, 173, 20, 0.25);
+}
+.rewind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.rewind-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: var(--fs-micro);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.rewind-item:hover {
+  border-color: var(--accent);
+}
+.rewind-item-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--card));
+}
+.rewind-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-2);
+}
+.rewind-item-empty {
+  color: var(--muted-2);
+  opacity: 0.7;
+}
+.rewind-plan {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  font-size: var(--fs-micro);
+  color: var(--fg-2);
+}
+.rewind-plan-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+}
+.rewind-plan-restore { color: var(--success); }
+.rewind-plan-delete { color: var(--danger); }
+.rewind-plan-skip { color: var(--muted-2); }
+.rewind-file-list {
+  margin-top: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: var(--fs-micro);
+  color: var(--muted-2);
+}
+.rewind-file-row {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 0;
 }

@@ -27,6 +27,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { currentRequestWorkspace } from './request-scope.js';
+import { ensureWorkspaceProfile } from './workspace-profile.js';
 
 /**
  * 归一化路径分隔符 (2026-10-16): 反斜杠 Windows 路径 (如 "F:\目录已检查\澳彩")
@@ -64,9 +65,111 @@ export const STANDARD_SUBDIRS = {
   worktrees:  'worktrees',   // Git worktree 缓存
   cache:      'cache',       // LLM 缓存 / embeddings
   config:     'config',      // sandbox rules, user-model, QQ config
+  // 2026-10-16 打包/部署加固: 之前这两个目录不在 STANDARD_SUBDIRS 里,
+  // 靠各模块自己 mkdir —— 一旦 init 时漏建(或容器里权限不足), 首次写入就失败。
+  checkpoints: 'checkpoints', // 会话级 checkpoint/rewind 存储
+  tasks:       'tasks',       // 长任务快照
 } as const;
 
+/**
+ * 解析 AgentAI 数据根目录（唯一权威入口）
+ * ---------------------------------------------------------------------------
+ * 优先级: AGENTAI_HOME > <userHome>/.agentai
+ *
+ * ⚠️ 2026-10-16: 此前 session-checkpoint / task-snapshot / worktree 三处各自
+ * 硬编码 `path.join(os.homedir(), '.agentai', ...)`，**绕过 AGENTAI_HOME**。后果:
+ *   - 桌面版（Tauri 显式设 AGENTAI_HOME=<data_dir>）checkpoint 却写到
+ *     %USERPROFILE%\.agentai\checkpoints，与 gateway 其余数据分离 →
+ *     卸载/迁移/多版本共存行为不可预期
+ *   - Docker 里 compose 挂的持久卷指向 /app/.agentai/memory，checkpoints 却
+ *     落在没挂卷的 /app/.agentai/checkpoints → 容器重建全丢
+ * 新代码一律用本函数，**不要再写 os.homedir()**。
+ */
+export function resolveAgentAiHome(explicit?: string): string {
+  if (explicit) return explicit;
+  const env = process.env.AGENTAI_HOME;
+  if (env && env.trim()) return env.trim();
+  return path.join(getUserHome(), '.agentai');
+}
+
 export type SubdirKey = keyof typeof STANDARD_SUBDIRS;
+
+/**
+ * 工作区/文件操作的允许根目录 (2026-10-17 批 2-B: 单一实现; 10-17 晚: 分发安全修正)
+ * ---------------------------------------------------------------------------
+ * 此前有**两份各自为政**的实现: routes/files.ts 的 getAllowedRoots 与
+ * safety/path-guard.ts 的 getAllowedRoots — 根集合不一致 (前者含 projectDir +
+ * monorepo 根, 后者含 AGENTAI_FS_ALLOWED_ROOTS), 且两处都写
+ * `require('os').homedir()` — 在 ESM 运行时 (tsx / dist) require 未定义,
+ * 那个 home 根**从来没生效过** (截图存桌面等场景被误拦, 且无人发现因为被 catch 吞)。
+ * 现统一为本函数 (并集语义), 两处消费方各自委托, 不再有第二份实现。
+ *
+ * ═══ 2026-10-17 晚 P0: 移除"projectDir 上两级"盲目授权 (分发安全) ═══
+ * 原实现 `path.resolve(projectDir, '..', '..')` 无条件入根 — 这是把开发机的
+ * monorepo 布局当成普适事实: 本机 projectDir=F:/目录已检查/澳彩 → 上两级=F:/,
+ * **整个 F 盘变成允许根**; 分发到用户机上, 项目目录上两级可能是 C:\Users\某人
+ * 甚至盘根 — 同样是越权放大。现改为 detectMonorepoRoot(): 只授予**确实探测到
+ * monorepo 标记** (pnpm-workspace.yaml / lerna.json / package.json#workspaces)
+ * 的祖先目录, 且锚点是 process.cwd() (gateway 自身所在), 不是用户工作区。
+ */
+export function getWorkspaceAllowedRoots(): string[] {
+  const roots: string[] = [];
+  // cwd: 仅当不是文件系统根时才授予 (分发场景 cwd 可能是盘根, 如 C:\ —
+  // 那等于整盘授权; 开发场景 cwd=gateway 包目录, 正常保留)
+  const cwd = path.resolve(process.cwd());
+  if (path.parse(cwd).root !== cwd) roots.push(cwd);
+  const wm = WorkspaceManager.getInstance();
+  if (wm.projectDir) roots.push(wm.projectDir);
+  if (process.env.AGENTAI_WORKSPACE) roots.push(path.resolve(process.env.AGENTAI_WORKSPACE));
+  if (process.env.AGENTAI_FS_ALLOWED_ROOTS) {
+    for (const r of process.env.AGENTAI_FS_ALLOWED_ROOTS.split(',').map(s => s.trim())) {
+      if (r) roots.push(path.resolve(r));
+    }
+  }
+  // monorepo 根 (仅标记验证通过的才授予 — 见函数头 P0 说明)
+  try {
+    const monorepoRoot = detectMonorepoRoot(cwd);
+    if (monorepoRoot) roots.push(monorepoRoot);
+  } catch { /* ignore */ }
+  // 用户主目录 (原两处都有这行意图, 但 require 在 ESM 下从未生效 — 本修复让其真正生效)
+  try {
+    const home = process.env.USERPROFILE || process.env.HOME || os.homedir();
+    if (home) roots.push(path.resolve(home));
+  } catch { /* ignore */ }
+  return [...new Set(roots.map(r => path.resolve(r)))];
+}
+
+/**
+ * 探测 monorepo 根目录 (2026-10-17 P0 新增, 分发安全)
+ * ---------------------------------------------------------------------------
+ * 从 fromDir 向上逐级找 monorepo 标记:
+ *   - pnpm-workspace.yaml / lerna.json 存在, 或
+ *   - package.json 含 "workspaces" 字段
+ * 最多向上 4 层, 命中即返回; 没有任何标记返回 null (调用方不授权)。
+ *
+ * 为什么需要它: 原 getWorkspaceAllowedRoots 用 `projectDir/../..` 盲目猜
+ * monorepo 根 — 开发机上猜对 (且顺带把 F:/ 盘根也猜进来了), 分发机上猜错
+ * (把用户目录的上级甚至盘根加进允许根)。"探测到标记才认" 让同一个函数在
+ * 开发/分发两种场景都给出正确答案。
+ */
+export function detectMonorepoRoot(fromDir: string): string | null {
+  let cur = path.resolve(fromDir);
+  for (let depth = 0; depth < 4; depth++) {
+    for (const marker of ['pnpm-workspace.yaml', 'lerna.json']) {
+      try {
+        if (fs.existsSync(path.join(cur, marker))) return cur;
+      } catch { /* ignore */ }
+    }
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(cur, 'package.json'), 'utf-8'));
+      if (pkg && pkg.workspaces) return cur;
+    } catch { /* 无 package.json 或解析失败 — 继续向上 */ }
+    const parent = path.dirname(cur);
+    if (parent === cur) break; // 已到文件系统根
+    cur = parent;
+  }
+  return null;
+}
 
 // ===== 单例 =====
 
@@ -109,9 +212,7 @@ export class WorkspaceManager {
 
   constructor(opts: WorkspaceManagerOptions = {}) {
     // 路径解析优先级: 构造参数 > 环境变量 > 平台默认
-    this.aiWorkDir = opts.aiWorkDir
-      || process.env.AGENTAI_HOME
-      || path.join(getUserHome(), '.agentai');
+    this.aiWorkDir = resolveAgentAiHome(opts.aiWorkDir);
 
     // ⚠️ 2026-10-16: 归一化分隔符。构造参数可能是反斜杠 Windows 中文路径
     // (如 "F:\目录已检查\澳彩"), 不归一化后续 .agentai/ 读写全失效。
@@ -228,6 +329,59 @@ export class WorkspaceManager {
     ensureDir(normalized + '/.agentai/memory');
     // 持久化 (重启后恢复)
     this._saveWorkspaceConfig();
+  }
+
+  /**
+   * 创建工作区目录 (批 2-B, 2026-10-17)
+   * ---------------------------------------------------------------------------
+   * 在允许根 (getWorkspaceAllowedRoots) 内建目录 + `.agentai/` 骨架 + 初始化画像
+   * (ensureWorkspaceProfile: 结构化技术栈探测 + 旧 devPrefs 迁移)。
+   *
+   * ⚠️ **只创建, 不切换**当前工作区 — 切换是用户显式动作 (POST /v1/workspace /
+   *    GUI 清单点击 / create_workspace 工具也遵守这条), 避免"某处顺手建个目录
+   *    就把当前会话的工作区偷走" (澳彩项目里挖洞时建个洞库工作区, 结果上下文全变)。
+   * ⚠️ name 只接受单段目录名: 拒绝路径分隔符 / 盘符 / `..` — 防越权写到允许根外。
+   * ⚠️ 目录已存在 → 不报错, 补建骨架并返回 existed:true (幂等, GUI/工具可安全重试)。
+   */
+  createProjectDir(name: string, parentDir?: string): { path: string; created: boolean; existed: boolean } {
+    const clean = String(name || '').trim();
+    if (!clean) throw new Error('工作区名称不能为空');
+    if (clean.length > 64) throw new Error('工作区名称过长 (≤64 字符)');
+    // 防越权: name 只能是单段目录名 (反斜杠在 Windows 也是分隔符, 一并禁)
+    if (/[\\/:*?"<>|]/.test(clean)) {
+      throw new Error(`非法工作区名称: "${clean}" — 不能包含路径分隔符或 Windows 保留字符 (\\ / : * ? " < > |)`);
+    }
+    if (clean === '.' || clean === '..' || clean.startsWith('..')) {
+      throw new Error(`非法工作区名称: "${clean}"`);
+    }
+
+    const roots = getWorkspaceAllowedRoots();
+    const parent = normalizeSeparators(parentDir || this.projectDir);
+    if (!parent) throw new Error('未指定父目录 (parent)');
+    const parentNorm = normalizeSeparators(path.resolve(parent));
+    // 父目录必须落在某个允许根内 (防"在 C:\\ 下建工作区"这类越权)
+    const inRoots = roots.some(r => {
+      const rn = normalizeSeparators(r);
+      return parentNorm === rn || parentNorm.startsWith(rn + '/');
+    });
+    if (!inRoots) {
+      throw new Error(`父目录不在允许范围内: ${parent} (允许根: ${roots.map(r => normalizeSeparators(r)).join(' | ')})`);
+    }
+    if (!fs.existsSync(parentNorm) || !fs.statSync(parentNorm).isDirectory()) {
+      throw new Error(`父目录不存在或不是目录: ${parent}`);
+    }
+
+    const target = parentNorm + '/' + clean;
+    const existed = fs.existsSync(target);
+    if (existed && !fs.statSync(target).isDirectory()) {
+      throw new Error(`目标已存在且不是目录: ${target}`);
+    }
+    if (!existed) fs.mkdirSync(target, { recursive: true });
+    // .agentai/ 骨架 (与 setProjectDir 对齐: 至少建 memory 子目录)
+    ensureDir(target + '/.agentai/memory');
+    // 初始化工作区画像 (已存在则不动; 首次会跑一次技术栈探测)
+    ensureWorkspaceProfile(target);
+    return { path: target, created: !existed, existed };
   }
 
   // ========================

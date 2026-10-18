@@ -15,14 +15,23 @@ chcp 65001 >nul
 echo [install-deps] PulseFlow Gateway 依赖检查
 
 set "SCRIPT_DIR=%~dp0"
-set "GW_DIR=%SCRIPT_DIR%..\resources\gateway-dist-v2"
-
-REM 规范化路径
-for %%i in ("%GW_DIR%") do set "GW_DIR=%%~fi"
-
-if not exist "%GW_DIR%" (
-    echo [install-deps] WARN: Gateway目录不存在: %GW_DIR%
-    echo [install-deps] SKIP (便携版可能未打包网关)
+REM 2026-10-18: tauri bundles resources\gateway-dist (Step 3.5 syncs v2 -> gateway-dist).
+REM Old code looked only for gateway-dist-v2 -> bootstrap was always a no-op.
+REM Try candidates in order; support both resources\ and exe-sibling layouts.
+set "GW_DIR="
+for %%D in (
+  "%SCRIPT_DIR%..\resources\gateway-dist"
+  "%SCRIPT_DIR%..\resources\gateway-dist-v2"
+  "%SCRIPT_DIR%..\gateway-dist"
+  "%SCRIPT_DIR%..\gateway-dist-v2"
+) do (
+  if not defined GW_DIR (
+    if exist "%%~fD\package.json" set "GW_DIR=%%~fD"
+  )
+)
+if not defined GW_DIR (
+    echo [install-deps] WARN: gateway dir not found (tried resources\gateway-dist etc.)
+    echo [install-deps] SKIP (portable build may not bundle gateway)
     exit /b 0
 )
 

@@ -18,7 +18,7 @@ UploadOutlined, PlusOutlined, ArrowRightOutlined, VideoCameraOutlined,
 CopyOutlined, StarOutlined, FullscreenOutlined, EditOutlined,
 } from '@ant-design/icons';
 import { promptLibrary, type PromptTemplate } from '../services/promptLibrary';
-import { imageTaskManager, type ImageTask } from '../services/imageTaskManager';
+import { imageTaskManager } from '../services/imageTaskManager';
 import { RegionEditor } from './RegionEditor';
 
 import { GATEWAY_HTTP } from '../services/config';
@@ -69,13 +69,6 @@ const STYLE_PRESETS = [
     { label: '波普', prompt: 'pop art, Andy Warhol, bright colors, comic book dots, bold' },
 ];
 
-// 质量档位 — 对应 Agnes API 的 1K/2K/3K/4K 档位
-const QUALITY_TIERS = [
-    { value: '1K', label: '1K 标准', desc: '1024px · 免费/快速' },
-    { value: '2K', label: '2K 高清', desc: '2048px · 更清晰' },
-    { value: '4K', label: '4K 超清', desc: '4096px · 最高质量' },
-];
-
 // 比例选项
 const ASPECT_RATIOS = [
     { value: '1:1', label: '1:1 方形', size: '1024x1024' },
@@ -109,7 +102,6 @@ const saveCustomModels = (models: CustomModel[]) => localStorage.setItem('agenta
 
 interface HistoryItem { id: string; prompt: string; url: string; size: string; ts: number; provider?: string; mode: StudioMode; sourceUrl?: string; }
 interface EditMessage { role: 'user' | 'ai'; content: string; imageUrl?: string; images?: string[]; error?: boolean; retryData?: { prompt: string; images: string[]; sourceImage: string; refImages: string[] }; }
-const STORAGE_KEY = 'agentai-studio-history';
 
 const EDIT_QUICK_ACTIONS = [
     { label: '🎨 换背景', prompt: 'Change the background to a beautiful natural landscape, keep the subject unchanged' },
@@ -191,10 +183,10 @@ export const ImageStudio: React.FC = () => {
   // P0 修复: 历史从全局 imageTaskManager 订阅 — 常驻不丢失, 不依赖 localStorage
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [current, setCurrent] = useState<HistoryItem | null>(null);
-  const [imgTasks, setImgTasks] = useState<ImageTask[]>(imageTaskManager.getTasks());
+  // 2026-10-12 删死代码: imgTasks state 只写不读 (订阅回调真正消费的是 history)
+  const [optimizing, setOptimizing] = useState(false);
   useEffect(() => {
     const unsub = imageTaskManager.subscribe((tasks) => {
-      setImgTasks(tasks);
       // 同步到本地 history 格式
       const items: HistoryItem[] = tasks
         .filter(t => t.imageUrl && t.status === 'completed')
@@ -474,6 +466,37 @@ const sendToVideo = (imageUrl: string) => {
         gen(userMsg);
     };
 
+    // ===== 2026-10-12 B-2: 对话改图补三条基础操作 =====
+    // 原设计只有"清空全部" (L659), 多轮对话里想删一轮/重来一轮只能全清重来。
+    /** 删除此轮对话: 该 AI 消息 + 它前面那条 user 消息一起删 */
+    const deleteEditTurn = (aiIndex: number) => {
+        setEditMessages(prev => {
+            // 从 aiIndex 往前找最近的 user 消息
+            let userIdx = -1;
+            for (let j = aiIndex - 1; j >= 0; j--) {
+                if (prev[j].role === 'user') { userIdx = j; break; }
+            }
+            return prev.filter((_, idx) => idx !== aiIndex && idx !== userIdx);
+        });
+    };
+    /** 编辑重发: 把该轮 user 消息填回输入框, 用户改完自己发 */
+    const editResendUser = (content: string) => {
+        setEditInput(content);
+        message.info('已填回输入框, 修改后发送');
+    };
+    /** 重新生成: 用该 AI 消息前面的 user 消息重跑 (消息流同步追加) */
+    const regenerateEditTurn = (aiIndex: number) => {
+        if (busy) return;
+        let userIdx = -1;
+        for (let j = aiIndex - 1; j >= 0; j--) {
+            if (editMessages[j].role === 'user') { userIdx = j; break; }
+        }
+        if (userIdx < 0) { message.warning('找不到对应的提问, 无法重新生成'); return; }
+        const um = editMessages[userIdx];
+        setEditMessages(prev => [...prev, { role: 'user', content: um.content, images: um.images }]);
+        gen(um.content);
+    };
+
     // ===== 洗图放大 (Upscale) — 用 AI 模型放大图片到 2x 分辨率 =====
     const [upscaling, setUpscaling] = useState<string | null>(null);
     const upscaleImage = async (imageUrl: string) => {
@@ -616,7 +639,10 @@ const sendToVideo = (imageUrl: string) => {
                     <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}>
                         <div style={{ fontSize: 'var(--fs-micro)', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', justifyContent: 'space-between' }}>
                             <span>生成历史 ({history.length})</span>
-                            {history.length > 0 && <span style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => { try { localStorage.removeItem('agentai-image-tasks'); setHistory([]); } catch {} }}>清空</span>}
+                            {/* 2026-10-12 P0 修复: 原写死 removeItem('agentai-image-tasks'),
+                                与 imageTaskManager 真实 key 'agentai-image-history' 不匹配
+                                → 清空后刷新历史复活。改为调 clearAll() (它同时清内存+持久化)。 */}
+                            {history.length > 0 && <span style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => { imageTaskManager.clearAll(); setCurrent(null); }}>清空</span>}
                         </div>
                         {history.length === 0 ? (
                             <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', textAlign: 'center', padding: 20 }}>暂无历史记录</div>
@@ -675,20 +701,22 @@ const sendToVideo = (imageUrl: string) => {
                             <div style={{ textAlign: 'center', marginTop: 80 }}>
                                 <div style={{ marginBottom: 16, color: 'var(--muted)' }}><MessageOutlined style={{ fontSize: 48 }} /></div>
                                 <div style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, marginBottom: 8 }}>AI 对话改图</div>
-                                <div style={{ fontSize: 'var(--fs-md)', color: 'var(--muted-2)', marginBottom: 24, maxWidth: 400, margin: '0 auto 24px' }}>
+                                <div style={{ fontSize: 'var(--fs-md)', color: 'var(--muted-2)', maxWidth: 400, margin: '0 auto 24px' }}>
                                     上传一张图片，用自然语言描述修改需求，AI 逐步迭代优化。<br/>
                                     支持多轮对话，每次基于上次结果继续编辑。
                                 </div>
                                 <Button type="primary" size="large" icon={<UploadOutlined />} onClick={() => sourceRef.current?.click()}
-                                    style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none', borderRadius: 'var(--radius-lg)', height: 48, padding: '0 32px', fontSize: 'var(--fs-md)' }}>
+                                    style={{ background: 'var(--grad-success)', border: 'none', borderRadius: 'var(--radius-lg)', height: 48, padding: '0 32px', fontSize: 'var(--fs-md)' }}>
                                     上传图片开始
                                 </Button>
                                 <input ref={sourceRef} type="file" accept="image/*" style={{ display: 'none' }}
                                     onChange={e => { if (e.target.files?.length) readImages(e.target.files, 1, imgs => { setSourceImage(imgs[0]); setRefImages([imgs[0]]); setCurrent({ id: 'src', prompt: '上传图片', url: imgs[0], size: '', ts: Date.now(), mode: 'edit' }); }); e.target.value = ''; }} />
+                            {/* 空状态快捷 Tag — 2026-10-12: 原来是死交互 (点了只弹"请先上传")
+                                → 改为直接唤起文件选择, 与主 CTA 同路径 */}
                                 <div style={{ marginTop: 32, display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 600, margin: '32px auto 0' }}>
                                     {EDIT_QUICK_ACTIONS.slice(0, 6).map(a => (
                                         <Tag key={a.label} style={{ cursor: 'pointer', fontSize: 'var(--fs-sm)', padding: '6px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
-                                            onClick={() => { message.info('请先上传一张图片'); }}>{a.label}</Tag>
+                                            onClick={() => sourceRef.current?.click()}>{a.label}</Tag>
                                     ))}
                                 </div>
                             </div>
@@ -726,12 +754,18 @@ const sendToVideo = (imageUrl: string) => {
                                                     {msg.content && (
                                                         <div style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--fg)', padding: '12px 18px', borderRadius: '18px 18px 4px 18px', fontSize: 'var(--fs-md)', lineHeight: 1.6 }}>{msg.content}</div>
                                                     )}
+                                                    {/* 2026-10-12 B-2: 编辑重发 — 填回输入框 */}
+                                                    {msg.content && (
+                                                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                                                            <Tooltip title="编辑这句提示并重发"><Button size="small" type="text" icon={<EditOutlined />} onClick={() => editResendUser(msg.content)} /></Tooltip>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         ) : (
                                             /* AI 消息 — 左对齐 + 图片 + 操作栏 */
                                             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--fg-on-accent)', fontSize: 'var(--fs-md)', fontWeight: 700 }}>AI</div>
+                                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--grad-success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--fg-on-accent)', fontSize: 'var(--fs-md)', fontWeight: 700 }}>AI</div>
                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                     {msg.imageUrl && (
                                                         <Dropdown menu={imgContextMenu(msg.imageUrl)} trigger={['contextMenu']}>
@@ -741,6 +775,11 @@ const sendToVideo = (imageUrl: string) => {
                                                     {msg.content && (
                                                         <div style={{ background: msg.error ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.10)', color: msg.error ? 'var(--danger)' : 'var(--fg)', padding: '12px 16px', borderRadius: '4px 18px 18px 18px', maxWidth: 500, fontSize: 'var(--fs-md)', lineHeight: 1.6 }}>{msg.content}</div>
                                                     )}
+                                                    {/* 2026-10-12 B-2: 单轮操作 — 重新生成 / 删除此轮 (原来只能清空全部) */}
+                                                    <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                                                        <Tooltip title="用同一句提示重新生成"><Button size="small" type="text" icon={<ReloadOutlined />} disabled={busy} onClick={() => regenerateEditTurn(i)} /></Tooltip>
+                                                        <Tooltip title="删除这一轮对话"><Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => deleteEditTurn(i)} /></Tooltip>
+                                                    </div>
                                                     {/* 错误重试按钮 */}
                                                     {msg.error && msg.retryData && (
                                                         <div style={{ marginTop: 8 }}>
@@ -766,12 +805,22 @@ const sendToVideo = (imageUrl: string) => {
                                         )}
                                     </div>
                                 ))}
-                                {/* 加载中 */}
+                                {/* 加载中 — 2026-10-12 B-1: 原来只有裸 Spin。
+                                    改图单次要 30-60s, 用户盯着转圈无法判断是卡死还是在跑。
+                                    fakeProgress 逻辑本就存在 (genOnce L310-311 递增),
+                                    此前只在非 edit 模式渲染 → edit 分支把它接上。 */}
                                 {busy && (
-                                    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-md)', fontWeight: 700 }}>AI</div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <Spin size="small" /> <span style={{ color: 'var(--muted)', fontSize: 'var(--fs-md)' }}>正在生成图片...</span>
+                                    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                                        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--grad-success)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-on-accent)', fontSize: 'var(--fs-md)', fontWeight: 700, flexShrink: 0 }}>AI</div>
+                                        <div style={{ flex: 1, maxWidth: 420 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                                <Spin size="small" />
+                                                <span style={{ color: 'var(--muted)', fontSize: 'var(--fs-md)' }}>正在生成图片...</span>
+                                            </div>
+                                            <Progress percent={Math.min(fakeProgress, 95)} status="active" size="small" />
+                                            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 2 }}>
+                                                {fakeProgress < 30 ? '正在提交请求' : fakeProgress < 90 ? 'AI 绘制中, 请稍候' : '即将完成'}
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -829,7 +878,7 @@ const sendToVideo = (imageUrl: string) => {
                             <Input.TextArea value={editInput} onChange={e => setEditInput(e.target.value)} placeholder={editInputImages.length > 0 ? '描述修改需求 (可不填, 直接发送图片)' : '描述你想要的修改，如：把背景换成海边日落...'} autoSize={{ minRows: 1, maxRows: 6 }} disabled={busy}
                                 onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); sendEditMessage(); } }} style={{ flex: 1, border: 'none', background: 'transparent', borderRadius: 0, fontSize: 'var(--fs-md)', padding: '12px 8px', resize: 'none', boxShadow: 'none' }} />
                             <Button type="primary" icon={<MessageOutlined />} loading={busy} onClick={sendEditMessage} disabled={!editInput.trim() && editInputImages.length === 0}
-                                style={{ borderRadius: 'var(--radius-md)', background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none', height: 40, minWidth: 72, fontSize: 'var(--fs-md)', fontWeight: 600, margin: '2px' }}>
+                                style={{ borderRadius: 'var(--radius-md)', background: 'var(--grad-success)', border: 'none', height: 40, minWidth: 72, fontSize: 'var(--fs-md)', fontWeight: 600, margin: '2px' }}>
                                 {busy ? '生成中' : '发送'}
                             </Button>
                         </div>
@@ -939,8 +988,9 @@ const sendToVideo = (imageUrl: string) => {
                 <PaneGrip resizable={studioLeftPane} min={260} max={560} label="调整控制面板宽度" />
                 {/* 内层滚动: 把手是 absolute, 不能放进滚动容器 (否则拖动时会滚走) */}
                 <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
-                {/* 模式选择 */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
+                {/* 模式选择 — 2026-10-12: repeat(5,1fr) → repeat(3,1fr)
+                    MODES 只剩 3 项 (img2img/style_transfer 已下线), 旧 5 列网格会左右各空一格 */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
                     {MODES.map(m => {
                         const active = mode === m.key;
                         const colors: Record<string, string> = { text2img: '#3B82F6', img2img: '#EC4899', style_transfer: '#8B5CF6', edit: 'var(--success)', tryon: '#F59E0B' };
@@ -972,10 +1022,33 @@ const sendToVideo = (imageUrl: string) => {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                 <Tooltip title="收藏夹"><Button size="small" icon={<StarOutlined />} onClick={() => setShowPromptLib(true)} /></Tooltip>
                                 <Tooltip title="保存"><Button size="small" icon={<PlusOutlined />} disabled={!prompt.trim()} onClick={() => { setNewPromptLabel(prompt.slice(0, 20)); setShowSavePrompt(true); }} /></Tooltip>
-                                <Tooltip title="AI优化"><Button size="small" icon={<BulbOutlined />} disabled={busy || !prompt.trim()} onClick={async () => {
-                                    setBusy(true);
-                                    try { const d = await apiPost('/v1/prompt/optimize', { text: prompt, type: 'image' }); if (d.ok && d.enhanced) { setPrompt(d.enhanced); message.success('✨ 已优化'); } else { setPrompt(`masterpiece, best quality, ${prompt}, 8k`); } }
-                                    catch { setPrompt(`masterpiece, best quality, ${prompt}, 8k`); } finally { setBusy(false); }
+                                <Tooltip title="AI优化"><Button size="small" icon={<BulbOutlined />} disabled={busy || optimizing || !prompt.trim()} onClick={async () => {
+                                    if (optimizing) return;
+                                    setOptimizing(true);
+                                    try {
+                                        const d = await apiPost('/v1/prompt/optimize', { text: prompt, type: 'image' });
+                                        if (d.ok && d.enhanced) {
+                                            // 2026-10-12 防"润色重复叠加" (对齐 VideoGen L450-479)
+                                            // 症状: 反复点「一键润色」→ 上一版结果当输入再润色 → 同一段被复述 2~3 遍
+                                            const before = prompt.trim();
+                                            const after = String(d.enhanced).trim();
+                                            const grew = after.length - before.length;
+                                            const merelyEchoes = after.includes(before) && grew < before.length * 0.3;
+                                            if (merelyEchoes) {
+                                                message.info('提示词已经比较完整, 未做改动（避免重复叠加润色）');
+                                            } else {
+                                                setPrompt(after);
+                                                message.success(`✨ AI 已优化提示词（${before.length} → ${after.length} 字）`);
+                                            }
+                                        } else {
+                                            // 降级: 本地增强 —— 先剥离旧片段再追加, 保证幂等
+                                            const stripped = prompt.replace(/,\s*(masterpiece, best quality|8k)/gi, '');
+                                            setPrompt(`masterpiece, best quality, ${stripped}, 8k`);
+                                        }
+                                    } catch {
+                                        const stripped = prompt.replace(/,\s*(masterpiece, best quality|8k)/gi, '');
+                                        setPrompt(`masterpiece, best quality, ${stripped}, 8k`);
+                                    } finally { setOptimizing(false); }
                                 }} /></Tooltip>
                             </div>
                         </div>
@@ -1152,7 +1225,7 @@ const sendToVideo = (imageUrl: string) => {
                 {/* 历史记录 */}
                 {history.length > 0 && (
                     <Card size="small" title={<Space><HistoryOutlined /> 历史 ({history.length})</Space>}
-                        extra={<Button size="small" danger icon={<DeleteOutlined />} onClick={() => { setHistory([]); setCurrent(null); }}>清空</Button>}>
+                        extra={<Button size="small" danger icon={<DeleteOutlined />} onClick={() => { imageTaskManager.clearAll(); setCurrent(null); }}>清空</Button>}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
                             {history.slice(0, 30).map(item => (
                                 <Dropdown key={item.id} menu={imgContextMenu(item.url)} trigger={['contextMenu']}>

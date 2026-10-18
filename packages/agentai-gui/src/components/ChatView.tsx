@@ -8,6 +8,7 @@
  */
 import { MessageList } from './chat/MessageList';
 import { JumpToBar } from './chat/JumpToBar';
+import { RewindPanel } from './chat/RewindPanel';
 import { PulseLine } from './chat/PulseLine';
 import type { RowBinds, StreamProgress } from './chat/types';
 import { AutoHideTaskBar } from './chat/AutoHideTaskBar';
@@ -662,13 +663,33 @@ const [loading, setLoading] = useState(false);
 
     // 智能超时保护: 有活动(delta/工具调用)时重置计时器, 只在完全无响应时才中止
     let lastActivityTs = Date.now();
+    // 2026-10-17 P0-1: 记录"本次请求正在运行中的工具数"。
+    // 工具**执行期间不发任何 SSE**, 前端会误判为无响应 →
+    // 事故: `run_command python probe_foos.py` 跑几分钟, 前端 5 分钟到点 abort,
+    // 把后端正在正常干活的连接掐掉, 用户看到"任务被强制中止"。
+    // 现在只要还有工具在跑, 就**不算 idle** (有上限, 防真死锁永久卡住)。
+    let runningToolCount = 0;
+    const TOOL_RUNNING_MAX_WAIT = 30 * 60 * 1000; // 工具最多可静默 30 分钟
+    let firstToolStartTs = 0;
     const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 分钟无任何活动才超时
     const timeoutChecker = setInterval(() => {
-      if (Date.now() - lastActivityTs > IDLE_TIMEOUT && abortRef.current === controller) {
+      const idleMs = Date.now() - lastActivityTs;
+      // 有工具在跑 → 走更宽松的门槛 (且受 TOOL_RUNNING_MAX_WAIT 兜底)
+      const limit = runningToolCount > 0 ? TOOL_RUNNING_MAX_WAIT : IDLE_TIMEOUT;
+      // 首轮工具刚起跑时不按运行时间算, 按 idle 算 (防止工具秒完成但没回事件)
+      const toolRunMs = firstToolStartTs ? Date.now() - firstToolStartTs : 0;
+      const timeoutByTool = runningToolCount > 0 && toolRunMs > TOOL_RUNNING_MAX_WAIT;
+      const timeoutByIdle = idleMs > limit;
+      if ((timeoutByTool || (timeoutByIdle && runningToolCount === 0)) && abortRef.current === controller) {
         controller.abort();
+        const msg = timeoutByTool
+          ? '\n\n⏱ 工具执行超时 (单次运行超过 30 分钟)'
+          : runningToolCount > 0
+            ? '\n\n⏱ 请求超时 (长时间无响应, 但仍有工具在运行 — 可能是网关卡住)'
+            : '\n\n⏱ 请求超时 (5 分钟无任何响应)';
         updateMessage(botId, (m: any) => ({
           ...m, streaming: false, status: 'error',
-          segments: [...m.segments, { kind: 'text', text: '\n\n⏱ 请求超时 (5 分钟无响应)' }],
+          segments: [...m.segments, { kind: 'text', text: msg }],
         }));
         setLoading(false);
         abortRef.current = null;
@@ -730,6 +751,9 @@ const [loading, setLoading] = useState(false);
       },
       onToolStart: (info: any) => {
         lastActivityTs = Date.now(); // 重置超时计时器
+        // 2026-10-17 P0-1: 标记有工具在跑 → idle 计时器不再误判无响应
+        runningToolCount++;
+        if (firstToolStartTs === 0) firstToolStartTs = Date.now();
         // 缓存 args 供 onToolResult 使用
         handlers._toolArgsCache[info.callId] = info.args;
         updateMessage(botId, (m: any) => ({
@@ -749,6 +773,8 @@ const [loading, setLoading] = useState(false);
       },
       onToolResult: (info: any) => {
         lastActivityTs = Date.now(); // 重置超时计时器
+        // 2026-10-17 P0-1: 该工具已结束 → 计数减 1 (下限 0, 防止重试重复减)
+        if (runningToolCount > 0) runningToolCount--;
         updateMessage(botId, (m: any) => {
           const segs = m.segments.map((s: any) =>
             s.kind === 'tool' && s.callId === info.callId
@@ -1153,14 +1179,36 @@ const [loading, setLoading] = useState(false);
           return { ...sa, steps: [...(sa.steps || []), stepDesc].slice(-20) };
         }));
       },
-      onToolStuck: (info: any) => {
-        lastActivityTs = Date.now();
+      // 2026-10-17: 非致命提示 (本地限流即将自动重试) —— 不报错, 只是告诉用户在等
+      onNotice: (info: any) => {
         updateMessage(botId, (m: any) => ({
           ...m, segments: [...m.segments, {
             kind: 'text',
-            text: `\n\n> ⚠️ 工具 \`${info.tool}\` 疑似卡死 (${info.count} 次调用)\n`,
+            text: `\n\n⏳ ${info.text}\n`,
           }],
         }));
+      },
+      // 2026-10-17 P0-2: 长耗时工具心跳 (后端每 30s 发一次)。
+      // 这是根治: 工具跑多久都持续续上 idle 计时器, 前端不会再误判无响应。
+      onToolHeartbeat: (_info: any) => {
+        lastActivityTs = Date.now();
+      },
+      onToolStuck: (info: any) => {
+        lastActivityTs = Date.now();
+        updateMessage(botId, (m: any) => {
+          // 2026-10-17 P1 纵深防御: 后端已改为"同一工具只播一次"，
+          // 这里再挡一层 —— 即使后端漏发/重放，同一工具也不重复渲染提示。
+          // 实机事故: `enum_subdomains 疑似卡死(3 次调用)` 连着出现十几次刷屏。
+          const marker = `\`${info.tool}\` 疑似卡死`;
+          const dup = (m.segments || []).some(
+            (s: any) => s.kind === 'text' && typeof s.text === 'string' && s.text.includes(marker),
+          );
+          if (dup) return m;
+          return { ...m, segments: [...m.segments, {
+            kind: 'text',
+            text: `\n\n> ⚠️ 工具 \`${info.tool}\` 疑似卡死 (${info.count} 次调用)\n`,
+          }] };
+        });
       },
     };
 
@@ -1204,6 +1252,7 @@ const [loading, setLoading] = useState(false);
             attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
             thinking, modelConfig,
             taskId: activeTaskId,  // 长任务快照 ID (跨会话恢复)
+            sessionId: activeId,  // 2026-10-16 会话级 checkpoint 归属 (GUI /rewind 按这个列轮次)
           }),
           signal: controller.signal,
         });
@@ -1232,6 +1281,7 @@ await apiStream(base + '/v1/chat', {
           thinking, modelConfig,
           systemRules: buildTimelinePrompt(),
           taskId: activeTaskId,  // 长任务快照 ID (跨会话恢复)
+          sessionId: activeId,  // 2026-10-16 会话级 checkpoint 归属 (GUI /rewind 按这个列轮次)
           contextInject: useModelStore.getState().contextInject,
           webSearch: opts?.webSearch || undefined, // P1 修复: webSearch 按钮终于生效
           isAnswer: opts?.isAnswer || undefined, // P0 修复: ask_user 答案不压制旧 loop
@@ -1431,6 +1481,8 @@ await apiStream(base + '/v1/chat', {
       smartClear();
     }},
     { cmd: '/abort', desc: '中断当前回复', run: () => handleStop() },
+    // 2026-10-16 会话级 rewind: 回退到本会话的某一轮 (AI 改错了秒退, 不动 git 历史)
+    { cmd: '/rewind', desc: '回退到某一轮: 列出本会话每轮改动, 预览后回滚代码', run: () => setShowRewind(v => !v) },
     // 赏金打单快捷入口 (2026-10-15): 填入一行指令后直接 send, 走 AI 跑
     // bounty-target-picker → grant_scope → pentest-workflow → report_vulnerability → bounty-report 链路
     { cmd: '/bounty', desc: '赏金打单: 挑授权目标+挖洞+出报告 (填入平台/地址后再发送)', run: () => {
@@ -1630,6 +1682,8 @@ await apiStream(base + '/v1/chat', {
   const { diffFile, diffText, clearDiff } = useDiffEvents();
   // 规划模式审批状态
   const [planNeedsApproval, setPlanNeedsApproval] = useState(false);
+  // 2026-10-16: /rewind 会话级回退面板开关
+  const [showRewind, setShowRewind] = useState(false);
   const [planSessionId, setPlanSessionId] = useState<string>('');
 // 意图澄清请求 (AI 检测到歧义时弹出卡片)
 const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | null>(null);
@@ -1855,6 +1909,13 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         {/* 批次8.8: 对话区悬浮"跳到时间线"按钮组 — 长对话不用从头翻 */}
         {messages.length > 0 && (
           <JumpToBar messages={messages} msgRefs={msgRefs} onNavigate={handleNavigateToMsg} />
+        )}
+
+        {/* 2026-10-16: 会话级 rewind 面板 (/rewind) — 回退到本会话某一轮, 不动 git 历史 */}
+        {showRewind && (
+          <div style={{ position: 'absolute', right: 16, bottom: 96, width: 380, zIndex: 40 }}>
+            <RewindPanel sessionId={activeId || undefined} />
+          </div>
         )}
 
         {/* 3D 可交互场景 (AI 调用 generate_3d_scene 生成) */}

@@ -5,32 +5,12 @@
 import { Router } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
-import { WorkspaceManager } from '../workspace-manager.js';
+import { WorkspaceManager, getWorkspaceAllowedRoots } from '../workspace-manager.js';
 import { currentRequestWorkspace } from '../request-scope.js';
 import { isPathAllowed } from '../safety/path-guard.js';
+import { readWorkspaceProfile } from '../workspace-profile.js';
 
 export const filesRouter = Router();
-
-// ===== 安全守卫 (动态) =====
-function getAllowedRoots(): string[] {
-  const cwd = process.cwd();
-  const envWs = process.env.AGENTAI_WORKSPACE;
-  const wm = WorkspaceManager.getInstance();
-  const roots = [cwd, wm.projectDir];
-  if (envWs) roots.push(path.resolve(envWs));
-  // 额外允许: 项目根目录的上两级 (monorepo 根)
-  try {
-    const monorepoRoot = path.resolve(wm.projectDir, '..', '..');
-    if (fs.existsSync(monorepoRoot)) roots.push(monorepoRoot);
-  } catch {}
-  // 额外允许: 用户主目录 (方便浏览)
-  try {
-    const home = process.env.USERPROFILE || process.env.HOME || require('os').homedir();
-    if (home) roots.push(home);
-  } catch {}
-  // 去重 (可能 projectDir === cwd)
-  return [...new Set(roots.map(r => path.resolve(r)))];
-}
 
 /**
  * GET /v1/fs/project-root
@@ -69,6 +49,42 @@ filesRouter.post('/v1/workspace', (req, res) => {
 });
 
 /**
+ * POST /v1/workspace/create
+ * 批 2-B (2026-10-17): 在允许根内创建工作区目录 + `.agentai/` 骨架 + 初始化画像。
+ * ⚠️ 只创建, **不切换**当前工作区 — 切换是用户显式动作 (POST /v1/workspace)。
+ * Body: { name: string, parent?: string } — name 单段目录名; parent 缺省为当前 projectDir
+ */
+filesRouter.post('/v1/workspace/create', (req, res) => {
+  try {
+    const { name, parent } = req.body || {};
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: '需要 name 参数 (工作区目录名, 单段)' });
+    }
+    const wm = WorkspaceManager.getInstance();
+    const result = wm.createProjectDir(
+      name.trim(),
+      typeof parent === 'string' && parent.trim() ? parent.trim() : undefined,
+    );
+    const profile = readWorkspaceProfile(result.path);
+    console.log(`[workspace] created: ${result.path} (created=${result.created})`);
+    res.json({
+      ok: true,
+      path: result.path,
+      created: result.created,
+      existed: result.existed,
+      projectDir: wm.projectDir,
+      profile: profile ? {
+        techStack: profile.techStack ? {
+          language: profile.techStack.language,
+          framework: profile.techStack.framework,
+        } : null,
+        createdAt: profile.createdAt,
+      } : null,
+    });
+  } catch (e: any) { res.status(400).json({ error: String(e?.message || e) }); }
+});
+
+/**
  * 限制文件操作在允许的根目录内，防止路径遍历攻击
  * - 解析符号链接防止绕过
  * - 拒绝非法的绝对路径/上级目录穿越
@@ -78,14 +94,14 @@ function sanitizePath(input: string): string {
     throw new Error(`Invalid path: ${JSON.stringify(input)}`);
   }
   const resolved = path.resolve(input);
-  const allowed = getAllowedRoots().some(root => resolved.startsWith(root) || resolved.startsWith(path.resolve(root)));
+  const allowed = getWorkspaceAllowedRoots().some(root => resolved.startsWith(root) || resolved.startsWith(path.resolve(root)));
   if (!allowed) {
     throw new Error(`Path not allowed (outside workspace): ${input}`);
   }
   // 防符号链接绕过
   try {
     const real = fs.realpathSync(resolved);
-    const allowedReal = getAllowedRoots().some(root => real.startsWith(root) || real.startsWith(path.resolve(root)));
+    const allowedReal = getWorkspaceAllowedRoots().some(root => real.startsWith(root) || real.startsWith(path.resolve(root)));
     if (!allowedReal) {
       throw new Error(`Symlink escape detected: ${input}`);
     }
@@ -145,6 +161,11 @@ filesRouter.get('/v1/fs/drives', (_req, res) => {
   try {
     const drives: string[] = [];
     const common: string[] = [];
+    // 常用盘判定 (2026-10-17 分发安全): 原实现硬编码 ['C:\\','D:\\','E:\\'] —
+    // 分发机上这些盘符可能不存在或与用户无关。改为"用户主目录所在盘 +
+    // gateway 运行目录所在盘" — 在任何机器上都是最有意义的起点。
+    const home = (process.env.USERPROFILE || process.env.HOME || '').toUpperCase();
+    const cwdUpper = process.cwd().toUpperCase();
     // Windows 盘符
     for (let i = 65; i <= 90; i++) {
       const letter = String.fromCharCode(i);
@@ -152,12 +173,11 @@ filesRouter.get('/v1/fs/drives', (_req, res) => {
       try {
         if (fs.existsSync(root)) {
           drives.push(root);
-          if (['C:\\', 'D:\\', 'E:\\'].includes(root)) common.push(root);
+          if ((home && home.startsWith(root)) || cwdUpper.startsWith(root)) common.push(root);
         }
       } catch { /* skip */ }
     }
     // 额外常用目录
-    const home = process.env.USERPROFILE || process.env.HOME || '';
     if (home) common.push(home);
     common.push(process.cwd());
     res.json({ drives, common: [...new Set(common)] });
@@ -323,12 +343,34 @@ filesRouter.get('/api/files/download', (req, res) => {
   try {
     const filePath = req.query.path as string;
     if (!filePath) return res.status(400).json({ error: 'path required' });
+    // ⚠️ 2026-10-17 Windows 中文路径归一化 (实机踩坑):
+    //   实测 `path.join('F:\\目录已检查\\澳彩', '.agentai', 'evidence')` 会拼出
+    //   `F:目录已检查澳彩\.agentai\...` —— 反斜杠被当转义符吞掉, 路径全错。
+    //   所以凡是用工作区根去拼路径, 必须先统一成正斜杠 (ws-paths.normWsPath)。
+    //   注意: **查询参数里的绝对路径**已经带反斜杠, 不能一刀切替换(会把
+    //   Windows 盘符路径搞坏), 所以这里只对"以工作区根为基准"的兜底分支做归一化。
     let safe = path.resolve(filePath);
     if (!fs.existsSync(safe)) {
-      // 回退: workspace 根目录 (AI 可能写到这里)
-      const wm = WorkspaceManager.getInstance();
-      const alt = path.resolve(wm.projectDir, '..', '..', path.basename(filePath));
-      if (fs.existsSync(alt)) { safe = alt; }
+      // 回退 1 (2026-10-17): 请求级 workspace —— 多工作区场景下不能读错项目。
+      //   原来只用 WorkspaceManager 全局单例, 与同文件 L306 的 /v1/files/backup 不一致。
+      const ws = currentRequestWorkspace() || WorkspaceManager.getInstance().projectDir;
+      if (ws) {
+        // 只接**裸文件名** (含相对子目录), 不接绝对路径 —— 否则这里会变成
+        //   一个"任意路径读取"入口。限定在工作区的 .agentai/ 证据目录内。
+        const rel = String(filePath).replace(/\\/g, '/').replace(/^[/\\]+/, '');
+        const normWs = String(ws).replace(/\\/g, '/').replace(/\/+$/, '');
+        // 只在 .agentai/ 下找 (证据、附件), 不给整个工作区当搜索域
+        const alt = path.resolve(`${normWs}/.agentai/${rel}`);
+        if (alt.startsWith(path.resolve(`${normWs}/.agentai`) + path.sep) && fs.existsSync(alt)) {
+          safe = alt;
+        }
+      }
+      if (!fs.existsSync(safe)) {
+        // 回退 2 (旧逻辑): workspace 根目录 (AI 可能写到这里)
+        const wm = WorkspaceManager.getInstance();
+        const alt2 = path.resolve(wm.projectDir, '..', '..', path.basename(filePath));
+        if (fs.existsSync(alt2)) { safe = alt2; }
+      }
     }
     if (!fs.existsSync(safe)) return res.status(404).json({ error: 'file not found' });
     const stat = fs.statSync(safe);

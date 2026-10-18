@@ -215,7 +215,10 @@ describe('token 层: 语义色不得再散落 (2026-10-11)', () => {
   const COLOR_SKIP = ['EmotionIndicator.tsx', 'SoulPanel.tsx', 'TokenPressureBar.tsx', 'store/modeStore.ts', 'store/modelStore.ts'];
   const GREY_SKIP = ['DecorAI/', 'VoiceDictation.tsx', 'TerminalPanel.tsx', 'modes/PreviewMode.tsx'];
   // 打印/导出 HTML 模板用的是"亮色纸张"配色 (白底黑字), 与 App 主题无关, 不得 token 化
-  const PRINT_SKIP = ['PrescriptionCard.tsx', 'WritePage.tsx'];
+  // Scene3DViewer 的 GLB 模板同理: iframe srcDoc 是**独立文档**,
+  // CSS 变量不跨文档继承 → 模板里写 var(--fg-on-accent) 根本不生效,
+  // 只能用字面量。且画布是自绘深色表面, 不跟随 App 主题。
+  const PRINT_SKIP = ['PrescriptionCard.tsx', 'WritePage.tsx', 'Scene3DViewer.tsx'];
   const norm = (f: string) => f.replace(/\\/g, '/');
   const skip = (f: string, list: string[]) => list.some(s => norm(f).includes(s));
   const src = (f: string) => stripComments(readFileSync(f, 'utf-8'));

@@ -220,6 +220,9 @@ class ImageTaskManager {
   clearAll() {
     this.tasks = [];
     this.activeIds.clear();
+    // 2026-10-12 P0 修复: 原来只清内存, localStorage 里的持久化不删
+    // → 调用 clearAll 后刷新页面, load() 又把历史读回来 (清空无效)
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* 隐私模式忽略 */ }
     this.notify();
   }
 

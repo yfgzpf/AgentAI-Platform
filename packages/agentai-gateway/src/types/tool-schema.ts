@@ -45,3 +45,18 @@ export interface ToolDecl {
   parallelSafe?: boolean;
   riskLevel: RiskLevel;
 }
+
+/**
+ * 阶段2 轻档 (2026-10-11): 单个 handler 签名 — 比 tool-registry.ts 的 ToolHandler 宽松一档。
+ *  - args 保持 Record<string, any> (统一, 不给每个工具建独立 args 接口 — 那是重档目标)
+ *  - ctx 可选 (EXTRA_HANDLERS 里 112 个 handler 根本不接 ctx, 不强行要求)
+ *  - 返回 Promise<ToolResult> (统一结果形状, 让消费侧拿到强类型)
+ * 用于收紧 EXTRA_HANDLERS 的 Record 值类型, 给 index.ts/spawner-cli.ts 的消费侧
+ * 提供强类型边界, 同时不要求 handler 实现逐个改签名 (tools.ts 仍 @ts-nocheck)。
+ */
+import type { ToolResult, ToolContext } from '../tool-registry.js';
+
+export type ToolHandlerLike = (
+  args: Record<string, any>,
+  ctx?: ToolContext,
+) => Promise<ToolResult>;

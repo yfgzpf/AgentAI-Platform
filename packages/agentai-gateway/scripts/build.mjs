@@ -77,6 +77,45 @@ if (existsSync(src)) {
     console.warn(`[build] WARN: 源 ${src} 不存在, 跳过 copy`);
 }
 
+// ═══ 2026-10-16: 编译产物版本戳 (防"改了 src 但 dist 是旧的") ═══
+// 事故背景: 修了 deepseek 400 的三道防线后, 400 依旧复现 —— 因为
+//   `npm start` 跑的是 `node dist/index.js`, 而我只改了 src 没重新 build,
+//   **修复从未被加载**。这种"改了等于没改"极难自查:
+//   源码明明修对了, 测试也全绿, 但运行时行为纹丝不动。
+// 解法: build 时写入 src 全部 .ts 的内容哈希 + 时间戳, 启动时比对。
+//   不一致就在日志最前面打醒目告警 —— 让人一眼看出"跑的是旧产物"。
+if (tscExit === 0) {
+    try {
+        const { createHash } = await import('node:crypto');
+        const { readdirSync, readFileSync, writeFileSync, statSync } = await import('node:fs');
+        const { join } = await import('node:path');
+
+        /** 递归列出 src 下全部 .ts (跳过 .test.ts —— 测试不影响运行时) */
+        function listTs(dir, acc = []) {
+            for (const name of readdirSync(dir)) {
+                const p = join(dir, name);
+                const st = statSync(p);
+                if (st.isDirectory()) listTs(p, acc);
+                else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) acc.push(p);
+            }
+            return acc;
+        }
+        const srcDir = resolve(ROOT, 'src');
+        const files = listTs(srcDir).sort();
+        const h = createHash('sha256');
+        for (const f of files) h.update(readFileSync(f));
+        const stamp = {
+            hash: h.digest('hex').slice(0, 16),
+            files: files.length,
+            builtAt: new Date().toISOString(),
+        };
+        writeFileSync(resolve(ROOT, 'dist/.build-stamp.json'), JSON.stringify(stamp, null, 2));
+        console.log(`[build] stamped: ${stamp.hash} (${stamp.files} files)`);
+    } catch (e) {
+        console.warn(`[build] WARN: 写入 build stamp 失败: ${e?.message || e}`);
+    }
+}
+
 if (tscExit !== 0) {
     console.error(`\n[build] ❌ tsc 编译有错误 (exit ${tscExit})，请修复后重试`);
 }

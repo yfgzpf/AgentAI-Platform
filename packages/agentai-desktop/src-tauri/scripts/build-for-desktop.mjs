@@ -22,9 +22,13 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC_TAUDI = __dirname;
-// __dirname = src-tauri/scripts → 上溯4层: scripts→src-tauri→desktop→packages→repo-root
-const ROOT = resolve(__dirname, '..', '..', '..', '..');
+// ⚠️ 2026-10-17 修复: __dirname 本身就是 .../src-tauri/scripts, 而 SRC_TAUDI 语义是
+// "src-tauri 根目录", 所以必须上溯一层。原实现 `const SRC_TAUDI = __dirname` 导致后续
+// `resolve(SRC_TAUDI, 'scripts', 'verify-*.mjs')` 拼出 src-tauri/scripts/scripts/... 多一层,
+// existsSync 全 false → 两个一致性门 + build-lite 被静默跳过 (形同虚设)。
+const SRC_TAUDI = resolve(__dirname, '..');
+// SRC_TAUDI = src-tauri → 上溯2层: src-tauri→desktop→packages... 再到 repo-root
+const ROOT = resolve(SRC_TAUDI, '..', '..', '..');
 
 function log(msg) { console.log(`[build-desktop] ${msg}`); }
 function logOk(msg) { console.log(`  ✅ ${msg}`); }
@@ -35,6 +39,27 @@ function run(cmd, cwd, opts = {}) {
   const r = spawnSync(cmd, { cwd, stdio: 'inherit', shell: true, ...opts });
   if (r.status !== 0 && r.status !== undefined) {
     logWarn(`${cmd} 失败 (exit ${r.status})，继续下一步...`);
+  }
+}
+
+// ── 打包时剥离内置密钥 (2026-10-18, 富哥定调) ──────────────────
+//   源码保留内置 key 方便开发/自用; 但**安装包不能带 key** (任何人解包即可提取)。
+//   这里在 dist 复制进 gateway-dist 之后, 把编译产物里的内置 key 清空;
+//   终端用户通过 MIMO_API_KEY 环境变量配置。只改产物, 不动源码。
+function stripBuiltInSecrets(distDir) {
+  const target = resolve(distDir, 'mimo-tts-service.js');
+  if (!existsSync(target)) {
+    logWarn('stripBuiltInSecrets: mimo-tts-service.js 不在产物中, 跳过');
+    return;
+  }
+  const before = readFileSync(target, 'utf8');
+  // 匹配 const BUILT_IN_KEY = '...' / "..." / `...`
+  const after = before.replace(/(const\s+BUILT_IN_KEY\s*=\s*)(['"`])[^'"`]*\2/g, (m, p1, q) => `${p1}${q}${q}`);
+  if (after !== before) {
+    writeFileSync(target, after);
+    logOk('已剥离产物中的内置 MIMO 密钥 (安装包不含 key, 由 MIMO_API_KEY 配置)');
+  } else {
+    logWarn('产物中未找到内置 MIMO 密钥 (可能已移除/被压缩, 忽略)');
   }
 }
 
@@ -102,6 +127,23 @@ const guiDistDir = resolve(guiDir, 'dist');
     }
   }
 
+  // 2026-10-18: 打包前先跑 tsc —— vite build 不做类型检查, 类型错误会静默混进安装包。
+  // (开发态 `pnpm --filter gui build` 是 `tsc && vite build`, 但本脚本直接调 vite, 绕过了 tsc)
+  const tscRoot = resolve(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
+  if (existsSync(tscRoot)) {
+    log('运行 tsc --noEmit 校验 GUI 类型...');
+    const tscR = spawnSync(process.execPath, [tscRoot, '--noEmit'], {
+      cwd: guiDir, stdio: 'inherit', shell: false,
+    });
+    if (tscR.status !== 0 && tscR.status !== undefined) {
+      logWarn('❌ GUI 类型检查失败 —— 中止打包');
+      process.exit(1);
+    }
+    logOk('GUI 类型检查通过');
+  } else {
+    logWarn('tsc 未找到, 跳过 GUI 类型检查');
+  }
+
   const viteCandidates = [
     resolve(guiDir, 'node_modules', 'vite', 'bin', 'vite.js'),
     resolve(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'),
@@ -164,9 +206,13 @@ const guiDistDir = resolve(guiDir, 'dist');
     }
   }
 
-  // 构建后一致性门 (fail-fast): title / entry 引用 / 资源存在性 / chunk 完整性。
+  // 构建后一致性门 (fail-fast, GUI 侧): title / entry 引用 / 资源存在性 / chunk 完整性。
   // 上面那些 logWarn 只是提示, 这里才是**真的会拦住**打包的地方 ——
   // 「打包后与开发状态显示不一致」正是因为过去这里只 warn 不 exit。
+  //
+  // ⚠️ 2026-10-17: gateway 运行时门 (R1/R2/R3) 从 Step 2 挪到 Step 3.5 之后:
+  // 它检查的是 resources/gateway-dist/ (Step 3.5 才同步过去), 在这里跑 = 检查旧目录
+  // (8 月 30 日的残留) → 永远 R1/R2 失败 → 打包**永远**在同步前被中止 (死锁, 门形同虚设)。
   const gateScript = resolve(SRC_TAUDI, 'scripts', 'verify-web-build.mjs');
   if (existsSync(gateScript)) {
     log('运行构建一致性门 (verify-web-build.mjs)...');
@@ -180,24 +226,6 @@ const guiDistDir = resolve(guiDir, 'dist');
     logOk('构建一致性门通过');
   } else {
     logWarn('verify-web-build.mjs 不存在, 跳过一致性校验');
-  }
-
-  // 2026-10-14: gateway 运行时资源一致性门 (R1 入口 / R2 .env key 名 / R3 陈旧)。
-  // 与 GUI 门并列 —— 过去"部分页面缺失"(漏 gateway 入口) 和"显示不一致"(.env 漂移)
-  // 都靠人肉翻安装包, 现在机器化拦住。
-  const rtGateScript = resolve(SRC_TAUDI, 'scripts', 'verify-desktop-runtime.mjs');
-  if (existsSync(rtGateScript)) {
-    log('运行 gateway 运行时一致性门 (verify-desktop-runtime.mjs)...');
-    const rtGate = spawnSync(process.execPath, [rtGateScript], {
-      cwd: SRC_TAUDI, stdio: 'inherit', shell: false,
-    });
-    if (rtGate.status !== 0) {
-      logWarn('❌ gateway 运行时一致性门未通过 —— 安装包会缺 gateway 入口或 .env 漏 key, 已中止打包');
-      process.exit(1);
-    }
-    logOk('gateway 运行时一致性门通过');
-  } else {
-    logWarn('verify-desktop-runtime.mjs 不存在, 跳过 gateway 运行时校验');
   }
 }
 
@@ -214,7 +242,13 @@ const gwDistV2 = resolve(resourcesDir, 'gateway-dist-v2');
     // 至少复制 dist 目录
     mkdirSync(gwDistV2, { recursive: true });
     cpSync(distSrc + '/.', resolve(gwDistV2, 'dist/'), { recursive: true, force: true });
-    cpSync(resolve(gwDir, 'package.json'), resolve(gwDistV2, 'package.json'));
+    stripBuiltInSecrets(resolve(gwDistV2, 'dist'));
+    // 同下方: 生产包的 package.json 必须剥掉 install 钩子（scripts/ 不会进产物）
+    const fallbackPkg = JSON.parse(readFileSync(resolve(gwDir, 'package.json'), 'utf8'));
+    delete fallbackPkg.scripts;
+    delete fallbackPkg.devDependencies;
+    if (fallbackPkg.dependencies) delete fallbackPkg.dependencies.typescript;
+    writeFileSync(resolve(gwDistV2, 'package.json'), JSON.stringify(fallbackPkg, null, 2));
   } else {
     // 清空并重建
     rmSync(gwDistV2, { recursive: true, force: true });
@@ -223,18 +257,44 @@ const gwDistV2 = resolve(resourcesDir, 'gateway-dist-v2');
 
     // 复制 dist 编译产物
     cpSync(distSrc + '/.', resolve(gwDistV2, 'dist/'), { recursive: true, force: true });
+    // 安装包不带内置 key (源码保留, 产物剥离)
+    stripBuiltInSecrets(resolve(gwDistV2, 'dist'));
 
-    // 复制 package.json（安装依赖用）
-    cpSync(resolve(gwDir, 'package.json'), resolve(gwDistV2, 'package.json'));
+    // 2026-10-16 打包修复 ①：package.json 里声明了
+    //   "build": "node scripts/build.mjs" 与 "postinstall": "node scripts/postinstall.mjs"
+    // 但 scripts/ 从来没被复制进产物 → 安装包内这两个钩子**必然失败**：
+    // 桌面版首次启动若触发自动补装依赖（lib.rs:148 会跑 npm install），
+    // postinstall 会因找不到 scripts/postinstall.mjs 直接报错，整个补装流程失败。
+    // 生产包根本不需要这两个脚本（dist 已编译好），所以**改写 package.json
+    // 剥掉 install 钩子**，而不是把整个 scripts/ 拷进去（那会带进 tsc 等构建期依赖）。
+    const pkg = JSON.parse(readFileSync(resolve(gwDir, 'package.json'), 'utf8'));
+    delete pkg.scripts;                 // 去掉 build / postinstall / dev 等所有钩子
+    delete pkg.devDependencies;         // 生产包不需要 devDeps，见 ②
+    // ② 只保留真正的运行时依赖。typescript 被误放在 dependencies 里会
+    // 把整个编译工具链拖进安装包（实测泄漏 289 个包）。
+    if (pkg.dependencies) delete pkg.dependencies.typescript;
+    writeFileSync(resolve(gwDistV2, 'package.json'), JSON.stringify(pkg, null, 2));
 
-    // 安装 production 依赖（用 npm，不走 pnpm）
-    log('  安装 production 依赖...');
-    run('npm install --production --ignore-scripts --no-optional --legacy-peer-deps', gwDistV2);
+    // ③ 原生命令（better-sqlite3 / playwright 等）**必须编译**，不能加 --ignore-scripts。
+    // 原实现用 --ignore-scripts 是为了跳过上面那个坏掉的 postinstall；
+    // 钩子已剥离，就不需要它了。--ignore-scripts 会导致 .node 文件缺失，
+    // 运行时才崩（用户看到的是启动失败，而不是安装失败）。
+    log('  安装 production 依赖（含原生命令编译）...');
+    try {
+      run('npm install --production --no-optional --legacy-peer-deps', gwDistV2);
+    } catch (e) {
+      // 原生模块编译失败不应让整个打包流程崩：降级为 --ignore-scripts 并如实告警
+      logWarn('原生模块编译失败，降级为 --ignore-scripts（部分运行时功能可能不可用）');
+      run('npm install --production --ignore-scripts --no-optional --legacy-peer-deps', gwDistV2);
+    }
 
     // 验证关键文件
     const checks = [
       'package.json',
       'dist/index.js',
+      // 2026-10-18: 新经验闭环模块必须在产物里, 缺了 AI 就召回不到经验 (静默降级)
+      'dist/pentest/experience.js',
+      'dist/pentest/roles.js',
       'node_modules/express/package.json',
       'node_modules/cors/package.json',
       'node_modules/socket.io/package.json',
@@ -248,7 +308,10 @@ const gwDistV2 = resolve(resourcesDir, 'gateway-dist-v2');
     if (allOk) {
       logOk('gateway-dist-v2 打包完成');
     } else {
-      logWarn('部分依赖缺失, 首次启动会自动补装');
+      // 2026-10-18: 不再"warn 继续"。缺入口/缺依赖打出来的包 = 安装成功但 gateway 起不来,
+      // 用户看到的是"打不开", 比打包失败难排查得多 (富哥历史上踩过)。fail-fast。
+      logWarn('❌ gateway 关键文件/依赖缺失 —— 安装包会起不来, 已中止打包');
+      process.exit(1);
     }
   }
 }
@@ -277,6 +340,25 @@ if (existsSync(gwDistV2) && existsSync(resolve(gwDistV2, 'dist', 'index.js'))) {
   }
   // 2026-10-14 R2: 同步根 .env 的 key 名到 bundle .env (只碰 key 名, 不复制/不打印 value)
   syncEnvKeyNames(ROOT, gwDistFinal);
+
+  // 2026-10-14: gateway 运行时资源一致性门 (R1 入口 / R2 .env key 名 / R3 陈旧)。
+  // ⚠️ 2026-10-17: 必须在 Step 3.5 同步 + .env key 名同步**之后**跑 —— 它检查的
+  // resources/gateway-dist/ 是刚被 Step 3/3.5 重建的目录。过去放在 Step 2 里,
+  // 检查的是 8 月 30 日的旧残留 → 永远 R1/R2 失败 → 打包永远被中止 (死锁)。
+  const rtGateScript = resolve(SRC_TAUDI, 'scripts', 'verify-desktop-runtime.mjs');
+  if (existsSync(rtGateScript)) {
+    log('运行 gateway 运行时一致性门 (verify-desktop-runtime.mjs)...');
+    const rtGate = spawnSync(process.execPath, [rtGateScript], {
+      cwd: SRC_TAUDI, stdio: 'inherit', shell: false,
+    });
+    if (rtGate.status !== 0) {
+      logWarn('❌ gateway 运行时一致性门未通过 —— 安装包会缺 gateway 入口或 .env 漏 key, 已中止打包');
+      process.exit(1);
+    }
+    logOk('gateway 运行时一致性门通过');
+  } else {
+    logWarn('verify-desktop-runtime.mjs 不存在, 跳过 gateway 运行时校验');
+  }
 } else {
   logWarn('gateway-dist-v2 不完整, 保持现有 gateway-dist');
 }
@@ -292,12 +374,14 @@ function syncEnvKeyNames(rootDir, gwDistDir) {
   if (!existsSync(rootEnv)) { logWarn('根 .env 不存在, 跳过 key 名同步'); return; }
   const rootText = readFileSync(rootEnv, 'utf8');
   const rootKeys = [...rootText.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/gm)].map(m => m[1]);
-  if (rootKeys.length === 0) { logWarn('根 .env 无 key, 跳过'); return; }
+  // 安装包必须让终端用户看到/填写的 key —— 即使根 .env 没有, 也要给空占位
+  const requiredKeys = ['MIMO_API_KEY'];
+  const allKeys = [...new Set([...rootKeys, ...requiredKeys])];
 
   const bundleLines = existsSync(bundleEnv) ? readFileSync(bundleEnv, 'utf8').split(/\r?\n/) : [];
   const existing = new Set(bundleLines.map(l => (l.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/) || [])[1]).filter(Boolean));
-  const missing = rootKeys.filter(k => !existing.has(k));
-  if (missing.length === 0) { logOk(`bundle .env 已含根 .env 全部 ${rootKeys.length} 个 key 名`); return; }
+  const missing = allKeys.filter(k => !existing.has(k));
+  if (missing.length === 0) { logOk(`bundle .env 已含全部 ${allKeys.length} 个 key 名`); return; }
 
   // 追加缺失 key 的空占位 (KEY=), 已有 key 的行不动 (保留用户已填的值)
   const placeholder = missing.map(k => `${k}=`).join('\n');

@@ -27,7 +27,8 @@ export const TOOL_GROUPS: Record<string, string[]> = {
         'list_directory',
         'directory_tree',
         'find_references',
-        'undo_edit'
+        'undo_edit',
+        'create_workspace'
     ],
 
     // 网络操作组
@@ -92,6 +93,25 @@ export const TOOL_GROUPS: Record<string, string[]> = {
         'officecli'
     ],
 
+    // ═══ 2026-10-17 渗透测试操作组 (security_ops) ═══
+    // 背景: 这 9 个工具此前**一个都没进任何工具组** —— 而 TASK_TYPE_TOOL_MAP 按组发工具,
+    //   于是无论什么任务类型, AI 都看不到渗透工具, "进不了挖洞上下文"是必然的。
+    //   再叠加 security 键缺失(静默回退 general), 挖洞任务实际拿到的是通用文件+浏览器工具。
+    // ⚠️ 安全边界不因此放宽: 所有攻击类工具仍各自过 scope_guard 授权闸门
+    //   (pentest-scope-guard.ts 默认拒绝, 无 scope.json 一律拒), 本组只是让工具"可见可用"。
+    security_ops: [
+        'wsl_scan',             // Kali 扫描器驱动 (nmap/nuclei/sqlmap/ffuf/... 8 个白名单)
+        'enum_subdomains',      // 证书透明度/子域枚举
+        'extract_js_endpoints', // JS 端点提取
+        'http_replay',          // Burp Repeater 式请求重放
+        'batch_pentest',        // 批量挖洞
+        'scope_guard',          // 授权范围校验 (AI 动手前必调)
+        'grant_scope',          // 授权管理
+        'list_scope',           // 查看当前授权范围
+        'report_vulnerability', // 漏洞上报落盘
+        'save_evidence',        // 证据固化
+    ],
+
     // 音乐控制组
     music_ops: [
         'control_music'
@@ -151,14 +171,25 @@ export const TASK_TYPE_TOOL_MAP: Record<string, string[]> = {
     coding: [...(TOOL_GROUPS.file_ops ?? []), ...(TOOL_GROUPS.git_ops ?? []), ...(TOOL_GROUPS.system_ops ?? []), ...(TOOL_GROUPS.generate_ops ?? [])],
     research: [...(TOOL_GROUPS.web_ops ?? []), ...(TOOL_GROUPS.system_ops ?? []), ...(TOOL_GROUPS.generate_ops ?? [])],
     general: [...(TOOL_GROUPS.file_ops ?? []), ...(TOOL_GROUPS.web_ops ?? []), ...(TOOL_GROUPS.system_ops ?? []), ...(TOOL_GROUPS.generate_ops ?? [])],
-    industry: [...(TOOL_GROUPS.file_ops ?? []), ...(TOOL_GROUPS.generate_ops ?? []), ...(TOOL_GROUPS.system_ops ?? [])]
+    industry: [...(TOOL_GROUPS.file_ops ?? []), ...(TOOL_GROUPS.generate_ops ?? []), ...(TOOL_GROUPS.system_ops ?? [])],
+    // ═══ 2026-10-17 新增 security (渗透/漏洞挖掘) ═══
+    // 修硬 bug: 此前此键**缺失**, detectTaskType 返回 'security' 时被 `|| general` 静默兜底
+    //   → 挖洞任务只拿到通用文件+浏览器工具, 9 个渗透工具一个都不见。
+    // 组合: 渗透专用 + 浏览器 (Web 类挖洞要用) + 文件 (读写 PoC/报告) + 系统 (规划/记忆/子智能体)
+    // 有意不含 generate_ops —— 挖洞不需要生图/视频, 塞进来只会稀释注意力
+    security: [
+        ...(TOOL_GROUPS.security_ops ?? []),
+        ...(TOOL_GROUPS.web_ops ?? []),
+        ...(TOOL_GROUPS.file_ops ?? []),
+        ...(TOOL_GROUPS.system_ops ?? []),
+    ],
 };
 
 /**
  * 根据任务类型和行业获取相关工具列表
  */
 export function getRelevantTools(
-    taskType: 'coding' | 'research' | 'media' | 'industry' | 'general',
+    taskType: 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general',
     industry?: string,
     registry?: ToolRegistry
 ): string[] {

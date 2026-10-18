@@ -33,7 +33,7 @@ export interface ReflectorOptions {
   /** 强制反思 (不依赖 reflectEvery 判断) */
   force?: boolean;
   /** 2026-06-25 CSSL: 任务类型（用于元指令召回） */
-  taskType?: 'coding' | 'research' | 'media' | 'industry' | 'general';
+  taskType?: 'coding' | 'research' | 'media' | 'industry' | 'security' | 'general';
   /** 2026-06-25 CSSL: 行业（用于元指令召回） */
   industry?: string;
   /** 2026-06-25 CSSL: 关键词（用于元指令召回） */
