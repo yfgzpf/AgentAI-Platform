@@ -12,7 +12,7 @@ import { RewindPanel } from './chat/RewindPanel';
 import { PulseLine } from './chat/PulseLine';
 import type { RowBinds, StreamProgress } from './chat/types';
 import { AutoHideTaskBar } from './chat/AutoHideTaskBar';
-import { generateConversationSummary, detectAndInsertImage } from './chat/chat-utils';
+import { generateConversationSummary, detectAndInsertImage, toImageDataUrl } from './chat/chat-utils';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Alert, Button, Select, Space, Spin, Tag, App } from 'antd';
 import { SyncOutlined, CloseOutlined } from '@ant-design/icons';
@@ -595,10 +595,26 @@ const [loading, setLoading] = useState(false);
     }
 
     // regenerate 时使用传入的附件, 不清空用户当前附件状态
-    const currentAttachments = extraAttachments || [...attachments];
+    const rawAttachments = extraAttachments || [...attachments];
     if (!extraAttachments) {
       setAttachments([]);
     }
+
+    /**
+     * 2026-10-18 修复「对话改图无效」:
+     * 附件可能来自上一条生成结果(网关 http URL), 不是 data URI。
+     * 不转换的话: 气泡缩略图裂图 + 发给模型的 image_url 是 127.0.0.1
+     * (厂商侧抓不到) → 改图等于没传图。发送前统一转 data URI。
+     */
+    const currentAttachments = await Promise.all(
+      rawAttachments.map(async (a) => {
+        if (a.kind === 'image' && a.dataUrl && !a.dataUrl.startsWith('data:')) {
+          const d = await toImageDataUrl(a.dataUrl);
+          return d ? { ...a, dataUrl: d } : a;
+        }
+        return a;
+      }),
+    );
 
     // Ensure session
     let sessionId = activeId;

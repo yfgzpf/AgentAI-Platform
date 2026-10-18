@@ -1,0 +1,1 @@
+{"targets":[{"host":"a.com","source":"global"},{"host":"b.com","source":"global"}],"max_rps":5}

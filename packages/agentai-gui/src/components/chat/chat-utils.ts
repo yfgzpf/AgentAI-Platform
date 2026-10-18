@@ -52,6 +52,37 @@ export function generateConversationSummary(messages: any[]): string {
 }
 
 /**
+ * 把图片地址统一成 data URI (2026-10-18)
+ * ============================================================
+ * 场景: "用上一条生成的图继续改" —— 附件的 dataUrl 其实是
+ *   `http://127.0.0.1:18789/api/files/download?path=...`（网关本地地址）。
+ * 两个后果:
+ *   ① 气泡渲染时 `dataUrl.replace(/^data:image\/\w+;base64,/,'')` 什么也替换不掉,
+ *      base64 字段变成整个 URL → `data:image/png;base64,http://...` → 缩略图必裂;
+ *   ② 发给模型时 image_url 还是 127.0.0.1 —— **厂商侧抓不到**这个地址,
+ *      等于没传图, 改图自然没效果。
+ * 所以在发送前统一拉成 data URI。失败就原样返回 (不阻断发送)。
+ */
+export async function toImageDataUrl(src: string): Promise<string | null> {
+  if (!src) return null;
+  if (src.startsWith('data:')) return src;
+  try {
+    const r = await fetch(src);
+    if (!r.ok) return null;
+    const blob = await r.blob();
+    if (!blob.size) return null;
+    return await new Promise<string>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 检测工具结果中的图片数据并插入 image segment
  * 支持: imageBase64 / imageUrl / screenshot_data
  */

@@ -30,6 +30,7 @@ import { FileTimeline } from '../services/FileTimeline';
 import { gatewayFallback } from '../services/GatewayFallback';
 import { UnifiedWorkspace } from './UnifiedWorkspace';
 import { useWorkspaceStore } from '../store/workspaceStore';
+import { getPreviewType } from '../types/workspace';
 
 interface FsEntry {
   name: string;
@@ -360,13 +361,34 @@ const filteredTree = filterTree(tree, searchQ);
 
   // ===== 打开文件 =====
   const openFile = async (filePath: string) => {
-    // 修复: 先乐观切到编辑器模式并同步目标文件, 即使后续读取失败也不会停在浏览器界面
     const fname = filePath.split(/[\\/]/).pop() || filePath;
+    const ext = fname.includes('.') ? '.' + fname.split('.').pop()!.toLowerCase() : '';
+    const node = { path: filePath, name: fname, type: 'file' as const, ext };
+
+    /**
+     * 2026-10-18 P0 修复: 媒体文件不进编辑器。
+     *
+     * 实机反馈"生成的文件无法查看"——点 AI 生成的 png/pdf/mp4 时,
+     * 这里原来**一律** `API.read()` 按 utf-8 读文本再塞进 Monaco:
+     *   - 图片 → 二进制被当文本解 → 一堆乱码 / 甚至读取报错;
+     *   - pdf → 同上;
+     *   - 视频 → 5MB 上限直接 413。
+     * 而 `PreviewMode` 早就支持 image/pdf/video/audio(还带缩放和另存),
+     * 只是**没有任何入口路由过去**。这里补上路由:
+     *   媒体类 → 预览模式; 文本/代码/markdown/html → 仍然是编辑器(行为不变)。
+     */
+    const ptype = getPreviewType(node);
+    if (ptype === 'image' || ptype === 'pdf' || ptype === 'video' || ptype === 'audio') {
+      useWorkspaceStore.getState().openPreview(node);
+      return;
+    }
+
+    // 修复: 先乐观切到编辑器模式并同步目标文件, 即使后续读取失败也不会停在浏览器界面
     useWorkspaceStore.getState().openEditor({
       path: filePath,
       name: fname,
       type: 'file',
-      ext: fname.includes('.') ? '.' + fname.split('.').pop()!.toLowerCase() : '',
+      ext,
     });
     const existing = openFiles.find(f => f.path === filePath);
     if (existing) {

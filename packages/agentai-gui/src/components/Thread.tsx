@@ -9,6 +9,7 @@
  *   - TurnDivider:     轮次分隔符 (时间线风格)
  */
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Tooltip, Tag } from 'antd';
 import { EditOutlined, FileTextOutlined, CaretRightOutlined, SettingOutlined, SearchOutlined, PictureOutlined, VideoCameraOutlined, MessageOutlined, OrderedListOutlined, ToolOutlined, LoadingOutlined } from '@ant-design/icons';
 import { Markdown } from './Markdown';
@@ -1518,6 +1519,74 @@ async function downloadImage(src: string, filename: string): Promise<void> {
   }
 }
 
+/**
+ * Lightbox —— 大图预览层 (2026-10-18 P0 修复)
+ * ============================================================
+ * 实机反馈: "AI 任务里生成的图不支持点开看大图"。
+ *
+ * 根因 (排查确认, 不是样式问题):
+ *   消息气泡都带 `.bubble-enter`，而 `@keyframes bubbleIn` 的 to 帧是
+ *   `transform: scale(1)` + `animation-fill-mode: forwards` —— 动画结束后
+ *   这个 transform **永久残留**。CSS 规范: 祖先只要有非 none 的 transform，
+ *   就会成为 `position: fixed` 后代的**包含块**。
+ *   于是预览层的 `inset: 0` 变成"铺满气泡"而不是"铺满视口" →
+ *   被气泡尺寸裁掉 / 被 overflow:hidden 剪掉，用户看到的就是"点不开"。
+ *
+ * 修法: 用 React Portal 把预览层挂到 document.body —— 无论祖先是什么
+ *   transform / filter / contain，都不可能再影响它。同时把 keyframes 的
+ *   终帧改成 `transform: none`（见 agentai-theme.css），双保险。
+ */
+const Lightbox: React.FC<{
+  src: string;
+  alt?: string;
+  onClose: () => void;
+  /** 底部操作区 (翻页 / 打开原图 / 保存)。null 则不渲染 */
+  footer?: React.ReactNode;
+}> = ({ src, alt, onClose, footer }) => {
+  // ESC 关闭 —— 大图全屏时用户的肌肉记忆
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0,
+        // 用具体数字而不是 CSS 变量: 预览层必须压过所有面板/拖拽层,
+        // 变量一旦没定义(或作用域不匹配)就会掉到 auto, 图片被面板盖住。
+        zIndex: 2147483000,
+        background: 'rgba(0,0,0,0.92)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20,
+      }}
+    >
+      <img
+        src={src}
+        alt={alt || '图片'}
+        style={{ maxWidth: '92vw', maxHeight: '86vh', borderRadius: 'var(--radius-md)', objectFit: 'contain' }}
+        onClick={e => e.stopPropagation()}
+      />
+      {footer && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+            display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center',
+          }}
+        >
+          {footer}
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
+};
+
 const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
   const [expanded, setExpanded] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -1616,60 +1685,49 @@ const ImageGallery: React.FC<{ segments: ImageSegment[] }> = ({ segments }) => {
         </div>
       )}
 
-      {/* 大图预览 Modal */}
+      {/* 大图预览 Modal (Portal → 不受气泡 transform 限制) */}
       {selectedIndex !== null && (
-        <div
-          onClick={() => setSelectedIndex(null)}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 'var(--z-dragging)',
-            background: 'rgba(0,0,0,0.9)', display: 'flex',
-            alignItems: 'center', justifyContent: 'center', padding: 20,
-          }}
-        >
-          <img
-            src={srcOf(segments[selectedIndex])}
-            alt={segments[selectedIndex].alt || `截图 ${selectedIndex + 1}`}
-            style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 'var(--radius-md)', objectFit: 'contain' }}
-            onClick={e => e.stopPropagation()}
-          />
-          <div style={{
-            position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
-            display: 'flex', gap: 12, alignItems: 'center',
-          }}>
-            <button
-              onClick={(e) => { e.stopPropagation(); setSelectedIndex(i => i !== null && i > 0 ? i - 1 : segments.length - 1); }}
-              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
-            >
-              ← 上一张
-            </button>
-            <span style={{ color: 'var(--fg-on-accent)', fontSize: 'var(--fs-md)' }}>
-              {selectedIndex + 1} / {segments.length}
-            </span>
-            <button
-              onClick={(e) => { e.stopPropagation(); setSelectedIndex(i => i !== null && i < segments.length - 1 ? i + 1 : 0); }}
-              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
-            >
-              下一张 →
-            </button>
-            {/* 2026-10-17: 补「另存为 / 新窗口打开」。
-                实机反馈"无法在线打开还要去复制打开" —— 之前只有翻页,
-                想拿原图去提交平台只能自己复制路径。这里给出直达动作。 */}
-            <button
-              onClick={(e) => { e.stopPropagation(); window.open(srcOf(segments[selectedIndex]), '_blank', 'noopener'); }}
-              title="在新窗口/浏览器标签打开原图"
-              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
-            >
-              🔗 打开原图
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); downloadImage(srcOf(segments[selectedIndex]), downloadNameOf(segments[selectedIndex], selectedIndex)); }}
-              title="保存到本地(赏金平台提交附件用)"
-              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
-            >
-              💾 保存
-            </button>
-          </div>
-        </div>
+        <Lightbox
+          src={srcOf(segments[selectedIndex])}
+          alt={segments[selectedIndex].alt || `截图 ${selectedIndex + 1}`}
+          onClose={() => setSelectedIndex(null)}
+          footer={
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setSelectedIndex(i => i !== null && i > 0 ? i - 1 : segments.length - 1); }}
+                style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
+              >
+                ← 上一张
+              </button>
+              <span style={{ color: 'var(--fg-on-accent)', fontSize: 'var(--fs-md)' }}>
+                {selectedIndex + 1} / {segments.length}
+              </span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setSelectedIndex(i => i !== null && i < segments.length - 1 ? i + 1 : 0); }}
+                style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
+              >
+                下一张 →
+              </button>
+              {/* 2026-10-17: 补「另存为 / 新窗口打开」。
+                  实机反馈"无法在线打开还要去复制打开" —— 之前只有翻页,
+                  想拿原图去提交平台只能自己复制路径。这里给出直达动作。 */}
+              <button
+                onClick={(e) => { e.stopPropagation(); window.open(srcOf(segments[selectedIndex]), '_blank', 'noopener'); }}
+                title="在新窗口/浏览器标签打开原图"
+                style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
+              >
+                🔗 打开原图
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); downloadImage(srcOf(segments[selectedIndex]), downloadNameOf(segments[selectedIndex], selectedIndex)); }}
+                title="保存到本地(赏金平台提交附件用)"
+                style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer' }}
+              >
+                💾 保存
+              </button>
+            </>
+          }
+        />
       )}
     </div>
   );
@@ -1707,45 +1765,40 @@ const ImageCardSmall: React.FC<ImageSegment> = ({ url, base64, alt, filePath }) 
         </div>
       </div>
 
-      {/* 大图预览 — 支持下载保存 */}
+      {/* 大图预览 — Portal 挂 body, 支持下载保存 */}
       {showLarge && (
-        <div
-          onClick={() => setShowLarge(false)}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 'var(--z-dragging)',
-            background: 'rgba(0,0,0,0.9)', display: 'flex',
-            alignItems: 'center', justifyContent: 'center', padding: 20,
-          }}
-        >
-          <img
-            src={src}
-            alt={alt || '图片'}
-            style={{ maxWidth: '90%', maxHeight: '85%', borderRadius: 'var(--radius-md)', objectFit: 'contain' }}
-            onClick={e => e.stopPropagation()}
-          />
-          {/* 下载按钮 */}
-          <div style={{
-            position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
-            display: 'flex', gap: 12, alignItems: 'center',
-          }}>
-            <button
-              onClick={async (e) => {
-                e.stopPropagation();
-                if (!src) return;
-                await downloadImage(src, downloadNameOf({ url, base64, alt, filePath }, 0));
-              }}
-              style={{ padding: '8px 20px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--accent)', color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-md)', fontWeight: 500 }}
-            >
-              ⬇ 保存图片
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowLarge(false); }}
-              style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-md)' }}
-            >
-              关闭
-            </button>
-          </div>
-        </div>
+        <Lightbox
+          src={src || ''}
+          alt={alt || '图片'}
+          onClose={() => setShowLarge(false)}
+          footer={
+            <>
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!src) return;
+                  await downloadImage(src, downloadNameOf({ url, base64, alt, filePath }, 0));
+                }}
+                style={{ padding: '8px 20px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--accent)', color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-md)', fontWeight: 500 }}
+              >
+                ⬇ 保存图片
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); window.open(src, '_blank', 'noopener'); }}
+                title="在新窗口打开原图"
+                style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-md)' }}
+              >
+                🔗 打开原图
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowLarge(false); }}
+                style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'var(--fg-on-accent)', cursor: 'pointer', fontSize: 'var(--fs-md)' }}
+              >
+                关闭
+              </button>
+            </>
+          }
+        />
       )}
     </>
   );

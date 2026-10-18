@@ -1158,7 +1158,13 @@ html, body {
 }
 @keyframes bubbleIn {
   from { opacity: 0; transform: scale(0.92); }
-  to   { opacity: 1; transform: scale(1); }
+  /* ⚠️ 2026-10-18 P0: 终帧必须是 none, 不能写 scale(1)。
+   * `.bubble-enter` 用了 animation-fill-mode: forwards, 动画结束后声明值会**残留**;
+   * 而祖先只要有非 none 的 transform, 就会成为 position:fixed 后代的包含块 →
+   * 气泡里的大图预览层(inset:0)会变成"铺满气泡"、被 overflow 裁掉,
+   * 实机表现就是「图片点不开 / 大图看不到」。
+   * 写成 none 后动画结束即无 transform, 不产生包含块。 */
+  to   { opacity: 1; transform: none; }
 }
 @keyframes blink {
   0%, 100% { opacity: 1; }

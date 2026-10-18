@@ -10,6 +10,25 @@ import { Card, Tag, Empty, Tooltip, message as antdMsg } from 'antd';
 import { FileAddOutlined, FileTextOutlined, DownloadOutlined, FolderOpenOutlined, EditOutlined } from '@ant-design/icons';
 import { useChatStore } from '../store/chatStore';
 
+/** 网关绝对地址 (图片/视频必须用绝对地址, <img src> 不走 fetch 拦截器) */
+const gatewayHttp = () =>
+  (window as any).__AGENTAI_GATEWAY__?.replace(/^ws(s?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
+
+const IMAGE_EXT = /^(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i;
+const VIDEO_EXT = /^(mp4|webm|mov|mkv|avi)$/i;
+const AUDIO_EXT = /^(mp3|wav|flac|aac|m4a|ogg)$/i;
+const downloadUrl = (p: string) => `${gatewayHttp()}/api/files/download?path=${encodeURIComponent(p)}`;
+
+/** 从工具输出文本里兜底抽路径 (generate_image 的 localPath 在 output 的 `FILE:` 行) */
+function pathFromOutput(result: unknown): string {
+  if (!result) return '';
+  const text = typeof result === 'string' ? result : JSON.stringify(result);
+  const fileLine = text.match(/FILE:\s*([^\s\n"']+)/i);
+  if (fileLine) return fileLine[1];
+  const anyPath = text.match(/(?:已生成|已创建|saved?|wrote|created|output)[:\s]*[`'"]*([A-Za-z]:[^\s`'"]+|\/[^\s`'"]+)\.(\w{2,5})/i);
+  return anyPath ? `${anyPath[1]}.${anyPath[2]}` : '';
+}
+
 export const GeneratedFilesPanel: React.FC = () => {
   const { messages } = useChatStore();
   // 就地展开预览: { path, content, loading } 合成一个状态, 便于丢弃过期响应
@@ -27,16 +46,18 @@ export const GeneratedFilesPanel: React.FC = () => {
           for (const seg of msg.segments) {
             if (seg.kind === 'tool' && seg.name) {
               const name = seg.name.toLowerCase();
-              if (!/^(write_file|edit_file|create_file|multi_edit|str_replace|run_code|generate_image|generate_diagram)$/i.test(name)) continue;
+              if (!/^(write_file|edit_file|create_file|multi_edit|str_replace|run_code|generate_image|generate_diagram|generate_video)$/i.test(name)) continue;
               // 从 args 提取文件路径 (args 包含 path/file_path/file)
               const args = typeof seg.args === 'string' ? safeJson(seg.args) : seg.args;
               let filePath = args?.path || args?.filePath || args?.file_path || args?.file || '';
-              // run_code: 从结果中提取生成的文件路径
-              if (!filePath && name === 'run_code' && seg.result) {
-                const resultStr = typeof seg.result === 'string' ? seg.result : JSON.stringify(seg.result);
-                const fileMatch = resultStr.match(/(?:已生成|已创建|saved?|wrote|created|output)[:\s]*[`'"]*([^\s`'"]+\.\w{2,5})/i);
-                if (fileMatch) filePath = fileMatch[1];
+              // 2026-10-18 修复: generate_image / generate_video 的落盘路径不在 args 里,
+              //   只在**输出文本** `FILE: ...` 行 (或 data.localPath)。原来只对 run_code 抽、
+              //   且正则过窄 → 生图产物压根不进这个列表, 用户以为"文件没生成"。
+              if (!filePath) {
+                const dataLocal = (seg as any)?.data?.localPath;
+                if (typeof dataLocal === 'string' && dataLocal) filePath = dataLocal;
               }
+              if (!filePath) filePath = pathFromOutput(seg.result);
               if (filePath && !seen.has(filePath)) {
                 seen.add(filePath);
                 result.push({ path: filePath, action: seg.name, ts: msg.ts });
@@ -60,12 +81,29 @@ export const GeneratedFilesPanel: React.FC = () => {
   };
 
   /**
+   * PDF / 视频等无法就地渲染的格式 → 走工作区预览面板。
+   * 与「编辑器」图标是同一条链路: 具体用预览还是 Monaco, 由 Editor.openFile
+   * 按文件类型统一路由 (媒体 → 预览, 文本 → 编辑器)。
+   */
+  const openInPreviewPanel = (filePath: string) => handleOpen(filePath);
+
+  /**
    * 点击行 → 就地展开/收起内容预览 (不跳页)。
    * 首次展开才拉取内容; 响应回来时若用户已点了别的文件, 直接丢弃。
+   *
+   * 2026-10-18 修复: 图片/视频/音频/PDF **不能**按 utf-8 读 ——
+   *   `/v1/files/read` 用 readFileSync(utf-8), 二进制会变成乱码,
+   *   而且 >5MB 直接 413。这类文件改为直接给媒体地址就地渲染。
    */
   const handlePreview = async (filePath: string) => {
     if (preview.path === filePath) {
       setPreview({ path: '', content: '', loading: false });
+      return;
+    }
+    const ext = (filePath.split(/[\\/]/).pop() || '').split('.').pop() || '';
+    if (IMAGE_EXT.test(ext) || VIDEO_EXT.test(ext) || AUDIO_EXT.test(ext) || /^pdf$/i.test(ext)) {
+      // 媒体: 不打文本接口, 直接标记 (渲染时用 downloadUrl)
+      setPreview({ path: filePath, content: '', loading: false });
       return;
     }
     setPreview({ path: filePath, content: '', loading: true });
@@ -164,23 +202,65 @@ export const GeneratedFilesPanel: React.FC = () => {
                 </div>
               </Tooltip>
               {/* 就地内容预览 (点击行展开, 不跳页) */}
-              {isOpen && (
-                preview.loading ? (
-                  <div style={{ padding: '4px 8px 6px 26px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>加载中…</div>
-                ) : preview.content ? (
-                  <pre style={{
-                    margin: '0 0 2px 22px', padding: '6px 8px',
-                    maxHeight: 200, overflowY: 'auto',
-                    fontSize: 'var(--fs-micro)', lineHeight: 1.4,
-                    fontFamily: "'Consolas', monospace",
-                    color: 'var(--fg-2)', background: 'var(--bg-2)',
-                    border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  }}>{preview.content}</pre>
-                ) : (
-                  <div style={{ padding: '4px 8px 6px 26px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>（空文件或读取失败）</div>
-                )
-              )}
+              {isOpen && (() => {
+                const fExt = (fileName.split('.').pop() || '').toLowerCase();
+                // 媒体: 就地渲染 (图片缩略图 / 视频播放器), 不读文本
+                if (IMAGE_EXT.test(fExt)) {
+                  return (
+                    <div style={{ padding: '4px 8px 6px 26px' }}>
+                      <img
+                        src={downloadUrl(f.path)}
+                        alt={fileName}
+                        onClick={() => window.open(downloadUrl(f.path), '_blank', 'noopener')}
+                        style={{
+                          maxWidth: '100%', maxHeight: 220, borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--border)', cursor: 'zoom-in', display: 'block',
+                        }}
+                      />
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginTop: 4 }}>
+                        点击图片在新窗口看原图
+                      </div>
+                    </div>
+                  );
+                }
+                if (VIDEO_EXT.test(fExt) || AUDIO_EXT.test(fExt)) {
+                  return (
+                    <div style={{ padding: '4px 8px 6px 26px' }}>
+                      {VIDEO_EXT.test(fExt)
+                        ? <video src={downloadUrl(f.path)} controls preload="metadata" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 'var(--radius-sm)' }} />
+                        : <audio src={downloadUrl(f.path)} controls style={{ width: '100%' }} />}
+                    </div>
+                  );
+                }
+                if (/^pdf$/i.test(fExt)) {
+                  return (
+                    <div style={{ padding: '4px 8px 6px 26px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
+                      PDF 需在预览面板打开 ——
+                      <span
+                        onClick={() => openInPreviewPanel(f.path)}
+                        style={{ color: 'var(--accent)', cursor: 'pointer', marginLeft: 4 }}
+                      >点此打开</span>
+                    </div>
+                  );
+                }
+                if (preview.loading) {
+                  return <div style={{ padding: '4px 8px 6px 26px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>加载中…</div>;
+                }
+                if (preview.content) {
+                  return (
+                    <pre style={{
+                      margin: '0 0 2px 22px', padding: '6px 8px',
+                      maxHeight: 200, overflowY: 'auto',
+                      fontSize: 'var(--fs-micro)', lineHeight: 1.4,
+                      fontFamily: "'Consolas', monospace",
+                      color: 'var(--fg-2)', background: 'var(--bg-2)',
+                      border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    }}>{preview.content}</pre>
+                  );
+                }
+                return <div style={{ padding: '4px 8px 6px 26px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>（空文件或读取失败）</div>;
+              })()}
               </div>
             );
           })}
