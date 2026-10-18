@@ -25,7 +25,7 @@ import { isTargetInScope, readScope, extractTargets } from './pentest-scope-guar
 import { hookCapture } from './hook-capture.js';
 import { AGENT_SYSTEM_IDENTITY } from './system-prompt.js';
 import { buildLiteSystemPrompt, detectTaskType, extractKeywords } from './system-prompt-lite.js';
-import { getRelevantTools, buildToolsFragment } from './tool-groups.js';
+import { getRelevantTools, buildToolsFragment, TOOL_GROUPS } from './tool-groups.js';
 import { userModel } from './user-model.js';
 import { recallEvolution, extractPatterns } from './evolution.js';
 import { trackTempFile, cleanupTempFiles, isTempFile } from './temp-file-tracker.js';
@@ -4046,7 +4046,16 @@ if (isComplexTask) {
         } else if (this._capabilityTier === 'autonomous') {
           // 自主模型: 给全部工具, 信任它自己选 — 不过滤
           requestTools = allTools;
-          console.log(`[tools] autonomous tier → ${requestTools.length} tools (全量, 无过滤)`);
+          // ═══ 2026-10-18 P0: security 任务例外 ═══
+          // 345 个工具全量下发, 模型反而只挑最熟的 write_file / run_command,
+          // 放着 wsl_scan / nmap 不用 (实机: 挖洞任务全程没碰 Kali)。
+          // 渗透任务收敛到"渗透 + 通用"这一小撮, 并把渗透工具排在前面。
+          if (this._taskType === 'security') {
+            requestTools = this.filterToolsByIntent(messageText, allTools);
+            console.log(`[tools] security task → 收敛到 ${requestTools.length} 个工具 (含 Kali 扫描器), 不采用全量 345`);
+          } else {
+            console.log(`[tools] autonomous tier → ${requestTools.length} tools (全量, 无过滤)`);
+          }
         } else {
           // 智能工具过滤: 根据消息意图只给AI相关工具 (减少噪音, 提升准确率)
           requestTools = this.filterToolsByIntent(messageText, allTools);
@@ -7179,6 +7188,23 @@ try {
       { pattern: /删掉|删除|清理|remove|delete|rm\b/i, tools: ['delete_file', 'get_file_info'] },
       // 文档/README (用户常说"写文档""README""说明")
       { pattern: /写文档|文档|readme|说明|api.*doc|接口文档/i, tools: ['write_file', 'auto_project_doc'] },
+      // ═══ 2026-10-18 P0: 渗透/挖洞意图 (此前**完全缺失**) ═══
+      // 实机事故(富哥): 挖洞任务里 AI 只用 write_file / run_command / run_code,
+      //   Kali 的 nmap/nuclei/sqlmap 一次都没调 —— 而工具本身是注册好的(345 个都在)。
+      // 根因: 工具下发给模型前要过本表; CORE 里没有任何渗透工具, 本表也没有渗透意图,
+      //   于是 security 任务类型只影响"工具组", 到这一步就被全部滤掉,
+      //   AI 手里只剩通用文件/命令工具, 自然"降级成普通工具"。
+      // 关键词与 detectTaskType 的 security 判定保持一致, 避免两处判据打架。
+      {
+        pattern: /挖洞|渗透|攻防|众测|赏金|漏洞|越权|idor|ssrf|rce|xss|sql\s*注入|命令注入|反序列化|未授权|目录爆破|子域名|子域枚举|攻击面|侦察|指纹识别|提权|横向|内网|扫描器|nmap|nuclei|sqlmap|ffuf|gobuster|nikto|subfinder|httpx|kali|wsl_scan/i,
+        tools: [
+          'wsl_scan', 'enum_subdomains', 'extract_js_endpoints', 'http_replay',
+          'scope_guard', 'grant_scope', 'list_scope',
+          'report_vulnerability', 'save_evidence', 'batch_pentest',
+          'browser_navigate', 'browser_screenshot', 'browser_extract',
+          'read_file', 'search_content', 'web_fetch', 'run_command',
+        ],
+      },
     ];
 
     // 收集匹配的工具名
@@ -7187,6 +7213,14 @@ try {
       if (pattern.test(msg)) {
         for (const t of tools) selected.add(t);
       }
+    }
+
+    // ═══ 2026-10-18 P0: security 任务无条件带上渗透工具组 ═══
+    // 不依赖关键词命中 —— 用户后续常说"继续"/"打下一个", 那些话里没有任何渗透词,
+    // 若只靠意图表, 第二轮起工具就"消失"了 (AI 表现为突然不会用 Kali)。
+    // taskType 是粘性棘轮 (security 一旦判定就保持), 这里跟着它走最稳。
+    if (this._taskType === 'security') {
+      for (const t of TOOL_GROUPS.security_ops ?? []) selected.add(t);
     }
 
     // 如果消息很复杂 (>50字) 或是首轮, 给更多工具
@@ -7218,11 +7252,19 @@ try {
     const filtered = allTools.filter(t => selected.has(getName(t)));
     // ═══ Cap: 提高到 25 (免费) / 40 (商用), 让 AI 看到更多能力 ═══
     // 优先保证: 高价值工具必须在顶部(不会被 cap 裁掉)
+    // 2026-10-18 P0: 渗透工具一并进优先级 —— 之前它们排在 rest 里,
+    //   deepseek 只有 25 个名额 (15 个 priority 之后只剩 10 个位置),
+    //   而 rest 是按注册顺序排的, wsl_scan 在 tools.ts 近千行处,
+    //   结果**每次都被 cap 裁掉** → 挖洞任务里 AI 从来看不到 Kali 扫描器。
     const PRIORITY_TOOLS = new Set([
       'spawn_subagent', 'explore_project', 'plan_task', 'update_plan',
       'directory_tree', 'read_file', 'write_file', 'search_content',
       'multi_edit', 'run_code', 'ask_user', 'web_search',
       'browser_navigate', 'desktop_automate', 'officecli',
+      // 渗透专用 (security 任务必需)
+      'wsl_scan', 'http_replay', 'enum_subdomains', 'extract_js_endpoints',
+      'scope_guard', 'grant_scope', 'list_scope',
+      'report_vulnerability', 'save_evidence', 'batch_pentest',
     ]);
     const priority = filtered.filter(t => PRIORITY_TOOLS.has(getName(t)));
     const rest = filtered.filter(t => !PRIORITY_TOOLS.has(getName(t)));
