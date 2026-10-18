@@ -1598,6 +1598,64 @@ function buildOcrFailureHint(imagePath: string, error: string, candidates: strin
 }
 
 /**
+ * 2026-10-19: run_command 环境级失败的可执行诊断
+ *
+ * 事故: AI 报 `spawn C:\Windows\system32\cmd.exe ENOENT`, 自我诊断为
+ *   "PATH 缺失或 shell 配置问题" —— **方向错了**。实测 (四种 env 全坏:
+ *   无 ComSpec / PATH 首段是孤立盘符 / ComSpec 指向不存在文件 / 空 env)
+ *   node 的 spawn({shell:true}) 在 win32 上全部跑通: node 用 ComSpec 绝对路径
+ *   起 shell 且自带兜底, **不走 PATH 查找**。
+ * 剩下唯一能让"绝对路径 cmd.exe"报 ENOENT 的解释: **该进程的文件系统视图里
+ *   没有 C:\Windows\...** —— 即进程跑在 Linux/WSL 侧 (env 里又带着 Windows 的
+ *   ComSpec), 或被沙箱做了路径视图隔离。
+ * 沙箱黑名单拦截报的是 EPERM + "PROGRAM BLOCKED", 不是 ENOENT, 可据此区分。
+ *
+ * 输出 = 现场事实 (platform/ComSpec/文件可见性/PATH 头几段) + 分岔建议,
+ * 让 AI 不再瞎猜"PATH 问题"而反复重试同一条命令。
+ */
+export function buildRunCommandFailureHint(err: any, command: string): string {
+  const msg = String(err?.message || err || '');
+  const plat = process.platform;
+  const comspec = process.env.ComSpec || process.env.COMSPEC || '(未设置)';
+  let cmdVisible = 'n/a';
+  if (plat === 'win32' && comspec !== '(未设置)') {
+    try { cmdVisible = fs.existsSync(comspec) ? '存在' : '不存在'; } catch { cmdVisible = '查询失败'; }
+  }
+  const pathHead = (process.env.PATH || '').split(plat === 'win32' ? ';' : ':').filter(Boolean).slice(0, 3);
+  const isSpawnError = /ENOENT|spawn/i.test(msg);
+
+  const lines: string[] = [`Error: ${msg}`, '', '--- 环境诊断 (run_command 执行器现场) ---'];
+  lines.push(`进程平台: ${plat}${plat !== 'win32' ? '  ← 不是 Windows 原生进程' : ''}`);
+  lines.push(`node: ${process.version}`);
+  lines.push(`ComSpec: ${comspec}${cmdVisible !== 'n/a' ? ` (文件${cmdVisible})` : ''}`);
+  lines.push(`PATH 前 3 段: ${pathHead.length ? pathHead.join(' | ') : '(空)'}`);
+  if (pathHead.some((p) => p && !p.includes(':') && !p.startsWith('/'))) {
+    lines.push('⚠️ PATH 含无效段 (如孤立盘符 "J" / 无盘符路径) — 沙箱改写所致, 但它不是根因 (见下)');
+  }
+
+  if (isSpawnError && plat !== 'win32') {
+    lines.push('', '🎯 根因: 网关进程跑在 Linux/WSL 侧, 而命令按 Windows cmd 语义执行。');
+    lines.push('   Linux 进程的文件系统里没有 C:\\Windows\\system32\\cmd.exe → 绝对路径 ENOENT。');
+    lines.push('   这不是 PATH 问题, 改 PATH 重试一万次也没用。');
+    lines.push('   ✅ 正确做法 (三选一):');
+    lines.push('   1) 改用 run_code 工具 (纯 JS/Python 沙箱, 不依赖 cmd.exe) — 首选;');
+    lines.push('   2) 命令按 bash 语法写 (ls/cat/grep 而非 dir/type/findstr), 让 run_command 走 /bin/sh;');
+    lines.push('   3) 要跑 Windows 命令, 需在 Windows 原生终端 (PowerShell/CMD) 重启网关。');
+  } else if (isSpawnError && plat === 'win32' && cmdVisible === '不存在') {
+    lines.push('', '🎯 根因: 进程是 Windows 原生, 但看不到 ComSpec 指向的文件 (沙箱路径视图隔离)。');
+    lines.push('   ✅ 改用 run_code (不依赖 cmd.exe) 完成计算/验证类工作; 必须跑 shell 时先向用户确认环境。');
+  } else if (isSpawnError && plat === 'win32' && cmdVisible === '存在') {
+    lines.push('', '🎯 cmd.exe 可见却仍 spawn 失败 — 属罕见环境异常 (安全软件/过滤驱动拦创建进程)。');
+    lines.push('   ✅ 先用 run_code 验证逻辑, 再重试一次; 持续失败则记录现场并告知用户。');
+  } else {
+    lines.push('', '非 spawn 环境错误: 先检查命令本身 (路径/参数/引号), 或改用 run_code 分步验证。');
+  }
+  lines.push('', '⛔ 不要反复原样重试同一条命令 — 环境级失败重试一万次也不会变。');
+  lines.push(`被中断命令: ${command.slice(0, 200)}`);
+  return lines.join('\n');
+}
+
+/**
  * 2026-10-19: wsl_scan 失败的可执行建议 (blob = e.message + stdout + stderr 合并串)
  *
  * 为什么需要: 实锤渗透任务里 wsl_scan 一失败, AI 就绕道手写脚本 (probe8.js → ...)
@@ -2745,6 +2803,13 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const so = e.stdout ? `\nSTDOUT:\n${e.stdout}` : '';
       const se = e.stderr ? `\nSTDERR:\n${e.stderr}` : '';
       const exitInfo = e.code !== undefined ? `\n退出码: ${e.code}` : '';
+      // 2026-10-19: spawn/ENOENT 等环境级失败带现场诊断 + 分岔建议。
+      //   AI 曾把它误诊为"PATH 缺失"并反复重试 — 实测 PATH/ComSpec 全坏 node 都能跑通,
+      //   真根因是"进程文件系统视图里没有 cmd.exe" (跑在 Linux/WSL 侧或沙箱隔离)。
+      const isEnvLevel = /ENOENT|spawn/i.test(String(e.message || ''));
+      if (isEnvLevel) {
+        return { success: false, output: `${buildRunCommandFailureHint(e, command)}${so}${se}${exitInfo}` };
+      }
       return { success: false, output: `Error: ${e.message || e}${so}${se}${exitInfo}` };
     }
   },
