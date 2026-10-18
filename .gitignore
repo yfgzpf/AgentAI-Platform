@@ -179,6 +179,8 @@ packages/*/dist/
 /creatorhub/
 # 打包脚本产生的 gateway 资源备份目录
 packages/agentai-desktop/src-tauri/resources/gateway-dist-backup-*/
+# 测试产生的临时 HOME (scope-guard / workspace 相关用例会写这里)
+**/.scope-guard-test-home/
 # 本地临时校验目录 (CSS/产物校验时生成)
 /tmp/
 # PowerShell 重定向事故产物 ($null 是 Windows 保留名, 会让 git 报错)
