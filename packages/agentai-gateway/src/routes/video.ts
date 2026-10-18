@@ -29,6 +29,17 @@ import { SUBMODEL_TO_GROUP_ENV } from '../factory-registry.js';
 // 2026-10-13: 剧本生成改为「跟随所选对话模型」—— 走 llm-router (它知道每个 provider
 // 的 baseURL / keyEnv / 模型名, 且自带重试/熔断)。原实现写死 agnes-2.5-flash 直连。
 import { getAgentAIRouter } from '../llm-router.js';
+// 2026-10-17: 剧本审核门 + 服装随剧情 —— 剧本 JSON 归一化与镜头级服装标注
+// 的纯函数都在 video-script.ts (可单测, 不依赖 express/LLM)。
+import {
+  normalizeScript,
+  normalizeStoryboardCostumes,
+  mergeScriptCharacters,
+  buildScriptForPrompt,
+  buildScriptSystemPrompt,
+  buildStoryboardFromScriptSystemPrompt,
+  type ScriptDraft,
+} from '../video-script.js';
 import { promisify } from 'util';
 import multer from 'multer';
 
@@ -1026,24 +1037,122 @@ ${originalPrompt}${storyInfo}${characterInfo}
   });
 
   // ════════════════════════════════════════════════════════════════════════
+  // POST /v1/video/script — 剧本生成 (审核门的第一步)
+  // 输入: { prompt, episodeCount?, refImages?, scriptProvider?, scriptModel?,
+  //         refine? } — refine = { instruction, script } 用于「继续优化」
+  // 输出: { ok, script } — 逐集可读剧本 + 角色服装库 (outfits/defaultOutfitId)
+  //
+  // 为什么单独一步: 原实现一次 LLM 调用直接产出整部分镜, 用户没有可读、可改的
+  // 剧本; 且服装只在角色 description 里写一次, 全剧一套。现在剧本先落成文本
+  // 让用户审/改, 确认后 /v1/video/storyboard 只做镜头拆分 (见该路由)。
+  // ════════════════════════════════════════════════════════════════════════
+  router.post('/v1/video/script', async (req, res) => {
+    try {
+      const {
+        prompt, episodeCount = 1, refImages = [], scriptProvider, scriptModel, refine,
+      } = req.body;
+      const refineInstruction = typeof refine?.instruction === 'string' ? refine.instruction.trim() : '';
+      const isRefine = !!(refineInstruction && refine?.script && typeof refine.script === 'object');
+      if (!isRefine && !prompt) return res.status(400).json({ error: 'prompt required' });
+
+      const episodeTotal = Math.max(1, Math.min(20, parseInt(String(episodeCount), 10) || 1));
+      const systemPrompt = buildScriptSystemPrompt({ episodeCount: episodeTotal });
+
+      // 优化模式: 把当前剧本 + 用户要求一起发下去, 要求返回完整修订版
+      let textPart: string;
+      if (isRefine) {
+        textPart = [
+          '这是当前剧本 JSON:',
+          JSON.stringify(refine.script).slice(0, 20000),
+          '',
+          `用户的优化要求: ${refineInstruction}`,
+          '',
+          '请按要求修改并返回**完整**剧本 JSON (不要只返回改动部分), 保持原有 schema。',
+        ].join('\n');
+      } else {
+        textPart = String(prompt);
+      }
+
+      let userContent: any = textPart;
+      if (!isRefine && Array.isArray(refImages) && refImages.length > 0) {
+        userContent = [{ type: 'text', text: textPart }];
+        for (const img of refImages.slice(0, 5)) {
+          try {
+            const url = await urlToBase64(String(img));
+            userContent.push({ type: 'image_url', image_url: { url } });
+          } catch (imgErr: any) {
+            console.warn(`[script] 参考图解析失败, 跳过: ${imgErr.message?.slice(0, 100)}`);
+          }
+        }
+      }
+
+      const llmResult = await callScriptLLM(scriptProvider, scriptModel, systemPrompt, userContent, 6000, 0.8);
+      if (!llmResult.ok) {
+        return res.status(llmResult.status || 500).json({ error: llmResult.error });
+      }
+
+      let content = llmResult.content || '';
+      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          return res.status(500).json({ error: 'LLM 返回的不是有效JSON', raw: content.slice(0, 500) });
+        }
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch {
+          return res.status(500).json({ error: 'LLM 返回的JSON无法解析', raw: content.slice(0, 500) });
+        }
+      }
+
+      const script = normalizeScript(parsed);
+      if (script.episodes.length === 0) {
+        return res.status(502).json({ error: '剧本为空 — 模型没有产出台词/场景, 请重试或换更强的剧本模型' });
+      }
+      return res.json({ ok: true, script, model: llmResult.model });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
   // POST /v1/video/storyboard — 剧本分镜生成
   // 输入: { prompt, episodeCount, durationPerShot, refImages?,
-  //         scriptProvider?, scriptModel? } — 后两者=跟随 GUI 所选对话模型
+  //         scriptProvider?, scriptModel?, script? } — 后两者=跟随 GUI 所选对话模型
+  //         script = 已确认剧本 (有它时只做镜头拆分, 不得改剧情)
   // 输出: { title, episodes: [{ index, title, shots: [{ id, duration, prompt, ... }] }] }
   // ════════════════════════════════════════════════════════════════════════
   router.post('/v1/video/storyboard', async (req, res) => {
     try {
-      const { prompt, episodeCount = 1, durationPerShot = '5', refImages = [], scriptProvider, scriptModel } = req.body;
-      if (!prompt) return res.status(400).json({ error: 'prompt required' });
+      const {
+        prompt, episodeCount = 1, durationPerShot = '5', refImages = [],
+        scriptProvider, scriptModel, script,
+      } = req.body;
+      // 已确认剧本 = 归一化后的只读快照; 缺它就是旧客户端/旧剧本, 走原有 prompt
+      const approvedScript: ScriptDraft | null =
+        script && typeof script === 'object' ? normalizeScript(script) : null;
+      if (!prompt && !approvedScript) return res.status(400).json({ error: 'prompt required' });
 
       // 计算每集镜数: 总时长 / 单镜时长
       const shotDuration = parseInt(String(durationPerShot), 10) || 5;
       const targetMinutesPerEpisode = 0.5; // 每集约30秒
       const shotsPerEpisode = Math.max(2, Math.min(8, Math.ceil((targetMinutesPerEpisode * 60) / shotDuration)));
+      const episodeTotal = approvedScript?.episodes.length
+        ? approvedScript.episodes.length
+        : Math.max(1, Math.min(20, parseInt(String(episodeCount), 10) || 1));
 
       // 构建多模态 LLM 消息 — 分析参考图 + 生成结构化剧本
       // 参考漫剧系统 FrameOS 的剧本生成规范: 视觉优先 + 角色一致 + 剧情连贯 + 对白精炼
-      const systemPrompt = `你是一位专业的AI视频编剧导演。你需要根据用户的创意生成分集分镜剧本。
+      const systemPrompt = approvedScript
+        // 已确认剧本 → 只拆分镜 (prompt 在 video-script.ts, 便于单测)
+        ? buildStoryboardFromScriptSystemPrompt({
+          shotDuration, shotsPerEpisode, episodeCount: episodeTotal,
+        })
+        : `你是一位专业的AI视频编剧导演。你需要根据用户的创意生成分集分镜剧本。
 
 【剧本铁律 — 参考漫剧系统验证过的规范】
 1. 视觉优先: 每镜描述具体的可拍摄动作 (如"走向窗边"而非"感到悲伤"); 内心活动**必须**写进 monologue 字段, 不要混进 prompt
@@ -1052,15 +1161,22 @@ ${originalPrompt}${storyInfo}${characterInfo}
 4. 对白精炼: 每句台词控制在15字以内, 对白要推动剧情而非闲聊
 5. 环境具体化: 明确描述光线方向、色温、空间布局、关键道具
 6. 情绪外化: 用表情和肢体动作传达情绪; 需要"内心戏"时写进 monologue 字段 (旁白/独白), 不要在 prompt 里写"内心感到..."
-7. 每镜时长固定 ${shotDuration} 秒, 每集 ${shotsPerEpisode} 镜, 共 ${episodeCount} 集
+7. 每镜时长固定 ${shotDuration} 秒, 每集 ${shotsPerEpisode} 镜, 共 ${episodeTotal} 集
 8. 每镜 prompt 必须是可直接发给视频模型的描述 (80-120字中文)
 9. 跨集剧情要连贯: 上一集结尾自然过渡到下一集开头, 每集有起承转合
 
 【角色一致性 — 跨集复用】
 - 为每个主要角色创建角色卡: name(名字), description(外貌描述), refImageIndex(参考图索引)
-- 角色描述要极其具体: 年龄/性别/发型(颜色+长度+样式)/服装(颜色+款式)/体型/标志特征
+- description 只写外貌: 年龄/性别/发型(颜色+长度+样式)/体型/标志特征, **不要**把服装写进 description
 - 跨镜头跨集复用同一角色描述, 保证角色视觉一致
 - 角色出现在哪镜, 就在 characters 数组中列出其名字
+
+【服装随剧情 — 每个角色一个服装库】
+- 每个角色输出 outfits 数组 (2-4 套): { "id": "o1", "name": "日常装", "description": "颜色+款式+材质等可拍摄细节" }
+- defaultOutfitId = 该角色**第一次出场**时穿的服装 id
+- 只在换场(如从公司回家)/换日/身份职业变化/重要事件时新增服装; 同一场连续戏内不得换装
+- 镜头级标注: 只有某角色本镜服装与上一镜**不同**时, 才写 "costume": { "角色名": "outfit_id" }
+- 未换装的镜头**不要**写 costume 字段 (= 自动沿用上一镜); 集内第一镜不写 (= 用 defaultOutfitId)
 
 【场景一致性 — 每集固定场景】
 - 为每集创建场景卡: scene: { name: "场景名", description: "场景描述" }
@@ -1094,7 +1210,12 @@ ${originalPrompt}${storyInfo}${characterInfo}
 {
   "title": "剧集标题",
   "characters": [
-    { "name": "角色名", "description": "极其具体的外貌描述", "refImageIndex": 0 }
+    { "name": "角色名", "description": "极其具体的外貌描述(不含服装)", "refImageIndex": 0,
+      "outfits": [
+        { "id": "o1", "name": "日常装", "description": "深蓝牛仔裤 + 白色宽松衬衫" },
+        { "id": "o2", "name": "正装", "description": "黑色修身西装 + 白衬衫" }
+      ],
+      "defaultOutfitId": "o1" }
   ],
   "episodes": [
     {
@@ -1111,7 +1232,8 @@ ${originalPrompt}${storyInfo}${characterInfo}
           "prompt": "具体的视频生成提示词(80-120字中文), 包含场景环境+角色动作+光线氛围+镜头运动",
           "characters": ["角色名1"],
           "dialogue": "角色名: \"台词内容\"",
-          "monologue": "\"内心独白或旁白, 无则空字符串\""
+          "monologue": "\"内心独白或旁白, 无则空字符串\"",
+          "costume": { "角色名1": "o2" }
         }
       ]
     }
@@ -1121,7 +1243,11 @@ ${originalPrompt}${storyInfo}${characterInfo}
 只输出JSON, 不要加任何说明文字或markdown标记。`;
 
       // 构建用户消息 — 有参考图用多模态
-      const userContent: any[] = [{ type: 'text', text: prompt }];
+      // 已确认剧本: 把剧本原文塞进去, 明确"只拆分镜"; 否则沿用原始创意描述
+      const userText = approvedScript
+        ? `下面是一份已确认的剧本, 请按规则拆分镜 (不得改动剧情 / 人名 / 对白 / 服装表):\n\n${buildScriptForPrompt(approvedScript)}`
+        : String(prompt);
+      const userContent: any[] = [{ type: 'text', text: userText }];
       for (const img of refImages.slice(0, 5)) {
         // 已是 Data URI 或 http URL → 直接使用; 纯 base64 → 补全前缀
         // 修复: 之前漏判 data: 前缀, 导致 data:image/png;base64,data:image/png;base64,... 非法格式 ("图送形式错误")
@@ -1174,7 +1300,16 @@ ${originalPrompt}${storyInfo}${characterInfo}
         }
       }
 
-      res.json({ ok: true, storyboard });
+      // 2026-10-17: 服装随剧情归一化 ——
+      // ① 角色表以已确认剧本为准 (服装库/外貌), 分镜自己多出来的角色保留;
+      // ② 镜头级 costume 值统一映射成 outfit id, 认不出的丢弃 = 继承上一镜。
+      if (storyboard) {
+        storyboard.characters = mergeScriptCharacters(storyboard.characters, approvedScript);
+        if (approvedScript && !storyboard.title) storyboard.title = approvedScript.title;
+        normalizeStoryboardCostumes(storyboard, approvedScript);
+      }
+
+      res.json({ ok: true, storyboard, script: approvedScript || undefined });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
