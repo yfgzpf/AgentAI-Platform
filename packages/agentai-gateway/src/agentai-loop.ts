@@ -4989,7 +4989,24 @@ if (isComplexTask) {
         // 2026-10-12: 记录本轮 dispatch 前的 tool 消息水位线 —— 死循环判据只看本轮
         // (见 _iterToolStartIdx 声明处的说明)
         this._iterToolStartIdx = this.context.appendOnlyLog.filter(m => m.role === 'tool').length;
-        const rawResults = await this.dispatchToolCalls(res.toolCalls);
+        // ═══ 2026-10-19 P0: dispatchToolCalls 最外层兜底 ═══
+        // registry.dispatch 崩了已在函数内兜底 (转逐条失败结果), 但 dispatchToolCalls 自身
+        // (审批等待/scope 闸门/hook) 仍可能抛。无兜底时 run() 直接崩 → tool:result 一个不发
+        // → 前端 tool segment 永远"● 执行中" → 用户看到"任务卡住" (实锤截图)。
+        let rawResults: any[] = [];
+        try {
+          rawResults = await this.dispatchToolCalls(res.toolCalls);
+        } catch (e: any) {
+          console.error(`[loop] 🔴 dispatchToolCalls 意外崩溃 (${e?.message}), 补发 tool:result 防止前端卡在"执行中"`);
+          for (const tc of res.toolCalls || []) {
+            const _id = tc.id ?? tc.name;
+            this.emit('tool:result', {
+              callId: _id, name: tc.name,
+              result: `[ERROR] 工具执行失败 (执行器异常): ${e?.message || e}`, ok: false, durationMs: 0,
+            });
+            rawResults.push({ id: _id, name: tc.name, output: `[ERROR] 工具执行失败 (执行器异常): ${e?.message || e}`, success: false, durationMs: 0 });
+          }
+        }
         // ═══ 2026-10-19: security 任务工具偏离检测 (用错了要被拽回来) ═══
         // 实锤: 渗透任务 AI 连写 probe8.js → getcaptcha.js → probe_pay10.js, wsl_scan 一个不碰。
         //   根因不在工具管道 (3c4710f 已修), 而在"没人告诉它走错了"。
@@ -5115,8 +5132,13 @@ if (isComplexTask) {
         // ═══ Token 压缩: 在入 log 前对工具输出做语义压缩 ═══
         // 学习 RTK 的 4 层压缩: 噪音过滤 → 结构化分组 → 重复折叠 → 智能截断
         // 副作用: 不影响 LLM 理解, 仅减少 token 消耗
+        // ⚠️ 2026-10-19: 映射必须带上 durationMs + success —— 原实现只取 4 字段,
+        //   导致下游 emit 的 durationMs 永远 0 (前端显示 "✅ 0.0s", 实锤截图)。
         const { results: toolResults, stats: compressStats } = compressAllToolResults(
-          rawResults.map(r => ({ id: r.id, name: r.name, output: r.output, data: r.data })),
+          rawResults.map(r => ({
+            id: r.id, name: r.name, output: r.output, data: r.data,
+            durationMs: r.durationMs, success: r.success,
+          })),
         );
         if (compressStats.compressedCount > 0) {
           const saved = compressStats.totalBefore - compressStats.totalAfter;
@@ -5318,9 +5340,15 @@ if (isComplexTask) {
           const _payload = (Array.isArray(_diag) && _diag.length) || (Array.isArray(_lr) && _lr.length)
             ? { data: { diagnostics: _diag ?? [], lineRanges: _lr ?? [] } }
             : {};
+          // ═══ 2026-10-19 P0: ok 判据必须与 :5180 的 isToolFailed 一致 ═══
+          // 事故: 原实现 `ok: !(r.output && r.output.startsWith('Error:'))` 只看 'Error:' 前缀,
+          //   而 run_command 超时返回的是中文提示 ("⏱ 命令超时...") → 被判 ok=true。
+          //   叠加"双发"(dispatchToolCalls 内部已发过一次正确的 ok=false), 后发的覆盖前发的
+          //   → 前端把失败显示成 ✅ (实锤截图: run_command 失败却显示 "✅ 0.0s")。
+          // durationMs 原来硬编码 0, 同样覆盖了 dispatch 内部的真实值 → 永远显示 0.0s。
           this.emit('tool:result', {
             callId: r.id, name: r.name, result: r.output,
-            ok: !(r.output && r.output.startsWith('Error:')), durationMs: 0,
+            ok: !isToolFailed, durationMs: (r as any).durationMs || 0,
             ..._payload,
           }); // 前端可监听 (C1: diagnostics / D2: lineRanges)
 
@@ -5671,7 +5699,7 @@ if (isComplexTask) {
           }
           // 5) 语法/运行错误 → 自动修复重试
           if (out.includes('SyntaxError') || out.includes('TypeError') || out.includes('ReferenceError') || out.includes('NameError')) {
-            const errorLine = out.split('\n').find(l => /Error:/i.test(l)) || '';
+            const errorLine = out.split('\n').find((l: string) => /Error:/i.test(l)) || '';
             const errorType = out.includes('SyntaxError') ? 'SyntaxError' : 
                              out.includes('TypeError') ? 'TypeError' : 
                              out.includes('ReferenceError') ? 'ReferenceError' : 'UnknownError';
@@ -7595,31 +7623,43 @@ try {
 
       // 发射 tool:start 事件 (仅被批准的)
     for (const c of callsToDispatchFinal) this.emit('tool:start', { callId: c.id, name: c.name, args: c.args });
-    let results: any[] = [];
-    if (callsToDispatchFinal.length > 0) {
-      // ═══ 2026-10-17 P0: 长耗时工具执行期间发心跳 ═══
-      // 事故: `run_command python probe_foos.py` 这类工具内部跑几分钟且**不发任何 SSE**,
-      //   前端 idle 计时器 (ChatView.tsx:664, 5 分钟) 到点判定"无响应" → controller.abort()
-      //   把**正在正常干活的后端**连接掐掉, 用户看到"任务被强制中止"。
-      //   心跳每 30 秒一发, 期间任何工具调用都能续上前端的 idle 计时器。
-      const HEARTBEAT_MS = 30_000;
-      const pendingIds = new Set(callsToDispatchFinal.map(c => c.id));
-      const hb = setInterval(() => {
-        if (pendingIds.size === 0) return;
-        for (const c of callsToDispatchFinal) {
-          if (pendingIds.has(c.id)) {
-            this.emit('tool:heartbeat', { callId: c.id, name: c.name, pending: pendingIds.size });
+      let results: any[] = [];
+      if (callsToDispatchFinal.length > 0) {
+        // ═══ 2026-10-17 P0: 长耗时工具执行期间发心跳 ═══
+        // 事故: `run_command python probe_foos.py` 这类工具内部跑几分钟且**不发任何 SSE**,
+        //   前端 idle 计时器 (ChatView.tsx:664, 5 分钟) 到点判定"无响应" → controller.abort()
+        //   把**正在正常干活的后端**连接掐掉, 用户看到"任务被强制中止"。
+        //   心跳每 30 秒一发, 期间任何工具调用都能续上前端的 idle 计时器。
+        const HEARTBEAT_MS = 30_000;
+        const pendingIds = new Set(callsToDispatchFinal.map(c => c.id));
+        const hb = setInterval(() => {
+          if (pendingIds.size === 0) return;
+          for (const c of callsToDispatchFinal) {
+            if (pendingIds.has(c.id)) {
+              this.emit('tool:heartbeat', { callId: c.id, name: c.name, pending: pendingIds.size });
+            }
           }
+        }, HEARTBEAT_MS);
+        // unref: 不阻止进程退出 (Node 定时器默认会拖住 event loop)
+        (hb as any).unref?.();
+        try {
+          results = await this.registry.dispatch(callsToDispatchFinal, ctx);
+        } catch (e: any) {
+          // ═══ 2026-10-19 P0: dispatch 意外崩溃也必须给每个 call 补 tool:result ═══
+          // 事故: dispatchInternal 对未注册工具是**同步 throw** (第 1 步校验), 该异常穿过
+          //   runWithWorkspace/dispatch/dispatchToolCalls 直达主循环, 而主循环调用点无兜底
+          //   → run() 整体崩 → tool:result 一个都不发 → 前端 tool segment **永远停在
+          //   "● 执行中"**, 用户看到的就是"任务卡住" (实锤截图)。
+          // 修法: 崩了也转成"每个 call 一条失败结果", 保证下游 7679 的 emit 循环照常执行。
+          console.error(`[loop] 🔴 dispatch 意外崩溃 (${e?.message}), 降级为逐条失败结果以保证 tool:result 送达`);
+          results = callsToDispatchFinal.map(c => ({
+            id: c.id,
+            result: { success: false, output: `[ERROR] 工具批量执行失败 (执行器异常): ${e?.message || e}`, durationMs: 0 },
+          }));
+        } finally {
+          clearInterval(hb);
         }
-      }, HEARTBEAT_MS);
-      // unref: 不阻止进程退出 (Node 定时器默认会拖住 event loop)
-      (hb as any).unref?.();
-      try {
-        results = await this.registry.dispatch(callsToDispatchFinal, ctx);
-      } finally {
-        clearInterval(hb);
       }
-    }
 
     // 自动重试: 失败的工具最多重试 2 次 (仅限可重试的临时错误)
     const retryableErrors = /timeout|ECONNREFUSED|ECONNRESET|ETIMEDOUT|network|503|429|rate.limit/i;
@@ -7644,6 +7684,13 @@ try {
       let retryResults: any[];
       try {
         retryResults = await this.registry.dispatch(failedCalls, ctx);
+      } catch (e: any) {
+        // 与首次 dispatch 同一兜底 (2026-10-19): 崩了也要有结果, 否则前端 segment 卡在"执行中"
+        console.error(`[loop] 🔴 retry dispatch 意外崩溃 (${e?.message}), 降级为逐条失败结果`);
+        retryResults = failedCalls.map(c => ({
+          id: c.id,
+          result: { success: false, output: `[ERROR] 工具重试执行失败 (执行器异常): ${e?.message || e}`, durationMs: 0 },
+        }));
       } finally {
         clearInterval(retryHb);
       }
@@ -7801,6 +7848,12 @@ try {
         name: c.name,
         output: r ? this.formatToolResult(r.result, c) : '[no result]',
         data: r?.result?.data || null,
+        // ═══ 2026-10-19 P0: 必须带上 durationMs + success ═══
+        // 事故: 原映射只给 {id,name,output,data} → 主循环 emit 的 durationMs 永远 0
+        //   (实锤截图: 工具明明跑了 5.7s, 前端显示 "✅ 0.0s"), success 也丢失 →
+        //   下游 isToolFailed 只能靠 output 文本猜。
+        success: r?.result?.success !== false,
+        durationMs: r?.result?.durationMs || 0,
       };
     });
     return [...approvedResults, ...rejectedResults, ...spawnHandledResults];
@@ -8003,7 +8056,16 @@ try {
       const hasEnoughContext = recentlyExecutedTools.length >= 3;
 
       if (hasEnoughContext) {
-        const diagHint = `
+        // 2026-10-19 去重: 同一会话只提醒一次。
+        // 原问题: diagHint 每轮 reflect 都往 appendOnlyLog 追加且从不清理,
+        // 多轮后上下文里堆叠多条相同建议 → 模型被反复催, 同一主题画好几张图
+        const alreadyHinted = this.context.appendOnlyLog.some(
+          (m: any) => m.role === 'system' && typeof m.content === 'string' && m.content.includes('[可视化建议]')
+        );
+        if (alreadyHinted) {
+          console.log('[reflect] ℹ️  可视化建议: 本会话已提醒过, 跳过重复注入');
+        } else {
+          const diagHint = `
 [可视化建议] 用户明确要求/适合可视化, 且已收集了 ${recentlyExecutedTools.length} 个工具的执行结果。
 考虑调用 generate_diagram 生成对应图表:
 - 系统审查/代码架构分析 → 架构图 (architecture)
@@ -8011,9 +8073,10 @@ try {
 - 方案对比/排行榜 → 对比图 (comparison)
 - 数据分析/统计 → 关系图/思维导图 (mindmap)
 
-**原则: 只在用户任务真正需要时才画图, 不要为了画图而画图。**`;
-        this.context.appendOnlyLog.push({ role: 'system', content: diagHint });
-        console.log(`[reflect] 💡 可视化建议触发: 用户需求明确, 已提供 ${recentlyExecutedTools.length} 个工具结果`);
+**原则: 只在用户任务真正需要时才画图, 不要为了画图而画图; 同一主题只画一张。**`;
+          this.context.appendOnlyLog.push({ role: 'system', content: diagHint });
+          console.log(`[reflect] 💡 可视化建议触发: 用户需求明确, 已提供 ${recentlyExecutedTools.length} 个工具结果`);
+        }
       } else {
         console.log(`[reflect] ℹ️  可视化建议: 用户需求明确, 但工具结果还不够 (${recentlyExecutedTools.length}/3)`);
       }

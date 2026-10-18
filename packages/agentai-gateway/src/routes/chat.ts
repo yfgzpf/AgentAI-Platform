@@ -510,6 +510,10 @@ const sendEvent = (event: string, data: any) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   } catch (e: any) {
     // SSE 连接已关闭, 静默忽略 — 防止 broken pipe 崩溃整个请求
+    // 2026-10-19: 不再完全静默 — 富哥日志实锤 "[SSE] 客户端断开/连接" 高频交替,
+    //   而 tool:result 写已断连接被吞 → 前端工具卡片永远"● 执行中", 零诊断线索。
+    //   现在至少记一行, 让人能看出"事件发了但连接没了"。
+    console.warn(`[SSE] 连接已断开, 事件 ${event} 未送达前端 (callId=${data?.callId || '-'})`);
   }
 };
 

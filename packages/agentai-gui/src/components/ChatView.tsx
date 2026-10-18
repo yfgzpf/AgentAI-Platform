@@ -12,7 +12,7 @@ import { RewindPanel } from './chat/RewindPanel';
 import { PulseLine } from './chat/PulseLine';
 import type { RowBinds, StreamProgress } from './chat/types';
 import { AutoHideTaskBar } from './chat/AutoHideTaskBar';
-import { generateConversationSummary, detectAndInsertImage, toImageDataUrl } from './chat/chat-utils';
+import { generateConversationSummary, detectAndInsertImage, toImageDataUrl, markStaleToolSegmentsAborted } from './chat/chat-utils';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Alert, Button, Select, Space, Spin, Tag, App } from 'antd';
 import { SyncOutlined, CloseOutlined } from '@ant-design/icons';
@@ -514,7 +514,8 @@ const [loading, setLoading] = useState(false);
       for (const m of streamingMsgs) {
         updateMessage(m.id, (prev) => ({
           ...prev, streaming: false, status: 'interrupted' as any,
-          segments: [...prev.segments, { kind: 'text', text: '\n\n⚡ 已被新消息中断' }],
+          // 2026-10-19 P0: 残留 running 工具 segment 自愈 (SSE 断连时 tool:result 永远到不了)
+          segments: [...markStaleToolSegmentsAborted(prev.segments), { kind: 'text', text: '\n\n⚡ 已被新消息中断' }],
         }));
       }
       setLoading(false);
@@ -845,15 +846,23 @@ const [loading, setLoading] = useState(false);
         });
 
         // SVG 图表渲染: generate_diagram 结果自动注入为 text segment
+        // 2026-10-19 去重: 模型回复里已含 <svg 时跳过注入 (模型自己画过了,
+        // 工具结果只是它的草稿, 再注入一份就是同一张图显示两次)
         if (info.name === 'generate_diagram' && info.ok) {
           try {
             const result = typeof info.result === 'string' ? info.result : JSON.stringify(info.result);
             const svgMatch = result.match(/<svg[\s\S]*?<\/svg>/i);
             if (svgMatch) {
-              updateMessage(botId, (m: any) => ({
-                ...m,
-                segments: [...m.segments, { kind: 'text', text: '\n\n```svg\n' + svgMatch[0] + '\n```\n' }],
-              }));
+              updateMessage(botId, (m: any) => {
+                const alreadyHasSvg = (m.segments || []).some(
+                  (s: any) => s.kind === 'text' && typeof s.text === 'string' && s.text.includes('<svg')
+                );
+                if (alreadyHasSvg) return m;
+                return {
+                  ...m,
+                  segments: [...m.segments, { kind: 'text', text: '\n\n```svg\n' + svgMatch[0] + '\n```\n' }],
+                };
+              });
             }
           } catch { /* svg extraction best-effort */ }
         }
@@ -951,6 +960,8 @@ const [loading, setLoading] = useState(false);
           if (info?.content?.trim() && !hasText) {
             segments = [...(m.segments || []), { kind: 'text', text: info.content }];
           }
+          // 2026-10-19 P0: 残留 running 工具 segment 自愈 (SSE 断连时 tool:result 永远到不了)
+          segments = markStaleToolSegmentsAborted(segments);
           return {
             ...m, segments, streaming: false, provider: info?.displayModel || info?.provider || 'unknown', status: 'done',
             usage: info?.usage,
@@ -1011,7 +1022,8 @@ const [loading, setLoading] = useState(false);
         const details = err.length > 120 ? err.slice(0, 120) + '...' : undefined;
         updateMessage(botId, (m: any) => ({
           ...m, streaming: false, status: 'error',
-          segments: [...m.segments, {
+          // 2026-10-19 P0: 残留 running 工具 segment 自愈 (SSE 断连时 tool:result 永远到不了)
+          segments: [...markStaleToolSegmentsAborted(m.segments), {
             kind: 'error',
             error: err.length > 80 ? err.slice(0, 80) + '...' : err,
             details,

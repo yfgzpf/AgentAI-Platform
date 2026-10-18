@@ -14,6 +14,11 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+// 2026-10-19 P0: ESM 下 __dirname 未定义
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import * as os from 'os';
 import {
   TaskSnapshotManager,

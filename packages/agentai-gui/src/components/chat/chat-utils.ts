@@ -306,3 +306,29 @@ export function detectAndInsertImage(
     }
   }
 }
+
+/**
+ * 2026-10-19 P0: 流结束时把残留的 running 工具 segment 标记为已中止
+ * --------------------------------------------------
+ * 事故 (富哥实锤截图): 任务中途 SSE 连接断开/重连 (日志里 "[SSE] 客户端断开/
+ *   连接" 高频交替), loop 被 abort, 但**已经 emit 的 tool:start 对应的
+ *   tool:result 永远到不了前端** (sendEvent 写已断的连接, 静默吞错) →
+ *   工具卡片永远停在 "● 执行中", 用户看到"任务卡住"。
+ * 自愈: SSE 流结束 (done/error/interrupted) 时, 把该消息所有仍 running 的
+ *   tool segment 就地标记为 error + 明确文案, 不再假装还在跑。
+ *
+ * 纯函数: 吃 segments 出新 segments, 不碰 store (调用方决定怎么用)。
+ */
+export function markStaleToolSegmentsAborted(segments: any[]): any[] {
+  if (!Array.isArray(segments)) return segments;
+  return segments.map((s: any) =>
+    s && s.kind === 'tool' && s.state === 'running'
+      ? {
+          ...s,
+          state: 'error' as const,
+          ok: false,
+          result: s.result || '[任务已中止] 工具执行未返回结果 — SSE 连接断开或任务被中断, 后端可能仍在跑。重发消息或查看网关日志确认。',
+        }
+      : s
+  );
+}
