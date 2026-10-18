@@ -965,7 +965,10 @@ function tryListenWithRetry(): void {
   // ===== 日志轮转 — 防止日志文件无限膨胀 =====
   try {
     const { startLogRotation } = await import('./log-rotate.js');
-    startLogRotation(path.join(__dirname, '..'));
+    // 2026-10-19: 传两个目录 —— 包目录 (开发期日志) + ~/.agentai (运行时日志,
+    //   gateway-crash.log 实际在这里, 原来只传包目录 → 那个文件从没被管过, 涨到 31.5GB)
+    const os = await import('os');
+    startLogRotation([path.join(__dirname, '..'), path.join(os.homedir(), '.agentai')]);
   } catch (e: any) {
     console.warn('[log-rotate] 启动失败:', e?.message);
   }

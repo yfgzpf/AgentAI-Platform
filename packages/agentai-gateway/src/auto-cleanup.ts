@@ -268,68 +268,45 @@ export class AutoCleanup extends EventEmitter {
   // 日志轮转
   // ═══════════════════════════════════════════════════════════
 
+  /**
+   * 日志清理 — 2026-10-19 重构: **统一委托 log-rotate, 不再自己转**
+   *
+   * 原实现三重失效 (富哥实锤 "以前有自动清理, 现在没了"):
+   *   1. 扫 `~/.agentai/logs` —— 该目录**是空的**, 而真正膨胀的
+   *      `gateway-crash.log` 在 `~/.agentai/` **根目录** → 每 4 小时扫了个寂寞;
+   *   2. 阈值 logMaxSize=100MB, 远高于 log-rotate 的 50MB 轮转 / 200MB 硬顶
+   *      → 即使文件在目录里也要等很久;
+   *   3. **两套轮转逻辑并存**会互相干扰 (一个把 x.log 转成 x.1.log, 另一个接着转)。
+   * 修法: log-rotate 是单一实现且已修好多目录 + 正确文件名, 这里只做"前后体积差"统计。
+   */
   private async rotateLogs(): Promise<CleanupResult['logs']> {
     const result = { rotated: 0, deleted: 0, freedBytes: 0 };
-    
-    if (!fs.existsSync(this.config.logDir)) {
-      return result;
-    }
+
+    const home = os.homedir();
+    const dirs = [path.join(home, '.agentai'), this.config.logDir].filter(d => fs.existsSync(d));
+    if (dirs.length === 0) return result;
 
     try {
-      const files = fs.readdirSync(this.config.logDir)
-        .filter(f => f.endsWith('.log'))
-        .map(f => ({
-          name: f,
-          path: path.join(this.config.logDir, f),
-          stats: fs.statSync(path.join(this.config.logDir, f)),
-        }))
-        .sort((a, b) => b.stats.mtime.getTime() - a.stats.mtime.getTime());
+      const sumLogBytes = (d: string): number => {
+        try {
+          return fs.readdirSync(d)
+            .filter(f => f.endsWith('.log'))
+            .reduce((acc, f) => {
+              try { return acc + fs.statSync(path.join(d, f)).size; } catch { return acc; }
+            }, 0);
+        } catch { return 0; }
+      };
+      const before = dirs.reduce((a, d) => a + sumLogBytes(d), 0);
 
-      // 处理超过大小限制的日志
-      for (const file of files) {
-        if (file.stats.size > this.config.logMaxSize) {
-          // 轮转：重命名为 .1.log, .2.log 等
-          const baseName = file.name.replace('.log', '');
-          let rotatedName = `${baseName}.1.log`;
-          let counter = 1;
-          
-          while (fs.existsSync(path.join(this.config.logDir, rotatedName)) && counter < this.config.logMaxFiles) {
-            counter++;
-            rotatedName = `${baseName}.${counter}.log`;
-          }
+      const { rotateLogs: rotate } = await import('./log-rotate.js');
+      for (const d of dirs) rotate(d);
 
-          if (counter >= this.config.logMaxFiles) {
-            // 删除最旧的轮转日志
-            const oldestLog = path.join(this.config.logDir, `${baseName}.${this.config.logMaxFiles}.log`);
-            if (fs.existsSync(oldestLog)) {
-              const stats = fs.statSync(oldestLog);
-              fs.unlinkSync(oldestLog);
-              result.deleted++;
-              result.freedBytes += stats.size;
-            }
-          }
-
-          fs.renameSync(file.path, path.join(this.config.logDir, rotatedName));
-          result.rotated++;
-          console.log(`[AutoCleanup] 轮转日志: ${file.name} → ${rotatedName}`);
-        }
-      }
-
-      // 删除超过保留数量的旧日志
-      const logFiles = files.filter(f => f.name.match(/\.\d+\.log$/));
-      if (logFiles.length > this.config.logMaxFiles) {
-        const toDelete = logFiles.slice(this.config.logMaxFiles);
-        for (const file of toDelete) {
-          fs.unlinkSync(file.path);
-          result.deleted++;
-          result.freedBytes += file.stats.size;
-          console.log(`[AutoCleanup] 删除旧日志: ${file.name}`);
-        }
-      }
+      const after = dirs.reduce((a, d) => a + sumLogBytes(d), 0);
+      result.freedBytes = Math.max(0, before - after);
+      result.rotated = result.freedBytes > 0 ? 1 : 0;
     } catch (e: any) {
-      console.warn('[AutoCleanup] 日志轮转失败:', e.message);
+      console.warn('[AutoCleanup] 日志轮转失败:', e?.message);
     }
-
     return result;
   }
 
