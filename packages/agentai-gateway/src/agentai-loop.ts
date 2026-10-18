@@ -4289,6 +4289,30 @@ if (isComplexTask) {
       // 表现: 用户看到"AI 什么都没做"、反复重试、任务停滞。
       const _hasToolCalls = !!(res?.toolCalls && res.toolCalls.length > 0);
       if (!res || (!_hasToolCalls && typeof res.content === 'string' && res.content.trim() === '' && res.provider !== 'none')) {
+        // ═══ 2026-10-19 P0: 账号级失败不走救援链 ═══
+        // 402 余额不足 / 401 密钥失效是确定性错误。救援链 L1(同模型重试) →
+        // L3(最小工具) → L4(无工具) 打的是**同一个 provider**, 结果必然一样,
+        // 白烧 180s 预算; 用户看到的是"模型暂时繁忙", 完全不知道要去充值。
+        // 现在: 识别账号级失败 → 立即把可执行结论返回给用户, 任务收尾。
+        const _reasons: Array<{ id: string; msg: string }> = (res as any)?._failReasons || [];
+        const _accountBlob = _reasons.map(r => `${r.id} ${r.msg}`).join(' | ');
+        const _isAccountFailure = (res as any)?._fatal === true
+          || /402|401|余额|insufficient balance|unauthorized|invalid.*(key|token)|欠费/i.test(_accountBlob);
+        if (_isAccountFailure) {
+          const _sel = `${this.opts.model}${this.opts.modelName ? ':' + this.opts.modelName : ''}`;
+          const _reasonLines = _reasons.slice(-4).map(r => `- ${r.id}: ${r.msg}`).join('\n');
+          const _msg = /402|余额|insufficient balance|欠费/i.test(_accountBlob)
+            ? `模型 ${_sel} 余额不足（HTTP 402），任务已停止。\n\n请到对应模型平台充值或购买加量包，也可以在设置里切换到其他有余额的模型，然后对我说"继续"即可接着跑。`
+            : `模型 ${_sel} 鉴权失败（密钥无效或已过期），任务已停止。\n\n请到设置页重新填写该模型的 API Key，然后对我说"继续"。`;
+          logger.warn(`[loop] 🛑 账号级失败 (${_sel}), 跳过救援链直接收尾: ${_reasonLines.replace(/\n/g, ' ')}`);
+          return {
+            content: _msg + (_reasonLines ? `\n\n失败原因:\n${_reasonLines}` : ''),
+            provider: (res as any)?.provider ?? ('none' as any),
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+            iterations: this.iteration,
+            durationMs: Date.now() - startedAt,
+          };
+        }
         logger.warn(`[loop] ⚠️ Empty LLM response (provider=${res?.provider}, iter=${this.iteration}), starting rescue chain...`);
         
         // 辅助函数: 从 appendOnlyLog 重建并消毒消息

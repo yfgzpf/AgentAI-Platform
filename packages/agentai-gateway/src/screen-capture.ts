@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { execFile, exec } from 'child_process';
 import { isPathAllowed } from './safety/path-guard.js';
+import { getAppTempDir, ensureAppTempDir } from './attachment-store.js';
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -58,7 +59,7 @@ export interface CaptureResult {
 /** ===== 桌面截图 (跨平台) ===== */
 async function captureDesktop(opts: CaptureOptions): Promise<CaptureResult> {
   const platform = process.platform;
-  const savePath = opts.savePath || path.join(os.tmpdir(), `screen_${Date.now()}.png`);
+  const savePath = opts.savePath || path.join(getAppTempDir(), `screen_${Date.now()}.png`);
 
   try {
     if (platform === 'win32') {
@@ -109,7 +110,7 @@ async function captureWindow(opts: CaptureOptions): Promise<CaptureResult> {
   if (process.platform !== 'win32') {
     return { ok: false, mode: 'window', error: 'Window capture only on Windows' };
   }
-  const savePath = opts.savePath || path.join(os.tmpdir(), `window_${Date.now()}.png`);
+  const savePath = opts.savePath || path.join(getAppTempDir(), `window_${Date.now()}.png`);
   const script = `
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -156,7 +157,7 @@ async function captureBrowser(opts: CaptureOptions): Promise<CaptureResult> {
     const { getBrowserEngine } = await import('./browser-engine.js');
     const engine = getBrowserEngine();
     if (opts.url) await engine.navigate?.(opts.url);  // v3.2 修复: 先导航
-    const savePath = opts.savePath || path.join(os.tmpdir(), `browser_${Date.now()}.png`);
+    const savePath = opts.savePath || path.join(getAppTempDir(), `browser_${Date.now()}.png`);
     const shot = await engine.screenshot(undefined, !!opts.fullScreen);  // v3.2 修复: 用 engine.screenshot() 不用 page.screenshot
     const fs2 = await import('fs');
     const buf = Buffer.from(shot.base64, 'base64');
@@ -175,6 +176,8 @@ async function captureBrowser(opts: CaptureOptions): Promise<CaptureResult> {
 
 /** ===== 主入口 ===== */
 export async function captureScreen(opts: CaptureOptions = {}): Promise<CaptureResult> {
+  // 默认保存目录必须在 path-guard 白名单内 (os.tmpdir() 不一定在 — 实机 TEMP=F:\temp)
+  if (!opts.savePath) ensureAppTempDir();
   const mode = opts.mode || 'desktop';
 
   // 1. 路径白名单（如果指定了 savePath）

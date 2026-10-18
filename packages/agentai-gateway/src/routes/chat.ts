@@ -27,6 +27,7 @@ import { getCostTracker, CostTracker } from '../cost/index.js';
 import { analyzeGaps } from '../diagnosis/gap-analyzer-llm.js';
 // 2026-10-14 P2 冻结开关 (ESM 模块, 用 import 不用 require — dev 下 tsx 直跑 ESM, require 会 ReferenceError)
 import { setEvolutionFrozen, isEvolutionFrozen } from '../evolution-freeze.js';
+import { persistAttachmentImages } from '../attachment-store.js';
 
 // Xuanji 实例
 const xuanji = new Xuanji({
@@ -1060,9 +1061,15 @@ const sendEvent = (event: string, data: any) => {
         if (attachments && Array.isArray(attachments) && attachments.length > 0) {
           const attachmentParts: string[] = [];
           const imageBlocks: any[] = [];
+          const imageNotes: string[] = [];
+          // 2026-10-19 P0: 图片附件落盘, 否则 AI 调 ocr_image 只能瞎猜路径 → Image not found
+          persistAttachmentImages(attachments);
           for (const att of attachments) {
             if (att.kind === 'image' && att.dataUrl) {
               imageBlocks.push({ type: 'image_url', image_url: { url: att.dataUrl } });
+              if (att.savedPath) {
+                imageNotes.push(`[图片附件「${att.name || '未命名'}」已保存到: ${att.savedPath} — 如需提取图中文字, 请调用 ocr_image 并传入该路径]`);
+              }
             } else if (att.content) {
               const pathInfo = att.filePath ? `\n[文件路径: ${att.filePath} — 你可以用 read_file 工具直接访问此文件]` : '';
               attachmentParts.push(`--- 附件: ${att.name} ---\n${att.content}${pathInfo}\n--- 附件结束 ---`);
@@ -1071,9 +1078,10 @@ const sendEvent = (event: string, data: any) => {
           // 图片统一注入 appendOnlyLog (让所有执行路径都能看到)
           if (imageBlocks.length > 0) {
             const textContent = message || '请查看上传的图片';
+            const note = imageNotes.length ? '\n\n' + imageNotes.join('\n') : '';
             loop.context?.appendOnlyLog?.push({
               role: 'user',
-              content: [{ type: 'text', text: textContent }, ...imageBlocks] as any,
+              content: [{ type: 'text', text: textContent + note }, ...imageBlocks] as any,
             });
             // runMessage 保持纯文本, 避免 loop.run() 重复注入图片
           }
@@ -1597,9 +1605,14 @@ req.on('close', () => {
       if (attachments && Array.isArray(attachments) && attachments.length > 0) {
         const attachmentParts: string[] = [];
         const imageBlocks: any[] = [];
+        const imageNotes: string[] = [];
+        persistAttachmentImages(attachments);
         for (const att of attachments) {
           if (att.kind === 'image' && att.dataUrl) {
             imageBlocks.push({ type: 'image_url', image_url: { url: att.dataUrl } });
+            if (att.savedPath) {
+              imageNotes.push(`[图片附件「${att.name || '未命名'}」已保存到: ${att.savedPath} — 如需提取图中文字, 请调用 ocr_image 并传入该路径]`);
+            }
           } else if (att.content) {
             const pathInfo = att.filePath ? `\n[文件路径: ${att.filePath} — 你可以用 read_file 工具直接访问此文件]` : '';
             attachmentParts.push(`--- 附件: ${att.name} ---\n${att.content}${pathInfo}\n--- 附件结束 ---`);
@@ -1607,9 +1620,10 @@ req.on('close', () => {
         }
         if (imageBlocks.length > 0) {
           const textContent = message || '请查看上传的图片';
+          const note = imageNotes.length ? '\n\n' + imageNotes.join('\n') : '';
           loop.context?.appendOnlyLog?.push({
             role: 'user',
-            content: [{ type: 'text', text: textContent }, ...imageBlocks] as any,
+            content: [{ type: 'text', text: textContent + note }, ...imageBlocks] as any,
           });
         }
         if (attachmentParts.length > 0) {

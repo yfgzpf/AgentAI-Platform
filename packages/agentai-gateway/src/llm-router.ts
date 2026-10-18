@@ -207,6 +207,12 @@ export interface ChatResponse {
   tempFallback?: boolean;
   /** 原始用户选择的 provider (仅 tempFallback=true 时有值) */
   originalProvider?: string;
+  /** 2026-10-19: 所有 provider 都失败时的降级标记 (内容里已含可执行结论) */
+  _degraded?: boolean;
+  /** 2026-10-19: 账号级失败 (402 余额/401 密钥) — 重试无意义, loop 应直接告知用户 */
+  _fatal?: boolean;
+  /** 2026-10-19: 各 provider 的失败原因 (供上层展示/诊断, 不替代 content) */
+  _failReasons?: Array<{ id: string; msg: string }>;
 }
 
 export interface ToolSpec {
@@ -546,6 +552,19 @@ factory: 'FACTORY_CHAT_KEY',
     // 用户选了付费模型 → 只锁该 provider, 不 fallback 到免费池
     const isPremiumModel = req.model && !isFreeModel(req.model);
 
+    // ═══ 2026-10-19 P0: 失败原因透传 ═══
+    // 线上实录: deepseek HTTP 402 余额不足 → 所有 provider 试完 → 只返回一句
+    // "所有 AI 模型暂时不可用, 请检查 API Key" → **用户根本不知道是没钱了**,
+    // 只会反复重试, 白白烧时间。
+    // 现在把每个 provider 的失败原因收下来, 全部失败时按类型给出可执行结论
+    // (402 余额 / 401 密钥 / 429 限流 / 网络), 并附原始原因清单。
+    const failReasons: Array<{ id: string; msg: string }> = [];
+    const noteFail = (id: string | undefined, err: any) => {
+      const msg = String(err?.message || err || 'unknown').replace(/\s+/g, ' ').slice(0, 180);
+      failReasons.push({ id: id || 'unknown', msg });
+      if (failReasons.length > 12) failReasons.shift();
+    };
+
     // === Step 1.5 (简化 2026-09-04): 动态注册自定义 provider; 请求收敛到 Step 4 统一发送 ===
     // 修复: 原 Step1.5"同模型先试一次" + Step4"再对同模型重试 MAX_RETRY=3" = 同模型最多连打 4 次,
     // 429/超时场景还会各自叠加等冷却时间。现改为只负责注册, 由 Step 4 做 ≤3 次尝试, 行为一致、少 1 次重复调用。
@@ -704,17 +723,24 @@ factory: 'FACTORY_CHAT_KEY',
     if (req.model) {
       const targetProvider = this.providers.get(req.model as ProviderId);
       // 付费模型固定调用: 失败不轮换 → 空响应交 loop 救援链处理
-      const premiumEmpty = (): ChatResponse => ({
+      // ═══ 2026-10-19 P0: 但"账号级失败"不该交救援链 ═══
+      // 402 余额不足 / 401 密钥失效是**确定性**错误: 同一 provider 重试 3 次 +
+      // 救援链 L1/L3/L4 再打 3 次, 结果必然一模一样, 纯烧 180s 预算和用户时间。
+      // 现在: 识别出账号级失败 → 立即带原因返回, 让 loop 直接告知用户收尾。
+      const _isAccountError = (e: any) => /402|401|余额|insufficient balance|unauthorized|invalid.*(key|token)|arrears|欠费/i.test(String(e?.message || e || ''));
+      const premiumEmpty = (fatal = false): ChatResponse => ({
         content: '',
         provider: req.model as ProviderId,
         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
         durationMs: 0,
+        _failReasons: failReasons.slice(),
+        ...(fatal ? { _fatal: true } : {}),
       });
       // isCircuitOpen() 内部已先自动尝试恢复; 若仍熔断 →
       //   付费模型直接空返; 免费指定模型跳过直接尝试 (走下方备用轮换)
       if (targetProvider && this.isCircuitOpen(targetProvider)) {
         console.warn(`[router] requested provider ${req.model} is tripped`);
-        if (isPremiumModel) return premiumEmpty();
+        if (isPremiumModel) return premiumEmpty(false);
       } else if (targetProvider) {
         // 对用户指定的模型进行最多 MAX_RETRY 次重试
         for (let retry = 0; retry < MAX_RETRY; retry++) {
@@ -730,6 +756,14 @@ factory: 'FACTORY_CHAT_KEY',
             return res;
           } catch (err) {
             console.warn(`[router] ${req.model} attempt ${retry + 1}/${MAX_RETRY} failed: ${(err as Error).message?.slice(0, 80)}`);
+            noteFail(targetProvider?.id ?? req.model, err);
+            // ═══ 2026-10-19: 账号级失败不重试 ═══
+            // 402/401 重试一万次也是同样结果, 还白等 1s+2s+4s 退避
+            if (_isAccountError(err)) {
+              console.warn(`[router] ${req.model} 账号级失败 (402/401), 跳过剩余重试`);
+              if (isPremiumModel) return premiumEmpty(true);
+              break;
+            }
             if (retry < MAX_RETRY - 1) {
               // ═══ 指数退避: 1s, 2s, 4s (对标 Trae: 尊重 API 节奏) ═══
               const delay = Math.min(AgentAIRouter.RETRY_BASE_DELAY_MS * Math.pow(2, retry), AgentAIRouter.RETRY_MAX_DELAY_MS);
@@ -741,10 +775,13 @@ factory: 'FACTORY_CHAT_KEY',
         // 所有重试都失败, 记录并继续尝试备用模型
         console.warn(`[router] ${req.model} failed after ${MAX_RETRY} retries, trying fallback`);
         this.recordFailure(targetProvider, new Error(`${MAX_RETRY} retries exhausted`));
+        noteFail(targetProvider?.id ?? req.model, `${MAX_RETRY} retries exhausted`);
         // 付费模型: 重试失败后不轮换到其他模型, 返回空响应让 loop 链处理
         if (isPremiumModel) {
           console.info(`[router] 付费模型 ${req.model} 重试失败, 不轮换到其他模型 (付费模型固定调用)`);
-          return premiumEmpty();
+          // 扫全部失败原因(不只最后一条): 任一账号级错误即判 fatal
+          const _anyAccount = failReasons.some(r => _isAccountError({ message: r.msg }));
+          return premiumEmpty(_anyAccount);
         }
       }
     }
@@ -811,6 +848,7 @@ factory: 'FACTORY_CHAT_KEY',
         return await this.tryOne(p, req);
       } catch (err) {
         this.recordFailure(p, err as Error);
+        noteFail(p?.id, err);
         console.warn(`[router] emergency recovery ${fp} also failed: ${(err as Error).message?.slice(0, 80)}`);
       }
     }
@@ -829,6 +867,7 @@ factory: 'FACTORY_CHAT_KEY',
           return await this.tryOne(p, req);
         } catch (err) {
           this.recordFailure(p, err as Error);
+          noteFail(p?.id, err);
         }
       }
     }
@@ -851,6 +890,7 @@ factory: 'FACTORY_CHAT_KEY',
           return await this.tryOne(deepseekProvider, fallbackReq, DEEPSEEK_FLASH_MODEL);
         } catch (err) {
           this.recordFailure(deepseekProvider, err as Error);
+          noteFail(deepseekProvider?.id, err);
           console.warn(`[router] deepseek fallback also failed: ${(err as Error).message?.slice(0, 80)}`);
         }
       }
@@ -870,6 +910,7 @@ factory: 'FACTORY_CHAT_KEY',
           return await this.tryOne(dxntProvider, req, 'free-route');
         } catch (err) {
           this.recordFailure(dxntProvider, err as Error);
+          noteFail(dxntProvider?.id, err);
           console.warn(`[router] dxnt fallback also failed: ${(err as Error).message?.slice(0, 80)}`);
         }
       }
@@ -885,6 +926,7 @@ factory: 'FACTORY_CHAT_KEY',
         return await this.tryOne(p, req);
       } catch (err) {
         this.recordFailure(p, err as Error);
+        noteFail(p?.id, err);
         console.warn(`[router] custom provider ${pid} also failed: ${(err as Error).message?.slice(0, 80)}`);
       }
     }
@@ -892,9 +934,26 @@ factory: 'FACTORY_CHAT_KEY',
     // 真的全部失败 — 返回降级消息
     const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
     const lastUserText = (typeof lastMsg?.content === 'string' ? lastMsg.content : (lastMsg?.content != null ? JSON.stringify(lastMsg.content) : '')).slice(0, 200);
+    // ═══ 2026-10-19 P0: 把失败原因升级为可执行结论 (402 余额是最高频且最容易被误判的一类) ═══
+    const blob = failReasons.map(r => `${r.id} ${r.msg}`).join(' | ');
+    let advice = '请检查 .env 中的 API Key 配置或在设置页填写。';
+    if (/402|insufficient balance|余额|欠费|quota/i.test(blob)) {
+      advice = '⚠️ 检测到【模型余额不足 (HTTP 402)】。这不是网络或 Key 问题 —— 请到对应模型平台充值/购买加量包，或在设置里切换到其他有余额的模型后再继续。';
+    } else if (/401|unauthor|invalid.*(key|token)|api key/i.test(blob)) {
+      advice = '⚠️ 检测到【API Key 无效或已过期 (HTTP 401)】。请到设置页重新填写对应模型的密钥。';
+    } else if (/429|rate.?limit|too many requests/i.test(blob)) {
+      advice = '⚠️ 检测到【触发限流 (HTTP 429)】。所有可用模型都在冷却中，请等待 1~2 分钟后再试，或切换到其他模型。';
+    } else if (/timeout|timed out|ETIMEDOUT|aborted/i.test(blob)) {
+      advice = '⚠️ 检测到【请求超时】。请检查网络/代理设置，或在设置里切换到响应更快的模型。';
+    } else if (/ECONNREFUSED|ENOTFOUND|fetch failed|network/i.test(blob)) {
+      advice = '⚠️ 检测到【网络不通】。请检查网络/代理/VPN 设置后重试。';
+    }
+    const reasonLines = failReasons.slice(-6).map(r => `- ${r.id}: ${r.msg}`).join('\n');
     return {
-      content: `所有 AI 模型暂时不可用。\n\n用户消息: "${lastUserText}"\n\n请检查 .env 中的 API Key 配置或在设置页填写。`,
+      content: `所有 AI 模型暂时不可用。\n\n${advice}${reasonLines ? `\n\n失败原因:\n${reasonLines}` : ''}\n\n用户消息: "${lastUserText}"`,
       provider: 'none' as ProviderId,
+      _degraded: true,
+      _failReasons: failReasons.slice(),
       usage: { promptTokens: 0, completionTokens: 0, cost: 0, cacheHit: false },
       durationMs: 0,
     };
@@ -963,6 +1022,7 @@ factory: 'FACTORY_CHAT_KEY',
       const errorMsg = (err as Error).message || String(err);
       console.error(`[router] ❌ Provider ${provider.id} failed: ${errorMsg.slice(0, 200)}`);
       this.recordFailure(provider, err as Error);
+      noteFail(provider?.id, err);
       this.emit('provider:failed', { provider: provider.id, err });
       
       // ===== Phase 2: 记录失败指标 =====

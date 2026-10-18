@@ -827,7 +827,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   { name: 'undo_edit', description: 'Undo the last AI edit on a file by restoring from backup (.agentai/backups/)', parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'File to restore' } }, required: ['file_path'] }, parallelSafe: false, riskLevel: 'medium' },
   // ====== 屏幕与窗口控制（AI 视觉能力）======
   { name: 'capture_screen', description: `截取屏幕画面（桌面/活动窗口/浏览器/指定区域）。返回 PNG base64。当用户问"现在屏幕上显示什么"或需要查看实时状态时使用。模式: desktop=全桌面, window=活动窗口, browser=需要URL, region=指定区域。`, parameters: { type: 'object', properties: { mode: { type: 'string', enum: ['desktop', 'window', 'browser', 'region'], default: 'desktop' }, url: { type: 'string', description: 'browser 模式需要的 URL' }, region: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } }, description: 'region 模式的坐标和尺寸' }, windowTitle: { type: 'string', description: 'window 模式的窗口标题模糊匹配' }, savePath: { type: 'string', description: '保存路径（不传则返回 base64）' } } }, parallelSafe: false, riskLevel: 'medium' },
-  { name: 'ocr_image', description: `从图片中提取文字（OCR）。支持: Windows 内置 OCR / macOS Vision / Tesseract / LLM 视觉引擎。当用户说"读取这个截图"或"提取图片文字"时使用。`, parameters: { type: 'object', properties: { imagePath: { type: 'string', description: '图片路径' }, engine: { type: 'string', enum: ['auto', 'windows', 'macos', 'tesseract', 'llm'], default: 'auto' }, language: { type: 'string', default: 'chi_sim+eng' } }, required: ['imagePath'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'ocr_image', description: `从图片中提取文字（OCR）。支持: Windows 内置 OCR / macOS Vision / Tesseract / LLM 视觉引擎。当用户说"读取这个截图"或"提取图片文字"时使用。⚠️ imagePath 必须是磁盘上真实存在的图片绝对路径：①用户在对话里上传/粘贴的图片会自动落盘，其真实路径会在该条消息文本里以"已保存到: ..."给出，直接用它；②想读当前屏幕请改用 capture_and_read（截图+OCR 一步完成）；③不要凭附件名或记忆拼路径，猜错会连续失败。`, parameters: { type: 'object', properties: { imagePath: { type: 'string', description: '图片在磁盘上的绝对路径（必须是真实存在的文件）' }, engine: { type: 'string', enum: ['auto', 'windows', 'macos', 'tesseract', 'llm'], default: 'auto' }, language: { type: 'string', default: 'chi_sim+eng' } }, required: ['imagePath'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'capture_and_read', description: `一键截图+OCR：截取屏幕并提取文字，最常用的"看看屏幕上显示什么"工具。返回 { image, text, mode, ocrEngine }。`, parameters: { type: 'object', properties: { mode: { type: 'string', enum: ['desktop', 'window', 'browser', 'region'], default: 'desktop' }, url: { type: 'string' }, region: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } } } } }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'list_windows', description: `列出所有可见窗口（Windows）。返回 [{ hwnd, title, process, rect }]。`, parameters: { type: 'object', properties: { titleFilter: { type: 'string', description: '标题模糊匹配过滤' } } }, parallelSafe: true, riskLevel: 'low' },
   { name: 'window_control', description: `窗口控制（Windows）。动作: minimize / maximize / restore / close / show / hide / focus / move / resize。`, parameters: { type: 'object', properties: { action: { type: 'string', enum: ['minimize', 'maximize', 'restore', 'close', 'show', 'hide', 'focus', 'move', 'resize'] }, windowTitle: { type: 'string', description: '窗口标题（模糊匹配）' }, x: { type: 'number', description: 'move 用的新 X 坐标' }, y: { type: 'number', description: 'move 用的新 Y 坐标' }, width: { type: 'number', description: 'resize 用的新宽度' }, height: { type: 'number', description: 'resize 用的新高度' } }, required: ['action'] }, parallelSafe: false, riskLevel: 'medium' },
@@ -1561,6 +1561,40 @@ function generateFallbackSvg(type: string, title: string, description: string): 
 
 function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+/**
+ * ocr_image 失败提示 — 2026-10-19 P0
+ * ------------------------------------------------------------------
+ * 旧行为: `❌ OCR 失败: Image not found` —— AI 拿到这句只会换个路径再试,
+ * 试十次错十次, 把模型额度烧光 (线上实录: 连续失败 + deepseek 402 空响应)。
+ *
+ * 新行为: 失败时告诉 AI **下一步该干什么**, 并把真实存在的候选路径列出来:
+ *   1. 用户上传的图片已由 attachment-store 落盘 → 列出最近几个真实路径
+ *   2. 想读的是"当前屏幕" → 用 capture_and_read(截图+OCR 一体)
+ *   3. 图片在工作区里 → 用 list_files / read_file 先确认真实路径
+ */
+function buildOcrFailureHint(imagePath: string, error: string, candidates: string[] = []): string {
+  const lines = [`❌ OCR 失败: ${error}`, `（传入路径: ${imagePath}）`, '', '请按以下顺序处理，不要继续猜测路径：'];
+  if (/not found/i.test(error)) {
+    lines.push('1. 该文件在磁盘上不存在。');
+  } else if (/not allowed/i.test(error)) {
+    lines.push('1. 该路径不在允许访问的目录内（只允许工作区/用户主目录等白名单位置）。');
+  } else if (/too large/i.test(error)) {
+    lines.push('1. 图片超过 10MB，请先用工具压缩或裁剪后再识别。');
+  } else {
+    lines.push('1. 先确认传入的 imagePath 是一个真实存在的图片文件绝对路径。');
+  }
+  if (candidates.length > 0) {
+    lines.push('2. 如果用户是在对话里上传/粘贴的截图，用下面这些【已验证存在】的路径直接重试：');
+    for (const p of candidates) lines.push(`   - ${p}`);
+    lines.push('   （多个时选时间最新的那个）');
+  } else {
+    lines.push('2. 如果用户是在对话里上传/粘贴的截图，路径通常形如 <临时目录>/agentai-uploads/upload_xxx.png，请先用 list_files 确认。');
+  }
+  lines.push('3. 如果你想读的是"当前屏幕/某个窗口"的内容，改用 capture_and_read 工具（截图+OCR 一步完成），不要自己拼路径。');
+  lines.push('4. 如果图片在工作区里，先用 list_files 或 search_content 找到真实路径，再调 ocr_image。');
+  return lines.join('\n');
 }
 
 // 2026-10-11 阶段2 轻档: 收紧到 ToolHandlerLike (强类型 ctx/返回值),
@@ -7826,12 +7860,21 @@ Write-Output 'OK'`;
       if (!args?.imagePath) return { success: false, output: 'imagePath required' };
       const { ocrImage } = await import('./ocr.js');
       const result = await ocrImage(args.imagePath, { engine: args.engine, language: args.language });
-      return { success: result.ok, output: result.ok
-        ? `✅ OCR 成功 (${result.engine}):\n\`\`\`\n${result.text}\n\`\`\``
-        : `❌ OCR 失败: ${result.error}`,
-        _text: result.text,
-        _engine: result.engine,
-      };
+      if (result.ok) {
+        return {
+          success: true,
+          output: `✅ OCR 成功 (${result.engine}):\n\`\`\`\n${result.text}\n\`\`\``,
+          _text: result.text,
+          _engine: result.engine,
+        };
+      }
+      // 2026-10-19 P0: 失败必须"可行动", 否则 AI 只会换着路径瞎猜 → 死循环烧额度
+      let candidates: string[] = [];
+      try {
+        const { recentUploadPaths } = await import('./attachment-store.js');
+        candidates = recentUploadPaths(6);
+      } catch { /* ignore */ }
+      return { success: false, output: buildOcrFailureHint(args.imagePath, result.error || 'unknown', candidates), _engine: result.engine };
     } catch (e: any) {
       return { success: false, output: `ocr_image error: ${e.message}` };
     }
