@@ -1,44 +1,143 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { createQuotaSafeStorage, createTieredPruner, capText } from '../utils/quota-safe-storage';
 
-// 节流 localStorage: 流式输出期间最多每 2 秒写入一次, 避免频繁序列化阻塞主线程
-const throttledStorage = (() => {
-  const timers = new Map<string, ReturnType<typeof setTimeout>>();
-  return {
-    getItem: (name: string) => {
-      try {
-        return localStorage.getItem(name);
-      } catch (e) {
-        console.error('[chatStore] getItem failed:', e);
-        return null;
+/**
+ * 聊天气息持久化 —— 节流 + 配额安全 (2026-10-18)
+ *
+ * 原实现只做节流 + 把配额异常 console.error 吞掉: 页面不崩, 但消息**静默丢失**,
+ * 用户重进发现对话没了。现改为走统一配额安全层: 超预算时按级瘦身再写, 写不进去
+ * 才降级为内存态, 并留下可诊断的日志。
+ *
+ * 这里的裁剪重点与 sessions 不同 —— 真正的黑洞是 `segments` 里的:
+ *   - image.base64 / data: URI (一张图可达数 MB)
+ *   - tool.result (整段命令输出)
+ *   - widget.content (内联 SVG/HTML 整页)
+ */
+const chatPruner = createTieredPruner([
+  // L0 图片段去掉 base64/data URI; 工具输出截到 2000; widget 截到 4000
+  (st) => eachSegment(st, (seg) => {
+    let changed = false;
+    if (seg.kind === 'image') {
+      if (seg.base64) { delete seg.base64; changed = true; }
+      if (typeof seg.url === 'string' && seg.url.startsWith('data:')) {
+        seg.url = '[本地图片已省略: 体积过大]';
+        changed = true;
       }
-    },
-    setItem: (name: string, value: string) => {
-      const t = timers.get(name);
-      if (t) clearTimeout(t);
-      timers.set(name, setTimeout(() => {
-        try {
-          localStorage.setItem(name, value);
-        } catch (e) {
-          console.error('[chatStore] setItem failed:', e);
-        }
-        timers.delete(name);
-      }, 2000));
-    },
-    removeItem: (name: string) => {
-      const t = timers.get(name);
-      if (t) {
-        clearTimeout(t);
-        timers.delete(name);
-      }
-      try {
-        localStorage.removeItem(name);
-      } catch (e) {
-        console.error('[chatStore] removeItem failed:', e);
-      }
-    },
-  };
-})();
+    }
+    if (seg.kind === 'tool') {
+      if (seg.data) { delete seg.data; changed = true; }
+      const r = capText(seg.result, 2000);
+      if (r.changed) { seg.result = r.text; changed = true; }
+    }
+    if (seg.kind === 'widget') {
+      const r = capText(seg.content, 4000);
+      if (r.changed) { seg.content = r.text; changed = true; }
+    }
+    return changed;
+  }),
+  // L1 文本类段落截到 4000; 工具输出截到 800
+  (st) => eachSegment(st, (seg) => {
+    if (seg.kind === 'tool') {
+      const r = capText(seg.result, 800);
+      if (!r.changed) return false;
+      seg.result = r.text;
+      return true;
+    }
+    if (seg.kind === 'text' || seg.kind === 'reasoning' || seg.kind === 'thinking') {
+      const r = capText(seg.text, 4000);
+      if (!r.changed) return false;
+      seg.text = r.text;
+      return true;
+    }
+    return false;
+  }),
+  // L2 注入文件只留路径 (content 是整份文件内容, 最占地方)
+  (st) => {
+    if (!Array.isArray(st.injectedFiles)) return false;
+    let changed = false;
+    st.injectedFiles = st.injectedFiles.map((f: any) => {
+      if (!f || typeof f.content !== 'string') return f;
+      changed = true;
+      const { content, ...rest } = f;
+      return { ...rest, contentDropped: (content as string).length };
+    });
+    return changed;
+  },
+  // L3 只留最近 80 条消息
+  (st) => keepLast(st, 80),
+  // L4 文本 1500 / 工具 300
+  (st) => eachSegment(st, (seg) => {
+    if (seg.kind === 'tool') {
+      const r = capText(seg.result, 300);
+      if (!r.changed) return false;
+      seg.result = r.text;
+      return true;
+    }
+    if (seg.kind === 'text' || seg.kind === 'reasoning' || seg.kind === 'thinking') {
+      const r = capText(seg.text, 1500);
+      if (!r.changed) return false;
+      seg.text = r.text;
+      return true;
+    }
+    return false;
+  }),
+  // L5 只留最近 30 条
+  (st) => keepLast(st, 30),
+  // L6 文本 600
+  (st) => eachSegment(st, (seg) => {
+    if (seg.kind === 'text' || seg.kind === 'reasoning' || seg.kind === 'thinking') {
+      const r = capText(seg.text, 600);
+      if (!r.changed) return false;
+      seg.text = r.text;
+      return true;
+    }
+    return false;
+  }),
+  // L7 只留最近 8 条
+  (st) => keepLast(st, 8),
+  // L8 只留最近 3 条, 每条 300
+  (st) => {
+    const a = keepLast(st, 3);
+    const b = eachSegment(st, (seg) => {
+      const key = seg.kind === 'text' || seg.kind === 'reasoning' || seg.kind === 'thinking' ? 'text'
+        : seg.kind === 'tool' ? 'result' : null;
+      if (!key) return false;
+      const r = capText((seg as any)[key], 300);
+      if (!r.changed) return false;
+      (seg as any)[key] = r.text;
+      return true;
+    });
+    return a || b;
+  },
+], 900_000);
+
+function eachSegment(st: any, fn: (seg: any) => boolean): boolean {
+  if (!Array.isArray(st?.messages)) return false;
+  let changed = false;
+  for (const m of st.messages) {
+    if (!m || !Array.isArray(m.segments)) continue;
+    for (const seg of m.segments) {
+      if (!seg || typeof seg !== 'object') continue;
+      try { if (fn(seg)) changed = true; } catch { /* 单段异常不影响整体 */ }
+    }
+  }
+  return changed;
+}
+
+function keepLast(st: any, n: number): boolean {
+  if (!Array.isArray(st?.messages) || st.messages.length <= n) return false;
+  st.messages = st.messages.slice(-n);
+  return true;
+}
+
+/** 节流 2s + 配额安全: 流式输出期间不频繁阻塞主线程, 且永不抛异常 */
+const quotaSafeChatStorage = createQuotaSafeStorage({
+  label: 'agentai-chat-messages',
+  budgetChars: 900_000,
+  throttleMs: 2000,
+  pruner: chatPruner.pruner,
+});
 
 export type ChatSegment =
   | { kind: 'text'; text: string }
@@ -235,7 +334,7 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: 'agentai-chat-messages',
-      storage: createJSONStorage(() => throttledStorage),
+      storage: createJSONStorage(() => quotaSafeChatStorage),
       partialize: (s) => ({ messages: s.messages.slice(-200), injectedFiles: s.injectedFiles }),
     },
   ),

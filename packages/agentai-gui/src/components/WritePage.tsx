@@ -9,6 +9,7 @@ import { SaveOutlined, FileTextOutlined, ExportOutlined, ClearOutlined, SendOutl
 import { Markdown } from './Markdown';
 import { VoiceDictation } from './VoiceDictation';
 import { GATEWAY_HTTP } from '../services/config';
+import { safeSetItem } from '../utils/quota-safe-storage';
 
 // ===== AI 动作模式 =====
 type AiAction = '续写' | '润色' | '扩写' | '缩写' | '翻译中文' | '翻译英文' | '口语化' | '总结';
@@ -68,12 +69,14 @@ export const WritePage: React.FC = () => {
   }, [replaceMode]);
 
   // ===== 自动保存 (debounce 3s) =====
+  // 2026-10-18: 改走配额安全写入 —— 长文草稿 + 满载的 localStorage 会让裸 setItem
+  //   抛 QuotaExceededError, 而这里在 setTimeout 里, 异常没被捕获 → 整页崩。
   const autoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
-      localStorage.setItem('agentai-write-draft', content);
-      localStorage.setItem('agentai-write-title', title);
-      localStorage.setItem('agentai-write-model', writeModel);
+      safeSetItem('agentai-write-draft', content, { maxChars: 400_000, label: 'write-draft' });
+      safeSetItem('agentai-write-title', title, { maxChars: 200, label: 'write-title' });
+      safeSetItem('agentai-write-model', writeModel, { maxChars: 200, label: 'write-model' });
     }, 3000);
   }, [content, title, writeModel]);
 
@@ -81,9 +84,10 @@ export const WritePage: React.FC = () => {
 
   // ===== 手动保存 =====
   const handleSave = () => {
-    localStorage.setItem('agentai-write-draft', content);
-    localStorage.setItem('agentai-write-title', title);
-    msg.success('✅ 已保存');
+    const ok = safeSetItem('agentai-write-draft', content, { maxChars: 400_000, label: 'write-draft' });
+    safeSetItem('agentai-write-title', title, { maxChars: 200, label: 'write-title' });
+    if (ok) msg.success('✅ 已保存');
+    else msg.warning('本地存储空间不足, 草稿未能保存 (请先清理历史会话)');
   };
 
   // ===== 字数统计 =====

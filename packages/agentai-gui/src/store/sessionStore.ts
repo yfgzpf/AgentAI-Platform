@@ -1,5 +1,31 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { createQuotaSafeStorage, createSessionPruner } from '../utils/quota-safe-storage';
+
+/**
+ * 2026-10-18 P0 (实机事故): `agentai-sessions` 写爆 localStorage 配额 →
+ *   `Failed to execute 'setItem' on 'Storage': ... exceeded the quota` 冒泡到
+ *   ErrorBoundary → 整页显示"页面加载中断", 应用不可用。
+ *
+ * 根因: 该 store 用的是 zustand persist **默认** storage(裸 localStorage, 无 try/catch),
+ *   而载荷是**全部会话的完整消息** —— 单条消息常带整段工具日志(一次渗透 100+ 步),
+ *   几个会话就能顶破 5MB; 同源还有 chat-messages / write-draft / 视频截图帧在抢配额。
+ *
+ * 修复: 换成配额安全存储 ——
+ *   ① 超预算先分级瘦身再写 (先动"非当前会话", 最后才动用户正在看的这段);
+ *   ② 配额真满时先清可牺牲的临时键 (截图帧/草稿);
+ *   ③ 彻底塞不下就降级为**内存态** —— 页面照常用, 只是刷新后少一次持久化;
+ *   ④ 任何情况都**不抛异常**, 不会再让 ErrorBoundary 接管整页。
+ */
+const sessionPruner = createSessionPruner(1_400_000);
+
+/** 导出供测试直接注入 (不要与 DOM 的 sessionStorage 混淆, 故用 quotaSafe 前缀) */
+export const quotaSafeSessionStorage = createQuotaSafeStorage({
+  label: 'agentai-sessions',
+  budgetChars: 1_400_000,   // ≈2.8MB (UTF-16), 给同源其它 key 留出余量
+  throttleMs: 0,            // 保持原语义: 消息写入即时落盘
+  pruner: sessionPruner.pruner,
+});
 
 interface SessionMessage {
   /**
@@ -166,6 +192,7 @@ export const useSessionStore = create<SessionState>()(
     }),
     { 
       name: 'agentai-sessions', 
+      storage: createJSONStorage(() => quotaSafeSessionStorage),   // 配额安全存储, 绝不抛异常
       partialize: (s) => ({ sessions: s.sessions, activeId: s.activeId, currentUserId: s.currentUserId }),
       // 迁移旧数据：为没有 userId/workspace 的会话添加默认值
       // 2026-10-05 P0 修复: 同时为没有 id 的历史消息补 id ——

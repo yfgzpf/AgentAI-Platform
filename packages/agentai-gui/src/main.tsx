@@ -27,6 +27,14 @@ import './styles/shell.css';
 // 解决 Tauri 打包后 fetch('/v1/...') 404 的问题
 import './services/fetchInterceptor';
 
+// ═══ 第0层: localStorage 启动体检 + 自愈 ═══
+// 2026-10-18 P0: 必须在 App (及其拖进来的所有 store) 求值**之前**执行 ——
+//   否则 store 已经拿着"满仓"数据 rehydrate, 再写一次就抛 QuotaExceededError,
+//   整页被 ErrorBoundary 接管 (实机现象: "页面加载中断")。
+//   注意: ES import 按出现顺序求值, 所以这行必须保持在 import { App } 之前。
+import './utils/startup-storage-check';
+import { isQuotaError, rescueSpace } from './utils/quota-safe-storage';
+
 // ═══ 第4层: 应用组件 ═══
 import { App } from './App';
 
@@ -52,6 +60,11 @@ class ErrorBoundary extends React.Component<
 
   componentDidCatch(e: any, info: any) {
     console.error('[ErrorBoundary] Global crash:', e, info);
+    // 2026-10-18: localStorage 配额事故先抢救 (丢临时缓存), 再走自动重试
+    if (isQuotaError(e)) {
+      const freed = rescueSpace();
+      console.warn(`[ErrorBoundary] 配额超限, 已释放 ${freed} 字临时缓存后重试`);
+    }
     // 首错自动重试一次（解决懒加载 chunk 瞬时失败问题）
     if (!this.state.retried) {
       const timer = window.setTimeout(() => {
@@ -91,7 +104,7 @@ class ErrorBoundary extends React.Component<
             <h2 style={{
               fontSize: 'var(--fs-lg)', margin: '0 0 8px',
               color: 'var(--fg)', fontWeight: 600,
-            }}>工作区遇到了一点小问题</h2>
+            }}>{isQuotaError({ message: this.state.error }) ? '本地存储已满' : '工作区遇到了一点小问题'}</h2>
             <p style={{
               fontSize: 'var(--fs-sm)', margin: '0 0 18px',
               color: 'var(--muted)',
