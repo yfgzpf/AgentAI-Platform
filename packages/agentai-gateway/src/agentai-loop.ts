@@ -3439,6 +3439,10 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
     // 防止"无工具短回复"被拉回空转 10 轮 (答完还在转圈); 长任务恢复不受影响。
     let shortReplyResumeCount = 0;
     const MAX_SHORT_REPLY_RESUME = 3;
+    // ═══ 2026-10-19 F1: "已跑过工具 + 上下文膨胀 + 模型偷懒" 短回复计数器 ═══
+    // 与 shortReplyResumeCount (纯文本任务) 解耦 — 这条线专门防"说一句话就断"。
+    // 上限 2 次, 避免死循环; 超过 2 次后自然 break (模型确实在收尾)。
+    let _thinReplyResumeCount = 0;
 
     while (true) {
       // 长任务超时降级标志 (在循环体内声明, 跨迭代保留)
@@ -3572,7 +3576,11 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
       }
 
       // 工作记忆摘要: 每 10 轮自动生成, 防止长对话"失忆"
-      if (this.iteration > 0 && this.iteration % 10 === 0) {
+      // ═══ 2026-10-19 C2: 第 5 轮也注入一次 (原只 10/20/30... 轮) ═══
+      // 原 % 10 判据让第 1-9 轮的长任务没有"防失忆锚点", 一旦前段正常、
+      // 后段突然膨胀 → 模型在第 7-8 轮就"没话说了"。提前到第 5 轮,
+      // 给前段留一道锚点; 后续仍按 % 10 节奏, 不影响 token 预算。
+      if (this.iteration > 0 && (this.iteration === 5 || this.iteration % 10 === 0)) {
         try {
           const toolCalls = this.context.appendOnlyLog
             .filter(m => m.role === 'tool')
@@ -6350,6 +6358,20 @@ if (this._capabilityTier !== 'autonomous') {
       }
 
       // 默认: finish_reason='stop' + 无 tool_calls → 自然结束
+      // ═══ 2026-10-19 F1: 短回复 + 无工具 + 有前序工具 + 非闲聊 → 强制再思考 ═══
+      // 场景: 模型在膨胀上下文里"没话说了", 回一句 26 字就 break,
+      // 用户侧表现 = "说一句话就断"。原 :6350 规则 4 只覆盖 `!hasPriorTools`
+      // (纯文本任务), 漏掉"已跑过工具 + 上下文已膨胀 + 模型偷懒"这条线。
+      // 现在: 有前序工具 + 短回复 (< 60 字) + 非闲聊/非信息型/非问候 → 给一句"请继续"
+      // 让模型在下一轮给出实质内容; 上限 2 次, 避免死循环。
+      const isThinReply = hasPriorTools && len > 0 && len < 60
+        && !isChitChat && !isGoodbye && !isGreetingOrIntro && !isInfoRequest && !isNoKeyResponse;
+      if (isThinReply && this.iteration >= 3 && _thinReplyResumeCount < 2) {
+        _thinReplyResumeCount++;
+        this.directives.add('thin_reply',
+          `[SYSTEM] 你刚才的回复只有 ${len} 字, 过短。请基于当前上下文给出实质结论或下一步, 不要只回一句话。如果确实已完成, 直接说"任务已完成"并列出已改动的文件/步骤。`, 'high');
+        continue;
+      }
       break;
     }
 
