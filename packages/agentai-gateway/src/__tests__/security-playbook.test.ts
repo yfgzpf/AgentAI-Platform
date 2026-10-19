@@ -6,6 +6,7 @@ import {
   shouldTripToolDeviation,
 } from '../security-playbook.js';
 import { buildWslScanAdvice } from '../tools.js';
+import { TOOL_GROUPS } from '../tool-groups.js';
 
 describe('security-playbook: 主对话注入的工作流', () => {
   it('五阶段全部在场 (授权→侦察→扫描→验证→报告)', () => {
@@ -63,8 +64,13 @@ describe('security-playbook: 偏离纠正', () => {
     expect(TOOL_DEVIATION_DIRECTIVE).toContain('run_command');
   });
 
-  it('SECURITY_OPS_TOOLS 与 tool-groups 的 security_ops 组一致 (10 个)', () => {
-    expect(SECURITY_OPS_TOOLS.size).toBe(10);
+  it('SECURITY_OPS_TOOLS 与 tool-groups 的 security_ops 组一致', () => {
+    // 2026-10-19: 原来硬编码 expect(size).toBe(10) —— 能力扩充后必然假失败。
+    // 真意图是**两边一致** (集合级契约), 不是"永远 10 个"。改为互为子集双向校验。
+    const group = new Set(TOOL_GROUPS.security_ops ?? []);
+    for (const t of group) expect(SECURITY_OPS_TOOLS.has(t)).toBe(true);
+    for (const t of SECURITY_OPS_TOOLS) expect(group.has(t)).toBe(true);
+    // 核心 10 个渗透工具一个都不能少 (防"精简"时把关键能力删掉)
     for (const t of ['wsl_scan', 'enum_subdomains', 'extract_js_endpoints', 'http_replay',
       'batch_pentest', 'scope_guard', 'grant_scope', 'list_scope', 'report_vulnerability', 'save_evidence']) {
       expect(SECURITY_OPS_TOOLS.has(t)).toBe(true);

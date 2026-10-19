@@ -105,11 +105,19 @@ export const TOOL_GROUPS: Record<string, string[]> = {
         'extract_js_endpoints', // JS 端点提取
         'http_replay',          // Burp Repeater 式请求重放
         'batch_pentest',        // 批量挖洞
+        'pentest_pipeline',     // 四角色串链编排 (planner→recon→exploit→validator)
         'scope_guard',          // 授权范围校验 (AI 动手前必调)
         'grant_scope',          // 授权管理
         'list_scope',           // 查看当前授权范围
         'report_vulnerability', // 漏洞上报落盘
         'save_evidence',        // 证据固化
+        // ── 2026-10-19: 经验/漏洞库三件套 (此前只有四角色子智能体有, 主对话挖洞时"失忆") ──
+        // 事故: searchExperience/formatExperienceBrief 实现完整但**零调用方**, 经验只写不读;
+        //   而主对话的 security_ops 组又没带这 3 个工具 → 主对话挖洞永远从零开始,
+        //   重复踩别人/自己踩过的坑。开工前查一次历史, 收尾记一条, 才能形成复利。
+        'search_pentest_experience', // 召回历史成功/失败手法
+        'search_vulns',               // 召回同类资产历史漏洞
+        'record_pentest_experience',  // 收尾固化本轮经验
     ],
 
     // 音乐控制组

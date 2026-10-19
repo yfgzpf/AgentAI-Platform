@@ -31,6 +31,11 @@ export const SECURITY_PLAYBOOK = `# 🔒 渗透任务工作流 (按阶段推进,
 当前是【安全测试】任务。授权范围与专用工具已就绪, 按 5 个阶段走。
 每个阶段都给了"工具组合", **优先用专用工具**。
 
+## 阶段 0 · 开工先查历史 (别重复劳动, 这一步最省钱)
+search_pentest_experience (按根域/漏洞类型/技术栈) + search_vulns (同类资产历史漏洞)。
+它们已经固化了这个工作区和全局的历史打法 —— 别人踩过的坑、你上次踩过的坑都在里面。
+查完再决定打哪里、走哪条路。没查到就直接进阶段 1。
+
 ## 阶段 1 · 授权确认 (每个新目标只做一次)
 list_scope 看授权范围 → 目标不在内就 grant_scope({target}) → scope_guard 复核。
 未授权目标一律不扫, 这是安全底线。
@@ -47,14 +52,20 @@ list_scope 看授权范围 → 目标不在内就 grant_scope({target}) → scop
 组合: http_replay (改 header/参数重放, 对比登录/未登录响应差异) → browser_navigate (需 JS 渲染时)
 出口: 每个疑似洞都 save_evidence 落盘 (截图或请求响应)。
 
-## 阶段 5 · 报告
-report_vulnerability (evidencePaths 至少一项) → 汇总结论给用户。
-未复现的洞不要写进报告。
+## 阶段 5 · 报告 + 固化经验
+report_vulnerability (evidencePaths 至少一项) → record_pentest_experience (成功/失败都记!)
+未复现的洞不要写进报告。**收尾必须记经验** —— 下一轮任务才能复用这次的教训。
+
+## 深度挖洞: 用串链编排, 别手工 spawn 四次
+pentest_pipeline({ target }) 一键跑 规划→侦察→执行→验证 四角色串链, 每阶段自动继承
+上一阶段的发现。适合"目标明确、要挖得深"的场景。
+小目标/单点验证仍按上面 5 阶段自己走, 更省 token。
 
 ## 工具选择铁律 (违反=跑偏)
 - 要"真扫端口/目录/指纹" → **wsl_scan**, 不要 run_command 手拼 nmap/curl
 - 要"改一个 header/参数看响应差异" → **http_replay**, 不要 run_code 写 fetch 脚本
 - 要"枚举子域/端点" → **enum_subdomains / extract_js_endpoints**, 不要 web_search 猜
+- 要"复用历史打法" → **search_pentest_experience / search_vulns**, 不要凭记忆硬打
 - 只有上述工具都试过且明确不适用的场景, 才允许 run_command 补位
 - 手搓脚本连续失败 2 次 → 立刻换回专用工具, 不要换文件名重试 (probe8.js → probe_pay10.js 这种)
 
@@ -75,6 +86,9 @@ enum_subdomains (子域) / extract_js_endpoints (端点)。先看上面的渗透
 export const SECURITY_OPS_TOOLS: ReadonlySet<string> = new Set([
   'wsl_scan', 'enum_subdomains', 'extract_js_endpoints', 'http_replay', 'batch_pentest',
   'scope_guard', 'grant_scope', 'list_scope', 'report_vulnerability', 'save_evidence',
+  // 2026-10-19: 经验/漏洞库 + 串链编排也算"用了专用工具" ——
+  //   否则 AI 开工先查一下历史经验, 却被判成"偏离"而被纠正, 荒谬。
+  'search_pentest_experience', 'search_vulns', 'record_pentest_experience', 'pentest_pipeline',
 ]);
 
 /**

@@ -7365,6 +7365,10 @@ try {
       'wsl_scan', 'http_replay', 'enum_subdomains', 'extract_js_endpoints',
       'scope_guard', 'grant_scope', 'list_scope',
       'report_vulnerability', 'save_evidence', 'batch_pentest',
+      // 2026-10-19: 经验库三件套 + 四角色串链 —— 不进 priority 会被 MAX_TOOLS 裁掉,
+      //   而"开工前查历史/收尾记经验"是渗透任务形成复利的唯一路径
+      'search_pentest_experience', 'search_vulns', 'record_pentest_experience',
+      'pentest_pipeline',
     ]);
     const priority = filtered.filter(t => PRIORITY_TOOLS.has(getName(t)));
     const rest = filtered.filter(t => !PRIORITY_TOOLS.has(getName(t)));

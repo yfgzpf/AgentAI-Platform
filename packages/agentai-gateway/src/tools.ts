@@ -952,6 +952,14 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       maxTargets: { type: 'number', description: '本轮最多处理几个目标 (默认 10, 上限 30, 防单轮打崩目标/超预算)' },
       depth: { type: 'string', enum: ['quick', 'deep'], description: 'quick=每目标浅扫 (nmap 指纹+最小探针, 默认); deep=全工具重扫 (nuclei 全模板+sqlmap+ffuf)' },
     }, required: [] }, parallelSafe: false, riskLevel: 'critical' },
+  // ═══ 2026-10-19: 串链挖洞 (深度挖洞的一键入口) ═══
+  { name: 'pentest_pipeline', description: '【深度挖洞串链】对**单个授权目标**一键跑 规划→侦察→执行→复核 四角色串链 (pentest_planner → pentest_recon → pentest_exploit → pentest_validator), 每阶段自动继承上一阶段的产出。开工前还会注入本工作区+全局的历史经验/漏洞库, 让 AI 复用已验证手法而不是每次从零开始。\n\n🔑 触发场景: 用户说"深挖这个站/挖深一点/认真测这个目标/串链打这个站"; 或你判断单目标值得投入超过 12 次工具调用时。与 batch_pentest 的区别: batch 是"广度取胜"(扫很多目标, 每个浅扫), 本工具是"深度取胜"(一个目标挖透)。\n\n⚙️ 参数: target (必填, 授权范围内的 host); mode ("quick"=跳过规划阶段, 默认 / "deep"=含规划+更长超时); stageTimeoutMs (可选, 每阶段超时毫秒, 默认 quick 150s / deep 300s); skipPlanner (可选, true=强制跳过规划阶段)。\n\n🔒 安全: 入口先查授权 (不在 scope.json 直接拒绝并提示 grant_scope); 执行与复核阶段各自再过子智能体自己的 scope 闸门; 归属平台档案自动注入 (report 报给对的 SRC)。\n\n📤 返回: 四阶段逐段状态表 (成功/超时/失败 + 耗时 + 摘要) + 漏洞落盘提示。某阶段失败**不中断整链** (上游产出仍可用), 但失败阶段的输出不会被继承下去。',
+    parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '要深挖的目标 host (必须在授权范围内)' },
+      mode: { type: 'string', enum: ['quick', 'deep'], description: 'quick=跳过规划阶段 (默认); deep=完整四阶段 + 更长超时' },
+      stageTimeoutMs: { type: 'number', description: '每阶段超时毫秒 (默认 quick 150000 / deep 300000)' },
+      skipPlanner: { type: 'boolean', description: '强制跳过规划阶段' },
+    }, required: ['target'] }, parallelSafe: false, riskLevel: 'critical' },
   // grant_scope: 授权对话化 — 聊天里说"授权测 X"就自动写 scope.json, 免手写 JSON
   { name: 'grant_scope', description: '【渗透测试授权 (对话式)】把一个目标加进 .agentai/scope.json 授权范围, 让后续 scope_guard / wsl_scan / pentest 子智能体能合法攻击它。免手写 JSON — 聊天里说"授权测 X / 把 X 加进授权范围"就自动调本工具。\n\n🔑 触发场景: 用户要"挖洞/渗透测/安全扫描"某目标, 但 scope.json 还没有这个目标 (scope_guard 返回 in_scope:false / 无授权范围)。\n\n📄 行为: 读现有 scope.json, 把 target 追加进 targets (去重), max_rps 可改。target 支持 host 或 URL (自动抽 host)。\n\n⚠️ 安全: 授权是"允许攻击边界", 加上即表示该目标可被 wsl_scan/pentest 动手。只在用户明确要测某目标时用, 别批量乱加。\n\n💡 示例: grant_scope({ target: "admin.example.com", max_rps: 5 }) → ✅ 已授权 admin.example.com (现共 N 个目标)',
     parameters: { type: 'object', properties: {
@@ -1225,19 +1233,33 @@ generate_poc({
 /** 图表系统提示 (参考 WorkBuddy Visualizer 设计系统) */
 const DIAGRAM_SYSTEM_PROMPT = `你是一个 SVG 图表生成器。生成干净、扁平、无渐变的 SVG 图表。
 
-规则:
-- viewBox="0 0 680 H", width="100%"
-- 无渐变、无阴影、无发光效果
-- 背景透明 (不设rect背景)
-- 颜色: 填充 #F1EFE8 / #E6F1FB / #E1F5EE, 描边 0.5px #B4B2A9 / #85B7EB / #5DCAA5
-- 文字: font-family="sans-serif", 标题 14px bold, 正文 12px, 辅助 11px
-- 连接线: stroke-width 1.5, 箭头用 marker
-- 圆角 rx=8, 内边距 12px
+硬性规则 (违反任何一条都算失败):
+- viewBox="0 0 680 H", width="100%", xmlns 必须有
+- **每个形状必须显式写 fill 和 stroke** — 不写 fill 会回落成黑色
+- **每段文字必须显式写 fill (颜色) 和 font-size**
+- 无渐变、无阴影、无发光、无滤镜
+- 背景透明 (不画 rect 背景)
+- 文字: font-family="sans-serif", 标题 15px bold, 正文 12px, 辅助 11px
+- 连接线: stroke-width 1.5, 箭头用 marker (在 defs 里定义)
+- 圆角 rx=8, 节点内边距 12px
 - 安全区域: x=40 到 x=640, y=40 以上
+
+布局规则 (画之前先心算):
+- **先数节点, 再定画布高度**: H = 起始Y + 节点数 × (节点高 + 间距) + 底部留白 40。
+  宁可画高一点, 绝不让内容超出 viewBox 被裁掉
+- 节点文字防溢出: 中文按 1 字 ≈ 字号px 全宽估算, 英文按 0.6 倍;
+  超宽就截断加"…"或分两行, 不许画出节点边界
+- 节点之间留足间距 (≥20px), 连接线不压文字
+- text 必须带 x/y/text-anchor, 居中文字用 text-anchor="middle"
+
+配色 (扁平, 三组循环):
+- 填充: #F1EFE8 / #E6F1FB / #E1F5EE
+- 描边: #B4B2A9 / #85B7EB / #5DCAA5
+- 文字: #2C2C2A (主) / #5F5E5A (次)
 
 图表类型:
 - flowchart: 流程图, 矩形节点 + 箭头连接, 从上到下或从左到右
-- architecture: 系统架构, 大矩形嵌套小矩形, 层叠布局
+- architecture: 系统架构, 大矩形嵌套小矩形, 层叠布局 (层名按实际内容命名, 不要硬编码"用户层/服务层/数据层")
 - comparison: 对比表, 左右两列或上下两段
 - timeline: 时间线, 横向或纵向, 带节点和标签
 - mindmap: 思维导图, 中心节点 + 放射状子节点`;
@@ -1280,13 +1302,12 @@ function sanitizeSvg(svg: string): string {
  */
 function generateCodeBasedSvg(type: string, title: string, description: string): string | null {
   const w = 720;
-  // 根据内容量动态计算高度
-  const lines = description.split(/[，。；\n、]/).filter(s => s.trim().length > 0);
-  const h = Math.max(300, Math.min(800, 120 + lines.length * 50));
-
   // 提取关键实体/步骤
   const entities = extractEntities(description);
-  
+  // 高度按实体数算 (不是描述行数): 节点多而行数少时, 旧公式画布只有 300px,
+  // 6 个节点需要 530px → 底部被裁掉。新公式留足余量。
+  const h = Math.max(300, Math.min(1200, 170 + Math.max(entities.length, 3) * 95));
+
   switch (type) {
     case 'flowchart':
       return buildFlowchartSvg(w, h, title, description, entities);
@@ -1370,10 +1391,18 @@ function buildFlowchartSvg(w: number, h: number, title: string, desc: string, en
 }
 
 function buildArchitectureSvg(w: number, h: number, title: string, desc: string, entities: string[]): string {
+  // 2026-10-19: 层名从描述中动态提取 (含"层/模块/服务/端"的词),
+  // 不再硬编码"用户层/服务层/数据层" — 描述 CI/CD 流水线也套三层是语义错位
+  const layerNames = entities.filter(e => /层|模块|服务|端|平台/.test(e)).slice(0, 3);
+  const layerNameSet = new Set(layerNames);
+  // 子项排除层名词本身, 避免"接入层"既当层名又当子项重复出现
+  const contentEntities = entities.filter(e => !layerNameSet.has(e));
+  const pool = contentEntities.length > 0 ? contentEntities : entities;
+
   const layers = [
-    { name: '用户层', color: COLORS.nodeA, border: COLORS.nodeABorder, items: entities.slice(0, 2) },
-    { name: '服务层', color: COLORS.nodeB, border: COLORS.nodeBBorder, items: entities.slice(2, 4) },
-    { name: '数据层', color: COLORS.nodeC, border: COLORS.nodeCBorder, items: entities.slice(4, 6) },
+    { name: layerNames[0] || '模块一', color: COLORS.nodeA, border: COLORS.nodeABorder, items: pool.slice(0, 2) },
+    { name: layerNames[1] || '模块二', color: COLORS.nodeB, border: COLORS.nodeBBorder, items: pool.slice(2, 4) },
+    { name: layerNames[2] || '模块三', color: COLORS.nodeC, border: COLORS.nodeCBorder, items: pool.slice(4, 6) },
   ].filter(l => l.items.length > 0 || entities.length === 0);
 
   let svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" xmlns="http://www.w3.org/2000/svg">`;
@@ -1416,8 +1445,17 @@ function buildArchitectureSvg(w: number, h: number, title: string, desc: string,
 }
 
 function buildComparisonSvg(w: number, h: number, title: string, desc: string, entities: string[]): string {
-  const leftItems = entities.filter((_, i) => i % 2 === 0).slice(0, 4);
-  const rightItems = entities.filter((_, i) => i % 2 === 1).slice(0, 4);
+  // 2026-10-19: 优先按 vs/对比 等分隔符切两半 (语义正确);
+  // 切不到才降级奇偶分配 (旧行为, 语义随机)
+  let leftItems: string[], rightItems: string[];
+  const vsParts = desc.split(/\s*(?:vs\.?|VS\.?|对比|相对于|相较)\s*/i).filter(s => s.trim());
+  if (vsParts.length >= 2) {
+    leftItems = extractEntities(vsParts[0]).slice(0, 4);
+    rightItems = extractEntities(vsParts.slice(1).join('，')).slice(0, 4);
+  } else {
+    leftItems = entities.filter((_, i) => i % 2 === 0).slice(0, 4);
+    rightItems = entities.filter((_, i) => i % 2 === 1).slice(0, 4);
+  }
 
   let svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" xmlns="http://www.w3.org/2000/svg">`;
   svg += `<rect width="100%" height="100%" fill="${COLORS.bg}" rx="8"/>`;
@@ -2076,23 +2114,18 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const { description, type = 'flowchart', title } = args;
       if (!description) return { success: false, output: 'description required' };
 
-      // ═══ 策略调整 (2026-08-01): 纯代码生成优先, LLM 作为增强 ═══
-      // 原问题: LLM 调用失败(模型配置/网络等)导致返回占位图
-      // 新策略: 先用纯代码生成可用SVG → 再尝试LLM增强 → 都不行用代码降级
+      // ═══ 策略 (2026-10-19): LLM 生成优先, 纯代码降级 ═══
+      // 原问题 (2026-08-01 版): 纯代码无条件 return, LLM 增强是死代码
+      //   → 图表全是"句子切分 + 固定模板", 架构图硬套三层, 语义错位, 版面溢出
+      // 新策略: 先 LLM 生成高质量 SVG → 失败/超时/无 router 才降级纯代码
 
-      // Step 1: 纯代码生成 SVG (不依赖任何外部服务)
-      const codeGeneratedSvg = generateCodeBasedSvg(type, title || '', description);
-      if (codeGeneratedSvg) {
-        return { success: true, output: `\`\`\`svg\n${codeGeneratedSvg}\n\`\`\`` };
-      }
-
-      // Step 2: 纯代码无法覆盖的复杂场景, 尝试 LLM 增强
+      // Step 1: LLM 生成 (主路径)
       let router = ctx?._router;
       if (!router || typeof router.chat !== 'function') {
         try {
           const { getAgentAIRouter } = await import('./llm-router.js');
           router = getAgentAIRouter();
-        } catch { /* 导入失败 */ }
+        } catch { /* 导入失败, 走降级 */ }
       }
 
       if (router && typeof router.chat === 'function') {
@@ -2110,16 +2143,23 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
 
           const svgMatch = res.content?.match(/<svg[\s\S]*?<\/svg>/i);
           if (svgMatch) {
-            let svg = sanitizeSvg(svgMatch[0]);
-            return { success: true, output: `\`\`\`svg\n${svg}\n\`\`\`` };
+            const svg = sanitizeSvg(svgMatch[0]);
+            return { success: true, output: `\`\`\`svg\n${svg}\n\`\`\``, source: 'llm' };
           }
+          console.warn('[generate_diagram] LLM 未返回有效 SVG, 降级纯代码');
         } catch (llmErr: any) {
-          console.warn(`[generate_diagram] LLM 增强失败, 使用代码降级: ${llmErr.message}`);
+          console.warn(`[generate_diagram] LLM 生成失败, 降级纯代码: ${llmErr.message}`);
         }
       }
 
-      // Step 3: 最终降级 - 代码生成的简化版 (不是占位图, 是真实可用的图表)
-      return { success: true, output: generateFallbackSvg(type, title, description) };
+      // Step 2: 纯代码降级 (LLM 不可用时的兜底, 非主路径)
+      const codeGeneratedSvg = generateCodeBasedSvg(type, title || '', description);
+      if (codeGeneratedSvg) {
+        return { success: true, output: `\`\`\`svg\n${codeGeneratedSvg}\n\`\`\``, source: 'code' };
+      }
+
+      // Step 3: 最终兜底
+      return { success: true, output: `\`\`\`svg\n${generateFallbackSvg(type, title, description)}\n\`\`\``, source: 'fallback' };
     } catch (e: any) {
       return { success: false, output: `Error: ${e.message}` };
     }
@@ -3284,6 +3324,171 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
 
       return { success: true, output: lines.join('\n'), data: { results, totalFound, processed: results.length, total: allTargets.length } };
     } catch (e: any) { return { success: false, output: `batch_pentest 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-19 深度挖洞串链: planner → recon → exploit → validator =====
+  // 为什么需要 (富哥: "给 AI 赋予更多可能"):
+  //   四角色能力早就有了 (roles.ts), spawn_subagent 的描述里也写着"深度挖洞建议按
+  //   planner→recon→exploit→validator 依次 spawn" —— 但**没有任何编排**:
+  //   1) AI 得自己记着 spawn 4 次, 漏一次就断链;
+  //   2) 每阶段是独立上下文, **前一阶段的发现要靠 AI 手工搬运**到下一阶段 task,
+  //      极易丢失 (这正是"AI 不组合工具"的老毛病在编排层的翻版);
+  //   3) 经验库只写不读 (readExperiences/formatExperienceBrief 零调用方), 每次从零开始。
+  // 本工具一次性解决三点: 一键串链 + 阶段继承 + 经验注入。
+  // 安全边界不变: exploit/validator 阶段由子智能体自身的 scope 闸门兜住
+  //   (PENTEST_SCOPE_GATED_ROLES), 且本工具入口先查 isTargetInScope。
+  pentest_pipeline: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const host = String(args.target || '').trim();
+      if (!host) return { success: false, output: '❌ 缺 target。pentest_pipeline({ target: "example.com", mode: "deep" })' };
+
+      // ① 授权闸门 —— **刻意排在 router/registry 检查之前**:
+      //   安全检查永远第一个跑, 不能因为"缺依赖跑不了"就跳过它 (那等于给绕过留后门)。
+      const { isTargetInScope } = await import('./pentest-scope-guard.js');
+      const hostOf = (u: string) => {
+        try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); } catch { return null; }
+      };
+      const h = hostOf(host) || host.toLowerCase();
+      if (!isTargetInScope(ws, h)) {
+        return {
+          success: false,
+          output: `❌ ${host} 不在授权范围内 (或无授权文件)。串链会真的打目标, 必须先授权:\n` +
+            `  1) list_scope 查看当前授权; 2) grant_scope({ target: "${h}" }) 请用户授权; 3) 再重试。\n` +
+            `⛔ 未授权目标一律不串链 —— 这是安全底线, 不是保守。`,
+        };
+      }
+
+      // ② 依赖检查 (授权已确认之后才谈跑不跑得起来)
+      const router = ctx?._router;
+      const registry = ctx?._registry;
+      if (!router || !registry) {
+        return { success: false, output: '串链挖洞需要 router/registry (cron/子智能体上下文缺失), 请在主对话里跑。' };
+      }
+
+      const mode = args.mode === 'deep' ? 'deep' : 'quick';
+      const { runSubagent } = await import('./subagent.js');
+      const { isPentestRole } = await import('./pentest/roles.js');
+
+      // ② 经验库注入 (阶段 0) —— 让"只写不读"的历史真正发挥作用
+      let expBrief = '';
+      try {
+        const { readExperiences, readVulns, formatExperienceBrief } = await import('./pentest/experience.js');
+        const brief = formatExperienceBrief(readExperiences(ws), readVulns(ws));
+        if (brief) expBrief = `\n${brief}\n(以上是本工作区+全局的历史沉淀, **优先复用已验证手法, 别重复踩已知的坑**)\n`;
+      } catch { /* 经验库读失败不阻断主流程 */ }
+
+      // ③ 平台档案注入 (与 batch_pentest 同源: 决定 report 报给哪家)
+      let platCtx = '';
+      try {
+        const sp = await import('./src-platforms.js');
+        const p = sp.findPlatformForTarget(ws, h);
+        if (p) {
+          const denies = (p.deny || []).slice(0, 20);
+          const actions = (p.forbiddenActions || []).slice(0, 12);
+          platCtx = `\n🏛️ 归属平台: 【${p.name}】(platform id: ${p.id}) — report_vulnerability 的 platform 填 "${p.id}"。` +
+            (denies.length ? `\n🚫 该平台禁止的目标(绝对不要打): ${denies.join(', ')}` : '') +
+            (actions.length ? `\n⛔ 该平台禁止的行为: ${actions.join('、')}` : '');
+        } else {
+          platCtx = `\n⚠️ 该目标不属于任何已确认的 SRC 平台 — report_vulnerability 的 platform 留空并说明归属未知。`;
+        }
+      } catch { /* 平台档案不可用 → 不注入 */ }
+
+      // ④ 四阶段串链定义 (quick 模式跳过 planner: 规划器不碰目标, 便宜且能省则省)
+      type Stage = { role: string; label: string; task: string; ms: number };
+      const INHERIT_CAP = 2000; // 每阶段继承上一阶段输出的上限 (防上下文爆炸)
+      const deepMs = Number(args.stageTimeoutMs) || (mode === 'deep' ? 300_000 : 150_000);
+      const stages: Stage[] = [];
+      if (args.skipPlanner !== true) {
+        stages.push({
+          role: 'pentest_planner', label: '规划', ms: Math.round(deepMs * 0.6),
+          task: `为 ${h} 规划本轮渗透路线: 这类资产/业务形态最值得打的入口在哪 (认证/越权/支付/文件上传/弱口令…), ` +
+            `列出 3-6 个具体攻击面并按"预期收益/成功率"排序。不要泛泛而谈"做 SQL 注入测试"这种, ` +
+            `要具体到"登录接口的验证码绕过""订单查询接口的横向越权"。优先结合上面的历史经验。`,
+        });
+      }
+      stages.push(
+        {
+          role: 'pentest_recon', label: '侦察', ms: deepMs,
+          task: `对 ${h} 做资产侦察: 子域/存活探测/端口指纹/JS 端点/接口清单。` +
+            `产出必须是一份**结构化的"可打点清单"**: 每个入口写清 URL + 方法 + 参数 + 是否需登录 + 值得注意的地方。` +
+            `后续阶段完全依赖这份清单, 写不清楚等于没做。`,
+        },
+        {
+          role: 'pentest_exploit', label: '执行', ms: deepMs,
+          task: `按侦察清单逐个做**最小化 PoC**, 优先级按"预期收益"。` +
+            `每个疑似洞: 先 save_evidence 落盘 (请求+响应/截图), 再 report_vulnerability。` +
+            `只报**你真的复现了**的, 拿不准的写进"待确认"别硬报 — 误报会扣分。`,
+        },
+        {
+          role: 'pentest_validator', label: '复核', ms: Math.round(deepMs * 0.8),
+          task: `独立复核上游结论: 逐条检查是否真复现、是否属于该平台可报类型、是否有重复/低危灌水。` +
+            `对**不可复现的直接标 false 并说明原因**, 对真实的高危补齐证据链 (请求/响应/截图都要能自证)。`,
+        },
+      );
+
+      const emitProgress = (i: number, total: number, label: string, note: string) => {
+        try {
+          (ctx as any)?.onProgress?.({
+            event: 'progress',
+            description: `串链挖洞 ${i}/${total} — ${label} · ${note}`,
+          });
+        } catch { /* 心跳失败不影响主流程 */ }
+      };
+
+      const results: Array<{ role: string; label: string; ok: boolean; ms: number; summary: string }> = [];
+      let carried = ''; // 阶段继承: 上一阶段输出的摘要
+
+      for (const [i, st] of stages.entries()) {
+        if (!isPentestRole(st.role)) {
+          results.push({ role: st.role, label: st.label, ok: false, ms: 0, summary: `未知角色 ${st.role}` });
+          continue;
+        }
+        const inherit = carried ? `\n\n━━━ 上一阶段 (${results[results.length - 1]?.label || '上游'}) 的产出 (直接继承, 不要重做) ━━━\n${carried}\n━━━ 继承结束 ━━━\n` : '';
+        emitProgress(i, stages.length, st.label, '开始');
+        const t0 = Date.now();
+        try {
+          const out = await withTimeout(
+            runSubagent(st.role, st.task + inherit + platCtx + expBrief, router, registry,
+              (ctx as any)?.userId || 'default', ws, ctx?.model, ctx?.modelName),
+            st.ms,
+            `${st.label}阶段`,
+          );
+          const text = String(out || '').trim();
+          // 继承摘要: 截断到 INHERIT_CAP, 且优先保留有结构的部分 (清单/URL)
+          carried = text.slice(0, INHERIT_CAP);
+          results.push({ role: st.role, label: st.label, ok: true, ms: Date.now() - t0, summary: text.slice(0, 300) });
+          emitProgress(i + 1, stages.length, st.label, `完成 (${Math.round((Date.now() - t0) / 1000)}s)`);
+        } catch (e: any) {
+          const isTimeout = /超时|timeout/i.test(e?.message || '');
+          // 🔴 阶段失败**不中断整链**: 上游还有价值, 且"跑完 3/4 阶段"好过"全废"。
+          //   但**不继承失败阶段的垃圾输出** —— 否则会污染下游判断。
+          carried = '';
+          results.push({
+            role: st.role, label: st.label, ok: false, ms: Date.now() - t0,
+            summary: isTimeout ? `⏱ 超时 (>${Math.round(st.ms / 1000)}s), 本阶段跳过` : `失败: ${e?.message || e}`,
+          });
+          emitProgress(i + 1, stages.length, st.label, isTimeout ? '超时跳过' : '失败');
+        }
+      }
+
+      const okCount = results.filter(r => r.ok).length;
+      const failed = results.filter(r => !r.ok);
+      const lines = [
+        `🔗 串链挖洞完成 (mode=${mode}, target=${h}): ${okCount}/${results.length} 阶段完成。`,
+        ...results.map(r => `  ${r.ok ? '✅' : '❌'} ${r.label} (${r.role}) ${Math.round(r.ms / 1000)}s — ${r.summary.slice(0, 160).replace(/\n+/g, ' ')}`),
+        '',
+        failed.length
+          ? `⚠️ ${failed.length} 个阶段未完成: ${failed.map(f => f.label).join('/')}。已完成阶段的产出仍有效, 可直接采用。`
+          : '✅ 四阶段全部跑完, 结论已由 validator 独立复核。',
+        '📌 漏洞与证据已由 exploit/validator 阶段直接落盘 (.agentai/vulns/ + .agentai/evidence/)。',
+        '💡 下一步建议: ① 按 bounty-report 出平台能过审的报告 ② 让 AI 用 record_pentest_experience 固化本轮经验 ③ 无命中则 pentest_pipeline({ mode:"deep" }) 重跑或换目标。',
+      ];
+      return {
+        success: true,
+        output: lines.join('\n'),
+        data: { target: h, mode, stages: results, completed: okCount, total: results.length },
+      };
+    } catch (e: any) { return { success: false, output: `pentest_pipeline 失败: ${e.message}` }; }
   },
   // ===== 2026-10-16 第一梯队: 子域枚举 (crt.sh 证书透明日志 + 授权状态分组) =====
   // "赏金 80% 的洞在没人管的子域上" — 授权一个根域后, 用它把资产清单展开。
