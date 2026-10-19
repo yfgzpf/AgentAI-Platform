@@ -7410,7 +7410,7 @@ try {
       // 2026-10-19: 经验库三件套 + 四角色串链 —— 不进 priority 会被 MAX_TOOLS 裁掉,
       //   而"开工前查历史/收尾记经验"是渗透任务形成复利的唯一路径
       'search_pentest_experience', 'search_vulns', 'record_pentest_experience',
-      'pentest_pipeline', 'wsl_exec', 'bounty_report', 'oob_register', 'oob_check',
+      'pentest_pipeline', 'wsl_exec', 'bounty_report', 'oob_register', 'oob_check', 'save_target_state', 'load_target_state', 'classify_response',
     ]);
     const priority = filtered.filter(t => PRIORITY_TOOLS.has(getName(t)));
     const rest = filtered.filter(t => !PRIORITY_TOOLS.has(getName(t)));

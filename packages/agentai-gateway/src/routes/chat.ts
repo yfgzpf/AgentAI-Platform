@@ -285,6 +285,16 @@ const tryActivateIndustry = async (reqBody: any) => {
       });
     }
 
+    // ═══ 2026-10-19 P0 作用域修复 ═══
+    // startTime / xuanjiCaseId 原先声明在下面 try 体内, 但 catch (非流式 500 兜底)
+    // 里要用它们去 completeTreatment 记录失败医案 → 只要发生任何未捕获错误,
+    // catch 会二次抛 "xuanjiCaseId is not defined", 把真实错误彻底掩盖。
+    // 日志里只剩 "X is not defined", 完全无法定位 (这次排查被它挡了很久)。
+    const startTime = Date.now();
+    let xuanjiCaseId: string | undefined;
+    // "继续"上下文注入载体: 原先写 loopOpts.contextInject, 而 loopOpts 全文件从未声明。
+    let injectedCtx = String(contextInject || '');
+
     try {
       // 允许纯图片消息: 有附件时 message 可以为空
       if (!message && (!attachments || attachments.length === 0)) {
@@ -355,8 +365,7 @@ const tryActivateIndustry = async (reqBody: any) => {
         fts5Memory.recordMessage({ sessionId: userId, userId, workspace, role: 'user', content: message }).catch(() => {});
       }
 
-      // 记录任务开始时间
-      const startTime = Date.now();
+      // 记录任务开始时间 (startTime 已提到 try 外 — catch 里记录失败医案要用)
       
       // ═══════════════════════════════════════════════════════════
       // [成本控制] PulseFlow - 初始化成本追踪
@@ -375,7 +384,7 @@ const tryActivateIndustry = async (reqBody: any) => {
       // [诊断优先] PulseFlow Xuanji - 四诊合参，辨证论治
       // ═══════════════════════════════════════════════════════════
       let diagnosisResult: any;
-      let xuanjiCaseId: string | undefined;
+      // xuanjiCaseId 已提到 try 外 (catch 兜底要用)
       
       if (FEATURE_FLAGS.enableDiagnosisPipeline && !auto) {
         try {
@@ -471,10 +480,23 @@ const tryActivateIndustry = async (reqBody: any) => {
               });
             }
             // 流式模式下发送澄清事件 + return（防止同时调 LLM）
-            sendEvent('clarification_needed', {
-              questions: diagnosisResult.clarificationQuestions,
-              reason: diagnosisResult.reason,
-            });
+            // 2026-10-19 P0 修复: 原先在这里调 sendEvent, 但它声明在下方 if(stream) 块内
+            // (块作用域) → 这里引用必然 ReferenceError, 追问卡片永远发不出去, 请求直接 500。
+            // 而且此时 SSE 响应头还没设, 即使能调用也只会写出无法解析的裸数据。
+            // 正确做法: 先补 SSE 头, 再写事件, 由下面的 res.end() 收尾。
+            if (stream === true) {
+              try {
+                res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+                res.setHeader('Cache-Control', 'no-cache, no-transform');
+                res.setHeader('Connection', 'keep-alive');
+                res.setHeader('X-Accel-Buffering', 'no');
+                res.flushHeaders?.();
+                res.write(`event: clarification_needed\ndata: ${JSON.stringify({
+                  questions: diagnosisResult.clarificationQuestions,
+                  reason: diagnosisResult.reason,
+                })}\n\n`);
+              } catch { /* 连接可能已断, 不阻断收尾 */ }
+            }
             // 安全守护: H1 修复 — 真阻塞，避免用户看到追问卡片但 AI 自行作答
             if (stream && res.writableEnded === false) {
               try { res.end(); } catch {}
@@ -870,13 +892,13 @@ const sendEvent = (event: string, data: any) => {
                     if (lastAssistantMsgs) ctxLines.push(`\n**AI 最近 3 次回复** (开头 300 字符):\n${lastAssistantMsgs}`);
                     if (toolSummary.length > 0) ctxLines.push(`\n**上轮使用过的工具**: ${toolSummary.join(', ')}`);
                     ctxLines.push(`\n💡 用户说"继续", 请直接基于上文继续, 不要重新探索。`);
-                    loopOpts.contextInject = (loopOpts.contextInject || '') + '\n\n' + ctxLines.join('\n');
+                    injectedCtx = (injectedCtx || '') + '\n\n' + ctxLines.join('\n');
                   } else {
                     // 普通对话 — 只注入 1 行简短摘要
                     const lastUser = lastMsgs.filter((m:any) => m.role === 'user').pop();
                     const lastUserText = typeof lastUser?.content === 'string' ? lastUser.content.slice(0, 80) : '';
                     if (lastUserText) {
-                      loopOpts.contextInject = (loopOpts.contextInject || '') + 
+                      injectedCtx = (injectedCtx || '') + 
                         `\n[上次摘要] 用户上次问了: "${lastUserText}"。当前是新任务, 除非用户提到"继续", 否则不要回顾上次。`;
                     }
                   }
@@ -1065,6 +1087,16 @@ const sendEvent = (event: string, data: any) => {
 
         // ====== 统一注入附件到上下文 (所有执行路径: loop.run / MasterController subtasks) ======
         let runMessage: string | { content: any[] } = message;
+        // 2026-10-19 P0: "继续"上下文注入真正落地。
+        // 原先写进 loopOpts.contextInject (未声明 → ReferenceError), 而且 agentai-loop
+        // 里根本没有 contextInject 的消费点 —— 传了也没人读, 整条功能是死的。
+        // 现在直接拼到本轮消息尾部 (8K 上限, 防止把上下文撑爆)。
+        if (injectedCtx && injectedCtx.trim()) {
+          const extraCtx = injectedCtx.trim().slice(0, 8000);
+          runMessage = typeof runMessage === 'string'
+            ? `${runMessage}\n\n${extraCtx}`
+            : { content: [...(runMessage.content || []), { type: 'text', text: extraCtx }] };
+        }
         if (attachments && Array.isArray(attachments) && attachments.length > 0) {
           const attachmentParts: string[] = [];
           const imageBlocks: any[] = [];

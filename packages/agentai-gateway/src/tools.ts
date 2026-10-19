@@ -370,7 +370,7 @@ function _planFile(ws: string): string {
 
 /** 读活跃计划：先看内存（快），没有则从磁盘恢复（跨重启） */
 export function getActivePlan(workspace?: string): any {
-  const key = workspace || ws();
+  const key = workspace || getWs();
   let p = _active_plans.get(key);
   if (p) return p;
   try {
@@ -388,7 +388,7 @@ export function getActivePlan(workspace?: string): any {
 
 /** 写活跃计划：内存 + 磁盘双写 */
 export function setActivePlan(plan: any, workspace?: string): void {
-  const key = workspace || ws();
+  const key = workspace || getWs();
   _active_plans.set(key, plan);
   try {
     const f = _planFile(key);
@@ -401,7 +401,7 @@ export function setActivePlan(plan: any, workspace?: string): void {
 
 /** 清除活跃计划（全部完成时调用） */
 export function clearActivePlan(workspace?: string): void {
-  const key = workspace || ws();
+  const key = workspace || getWs();
   _active_plans.delete(key);
   try {
     const f = _planFile(key);
@@ -528,7 +528,9 @@ function wm(): WorkspaceManager {
  * 优先读request-scope.ts 的 ALS 请求级上下文；
  * 不在请求上下文中（后台任务/启动钩子/单测）→ 回退全局单例。
  *
- * 用法: 把 handler 里的 `ws()` 全部换成 `ws()`。
+ * 用法: 把 handler 里的 `ws()` 全部换成 `getWs()`。
+ * (2026-10-19 修正: 之前这里的替换目标被误写成 `ws()` 自己, 导致 11 处调用点
+ *  永远引用一个不存在的函数 → 计划/上下文/子智能体相关路径一调用就 ReferenceError。)
  *
  * 为什么不逐个给 handler 加 ctx 参数:
  *   实测 38 个 handler 引用 projectDir，其中 20 个签名不含 ctx
@@ -688,7 +690,7 @@ const pendingPreviews = new Map<string, { edits: any[]; createdAt: number; works
 /** 解析工具操作路径: 相对于项目目录, 但允许安全的绝对路径 */
 const resolvePath = (p: string, wsParam?: string) => {
   // 2026-10-06: base 必须是**请求级**工作区（此前读全局单例 → 跨请求串扰）
-  const base = wsParam || ws();
+  const base = wsParam || getWs();
   if (!p) return base;
   if (path.isAbsolute(p)) {
     // 先尝试项目目录解析
@@ -997,6 +999,26 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       techStack: { type: 'array', items: { type: 'string' }, description: '技术栈指纹 (可选)' },
       scope: { type: 'string', enum: ['workspace', 'global'], description: '写到哪里: workspace=本项目(默认); global=全局库(所有项目共用, 适合通用教训)' },
     }, required: ['kind', 'target', 'lesson'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'save_target_state', description: '【长周期目标状态记忆】记录某目标"扫到哪了": 已发现子域/已测端点/已排除项/当前攻击面/WAF遭遇/已确认发现。多天 engagement 跨会话继承进度, 避免重复劳动。合并写(去重, 不覆盖未传字段)。每次阶段收尾或发现新资产时调。',
+    parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '目标 host 或根域' },
+      discoveredSubdomains: { type: 'array', items: { type: 'string' }, description: '本次新发现的子域' },
+      testedEndpoints: { type: 'array', items: { type: 'string' }, description: '本次已测过的端点 (URL+方法)' },
+      excludedItems: { type: 'array', items: { type: 'string' }, description: '已确认无风险/明确排除的项' },
+      attackSurface: { type: 'array', items: { type: 'string' }, description: '当前攻击面/待打点/存疑入口' },
+      findings: { type: 'array', items: { type: 'string' }, description: '已确认发现 (标题级)' },
+      wafEncounters: { type: 'array', items: { type: 'string' }, description: 'WAF/限流遭遇 (每个字符串一条 note, 自动打时间戳)' },
+    }, required: ['target'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'load_target_state', description: '【长周期目标状态记忆·读回】读某目标的历史进度快照 (工作区优先, 回退全局)。pentest_pipeline 开工自动注入; 也可手动调, 确认"上次扫到哪了"再决定从哪继续。无历史返回"从零开始"。',
+    parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '目标 host 或根域' },
+    }, required: ['target'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'classify_response', description: '【响应智能识别·WAF/限流/验证码】把一次 HTTP 响应 (status/headers/body) 送来分析, 判断是否被 WAF 拦截/限流/验证码/需认证, 并给可行动建议 (退避/轮换UA/加XFF/走browser)。http_replay 已自动附加此分析; 本工具用于分析非 http_replay 拿到的响应 (如 browser 截到的/手工 fetch 的)。',
+    parameters: { type: 'object', properties: {
+      status: { type: 'number', description: 'HTTP 状态码 (如 403/429/503)' },
+      headers: { type: 'object', description: '响应头 (键值对)' },
+      body: { type: 'string', description: '响应体文本 (或对象会被 JSON 化)' },
+    }, required: ['status'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'search_vulns', description: '【漏洞库召回】查本工作区历史漏洞 (vulns.jsonl), 支持按目标根域/漏洞类型/等级过滤。打新目标前先查"同类资产以前出过什么洞", 避免重复劳动。',
     parameters: { type: 'object', properties: {
       target: { type: 'string', description: '目标 host 或根域 (查 u51.com 能召回 api.u51.com 等子域)' },
@@ -2544,7 +2566,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       // 作用: 标记"本会话已读过此文件"，供 agentai-loop 在历史裁剪 / 压缩时注入
       // "已读文件清单"，让 AI 不再重复 read_file 同一文件
       // （重复读是"AI 从头开始"的表现之一：它不记得自己读过，于是重读）。
-      const readCount = markFileRead(ctx?.workspace || ws(), resolved);
+      const readCount = markFileRead(ctx?.workspace || getWs(), resolved);
       const hint = readCount > 1
         ? `\n\n[已读标记] 本会话此前已读取过此文件（本次为第 ${readCount} 次）。若内容无变化，无需重复读取。`
         : '';
@@ -2675,7 +2697,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       //     → undo_edit({file_path:"../../.ssh/authorized_keys"}) 可写到工作区外
       //  3) 备份文件名用 basename 后startsWith 匹配，若目录里存在同名备份
       //     （如项目曾copy 过该文件）就能把内容写进任意同名目标路径
-      const ws = ctx?.workspace || ws();
+      const ws = ctx?.workspace || getWs();
       const backupDir = path.join(ws, '.agentai', 'backups');
       const fileName = path.basename(args.file_path);
       if (!fs.existsSync(backupDir)) return { success: false, output: '无备份目录' };
@@ -2759,6 +2781,11 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   // DEF-09 修复: node -e "..." 在 Windows 下被 execFile 当作文件名 → ENOENT
   // 改为: node -e 脚本写入临时 .js 文件再执行, 绕开引号转义和命令截断
   run_command: async (args, ctx?) => {
+    // 2026-10-19 P0 作用域修复: command 原先在 try 内声明, 但 catch 里要拿它拼失败诊断
+    // (buildRunCommandFailureHint(e, command)) → 只要命令失败, catch 就二次抛
+    // "command is not defined", 真实失败原因 (ENOENT / 权限 / 引号破坏) 全部丢失。
+    // 这是"AI 拿到莫名错误后反复重试同一条命令"的成因之一。
+    const command = String(args.command || '');
     try {
       const { execFile, spawn } = await import('child_process');
       const os = await import('os');
@@ -2766,7 +2793,6 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const fsMod = await import('fs');
       const cwd = args.cwd || ctx?.workspace || process.cwd();
       const timeout = Math.min(args.timeout_ms || 30000, 120_000);
-      const command = String(args.command || '');
       if (!command.trim()) return { success: false, output: '命令为空' };
       const danger = DANGEROUS_CMD_PATTERNS.find((p) => p.pattern.test(command));
       if (danger) {
@@ -3021,9 +3047,51 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const lines = [`📚 历史漏洞 ${vulns.length} 条:`];
       for (const v of vulns) lines.push(`- ${v.target} [${v.severity || '?'}/${v.vulnType || '?'}] ${v.title}${v.status ? ` (${v.status})` : ''}`);
       return { success: true, output: lines.join('\n'), data: { vulns } };
-    } catch (e: any) {
-      return { success: true, output: `📭 漏洞库读取失败 (${e.message}) —— 不影响继续。` };
-    }
+      } catch (e: any) {
+        return { success: true, output: `📭 漏洞库读取失败 (${e.message}) —— 不影响继续。` };
+      }
+  },
+  // ===== 2026-10-19 长周期目标状态记忆 (缺口 ④ L3 DAG): 跨会话继承进度 =====
+  save_target_state: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { saveTargetState, formatTargetStateBrief } = await import('./pentest/target-state.js');
+      const toArr = (x: any): string[] =>
+        Array.isArray(x) ? x.map(String).filter(Boolean)
+          : (typeof x === 'string' && x ? x.split(/[,\n]/).map(s => s.trim()).filter(Boolean) : []);
+      const merged = saveTargetState(ws, String(args.target || ''), {
+        discoveredSubdomains: toArr(args.discoveredSubdomains),
+        testedEndpoints: toArr(args.testedEndpoints),
+        excludedItems: toArr(args.excludedItems),
+        attackSurface: toArr(args.attackSurface),
+        findings: toArr(args.findings),
+        wafEncounters: toArr(args.wafEncounters).map((n: string) => ({ ts: Date.now(), kind: 'manual', note: n })),
+      }, (ctx as any)?.userId);
+      return { success: true, output: `✅ 目标状态已更新: ${args.target}\n${formatTargetStateBrief(merged)}`, data: merged };
+    } catch (e: any) { return { success: false, output: `save_target_state 失败: ${e.message}` }; }
+  },
+  load_target_state: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { loadTargetState, formatTargetStateBrief } = await import('./pentest/target-state.js');
+      const st = loadTargetState(ws, String(args.target || ''));
+      if (!st) return { success: true, output: `📭 ${args.target} 暂无历史状态 (新目标, 从零开始即可)。`, data: null };
+      return { success: true, output: formatTargetStateBrief(st) || `(${args.target} 状态为空)`, data: st };
+    } catch (e: any) { return { success: false, output: `load_target_state 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-19 目标侧 WAF/限流智能识别 (缺口 ⑥): 任意响应送来分析 =====
+  classify_response: async (args, ctx) => {
+    try {
+      const { classifyResponse, formatAnalysis } = await import('./pentest/response-classifier.js');
+      const status = Number(args.status) || 0;
+      const headers: Record<string, string> = {};
+      if (args.headers && typeof args.headers === 'object') {
+        for (const [k, v] of Object.entries(args.headers as Record<string, any>)) headers[String(k)] = String(v);
+      }
+      const body = typeof args.body === 'string' ? args.body : (args.body ? JSON.stringify(args.body) : '');
+      const a = classifyResponse(status, headers, body);
+      return { success: true, output: formatAnalysis(a), data: a };
+    } catch (e: any) { return { success: false, output: `classify_response 失败: ${e.message}` }; }
   },
   report_vulnerability: async (args, ctx) => {
     try {
@@ -3566,6 +3634,14 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         if (brief) expBrief = `\n${brief}\n(以上是本工作区+全局的历史沉淀, **优先复用已验证手法, 别重复踩已知的坑**)\n`;
       } catch { /* 经验库读失败不阻断主流程 */ }
 
+      // ②-bis 目标状态快照注入 (缺口 ④: 跨会话继承进度, 不重复劳动)
+      let stateBrief = '';
+      try {
+        const { loadTargetState, formatTargetStateBrief } = await import('./pentest/target-state.js');
+        const sb = formatTargetStateBrief(loadTargetState(ws, h));
+        if (sb) stateBrief = `\n${sb}\n`;
+      } catch { /* 状态读失败不阻断主流程 */ }
+
       // ③ 平台档案注入 (与 batch_pentest 同源: 决定 report 报给哪家)
       let platCtx = '';
       try {
@@ -3637,7 +3713,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         const t0 = Date.now();
         try {
           const out = await withTimeout(
-            runSubagent(st.role, st.task + inherit + platCtx + expBrief, router, registry,
+            runSubagent(st.role, st.task + inherit + platCtx + expBrief + stateBrief, router, registry,
               (ctx as any)?.userId || 'default', ws, ctx?.model, ctx?.modelName),
             st.ms,
             `${st.label}阶段`,
@@ -3888,6 +3964,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       // ③ 限频 (与 wsl_scan 同一桶)
       await pentestRateLimit(ws, Number(args.max_rps) || 5);
       const { httpRequestRaw } = await import('./http-replay.js');
+      const { classifyResponse, formatAnalysis } = await import('./pentest/response-classifier.js');
       const t0 = Date.now();
       const resp = await httpRequestRaw(method, u, headers, body, { follow, timeoutMs, maxRedirects: 3, isTargetInScope: (h: string) => isTargetInScope(ws, h) });
       const durationMs = Date.now() - t0;
@@ -3901,10 +3978,11 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         `\n响应体 (${resp.body.length} 字符):\n${bodyTxt}`,
         capped.note || '',
       ].filter(Boolean).join('\n');
+      const analysis = classifyResponse(resp.status, resp.headers || {}, bodyTxt);
       return {
         success: resp.status > 0,
-        output: lines,
-        data: { status: resp.status, headers: resp.headers, body: capped.body.slice(0, 6000), redirects: resp.redirects, durationMs, target: u.hostname },
+        output: lines + '\n\n' + formatAnalysis(analysis),
+        data: { status: resp.status, headers: resp.headers, body: capped.body.slice(0, 6000), redirects: resp.redirects, durationMs, target: u.hostname, analysis },
       };
     } catch (e: any) { return { success: false, output: `http_replay 失败: ${e.message}` }; }
   },
@@ -4876,7 +4954,7 @@ ${violations.map(v => `• ${v}`).join('\n')}
               `[${agent.persona}视角] ${task}\n请以${agent.persona}的身份分析并给出方案。`,
               router, registry,
               (ctx as any)?.userId || 'default',
-              ws(),
+              getWs(),
               // 2026-10-12: 子智能体继承父模型 (provider + 精确模型名), 不再默认跑免费档
               ctx?.model,
               ctx?.modelName,
@@ -4923,7 +5001,7 @@ ${violations.map(v => `• ${v}`).join('\n')}
 
       const { runSubagent } = await import('./subagent.js');
       // 2026-10-12: 传父模型 (provider + 精确模型名) → 子智能体用父模型自身
-      const result = await runSubagent(type, task, router, registry, (ctx as any)?.userId || 'default', ws(), ctx?.model, ctx?.modelName);
+      const result = await runSubagent(type, task, router, registry, (ctx as any)?.userId || 'default', getWs(), ctx?.model, ctx?.modelName);
       return { success: true, output: result || '(subagent returned empty)' };
     } catch (e: any) { return { success: false, output: `Subagent error: ${e.message}` }; }
   },
@@ -4937,7 +5015,7 @@ ${violations.map(v => `• ${v}`).join('\n')}
       const result = await runTeam(
         teamId, task, router, registry,
         (ctx as any)?.userId || 'default',
-        ws(),
+        getWs(),
         // 2026-10-12: 团队成员同样继承父模型 (provider + 精确模型名)
         ctx?.model,
         ctx?.modelName,
@@ -5278,7 +5356,7 @@ const ws = getWs();
         ]);
       };
 
-      const projectDir = ws();
+      const projectDir = getWs();
       const userId = (ctx as any)?.userId || 'default';
       const [securityR, qualityR, testR] = await Promise.allSettled([
         wrapWithTimeout(
@@ -5335,7 +5413,7 @@ const ws = getWs();
         type,
         mode,
         workspace: args.workspace,
-        cwd: args.cwd || ws(),
+        cwd: args.cwd || getWs(),
         force: false,  // npm_install 默认不强制, 让检测逻辑工作
         chinaMirror: args.chinaMirror !== false,
         timeout: args.timeout || 120_000,
@@ -5353,7 +5431,7 @@ const ws = getWs();
         return { success: false, output: '❌ package 或 packages 参数必填' };
       }
       const type: 'npm' | 'pip' = args.manager === 'pip' ? 'pip' : 'npm';
-      const cwd = args.cwd || ws();
+      const cwd = args.cwd || getWs();
 
       // 先逐个检查
       const packages = Array.isArray(pkgInput) ? pkgInput : [pkgInput];
@@ -5373,8 +5451,10 @@ const ws = getWs();
         let output = `✅ 全部依赖已就绪, 无需安装\n已装: ${alreadyInstalled.join(', ')}`;
         // 可选: importCheck 验证
         if (args.importCheck) {
+          // 2026-10-19 P0: checkName 原先在 try 内声明, catch 里要用 → 验证失败时
+          // 二次抛 "checkName is not defined", 把真实 import 错误盖掉。
+          const checkName: string = String(args.importCheck);
           try {
-            const checkName = args.importCheck;
             if (type === 'pip') {
               const { execSync } = await import('child_process');
               execSync(`python -c "import ${checkName.replace(/-/g, '_')}"`, { stdio: 'pipe', timeout: 5000 });
@@ -6885,7 +6965,7 @@ Write-Output 'OK'`;
         console.log(`[visual-gui] step ${steps}/${max_steps}`);
 
         // 1. 截图
-        const screenshotResult = await desktop_automate({ action: 'screenshot' }, ctx);
+        const screenshotResult = await EXTRA_HANDLERS.desktop_automate({ action: 'screenshot' }, ctx);
         if (!screenshotResult.success) {
           return { success: false, output: `截图失败: ${screenshotResult.output}` };
         }
@@ -6961,19 +7041,19 @@ Write-Output 'OK'`;
               // 执行操作
               let actionOutput = '';
               if (analysis.action === 'click') {
-                actionOutput = await desktop_automate({
+                actionOutput = await EXTRA_HANDLERS.desktop_automate({
                   action: 'mouse_click', x: analysis.x, y: analysis.y,
                 }, ctx);
               } else if (analysis.action === 'type') {
-                actionOutput = await desktop_automate({
+                actionOutput = await EXTRA_HANDLERS.desktop_automate({
                   action: 'key_type', text: analysis.text,
                 }, ctx);
               } else if (analysis.action === 'press') {
-                actionOutput = await desktop_automate({
+                actionOutput = await EXTRA_HANDLERS.desktop_automate({
                   action: 'key_press', key: analysis.key,
                 }, ctx);
               } else if (analysis.action === 'scroll') {
-                actionOutput = await desktop_automate({
+                actionOutput = await EXTRA_HANDLERS.desktop_automate({
                   action: 'scroll', amount: analysis.amount || 3, direction: analysis.direction || 'down',
                 }, ctx);
               }

@@ -834,8 +834,11 @@ httpServer.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
     logCrash(`port ${PORT} in use after kill attempt (retry ${eaddrRetryCount + 1}/${EADDR_MAX_RETRY})`);
     // 精确清理: 只杀占用本端口的进程, 绝不 taskkill /IM node.exe (会误杀守护进程/dev.mjs)
+    // 2026-10-19 P0 作用域修复: execSync 原先在下面 try 内解构, 但重试判定的 IIFE (L862)
+    // 在该 try 块之外 → 报 "execSync is not defined", 被内层 catch 吞成 hasPid=false,
+    // 于是端口真被占用时也走"快速重试", 最终提前 exit(1)。提到 try 外。
+    const { execSync } = require('child_process');
     try {
-      const { execSync } = require('child_process');
       const out = execSync(`netstat -ano | findstr :${PORT}`, { encoding: 'utf8', timeout: 5000 });
       const seen = new Set<string>();
       for (const line of out.trim().split('\n').filter(Boolean)) {

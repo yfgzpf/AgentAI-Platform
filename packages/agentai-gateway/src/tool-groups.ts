@@ -122,6 +122,9 @@ export const TOOL_GROUPS: Record<string, string[]> = {
         'bounty_report',              // engagement 级报告聚合 (断头路的终点)
         'oob_register',              // OOB 盲测回连注册
         'oob_check',                 // OOB 回连查询 (盲测确认)
+        'save_target_state',        // 长周期目标状态记忆 (跨会话继承进度)
+        'load_target_state',        // 目标状态读回
+        'classify_response',        // 响应识别 WAF/限流/验证码
     ],
 
     // 音乐控制组
