@@ -1490,8 +1490,8 @@ describe('上游临时繁忙退避重试 (2026-10-17)', () => {
     const chunk = LOOP.slice(idx, idx + 5000);
     expect(chunk).toMatch(/const authFailed = \/401\|403/);
     expect(chunk).toMatch(/const transient = !authFailed &&/);
-    // 鉴权失败要说清"等也没用"
-    expect(chunk).toMatch(/API Key 问题, 等也没用/);
+    // 鉴权失败要说清"等也没用" (2026-10-19 f86288c 增强: 附带分组权限语境)
+    expect(chunk).toMatch(/API Key \/ 分组权限问题, 等也没用/);
   });
 
   it('C3: 临时性失败走退避重试而不是直接 return', () => {

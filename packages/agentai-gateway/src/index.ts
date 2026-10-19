@@ -18,6 +18,8 @@ import { scanProjectSkills, scanUserSkills, scanProjectLocalSkills } from './ski
 import { EXTRA_TOOLS, EXTRA_HANDLERS } from './tools.js';
 import type { ToolDecl } from './types/tool-schema.js';
 import { startSkillWatcher } from './skills/watcher.js';
+// [2026-10-19 P0] 环境变量优先级合并: GUI 保存的密钥类变量 (.env) 重启后以 .env 为准
+import { mergeEnvValue } from './env-merge.js';
 import { startEvolutionCleanupLoop } from './evolution.js';
 import { frameworkSwitcher } from './frameworks/switcher.js';
 import { AutoSkillDiscovery, buildSkillsIndexXml } from './auto-skill-discovery.js';
@@ -64,8 +66,16 @@ function loadEnv() {
       const text = fs.readFileSync(p, 'utf-8');
       for (const line of text.split('\n')) {
         const m = line.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
-        if (m && m[1] && !process.env[m[1]] && m[2] !== undefined) {
-          process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+        if (m && m[1] && m[2] !== undefined) {
+          const name = m[1];
+          const value = m[2].replace(/^['"]|['"]$/g, '');
+          // 2026-10-19 P0: GUI 保存的密钥 (.env) 重启后必须覆盖 shell 环境变量,
+          // 否则前端改密钥、重启又回退旧密钥。非密钥变量仍保持 shell 优先。
+          const { value: resolved, overridden } = mergeEnvValue(name, value, process.env[name]);
+          if (overridden) {
+            console.warn(`[env] ⚠️ ${name}: 运行时环境变量与 .env 不一致, 已用 .env (GUI 保存值) 覆盖 shell 环境变量`);
+          }
+          process.env[name] = resolved;
         }
       }
       console.log(`[env] loaded from ${p}`);
