@@ -3572,6 +3572,15 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
             PER_TARGET_TIMEOUT_MS,
             host,
           );
+          // ═══ 2026-10-19 P0: 空产出必须判失败 ═══
+          // runSubagent 在"模型熔断 / 400 / 空回复"时不抛错, 只返回空串。
+          // 旧代码记成 ok:true + "未命中", 于是:
+          //   ① AI 以为该目标"扫过了没洞", 不会换策略, 反复重跑同一批;
+          //   ② 课程循环用 `results.some(r => r.ok)` 判定 verified, 把"模型挂了"
+          //      沉淀成"已验证路线", 污染下轮焦点。
+          if (!String(out ?? '').trim()) {
+            throw new Error('子智能体无产出 (模型返回空: 熔断/400/超时), 不是该目标没洞');
+          }
           // 子智能体输出里统计"report_vulnerability 已落盘"次数作为命中数
           const found = (String(out).match(/report_vulnerability/gi) || []).length > 0
             ? (String(out).match(/已落盘|verified/i) || []).length : 0;
@@ -3623,7 +3632,18 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         }
       } catch { /* 课程循环失败不影响 batch 主结果 */ }
 
-      return { success: true, output: lines.join('\n'), data: { results, totalFound, processed: results.length, total: allTargets.length } };
+      // 2026-10-19 P0: 全军覆没不能报 success (否则前端绿卡 + AI 以为扫过了)
+      const noneOk = results.every(r => !r.ok);
+      const allFailedHint = noneOk
+        ? `\n\n🛑 ${results.length} 个目标全部失败 —— 先看失败原因: 若都是"无产出/超时", `
+          + `那是**模型层问题**(熔断/400/密钥), 跟目标没关系; 换模型或等恢复再重跑, `
+          + `重复调用只会同样失败。`
+        : '';
+      return {
+        success: !noneOk,
+        output: lines.join('\n') + allFailedHint,
+        data: { results, totalFound, processed: results.length, total: allTargets.length },
+      };
     } catch (e: any) { return { success: false, output: `batch_pentest 失败: ${e.message}` }; }
   },
   // ===== 2026-10-19 深度挖洞串链: planner → recon → exploit → validator =====
@@ -3763,6 +3783,13 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
             `${st.label}阶段`,
           );
           const text = String(out || '').trim();
+          // ═══ 2026-10-19 P0: 空产出必须判失败 ═══
+          // runSubagent 在"模型熔断 / 400 / 空回复"时**不抛错**, 只是返回空串。
+          // 旧代码把它记成 ok:true + "完成", 于是 AI 看到"阶段完成"却什么都没拿到,
+          // 只能反复重跑同一条链 —— 这就是"batch/pipeline 失败好多次"的主因。
+          if (!text) {
+            throw new Error('阶段无产出 (模型返回空: 可能被熔断/400/超时), 不是目标问题');
+          }
           // 继承摘要: 截断到 INHERIT_CAP, 且优先保留有结构的部分 (清单/URL)
           carried = text.slice(0, INHERIT_CAP);
           results.push({ role: st.role, label: st.label, ok: true, ms: Date.now() - t0, summary: text.slice(0, 300) });
@@ -3792,9 +3819,19 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         '📌 漏洞与证据已由 exploit/validator 阶段直接落盘 (.agentai/vulns/ + .agentai/evidence/)。',
         '💡 下一步建议: ① 按 bounty-report 出平台能过审的报告 ② 让 AI 用 record_pentest_experience 固化本轮经验 ③ 无命中则 pentest_pipeline({ mode:"deep" }) 重跑或换目标。',
       ];
+      // ═══ 2026-10-19 P0: 全阶段失败不能报 success ═══
+      // 旧实现恒返回 success:true → 前端工具卡片是绿色 ✅, AI 也以为执行成功 →
+      // 于是原地反复调用同一条链 (实测日志里 batch/pipeline 连着失败十几次)。
+      // 真正的自检: 0 个阶段完成时, 99% 是模型层挂了, 跟目标没关系。
+      const allFailed = okCount === 0;
+      const failHint = allFailed
+        ? `\n\n🛑 ${results.length} 个阶段全部无产出 —— 这**不是目标的问题**, 而是模型层挂了 `
+          + `(provider 熔断 / HTTP 400 / 密钥)。先随便问一句话确认当前模型能回，`
+          + `恢复后再重跑；否则调用多少次结果都一样，只会白白烧钱。`
+        : '';
       return {
-        success: true,
-        output: lines.join('\n'),
+        success: !allFailed,
+        output: lines.join('\n') + failHint,
         data: { target: h, mode, stages: results, completed: okCount, total: results.length },
       };
     } catch (e: any) { return { success: false, output: `pentest_pipeline 失败: ${e.message}` }; }

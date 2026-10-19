@@ -99,6 +99,50 @@ export function resolveRetiredModelAlias(providerId: string, name: string): stri
 }
 
 /**
+ * 深度清洗即将 JSON 序列化的 payload: 把"孤立代理项"修成 U+FFFD。
+ * =====================================================================
+ * 事故 (富哥 2026-10-19):
+ *   deepseek 突然全部 400:
+ *   `Failed to parse the request body as JSON: messages[13].content:
+ *    unexpected end of hex escape at line 1 column 129999`
+ *   "刚才都好好的, 突然就接不进去了" —— 这不是模型挂了, 是**我们发的 body 坏了**。
+ *
+ * 根因: JS 字符串里可以存在"孤立代理项"(lone surrogate) —— 一个 emoji (占 2 个
+ *   UTF-16 码元) 被 `slice()` 从中间切开就会产生。`JSON.stringify` 会把它转义成
+ *   `"\ud83d"` (ES2019 well-formed 行为), 语法上是合法 JSON, 但**语义上是非法
+ *   Unicode**; 上游 serde 系解析器读到 `\u` 后面凑不满 4 位十六进制 (或者只有
+ *   高位没有低位) → `unexpected end of hex escape`。
+ *
+ * 为什么"突然": 只有当天某条工具结果/摘要**恰好**被截断在 emoji 中间才会中招,
+ *   而且一旦中招, 这份 payload 会随 appendOnlyLog 一直重发 → 重试 3 次全废 →
+ *   provider 熔断 → 整个会话再也调不动这个模型。
+ *
+ * 失败点全在截断处: `output.slice(0, 100000)` / `summary.slice(0, 4000)` /
+ *   `text.slice(0, 200)` —— 渗透输出满天是 ✅🔴💭 这类符号, 切一半的概率不低。
+ *
+ * 修法: 发送前统一 toWellFormed() (Node 20+, 语义就是"把孤立代理项换成 U+FFFD"),
+ *   比逐个截断点修补可靠得多 (截断点会不断新增, 发送口只有一个)。
+ */
+export function sanitizeForJson<T>(value: T): T {
+  if (typeof value === 'string') {
+    const s: any = value;
+    if (typeof s.toWellFormed === 'function') return s.toWellFormed();
+    // 兜底 (旧 Node): 手动替换孤立代理项
+    return s.replace(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+      '\uFFFD',
+    );
+  }
+  if (Array.isArray(value)) return value.map((v) => sanitizeForJson(v)) as any;
+  if (value && typeof value === 'object') {
+    const out: any = {};
+    for (const k of Object.keys(value as any)) out[k] = sanitizeForJson((value as any)[k]);
+    return out;
+  }
+  return value;
+}
+
+/**
  * 判定 provider/model id 是否属于免费档 (含 agnes 各免费别名)。
  *
  * ⚠️ 2026-10-11 修复: 原实现用 `id.startsWith('agnes')` 做兜底, 会把
@@ -744,7 +788,20 @@ factory: 'FACTORY_CHAT_KEY',
       // isCircuitOpen() 内部已先自动尝试恢复; 若仍熔断 →
       //   付费模型直接空返; 免费指定模型跳过直接尝试 (走下方备用轮换)
       if (targetProvider && this.isCircuitOpen(targetProvider)) {
-        console.warn(`[router] requested provider ${req.model} is tripped`);
+        // 2026-10-19: 熔断时把原因写进 failReasons。
+        //   之前只 console.warn 一句, 上层 (agentai-loop) 拿不到任何缘由 →
+        //   救援链 L2/L3/L4 还会打同一个 provider 各一次 (必然秒回 tripped),
+        //   最后只给用户一句"模型暂时繁忙", 完全看不出是熔断还是配置问题。
+        const _remainMs = targetProvider.trippedAt
+          ? Math.max(0, AgentAIRouter.CB_COOLDOWN_MS - (Date.now() - targetProvider.trippedAt))
+          : 0;
+        const _remainSec = Math.ceil(_remainMs / 1000);
+        const _lastStatus = targetProvider.lastErrorStatus ? `, 最后错误 HTTP ${targetProvider.lastErrorStatus}` : '';
+        failReasons.push({
+          id: String(req.model),
+          msg: `已熔断${_remainSec > 0 ? ` (约 ${_remainSec}s 后自动恢复)` : ''}${_lastStatus}`,
+        });
+        console.warn(`[router] requested provider ${req.model} is tripped${_remainSec > 0 ? ` (${_remainSec}s left)` : ''}`);
         if (isPremiumModel) return premiumEmpty(false);
       } else if (targetProvider) {
         // 对用户指定的模型进行最多 MAX_RETRY 次重试
@@ -2012,6 +2069,28 @@ if (id === 'agentai') {
       const flakyTimeout = AgentAIRouter.FLAKY_PROVIDERS.has(id)
         ? AgentAIRouter.FLAKY_TIMEOUT_MS
         : 300_000;
+      // ═══ 2026-10-19 P0: 发送前修孤立代理项 ═══
+      // emoji (占 2 个 UTF-16 码元) 被 slice() 从中间切开 → JSON.stringify 会转义成
+      // "\ud83d" (高位代理单独存在) → 上游 serde 解析器报
+      // "unexpected end of hex escape" 直接 400, 且这份 payload 会一直重发,
+      // 把 provider 打进熔断。详见 sanitizeForJson() 的注释。
+      let _hadLoneSurrogate = false;
+      try {
+        for (const m of truncatedMessages) {
+          const c: any = (m as any)?.content;
+          if (typeof c === 'string' && typeof c.isWellFormed === 'function' && !c.isWellFormed()) {
+            _hadLoneSurrogate = true;
+            break;
+          }
+        }
+      } catch { /* 检测本身失败不影响发送 */ }
+      if (_hadLoneSurrogate) {
+        console.warn(
+          '[router] ⚠️ 检测到孤立代理项 (emoji 被截断切半) — 已用 U+FFFD 修复后发送。' +
+          ' 不修的话上游会 400 "unexpected end of hex escape", 并把 provider 打进熔断。',
+        );
+      }
+
       const r = await fetch(fetchUrl, {
         method: 'POST',
         headers: {
@@ -2020,7 +2099,7 @@ if (id === 'agentai') {
           'Accept-Encoding': 'identity', // SSE 禁用压缩: 避免客户端缓冲解压导致延迟
           'Authorization': `Bearer ${apiKey}`,
         },
-        body: JSON.stringify(bodyObj),
+        body: JSON.stringify(sanitizeForJson(bodyObj)),
         signal: req.abortSignal
           ? AbortSignal.any([AbortSignal.timeout(flakyTimeout), req.abortSignal])
           : AbortSignal.timeout(flakyTimeout), // 不稳定提供者 15s, 其他人 5 分钟

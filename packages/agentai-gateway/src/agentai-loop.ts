@@ -4374,6 +4374,43 @@ if (isComplexTask) {
             durationMs: Date.now() - startedAt,
           };
         }
+        // ═══ 2026-10-19 P0: 请求体级 400 / provider 熔断 → 不走救援链 ═══
+        // 实测 (deepseek 突然全 400):
+        //   "Failed to parse the request body as JSON: messages[13].content:
+        //    unexpected end of hex escape at line 1 column 129999"
+        //   → 连续 3 次失败 → provider 熔断 120s
+        //   → 救援链 L3/L4 打的是**同一个 provider**, 每次秒回
+        //     "requested provider is tripped" → 三层全灭
+        //   → 用户只看到"模型暂时繁忙", 完全不知道发生了什么。
+        // 这两类失败都是**确定性**的: 同一份 payload / 同一个熔断状态, 换工具集、
+        //   缩上下文都救不回来。唯一有价值的动作是: 把真实原因和下一步告诉用户。
+        const _selFixed = `${this.opts.model}${this.opts.modelName ? ':' + this.opts.modelName : ''}`;
+        const _isBodyLevel400 = /Failed to parse the request body|unexpected end of hex escape|invalid\s*(request\s*)?body|messages\[\d+\]\.content/i.test(_accountBlob);
+        const _isTripped = /已熔断|is tripped|blacklist|熔断/i.test(_accountBlob);
+        if (_isBodyLevel400 || _isTripped) {
+          logger.warn(`[loop] ⏭ 跳过救援链: ${_isBodyLevel400 ? '请求体级 400' : 'provider 熔断'} (救不回来, 直接给结论)`);
+          const _reasonTail = _reasons.slice(-3).map(r => `- ${r.id}: ${r.msg}`).join('\n');
+          const _body = _isBodyLevel400
+            ? `模型 ${_selFixed} 拒绝了这次请求（HTTP 400：请求体 JSON 格式错误）。\n\n`
+              + `根因通常是：某条工具输出或摘要里的 emoji 被截断切半，生成了孤立的 \\u 转义序列。\n`
+              + `**这条坏消息会随历史一直重发**，所以重试多少次都一样 —— 这也是它"突然就打不进去"的原因。\n\n`
+              + `下一步：\n`
+              + `1. 点「新会话」重开一轮（把那条坏消息清掉），然后对我说"继续"；\n`
+              + `2. 或先切到免费档（agnes-3.0-flash）把手上的活干完。`
+            : `模型 ${_selFixed} 已连续失败被熔断，当前处于冷却期。\n\n`
+              + (this.opts.userPickedModel
+                ? `你选的是付费模型，按「固定调用」策略**不会自动切换** —— 所以救援链打的是同一个模型，只能空转。\n\n`
+                  + `下一步：手动切到免费档（如 agnes-3.0-flash）继续，或等 1~2 分钟后重试。`
+                : `熔断一般 1~2 分钟后自动恢复，期间可以切换到其他模型继续。`);
+          return {
+            content: _body + (_reasonTail ? `\n\n失败原因:\n${_reasonTail}` : ''),
+            provider: (res as any)?.provider ?? ('none' as any),
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+            iterations: this.iteration,
+            durationMs: Date.now() - startedAt,
+          };
+        }
+
         logger.warn(`[loop] ⚠️ Empty LLM response (provider=${res?.provider}, iter=${this.iteration}), starting rescue chain...`);
         
         // 辅助函数: 从 appendOnlyLog 重建并消毒消息
