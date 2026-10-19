@@ -119,6 +119,9 @@ export const TOOL_GROUPS: Record<string, string[]> = {
         'search_pentest_experience', // 召回历史成功/失败手法
         'search_vulns',               // 召回同类资产历史漏洞
         'record_pentest_experience',  // 收尾固化本轮经验
+        'bounty_report',              // engagement 级报告聚合 (断头路的终点)
+        'oob_register',              // OOB 盲测回连注册
+        'oob_check',                 // OOB 回连查询 (盲测确认)
     ],
 
     // 音乐控制组

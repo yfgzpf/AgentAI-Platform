@@ -725,6 +725,15 @@ deps.io = io;  // 注入 io 到 deps, 使路由可访问
 setQQIO(io);    // 后置注入 io 到 QQ 路由 (socket.io 桥接 + 自动重连)
 setWechatIO(io); // 后置注入 io 到微信路由 (socket.io 桥接)
 
+// ===== OOB 盲测回连接收器 (填补盲测盲区, 独立端口, 失败不阻断网关启动) =====
+try {
+  const { startOobServer } = await import('./oob-listener.js');
+  const oobPort = await startOobServer();
+  console.info(`[oob-listener] 盲测回连监听已启动: 0.0.0.0:${oobPort} (外网目标回连需 OOB_PUBLIC_URL 或 share_port 暴露该端口)`);
+} catch (e: any) {
+  console.warn(`[oob-listener] 启动失败, 盲测回连暂不可用: ${e?.message || e}`);
+}
+
 // ===== 全局异常处理 =====
 process.on('uncaughtException', (err: Error) => {
   logCrash(`uncaughtException: ${err.message}\n${err.stack?.slice(0, 500)}`);

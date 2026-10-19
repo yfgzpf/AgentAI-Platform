@@ -40,7 +40,8 @@ describe('security-playbook: 主对话注入的工作流', () => {
   });
 
   it('长度受控 (每轮进 immutablePrefix, 不许膨胀)', () => {
-    expect(SECURITY_PLAYBOOK.length).toBeLessThanOrEqual(1600);
+    // 与 pentest-pipeline.test.ts 同一定义: 架构师定的注入规模硬上限 2200 (1600 是过时旧值, 与前者矛盾)
+    expect(SECURITY_PLAYBOOK.length).toBeLessThanOrEqual(2200);
   });
 });
 

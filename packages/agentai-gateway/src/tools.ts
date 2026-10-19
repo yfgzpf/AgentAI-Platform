@@ -1003,6 +1003,19 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       vulnType: { type: 'string' }, severity: { type: 'string' },
       limit: { type: 'number', description: '默认 5, 上限 20' },
     }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'bounty_report', description: '【赏金报告聚合 (engagement 级交付物)】把 .agentai/vulns/vulns.jsonl 里的零散漏洞 + .agentai/evidence/ 证据附件聚合成一份平台级、能直接贴到 SRC 平台过审的 markdown 报告 (含按严重度分层、可复现 PoC、影响面量化、证据附件清单, 并会校验证据文件是否真实存在)。\n\n🔑 触发: pentest_pipeline / batch_pentest / 手动挖洞收尾时, 调用本工具生成可提交报告 (此前这条流水线在"出报告"这一步是断头路)。\n\n📋 参数:\n- target (可选): 只导出某根域/子域 (如 "airbnb.cn" 会召回 api.airbnb.cn 等)\n- platform (可选): 只导出某 SRC 平台 (按 platform id 过滤)\n- minSeverity (可选): 最低严重度 critical/high/medium/low/info 之一, 低于它的不导出\n- status (可选): 按状态过滤 unverified/verified/reported (默认全部)\n- outFile (可选, 默认 true): 是否把报告落盘到 .agentai/reports/', parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '目标 host 或根域 (可选, 过滤)' },
+      platform: { type: 'string', description: 'SRC 平台 id (可选, 过滤)' },
+      minSeverity: { type: 'string', enum: ['critical','high','medium','low','info'], description: '最低严重度, 低于它的不导出' },
+      status: { type: 'string', enum: ['unverified','verified','reported'], description: '按状态过滤 (默认全部)' },
+      outFile: { type: 'boolean', description: '是否落盘报告到 .agentai/reports/ (默认 true)' },
+    }, required: [] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'oob_register', description: '【OOB 盲测回连注册】生成一次性 oob_id + callbackUrl, 用于盲 XSS / 盲 SSRF / 异步 RCE / DNS 外带等"盲"漏洞的**确定确认**。\n把 callbackUrl 拼进 payload, 目标若真触发就会回连到你的监听, oob_check 即可确认 "真中" 而非"怀疑"。\n⚠️ 默认 localhost 仅本机可见; 让外网目标回连需设 OOB_PUBLIC_URL (公网机器) 或用 share_port 暴露 OOB 端口。', parameters: { type: 'object', properties: {
+      label: { type: 'string', description: '本次回连的备注标签 (如 "airbnb-blind-xss")' },
+    }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'oob_check', description: '【OOB 回连查询】查某个 oob_id 是否收到目标的回连 (盲测确认)。返回命中次数 + 每次的来源 IP / UA / 时间 / query / body。\n未命中会给出"外网不可达需 share_port/OOB_PUBLIC_URL"等排查提示。', parameters: { type: 'object', properties: {
+      id: { type: 'string', description: 'oob_register 返回的 oob_id' },
+    }, required: ['id'] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'forget', description: '【删除记忆 / 删除对话历史 / 清理跨会话数据】\n删除已保存的记忆条目或对话历史。支持多种类型:\n- memory: 普通记忆条目 (由 remember 创建)\n- session: 删除整个对话 session (包括 checkpoint 和历史)\n- checkpoint: 删除指定 session 的 checkpoint\n- last_session_summary: 清除上轮会话摘要 (避免跨会话记忆注入)\n- project_memory: 删除项目级跨会话记忆 (不传 key 或 key="*" 清空全部)\n- all: 一键清理所有跨会话数据 (项目记忆+上轮摘要+会话日志+AI记忆+对话历史)\n\n💡 示例:\n- forget({type:"memory", name:"用户偏好"}) — 删除某条记忆\n- forget({type:"session", session_id:"xxx"}) — 删除整个对话\n- forget({type:"last_session_summary"}) — 清除上轮摘要，避免注入\n- forget({type:"project_memory", key:"技术栈"}) — 删除单条项目记忆\n- forget({type:"project_memory"}) — 清空全部项目记忆\n- forget({type:"all"}) — 一键清理所有跨会话知识库 (全新开始)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['memory','session','checkpoint','last_session_summary','project_memory','all'], description: '要删除的数据类型' }, name: { type: 'string', description: 'memory 类型时的记忆名称' }, session_id: { type: 'string', description: 'session/checkpoint 类型时的 session ID' }, key: { type: 'string', description: 'project_memory 类型时的键名 (不传或 "*" 清空全部)' }, scope: { type: 'string', enum: ['global','project'], description: 'memory 类型时的作用域' } }, required: ['type'] }, parallelSafe: false, riskLevel: 'medium' },
   { name: 'create_workspace', description: '【新建工作区 (AI 主动)】在允许根内创建一个新的工作区目录, 自动建 `.agentai/` 骨架并初始化画像 (技术栈探测, 落 workspace-profile.json)。\n\n🔑 触发场景:\n- 用户说"新建一个工作区/项目目录/给 X 单开一个目录"\n- 当前任务需要一个独立目录 (新报告/新项目/挖洞成果库), 而不应污染当前工作区时 — 比"在当前工作区里乱建文件"干净 (见 Workspace 注入里的任务归属判断)\n\n⚙️ 参数: name (单段目录名, 不能含路径分隔符/Windows 保留字符) + parent (可选, 父目录, 缺省=当前工作区; 必须在允许根内)。\n\n⚠️ 边界 (与 GUI 侧栏「新建」按钮同一语义):\n- **只创建, 不切换**当前会话的工作区 — 建完明确告知路径, 是否切换由用户决定 (或在侧栏清单里点选)\n- parent 越界 (不在允许根内) 直接拒绝\n- 目录已存在 → 不报错, 补建骨架 + 画像 (幂等, 可安全重试)\n\n💡 示例:\ncreate_workspace({ name: "bounty-2026" }) → ✅ 已创建工作区: <当前工作区>/bounty-2026\ncreate_workspace({ name: "report-q4", parent: "F:/work" }) → 在指定父目录下建', parameters: { type: 'object', properties: { name: { type: 'string', description: '工作区目录名 (单段, 不含路径分隔符/保留字符)' }, parent: { type: 'string', description: '可选, 父目录绝对路径 (缺省=当前工作区; 必须在允许根内)' } }, required: ['name'] }, parallelSafe: false, riskLevel: 'low' },
   { name: 'recall_memory', description: 'Read a saved memory', parameters: { type: 'object', properties: { name: { type: 'string' }, scope: { type: 'string', enum: ['global','project'] } }, required: ['name','scope'] }, parallelSafe: true, riskLevel: 'low' },
@@ -3203,6 +3216,152 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         data: { evidencePaths: out, dir: evDir },
       };
     } catch (e: any) { return { success: false, output: `save_evidence 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-19 赏金报告聚合: 把 .agentai/vulns/ 的零散记录拼成平台级可过审报告 =====
+  // 实机断头路: exploit/validator 阶段把漏洞落进 vulns.jsonl + evidence/, 但**没有任何东西
+  // 把它们聚合成一份能贴到 SRC 平台的报告** —— pentest_pipeline 末尾只"建议按 bounty-report
+  // 出报告", 而 bounty-report 此前根本不存在 (纯幻影)。于是挖完一轮 = 一堆 jsonl, 白干。
+  // 本工具读 vulns.jsonl + 校验 evidence/ 附件真实存在, 按严重度分层输出合规 markdown
+  // (含可复现 PoC / 影响量化 / 证据附件清单), 并落盘到 .agentai/reports/ 供直接提交。
+  bounty_report: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const vulnsFile = path.join(ws, '.agentai', 'vulns', 'vulns.jsonl');
+      if (!fs.existsSync(vulnsFile)) {
+        return { success: true, output: `📭 暂无漏洞库: ${vulnsFile}\n请先用 report_vulnerability 落盘漏洞, 再用本工具出报告。` };
+      }
+      // 容错解析 JSONL (坏行跳过, 不连坐)
+      const lines = fs.readFileSync(vulnsFile, 'utf-8').split('\n').map((s) => s.trim()).filter(Boolean);
+      const all: any[] = [];
+      for (const ln of lines) {
+        try { all.push(JSON.parse(ln)); } catch { /* 跳过坏行 */ }
+      }
+      if (all.length === 0) return { success: true, output: `📭 漏洞库为空 (${vulnsFile})` };
+
+      // ── 过滤 ──
+      const target = String(args.target || '').trim().toLowerCase();
+      const platform = String(args.platform || '').trim();
+      const minSev = String(args.minSeverity || '').trim().toLowerCase();
+      const statusFilter = args.status ? String(args.status).toLowerCase() : null;
+      const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1, unknown: 0 };
+      const minRank = minSev ? (SEV_RANK[minSev] ?? 0) : 0;
+
+      const rows = all.filter((v) => {
+        const vt = String(v.target || '').toLowerCase();
+        if (target && !(vt.includes(target) || vt.endsWith('.' + target.replace(/^\*\./, '')))) return false;
+        if (platform && String(v.platform || '') !== platform) return false;
+        if (statusFilter && String(v.status || 'unverified').toLowerCase() !== statusFilter) return false;
+        const rank = SEV_RANK[String(v.severity || '').toLowerCase()] ?? SEV_RANK.unknown;
+        if (rank < minRank) return false;
+        return true;
+      });
+
+      // 严重度降序, 同严重度按时间倒序 (新发现在前)
+      rows.sort((a, b) => {
+        const ra = SEV_RANK[String(a.severity || '').toLowerCase()] ?? 0;
+        const rb = SEV_RANK[String(b.severity || '').toLowerCase()] ?? 0;
+        return rb - ra || (b.ts || 0) - (a.ts || 0);
+      });
+      if (rows.length === 0) {
+        return { success: true, output: `📭 按当前过滤条件 (target=${target || '*'}, platform=${platform || '*'}, minSeverity=${minSev || '*'}, status=${statusFilter || '*'}) 无命中漏洞。` };
+      }
+
+      // ── 统计 ──
+      const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
+      for (const v of rows) counts[String(v.severity || 'unknown').toLowerCase()]++;
+
+      // ── 生成 markdown ──
+      const now = new Date().toISOString().slice(0, 10);
+      const title = target ? `渗透测试报告 — ${target}` : '渗透测试报告 — 全工作区';
+      let md = `# ${title}\n\n`;
+      md += `> 生成时间: ${now}  |  漏洞总数: **${rows.length}**\n\n`;
+      md += `## 一、执行摘要\n\n`;
+      md += `| 严重度 | 数量 |\n| --- | --- |\n`;
+      for (const k of ['critical', 'high', 'medium', 'low', 'info', 'unknown']) {
+        if (counts[k]) md += `| ${k.toUpperCase()} | ${counts[k]} |\n`;
+      }
+      md += `\n> 影响面: 涉及目标 ${new Set(rows.map((v) => v.target)).size} 个, 命中平台 ${new Set(rows.map((v) => v.platform).filter(Boolean)).size} 个。\n`;
+
+      for (const sev of ['critical', 'high', 'medium', 'low', 'info', 'unknown']) {
+        const group = rows.filter((v) => String(v.severity || 'unknown').toLowerCase() === sev);
+        if (!group.length) continue;
+        md += `\n## 二、${sev.toUpperCase()} 级别漏洞 (${group.length})\n\n`;
+        for (const v of group) {
+          md += `### ${v.title || v.id} \`[${v.status || 'unverified'}]\`\n\n`;
+          md += `- **目标**: ${v.target}\n`;
+          md += `- **类型**: ${v.vulnType || 'unknown'}\n`;
+          md += `- **归属平台**: ${v.platform ? v.platform : '未识别'}${v.platformTrusted ? '' : ' ⚠️(归属不可信, 提交前需核对)'}\n`;
+          if (v.platformWarn) md += `- **归属警告**: ${v.platformWarn}\n`;
+          md += `- **记录ID**: ${v.id}\n`;
+          if (v.poc) md += `\n**PoC / 复现步骤**:\n\`\`\`\n${v.poc}\n\`\`\`\n`;
+          if (v.evidence) md += `\n**证据 (文本)**:\n\n${v.evidence}\n`;
+          if (Array.isArray(v.evidencePaths) && v.evidencePaths.length) {
+            md += `\n**证据附件**:\n`;
+            for (const p of v.evidencePaths) {
+              const exists = fs.existsSync(p);
+              md += `- ${exists ? '📎' : '⚠️缺失'} ${p}\n`;
+            }
+          }
+          md += `\n---\n\n`;
+        }
+      }
+
+      // ── 落盘 ──
+      let savedPath = '';
+      const outFile = args.outFile !== false;
+      if (outFile) {
+        const reportsDir = path.join(ws, '.agentai', 'reports');
+        fs.mkdirSync(reportsDir, { recursive: true });
+        const slug = (target || 'all').replace(/[^a-z0-9.-]/gi, '_').slice(0, 48);
+        const outName = `bounty-report-${slug}-${now}.md`;
+        savedPath = path.join(reportsDir, outName);
+        fs.writeFileSync(savedPath, md, 'utf-8');
+      }
+
+      const summary =
+        `✅ 已生成赏金报告: ${rows.length} 个漏洞 (C:${counts.critical} H:${counts.high} M:${counts.medium} L:${counts.low} I:${counts.info})\n`
+        + (savedPath ? `📄 报告已落盘: ${savedPath}\n` : '')
+        + `可直接复制下方 markdown 提交到 SRC 平台 (注意: ⚠️ 标记的归属不可信项需先核对)。\n\n`
+        + md;
+      return { success: true, output: summary, data: { count: rows.length, counts, report: savedPath || null, markdown: md } };
+    } catch (e: any) { return { success: false, output: `bounty_report 失败: ${e.message}` }; }
+  },
+  // ===== 2026-10-19 OOB 回连接收器: 填补盲测盲区 (盲 XSS/SSRF/异步 RCE/DNS 外带) =====
+  // 此前 blind 类漏洞只能"怀疑"无法"确认" (项目明确不做第三方 OAST/DNSLog)。
+  // 本工具组在网关内自带轻量 HTTP 回调监听 (独立端口), 把"盲"变"确定回连"。
+  oob_register: async (args) => {
+    try {
+      const { createOobId, getPort } = await import('./oob-listener.js');
+      const { id, callbackUrl } = createOobId(String(args.label || ''));
+      return {
+        success: true,
+        output: `✅ OOB 回调已注册:\n- oob_id: ${id}\n- callbackUrl: ${callbackUrl}\n\n把 callbackUrl 拼进盲测 payload (如 <img src="${callbackUrl}"> / SSRF url / DNS 子域 x.${id}.your.domain)。\n⚠️ 默认 localhost 仅本机/同内网可见; 让**外网**目标回连需二选一: ① 在公网 IP 机器跑网关并设 OOB_PUBLIC_URL; ② 用 share_port 暴露本 OOB 端口 (${getPort() || 8800}, 只暴露这个轻端口, 不暴露网关 API)。\n等待回连后调 oob_check({id:"${id}"}) 确认是否真命中。`,
+        data: { id, callbackUrl },
+      };
+    } catch (e: any) { return { success: false, output: `oob_register 失败: ${e.message}` }; }
+  },
+  oob_check: async (args) => {
+    try {
+      const { checkOob } = await import('./oob-listener.js');
+      const id = String(args.id || '').trim();
+      const r = checkOob(id);
+      if (!r.found || !r.record) {
+        return {
+          success: true,
+          output: `⏳ 尚未收到回连 (oob_id=${id})。可能: 目标未触发 / payload 未生效 / 网络不通 / 目标在外网而回调地址不可达 (检查 OOB_PUBLIC_URL 或用 share_port 暴露 OOB 端口)。稍后重试 oob_check。`,
+          data: { found: false },
+        };
+      }
+      const rec = r.record;
+      const hits = rec.hits.map((h, i) =>
+        `  ${i + 1}. [${new Date(h.at).toISOString()}] ${h.method} from ${h.ip} ua=${h.ua}\n     query=${JSON.stringify(h.query)} body=${h.body.slice(0, 200)}`,
+      ).join('\n');
+      return {
+        success: true,
+        output: `🔥 确认回连! 命中 ${rec.hits.length} 次:\n${hits}\n\n→ 盲测确认为真 (目标确实向你发起了请求)。可按 bounty_report 出报告 (证据 = 这条回连记录)。`,
+        data: { found: true, hits: rec.hits },
+      };
+    } catch (e: any) { return { success: false, output: `oob_check 失败: ${e.message}` }; }
   },
   // ===== 2026-10-16 批量挖洞: 遍历全部授权目标逐个 spawn pentest 子智能体 =====
   // 赏金"数量取胜"入口。读 scope.json 全部目标, 逐个 (受限频 + maxTargets 上限) 跑
