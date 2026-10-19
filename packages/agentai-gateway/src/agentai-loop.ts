@@ -2511,8 +2511,9 @@ try {
       }
     }
 
-    // 常态路径也记录一条 debug, 便于排查"为什么这轮注入了/没注入"
-    logger.debug(
+    // 常态路径也记录一条 info, 便于排查"为什么这轮注入了/没注入"
+    // ═══ 2026-10-19 D2: debug → info (常态也打, 排查"膨胀但没压缩"类问题需要这行) ═══
+    logger.info(
       `[ctx:budget] system 注入 ${systemMsgs.length} 条 / ${totalChars} 字符 ` +
       `(${ctxLedger.length} 条已登记, 其中 ${droppedByBudget} 条优先级 > ${CTX_PRIORITY_DROP_THRESHOLD})`
     );

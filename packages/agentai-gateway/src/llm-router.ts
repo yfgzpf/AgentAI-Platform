@@ -2289,6 +2289,15 @@ if (id === 'sensenova') {
     const totalTokens = promptTokens + completionTokens;
     const cost = apiUsage?.cost ?? this._calculateCost(promptTokens, completionTokens, p);
 
+    // ═══ 2026-10-19 D1: 大上下文请求诊断日志 ═══
+    // 之前 token 用量只进 usage 字段, 没有任何日志输出, 排查"说一句话就断"
+    // 类膨胀问题无据可依。现在: >40K 走 warn, 否则 debug (默认级别不打)。
+    if (totalTokens > 40_000) {
+      logger.warn(`[router] 大上下文: prompt=${promptTokens} total=${totalTokens} model=${req.model} source=${source}`);
+    } else {
+      logger.debug(`[router] 用量: prompt=${promptTokens} total=${totalTokens} model=${req.model} source=${source}`);
+    }
+
     return {
       promptTokens,
       completionTokens,
