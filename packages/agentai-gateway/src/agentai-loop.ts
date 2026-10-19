@@ -4518,6 +4518,21 @@ if (isComplexTask) {
         }
 
         logger.warn(`[loop] ✗ All rescue levels exhausted`);
+        // ═══ 2026-10-19: ALRO 分组 403 透传, 不再吞成"模型暂时繁忙" ═══
+        const _lastErr = String((res as any)?.error || (res as any)?.lastError || '');
+        if (/ALRO_GROUP_403|无权访问.*分组|alro\.huazhiweilai/i.test(_lastErr)) {
+          logger.warn(`[loop] ALRO 分组权限 403, 透传指引而非"模型暂时繁忙"`);
+          const alroHint = _lastErr.includes('[ALRO_GROUP_403]')
+            ? _lastErr.replace('[ALRO_GROUP_403]', '').trim()
+            : `ALRO 令牌分组权限不足 (${(_lastErr || '无详情').slice(0, 120)})。请到 ALRO 令牌管理重新生成全权限令牌并填入 ALRC_API_KEY, 其余 FACTORY_*_KEY 留空即可。`;
+          return {
+            content: alroHint,
+            provider: 'none' as any,
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const },
+            iterations: this.iteration,
+            durationMs: Date.now() - startedAt,
+          };
+        }
         return {
           content: '当前 AI 模型暂时繁忙，请稍后再试。如果问题持续，请前往设置页检查 API Key 配置。',
           provider: 'none' as any,
@@ -4571,7 +4586,7 @@ if (isComplexTask) {
         this.emit('model:lock-refused', { model: this.opts.model, subModel: this.opts.modelName || null, reason: authFailed ? '所选模型鉴权失败' : '所选模型反复临时不可用' });
         return {
           content: authFailed
-            ? `你选定的模型 **${sel}** 鉴权失败 (401/403)。这属于 **API Key 问题, 等也没用** —— 请到设置页检查该 provider 的 Key 是否有效或额度是否耗尽。`
+            ? `你选定的模型 **${sel}** 鉴权失败 (401/403)。\n\n${(lastErr.includes('[ALRO_GROUP_403]') ? lastErr.replace('[ALRO_GROUP_403]', '').trim() : lastErr.slice(0, 240) || '请到设置页检查该 provider 的 Key 是否有效或额度是否耗尽。')}\n\n这属于 **API Key / 分组权限问题, 等也没用** —— 请到设置页检查该 provider 的 Key 是否有效或额度是否耗尽。`
             : `你选定的模型 **${sel}** 连续 ${PROVIDER_WAIT_MAX_RETRY} 次临时不可用 (上游繁忙/限流, 已自动退避重试)。\n\n`
               + `**这不是额度问题** —— 多来自上游服务短暂过载。任务进度已保留, 可直接重试继续; 若频繁出现建议在模型选择器里换一个 provider。`,
           provider: 'none' as any,

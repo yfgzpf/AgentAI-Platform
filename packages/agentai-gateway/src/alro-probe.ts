@@ -119,6 +119,35 @@ export async function probeAlroAccess(opts: ProbeAlroOptions): Promise<AlroProbe
   return Promise.all(tasks);
 }
 
+/**
+ * 汇总 ALRO 分组 403, 生成「同源合并」提示文案。
+ * 关键场景: 用户只有一把 domestic-only 令牌时, 5 个类别全部 403 且 detail
+ * 都是「无权访问 国内模型 分组」—— 这说明**只需一把全权限 ALRC_API_KEY**,
+ * 不是缺 5 把分组密钥。合并成一行避免用户误判。
+ * 纯函数, 可单测。返回 null 表示没有 forbidden。
+ */
+export function summarizeAlroForbidden(results: AlroProbeResult[]): string | null {
+  const forbids = results.filter((r) => r.status === 'forbidden');
+  if (forbids.length === 0) return null;
+
+  // 同源判定: 所有 forbidden 的 detail 都提到「分组」(即 ALRO 仍按分组鉴权)
+  const allGrouped = forbids.every((r) => /分组/.test(r.detail || ''));
+  if (allGrouped && forbids.length >= 2) {
+    const cats = forbids.map((r) => r.category).join('/');
+    return (
+      `⚠️ ALRO 有 ${forbids.length} 个类别 403 无权限, 且全部来自同一把 domestic 令牌 ` +
+      `(detail 均含"分组"): ${cats}。\n` +
+      `    你只需一把「全权限」ALRC_API_KEY 令牌即可通全部模型 —— ` +
+      `当前令牌仅挂"国内模型"分组, GPT/Claude/Grok/生图/视频 均被拒。\n` +
+      `    去 ALRO 令牌管理重新生成全权限令牌, 填 ALRC_API_KEY, 其余 FACTORY_*_KEY 留空 (网关自动回退主令牌)。`
+    );
+  }
+  return (
+    `⚠️ ALRO 有 ${forbids.length} 个类别 403 无权限: ` +
+    `${forbids.map((r) => r.category).join('/')} — 去 ALRO 重新生成全权限令牌并填 ALRC_API_KEY`
+  );
+}
+
 /** 把探测结果渲染成日志行 (供网关复用, 也便于测试断言) */
 export function formatAlroProbeLog(results: AlroProbeResult[]): string[] {
   return results.map((r) => {

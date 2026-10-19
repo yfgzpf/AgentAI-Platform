@@ -2,7 +2,7 @@
  * alro-probe 单测: 验证分组权限探测的纯函数逻辑 (mock fetch, 不联网)。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { probeAlroAccess, formatAlroProbeLog, ALRO_PROBE_MODELS } from '../alro-probe.js';
+import { probeAlroAccess, formatAlroProbeLog, summarizeAlroForbidden, ALRO_PROBE_MODELS } from '../alro-probe.js';
 
 function mockFetch(status: number, body = '') {
   return vi.fn(async () => ({
@@ -100,5 +100,48 @@ describe('formatAlroProbeLog', () => {
     expect(log[1]).toContain('❌') && expect(log[1]).toContain('无权访问 X');
     expect(log[2]).toContain('➖');
     expect(log[3]).toContain('⚠️');
+  });
+});
+
+describe('summarizeAlroForbidden', () => {
+  it('无 forbidden → null', () => {
+    expect(summarizeAlroForbidden([
+      { category: '国内·对话', subModel: 'd', status: 'ok' },
+      { category: 'GPT', subModel: 'g', status: 'ok' },
+    ])).toBeNull();
+  });
+
+  it('5❌同源 domestic 令牌 → 合并成"只需一把全权限 ALRC_API_KEY"', () => {
+    const summary = summarizeAlroForbidden([
+      { category: '国内·对话', subModel: 'd', status: 'ok' },
+      { category: 'GPT', subModel: 'g', status: 'forbidden', detail: '无权访问 国内模型 分组' },
+      { category: 'Claude', subModel: 'c', status: 'forbidden', detail: '无权访问 国内 模型 分组' },
+      { category: 'Grok', subModel: 'gk', status: 'forbidden', detail: '无权访问 国内模型 分组' },
+      { category: '生图', subModel: 'n', status: 'forbidden', detail: '无权访问 国内模型 分组' },
+      { category: '视频', subModel: 'dv', status: 'forbidden', detail: '无权访问 国内 模型 分组' },
+    ]);
+    expect(summary).not.toBeNull();
+    expect(summary!).toContain('同一把 domestic 令牌');
+    expect(summary!).toContain('ALRC_API_KEY');
+    expect(summary!).toContain('GPT/Claude/Grok/生图/视频');
+  });
+
+  it('含非分组原因 (如 model_not_found) → 走普通汇总, 不合并', () => {
+    const summary = summarizeAlroForbidden([
+      { category: 'GPT', subModel: 'g', status: 'forbidden', detail: 'model_not_found: gpt-5.5' },
+      { category: 'Claude', subModel: 'c', status: 'forbidden', detail: 'model_not_found: claude-x' },
+    ]);
+    expect(summary).not.toBeNull();
+    expect(summary!).not.toContain('同一把 domestic 令牌');
+    expect(summary!).toContain('GPT/Claude');
+  });
+
+  it('仅 1 个 forbidden → 普通汇总 (不满足同源≥2)', () => {
+    const summary = summarizeAlroForbidden([
+      { category: '国内·对话', subModel: 'd', status: 'ok' },
+      { category: 'GPT', subModel: 'g', status: 'forbidden', detail: '无权访问 国内模型 分组' },
+    ]);
+    expect(summary).not.toBeNull();
+    expect(summary!).not.toContain('同一把 domestic 令牌');
   });
 });

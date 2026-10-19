@@ -30,8 +30,8 @@ import { modelMetrics } from './model-metrics-service.js';
 import { sanitizeToolMessages } from './message-utils.js';
 // [模型工厂] 单一真源 — subModel → 分组密钥映射 (含此前漏掉的 seedance 2.5)
 import { SUBMODEL_TO_GROUP_ENV } from './factory-registry.js';
+import { probeAlroAccess, formatAlroProbeLog, summarizeAlroForbidden } from './alro-probe.js';
 // [ALRO 分组权限探测] 纯函数: 启动探测每个类别能否调用, 对抗厂家改分组静默 403
-import { probeAlroAccess, formatAlroProbeLog } from './alro-probe.js';
 
 // 免费模型池: 这些可以互相切换 (sensenova/longcat 有免费额度, 也加入)
 // ★ 2026-10-10: 提取为模块级导出, 消除三处名单不统一 (见下)。
@@ -617,11 +617,10 @@ factory: 'FACTORY_CHAT_KEY',
         masterKey,
       });
       for (const line of formatAlroProbeLog(results)) console.log(`[router]${line}`);
-      const forbids = results.filter((r) => r.status === 'forbidden');
-      if (forbids.length > 0) {
-        console.warn(`[router] ⚠️ ALRO 有 ${forbids.length} 个类别 403 无权限: ` +
-          `${forbids.map((r) => r.category).join('/')} — 去 ALRO 重新生成全权限令牌并填 ALRC_API_KEY`);
-      }
+      // ═══ 2026-10-19: 「5❌同源」合并提示 ═══
+      // 同源 domestic 令牌时, 5 个 403 其实只需一把全权限 ALRC_API_KEY, 避免误判缺 5 把密钥
+      const forbiddenSummary = summarizeAlroForbidden(results);
+      if (forbiddenSummary) console.warn(`[router] ${forbiddenSummary}`);
     } catch (e: any) {
       console.warn(`[router] ALRO 探测异常: ${String(e?.message || e).slice(0, 80)}`);
     }
@@ -2212,6 +2211,21 @@ if (id === 'sensenova') {
           }
           console.error(`[router] 🔍 thinking 模式: ${JSON.stringify(bodyObj.extra_body)} reasoning_effort=${(bodyObj as any).reasoning_effort}`);
           console.error(`[router] 🔍 上游原话: ${errText.slice(0, 300)}`);
+        }
+
+        // ═══ 2026-10-19: ALRO 分组 403 透传明确指引 ═══
+        // 旧令牌只挂"国内模型"分组时, GPT/Claude/Grok/生图/视频 全部 403,
+        // 错误被吞成"模型暂时繁忙"。这里把"无权访问 X 分组"翻译成可操作指引,
+        // 冒到 agentai-loop 后会被 authFailed(含403) 命中并透传给前端。
+        if ((id === 'alrc' || id === 'factory') && r.status === 403) {
+          const m = errText.match(/无权访问[：:\s]*([\s\S]*?)\s*分组/);
+          const groupName = m ? m[1].replace(/\s+/g, '') : '对应';
+          const hint =
+            `ALRO 令牌无权访问「${groupName}」分组 (model=${modelName})。` +
+            `这不是代码问题 —— 请到 ALRO 令牌管理重新生成「全权限」令牌 (勾选全部分组), ` +
+            `填入 .env 的 ALRC_API_KEY 即可, 其余 FACTORY_*_KEY 留空 (网关自动回退到主令牌)。`;
+          console.warn(`[router] ❌ ALRO 分组 403: ${hint} | 上游原话: ${errText.slice(0, 120)}`);
+          throw new Error(`[ALRO_GROUP_403] ${hint}`);
         }
 
         throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
