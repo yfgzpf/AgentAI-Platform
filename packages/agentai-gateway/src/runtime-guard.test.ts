@@ -1565,6 +1565,41 @@ describe('上游临时繁忙退避重试 (2026-10-17)', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// 命令未安装 vs 路径不存在 (2026-10-19)
+// 事故: kali 没装 httpx → `bash: httpx: command not found` (退出码 127) →
+//   classifyToolError 的 ENOENT 分支含 "not found" 字面量, 把"命令没装"误判成
+//   "目标文件不存在", nextAction 还让 AI "用 list_directory 确认路径正确" ——
+//   路径本来就对, AI 被引着反复查目录, 形成"老是 wsl 失败"死循环。
+// ═══════════════════════════════════════════════════════════════
+describe('命令未安装的分类 (command not found ≠ 路径不存在)', () => {
+  const LOOP = readFileSync(new URL('./agentai-loop.ts', import.meta.url), 'utf-8');
+  // 锚定代码行 (不是注释行): 注释里也出现 COMMAND_NOT_FOUND 字样
+  const cmdCodeIdx = LOOP.indexOf("code: 'COMMAND_NOT_FOUND'");
+
+  it('C10: COMMAND_NOT_FOUND 分支存在, 且**排在 ENOENT 之前** (顺序错就又被吞掉)', () => {
+    const enoentIdx = LOOP.indexOf("code: 'ENOENT'");
+    expect(cmdCodeIdx).toBeGreaterThan(-1);
+    expect(enoentIdx).toBeGreaterThan(-1);
+    expect(cmdCodeIdx, 'COMMAND_NOT_FOUND 必须先生效, 否则被 ENOENT 的 "not found" 抢先').toBeLessThan(enoentIdx);
+  });
+
+  it('C11: 命中 "command not found" / "未找到命令" 两种形态', () => {
+    // 判定行在 return 之前 ~400 字符内
+    const chunk = LOOP.slice(cmdCodeIdx - 400, cmdCodeIdx + 300);
+    expect(chunk).toMatch(/err\.includes\('command not found'\)/);
+    expect(chunk).toMatch(/err\.includes\('未找到命令'\)/);
+  });
+
+  it('C12: nextAction 引导"确认命令/装工具", 而不是 list_directory 查路径', () => {
+    // 只切 COMMAND_NOT_FOUND 分支本身 (hint+nextAction ≈ 380 字符), 不伸进 ENOENT 分支
+    const chunk = LOOP.slice(cmdCodeIdx, cmdCodeIdx + 450);
+    expect(chunk).toMatch(/wsl_exec\(\{ command: "which"/);
+    expect(chunk).toMatch(/install-pentest-tools\.ps1|apt-get install/);
+    expect(chunk, '不能再把 AI 引去 list_directory').not.toMatch(/list_directory/);
+  });
+});
+
 describe('超时降级按任务类型保留核心工具 (2026-10-17)', () => {
   // 实锤坑: 原来 llmTimedOut 时无条件砍到 8 个文件类工具, 挖洞任务超时一次后
   //   wsl_scan / enum_subdomains / http_replay / report_vulnerability 全消失,

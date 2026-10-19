@@ -421,6 +421,24 @@ export interface AgentContext {
 // DEF-07: 工具故障分类 — 结构化错误码 + 修复建议 + 下一步动作
 function classifyToolError(toolName: string, errorOutput: string): { code: string; hint: string; nextAction: string } {
   const err = errorOutput.toLowerCase();
+  // COMMAND_NOT_FOUND — 命令未安装 (必须排在 ENOENT 之前!)
+  // 实锤 (2026-10-19): kali 里没装 httpx, `bash: httpx: command not found` 被下面
+  // 的 ENOENT 分支 (含 "not found") 误判成"目标文件不存在", nextAction 还让 AI
+  // "用 list_directory 确认路径正确" —— 路径本来就对, AI 被引着反复查目录,
+  // 换个写法再试还是失败, 形成"老是 wsl 失败"的死循环。
+  if (
+    err.includes('command not found') ||
+    err.includes('未找到命令') ||
+    err.includes('is not recognized as an internal or external command') ||
+    err.includes('not recognized')
+  ) {
+    return {
+      code: 'COMMAND_NOT_FOUND',
+      hint: '命令未安装 (不是路径问题, 别去查目录)',
+      nextAction: '用 wsl_exec({ command: "which", args: ["<工具名>"] }) 确认; 缺工具就告诉用户在 Kali 里装 ' +
+        '(Windows 终端跑 scripts/install-pentest-tools.ps1, 或 Kali 里 apt-get install), 装上前用 enum_subdomains / http_replay 顶替',
+    };
+  }
   // ENOENT — 文件/命令不存在
   if (err.includes('enoent') || err.includes('no such file') || err.includes('not found')) {
     return { code: 'ENOENT', hint: '目标文件或命令不存在', nextAction: '用 list_directory 确认路径正确, 或检查命令是否安装' };
