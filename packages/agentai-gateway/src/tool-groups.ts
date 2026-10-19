@@ -101,6 +101,7 @@ export const TOOL_GROUPS: Record<string, string[]> = {
     //   (pentest-scope-guard.ts 默认拒绝, 无 scope.json 一律拒), 本组只是让工具"可见可用"。
     security_ops: [
         'wsl_scan',             // Kali 扫描器驱动 (nmap/nuclei/sqlmap/ffuf/... 8 个白名单)
+        'wsl_exec',             // WSL 数组化执行 (绕开 cmd.exe, 修四层嵌套的引号破坏)
         'enum_subdomains',      // 证书透明度/子域枚举
         'extract_js_endpoints', // JS 端点提取
         'http_replay',          // Burp Repeater 式请求重放

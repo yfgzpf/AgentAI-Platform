@@ -952,6 +952,15 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       maxTargets: { type: 'number', description: '本轮最多处理几个目标 (默认 10, 上限 30, 防单轮打崩目标/超预算)' },
       depth: { type: 'string', enum: ['quick', 'deep'], description: 'quick=每目标浅扫 (nmap 指纹+最小探针, 默认); deep=全工具重扫 (nuclei 全模板+sqlmap+ffuf)' },
     }, required: [] }, parallelSafe: false, riskLevel: 'critical' },
+  // ═══ 2026-10-19: wsl_exec (绕开 cmd.exe 的 WSL 执行器) ═══
+  { name: 'wsl_exec', description: '【WSL 命令执行 (不经 cmd.exe, 引号安全)】在 WSL 发行版里跑命令, 参数**数组化**传递, 全程不经过 Windows cmd.exe → 多层 shell 嵌套的引号破坏被根治。\n\n🔑 触发场景: 要在 Kali/WSL 里装工具 (go install / apt install)、查环境 (which go)、跑扫描器 (nuclei/httpx/subfinder)。\n⛔ **不要用 run_command 跑 `wsl ... bash -lc "长命令"`** —— 实锤会坏: cmd.exe 剥掉外层引号后, wsl.exe 用 CommandLineToArgvW 重新拆词, bash 的 -c 参数被截断成只剩 "export" (报 `syntax error near unexpected token \'(\'`)。要跑长命令, 用本工具把整段脚本作为 **args 数组的一个元素** 传进去。\n\n⚙️ 参数: command (WSL 内可执行名, 如 "bash" / "which" / "apt-get"); args (字符串数组, 直接送进 WSL, 不做 shell 拆词); distro (默认 kali-linux); user (默认 root); timeout_ms (默认 120s, 上限 600s)。\n\n💡 例: 装 subfinder → wsl_exec({ command: "bash", args: ["-lc", "export PATH=$PATH:/root/go/bin && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"] })\n⚠️ 发行版没装时本工具会明确报错 (Agent 的 wsl.exe 被程序黑名单挡, 装不了, 不是偷懒) —— 那时用 enum_subdomains (纯 JS) 顶替, 别卡住。',
+    parameters: { type: 'object', properties: {
+      command: { type: 'string', description: 'WSL 内的可执行名 (如 bash / which / apt-get / go)' },
+      args: { type: 'array', items: { type: 'string' }, description: '参数数组, 原样送达不做 shell 拆词 (整段脚本就放一个元素里)' },
+      distro: { type: 'string', description: '发行版 (默认 kali-linux)' },
+      user: { type: 'string', description: 'WSL 用户 (默认 root)' },
+      timeout_ms: { type: 'number', description: '超时毫秒 (默认 120000, 上限 600000)' },
+    }, required: ['command'] }, parallelSafe: false, riskLevel: 'high' },
   // ═══ 2026-10-19: 串链挖洞 (深度挖洞的一键入口) ═══
   { name: 'pentest_pipeline', description: '【深度挖洞串链】对**单个授权目标**一键跑 规划→侦察→执行→复核 四角色串链 (pentest_planner → pentest_recon → pentest_exploit → pentest_validator), 每阶段自动继承上一阶段的产出。开工前还会注入本工作区+全局的历史经验/漏洞库, 让 AI 复用已验证手法而不是每次从零开始。\n\n🔑 触发场景: 用户说"深挖这个站/挖深一点/认真测这个目标/串链打这个站"; 或你判断单目标值得投入超过 12 次工具调用时。与 batch_pentest 的区别: batch 是"广度取胜"(扫很多目标, 每个浅扫), 本工具是"深度取胜"(一个目标挖透)。\n\n⚙️ 参数: target (必填, 授权范围内的 host); mode ("quick"=跳过规划阶段, 默认 / "deep"=含规划+更长超时); stageTimeoutMs (可选, 每阶段超时毫秒, 默认 quick 150s / deep 300s); skipPlanner (可选, true=强制跳过规划阶段)。\n\n🔒 安全: 入口先查授权 (不在 scope.json 直接拒绝并提示 grant_scope); 执行与复核阶段各自再过子智能体自己的 scope 闸门; 归属平台档案自动注入 (report 报给对的 SRC)。\n\n📤 返回: 四阶段逐段状态表 (成功/超时/失败 + 耗时 + 摘要) + 漏洞落盘提示。某阶段失败**不中断整链** (上游产出仍可用), 但失败阶段的输出不会被继承下去。',
     parameters: { type: 'object', properties: {
@@ -2750,6 +2759,27 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       if (danger) {
         return { success: false, output: `命令被安全策略拒绝: ${danger.reason}\n（被拒命令）${command.slice(0, 200)}` };
       }
+      // ═══ 2026-10-19: 拦截"四层 shell 嵌套"的高危形态 (引号破坏的根治提示) ═══
+      // 实锤: `wsl ... bash -lc "export PATH=...; go install ... | tail -3; ..."` →
+      //   cmd.exe 剥掉外层引号 → wsl.exe 用 CommandLineToArgvW 重新拆词 →
+      //   bash 的 -c 参数只剩 "export" → `syntax error near unexpected token '('`。
+      //   AI 拿到这个错误后反复重试同一条命令 (卡死现场)。
+      //   正确做法: 用 wsl_exec (数组化, 不经 cmd.exe) 或把脚本写成文件再执行。
+      if (/\bwsl\b[\s\S]*\b(bash|sh)\b[\s\S]*-l?c\s+"/.test(command)) {
+        return {
+          success: false,
+          output:
+            `⚠️ 拒绝执行: 这条命令是「WSL + 内层 shell -c + 引号包裹脚本」的四层嵌套形态, ` +
+            `**必然被引号破坏** (实锤: cmd.exe 剥掉外层引号后, wsl.exe 用 CommandLineToArgvW ` +
+            `重新拆词 → 内层 bash 的 -c 参数只剩第一个词, 报 \`syntax error near unexpected token \'(\'\`)。\n\n` +
+            `✅ 正确做法 (二选一):\n` +
+            `  1) 用 wsl_exec (数组化, 全程不经 cmd.exe):\n` +
+            `     wsl_exec({ command: "bash", args: ["-lc", "<整段脚本>"] })\n` +
+            `  2) 把脚本写成文件再跑: 先用 write_file 写到工作区, 再 wsl_exec({ command: "bash", args: ["/mnt/f/xxx.sh"] })\n\n` +
+            `⛔ 别原样重试这条命令 —— 换任何参数都救不回来, 是结构性引号破坏。\n` +
+            `（被拒命令）${command.slice(0, 200)}`,
+        };
+      }
 
       // DEF-09: node -e "..." → 写临时文件执行, 绕开 Windows 引号截断
       const nodeEMatch = command.match(/^node\s+-e\s+["'](.+)["']$/s);
@@ -3720,6 +3750,72 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
     } catch (e: any) { return { success: false, output: `http_replay 失败: ${e.message}` }; }
   },
   // ===== 2026-10-15 kali 扫描器接线: wsl_scan 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等 =====
+  // ═══ 2026-10-19: wsl_exec — 绕开 cmd.exe 的 WSL 命令执行器 (引号地狱的根治) ═══
+  // 事故 (富哥实锤): AI 用 run_command 跑
+  //   wsl -u root -d kali-linux -- bash -lc "export PATH=$PATH:...; go install ...@latest | tail -3; ..."
+  // → exit code 2, stderr: `bash: -c: line 1: syntax error near unexpected token '('`
+  //   + `bash: -c: \`export`  ← **bash 的 -c 参数被截断成只剩 "export"**。
+  // 根因: node spawn(shell:true) → cmd.exe → wsl.exe → bash, **四层 shell 嵌套**,
+  //   每一层都重新做一次引号/元字符解析; cmd.exe 剥掉外层引号后, wsl.exe 用
+  //   CommandLineToArgvW 重新拆词 → `bash -lc "export ..."` 的参数被拆成
+  //   `-lc` `export` `PATH=...` `;` `which` ... 各自成词 → bash 只拿到 "export"。
+  //   这跟"命令太长/超时"无关, 是**结构性的引号破坏**。
+  // 修法: 本工具用 execFile('wsl', argv) **数组化直调**, 全程不经 cmd.exe,
+  //   参数原样送达 (与同文件 wsl_scan 同一套思路)。
+  // 安全边界: 与 AI 现有的本机 run_command 权限等价 (都是本机执行), 不放宽;
+  //   真正要管的是"别打到未授权外部目标", 那是 scope 闸门的职责, 与本工具无关。
+  wsl_exec: async (args, ctx) => {
+    try {
+      const { execFile } = await import('child_process');
+      const distro = String(args.distro || 'kali-linux');
+      const user = String(args.user || 'root');
+      const command = String(args.command || '').trim();
+      if (!command) return { success: false, output: '❌ 缺 command。wsl_exec({ command: "which", args: ["go"] })' };
+      // args 必须是**数组**: 数组化是本工具的全部价值所在 (不经 shell 拆词)
+      const argv = Array.isArray(args.args) ? args.args.map((a: any) => String(a)) : [];
+      const timeout = Math.min(Number(args.timeout_ms) || 120_000, 600_000);
+
+      const full = ['-u', user, '-d', distro, '--', command, ...argv];
+      const out = await new Promise<string>((resolve, reject) => {
+        const child = execFile('wsl', full, {
+          timeout, maxBuffer: 5 * 1024 * 1024, windowsHide: true, encoding: 'utf-8',
+        }, (err: any, so: any, se: any) => {
+          if (err) { err.stdout = so; err.stderr = se; reject(err); return; }
+          resolve(String(so ?? '') + (se ? `\nSTDERR:\n${se}` : ''));
+        });
+        (child as any)?.on?.('error', () => { /* 统一走 callback */ });
+      });
+      const txt = (out || '').trim().slice(0, 8000);
+      return {
+        success: true,
+        output: txt || '(ok, 无输出)',
+        data: { distro, user, command, args: argv },
+      };
+    } catch (e: any) {
+      const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
+      const se = e.stderr ? `\nSTDERR:\n${String(e.stderr).slice(0, 2000)}` : '';
+      // 失败必须"可行动": 这类失败最常见是 (a) 发行版没装 (b) 命令不存在 (c) 真超时
+      const blob = `${e.message || ''}${so}${se}`;
+      let advice = '';
+      if (/not a recognized distribution|没有安装分发版|找不到指定的分发版|no installed distributions/i.test(blob)) {
+        advice = `\n\n❗ WSL 发行版 "${String(args.distro || 'kali-linux')}" 不可用。` +
+          `\n   这不是命令写错 —— 是环境没装/没初始化。` +
+          `\n   ✅ 正确做法: ① 告诉用户在本机 PowerShell 跑 "wsl --install -d kali-linux";` +
+          `\n   ② 本工具**无法代劳** (Agent 环境的 wsl.exe 被程序黑名单挡, 不是偷懒);` +
+          `\n   ③ 装好前, 子域枚举用 enum_subdomains (纯 JS, 跨平台不依赖 WSL), ` +
+          `存活探测用 http_replay/browser_navigate 顶替, 别卡在这。`;
+      } else if (/command not found|No such file or directory|未找到命令/i.test(blob)) {
+        advice = `\n\n❗ WSL 里没有这个命令。先确认工具是否已装: ` +
+          `wsl_exec({ command: "ls", args: ["/usr/bin"] }) 或 ` +
+          `wsl_exec({ command: "which", args: ["<工具名>"] })。` +
+          `Kali 工具链安装要用户本人在 Kali 终端跑 (apt install nmap nuclei sqlmap ffuf gobuster nikto subfinder httpx)。`;
+      } else if (/timed out|timeout|ETIMEDOUT/i.test(blob)) {
+        advice = `\n\n⏱ 超时。拆分命令逐条跑 (别一次串 4 个 go install), ` +
+          `或加大 timeout_ms (上限 600000)。`;
+      }
+      return { success: false, output: `wsl_exec 失败: ${e.message || e}${so}${se}${advice}` };
+    }
+  },
   wsl_scan: async (args, ctx) => {
     try {
       const { execFile } = await import('child_process');

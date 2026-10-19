@@ -3607,6 +3607,8 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
             role: 'system', content: summary,
           });
           logger.info(`[working-memory] injected summary at iteration ${this.iteration}`);
+          // 2026-10-19: 推前端提示 —— 否则"工作记忆摘要"只在后端日志里, 用户完全无感知
+          this.emit('working_memory', { iteration: this.iteration });
         } catch { /* working memory optional */ }
       }
 
@@ -4063,6 +4065,8 @@ if (isComplexTask) {
             this.context.appendOnlyLog = newLog;
           }
           console.log(`[history-compress] ${systemMsgs.length + nonSystem.length} → ${messages.length} msgs (users:${userRequests.length} tools:${toolSuccessCount}+${errorsHit.length}err files:${filesModified.size})`);
+          // 2026-10-19: 推前端提示 —— "达到阈值自动压缩"现在对用户可见
+          this.emit('context_compressed', { before: systemMsgs.length + nonSystem.length, after: messages.length, compressed: old.length });
         }
       }
 

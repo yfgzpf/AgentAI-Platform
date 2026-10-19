@@ -285,8 +285,10 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
 
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        // ⚠️ 关键修复: 必须在 break 前先处理 value, 否则末包 (可能含 done 事件, 与 res.end() 同一 TCP 段)
+        //   会被直接丢弃 → 前端永远收不到 done → 消息永久卡在 streaming 转圈 (即"说一句话就断了")
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
 
         let sepIdx: number;
         while ((sepIdx = buffer.indexOf('\n\n')) >= 0) {
@@ -341,13 +343,26 @@ case 'curiosity': window.dispatchEvent(new CustomEvent('agentai:curiosity', { de
 case 'debate': window.dispatchEvent(new CustomEvent('agentai:debate', { detail: data })); break;
 case 'dream': window.dispatchEvent(new CustomEvent('agentai:dream', { detail: data })); break;
               case 'timeout': window.dispatchEvent(new CustomEvent('agentai:timeout', { detail: data })); break;
+              case 'resume': handlers.onNotice?.({ kind: 'reconnect', text: data?.msg || 'SSE 断线恢复中…' }); break;
+              case 'context_compressed': handlers.onNotice?.({ kind: 'compress', text: `已自动压缩上下文 (保留 ${data.after} 条关键记忆, 压缩 ${data.compressed} 条)` }); break;
+              case 'working_memory': handlers.onNotice?.({ kind: 'memory', text: `已生成工作记忆摘要 (第 ${data.iteration} 轮)` }); break;
               case 'done': handlers.onDone?.({ provider: data.provider, content: data.content, usage: data.usage, displayModel: data.displayModel }); return;
               case 'error': handlers.onError?.(data.error || data.text || 'Unknown error'); return;
             }
           } catch {}
         }
+        }
+        if (done) break;
       }
-      // 正常结束 (SSE 流关闭, 但没有 done 事件)
+      // 流正常关闭但没有 done 事件:
+      //   传输层在 done 之前断了 (后端断线即 abort 当前 loop, 不会再补发 done)。
+      //   已收的 delta 就是本次能拿到的最完整内容 —— 兜底收尾, 绝不卡死转圈
+      //   (这正是"说一句话就断了"的根因之一)。
+      if (receivedDelta.trim()) {
+        handlers.onDone?.({ content: receivedDelta });
+      } else {
+        handlers.onError?.('连接已断开, 未收到任何回复');
+      }
       return;
     } catch (e: any) {
       // 确保 reader 被释放, 防止光标/缓冲残留

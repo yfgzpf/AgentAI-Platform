@@ -625,8 +625,10 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, episodeCount, refImages, scriptProvider, scriptModel: scriptModelName }),
+        signal: AbortSignal.timeout(120000),
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) { message.error('剧本生成失败: ' + (data.error || ('HTTP ' + resp.status))); return; }
       if (data.error) { message.error('剧本生成失败: ' + data.error); return; }
       if (data.ok && data.script) {
         const s = data.script as ScriptDraft;
@@ -664,8 +666,10 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
           scriptProvider, scriptModel: scriptModelName,
           refine: { instruction: refineText.trim(), script: current },
         }),
+        signal: AbortSignal.timeout(120000),
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) { message.error('剧本优化失败: ' + (data.error || ('HTTP ' + resp.status))); return; }
       if (data.error) { message.error('剧本优化失败: ' + data.error); return; }
       if (data.ok && data.script) {
         const s = data.script as ScriptDraft;
@@ -711,8 +715,10 @@ const [rightPanelExpanded, setRightPanelExpanded] = useState<string[]>(['preview
           scriptProvider, scriptModel: scriptModelName,
           script,
         }),
+        signal: AbortSignal.timeout(120000),
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) { message.error('分镜生成失败: ' + (data.error || ('HTTP ' + resp.status))); return; }
       if (data.error) { message.error('分镜生成失败: ' + data.error); return; }
       if (data.ok && data.storyboard) {
         const sb = data.storyboard as Storyboard;

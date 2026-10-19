@@ -66,6 +66,10 @@ pentest_pipeline({ target }) 一键跑 规划→侦察→执行→验证 四角�
 - 要"改一个 header/参数看响应差异" → **http_replay**, 不要 run_code 写 fetch 脚本
 - 要"枚举子域/端点" → **enum_subdomains / extract_js_endpoints**, 不要 web_search 猜
 - 要"复用历史打法" → **search_pentest_experience / search_vulns**, 不要凭记忆硬打
+- 要"在 Kali/WSL 里装工具或跑命令" → **wsl_exec** (数组化, 不经 cmd.exe)。
+  ⛔ **绝对不要用 run_command 跑 wsl ... bash -lc "长脚本"** —— cmd.exe 会剥掉外层引号,
+  wsl.exe 再拆一次词, 内层 bash 的参数被截断成只剩第一个词 (报 syntax error near unexpected token)。
+  这是结构性破坏, 换参数救不回来, 别重试。
 - 只有上述工具都试过且明确不适用的场景, 才允许 run_command 补位
 - 手搓脚本连续失败 2 次 → 立刻换回专用工具, 不要换文件名重试 (probe8.js → probe_pay10.js 这种)
 
@@ -89,6 +93,7 @@ export const SECURITY_OPS_TOOLS: ReadonlySet<string> = new Set([
   // 2026-10-19: 经验/漏洞库 + 串链编排也算"用了专用工具" ——
   //   否则 AI 开工先查一下历史经验, 却被判成"偏离"而被纠正, 荒谬。
   'search_pentest_experience', 'search_vulns', 'record_pentest_experience', 'pentest_pipeline',
+  'wsl_exec',
 ]);
 
 /**

@@ -1008,6 +1008,9 @@ const sendEvent = (event: string, data: any) => {
         loop.on('progress', (info: any) => {
           sendEvent('progress', info);
         });
+        // 2026-10-19: 上下文压缩 / 工作记忆摘要 推前端提示 (否则用户看不到"达到阈值自动压缩"在发生)
+        loop.on('context_compressed', (info: any) => { sendEvent('context_compressed', info); });
+        loop.on('working_memory', (info: any) => { sendEvent('working_memory', info); });
 
         // ═══ 灵魂层 SSE 事件: 实时推送 AI 内心状态到前端 ═══
         // 串味修复: 必须传请求级 workspace, 与 buildImmutablePrefix §4.75 用同一个 key,
@@ -1342,6 +1345,16 @@ req.on('close', () => {
                 content: systemRules,
               });
             }
+          }
+
+          // SSE 断线恢复: 前端重试时带 _receivedDelta, 让模型"续跑"而非"重跑"。
+          // 否则每次断线后端都从零重启 loop.run, 模型重新生成, 往往只吐一句短回复就停
+          // (这正是"说一句话就断了"在重试路径下的根因)。
+          if (isRetry && receivedDelta) {
+            loop.context?.appendOnlyLog?.push({
+              role: 'system',
+              content: `[断线恢复] 上一次响应在传输中途中断, 已生成的内容如下 (请基于它继续完成剩余工作, 不要重复已完成的步骤):\n${receivedDelta.slice(-2000)}`,
+            });
           }
 
           const response = await loop.run(runMessage);
