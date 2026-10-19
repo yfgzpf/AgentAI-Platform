@@ -3889,8 +3889,17 @@ if (isComplexTask) {
 
       // 3.1.1 对话历史智能压缩: 结构化摘要 (保留 system + 最近 10 条)
        // 基于 token 估算触发压缩 (根据模型上下文窗口动态调整阈值)
-       const estimatedTokens = messages.reduce((sum: number, m) =>
-         sum + (typeof m.content === 'string' ? m.content.length / 4 : 0), 0);
+       // ═══ 2026-10-19 C1: 估算改用「上轮真实 usage.promptTokens」作种子 ═══
+       // 原估算按字符/4, 中文 1 字≈1.8-2.2 token → 系统性偏低 ~2 倍,
+       // 导致"上下文已膨胀但估算值没破 50K 阈值"的死区, 压缩永不触发。
+       // 改用 router 回传的真实 promptTokens (覆盖完整 messages+tools),
+       // 新消息按均摊 20 token 估, 缺失时回落到字符/2 (比 /4 更接近真值)。
+       const _lastUsage = (lastResponse as any)?.usage;
+       const _lastPromptTokens = typeof _lastUsage?.promptTokens === 'number' ? _lastUsage.promptTokens : 0;
+       const estimatedTokens = _lastPromptTokens > 0
+         ? _lastPromptTokens + messages.length * 20
+         : messages.reduce((sum: number, m) =>
+             sum + (typeof m.content === 'string' ? m.content.length / 2 : 0), 0);
        const MAX_TOKENS_EST = (this as any)._contextCompressThreshold || 50_000;
       // ═══ 2026-10-11 记录事实 (不改判据) ═══
       // messages.length 里包含 immutablePrefix 的 36+ 条 system 消息 (实测 49 处 systemMsgs.push),
@@ -3922,9 +3931,15 @@ if (isComplexTask) {
         //    (实测教训: 曾把 old 改成"非 user", 直接打破 context-fidelity 的 3 条契约,
         //     且 head 全为 user 时 old.length===0 → 整段压缩被跳过 → 摘要彻底消失)
         const headUsers = head.filter(m => m.role === 'user');
-        const carriedUsers = headUsers.length <= 3
+        // ═══ 2026-10-19 C3: carriedUsers 上限 3 → 5 ═══
+        // 原注释 (2026-10-11): "全钉住会让 30+ 轮的会话永远满足压缩条件, 反而每轮都触发压缩"
+        // 这条顾虑**只在 C1 修好前成立** —— 当时 token 估算系统性偏低, 压缩判据靠 messages.length>30 触发,
+        // 每轮都压 → 保留 user 越多越膨胀。
+        // C1 修好后, 压缩按真实 promptTokens 触发 (50K 阈值), 不再每轮都压,
+        // 可以把保留的 user 从 3 提到 5, 长会话里用户诉求保留率 3/11 → 5/11, 减少"失忆"。
+        const carriedUsers = headUsers.length <= 5
           ? headUsers
-          : [headUsers[0]!, ...headUsers.slice(-2)];
+          : [headUsers[0]!, ...headUsers.slice(-4)];
         const recent = [...carriedUsers, ...tail];
         const old = head;
 
@@ -7368,7 +7383,7 @@ try {
       // 2026-10-19: 经验库三件套 + 四角色串链 —— 不进 priority 会被 MAX_TOOLS 裁掉,
       //   而"开工前查历史/收尾记经验"是渗透任务形成复利的唯一路径
       'search_pentest_experience', 'search_vulns', 'record_pentest_experience',
-      'pentest_pipeline',
+      'pentest_pipeline', 'wsl_exec',
     ]);
     const priority = filtered.filter(t => PRIORITY_TOOLS.has(getName(t)));
     const rest = filtered.filter(t => !PRIORITY_TOOLS.has(getName(t)));
