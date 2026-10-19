@@ -138,13 +138,16 @@ const MODELS = [
     // 正式版同样限流 ⇒ 默认值一进来就大概率失败。现默认改为 cogvideo (智谱免费, 实测最稳)。
     { value: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', desc: '实测最稳, 免费, 需 ZHIPU_API_KEY', priority: 10 },
     { value: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', desc: '1080p 画质最好, 需 VOLCANO_API_KEY', priority: 20 },
-    // ✅ 批次9 (2026-10-13): Alrc 工厂 Seedance 系列 4 个变体 (走 FACTORY_VIDEO_KEY)。
-    // modelStore.ts 的 FACTORY_VIDEO_MODELS 已注册同 4 条; 这里加到 MODELS 是为了
-    // "按引擎"选的入口也能直接看到 (videoModels filter 只挑 enabled 的, 默认全关)。
-    { value: 'doubao-seedance-2.5', label: 'Seedance 2.5 (工厂)', desc: 'Alrc 中转 · 按秒计费, 需 FACTORY_VIDEO_KEY', priority: 21 },
-    { value: 'doubao-seedance-2', label: 'Seedance 2 (工厂)', desc: 'Alrc 中转 · 1080p×5.1, 需 FACTORY_VIDEO_KEY', priority: 22 },
-    { value: 'doubao-seedance-2-fast', label: 'Seedance 2 Fast (工厂)', desc: 'Alrc 中转 · 720p 快速, 需 FACTORY_VIDEO_KEY', priority: 23 },
-    { value: 'doubao-seedance-2-mini', label: 'Seedance 2 Mini (工厂)', desc: 'Alrc 中转 · 480p 最省, 需 FACTORY_VIDEO_KEY', priority: 24 },
+    // ✅ 批次9 (2026-10-13) + 2026-10-20 修正: Alrc 工厂 Seedance 系列 4 个变体 (走 FACTORY_VIDEO_KEY)。
+    // ⚠️ value 必须与 modelStore.ts 工厂条目 id / 后端 VIDEO_ENGINES name **同一套** (factory-seedance-*)!
+    //   2026-10-20 之前这里写 doubao-seedance-* (上游真实名), 而 engineStatus[m.value] 用
+    //   m.value 查后端 engines 目录 → 键名对不上 → 灰显失效; 用户从这里选的模型提交后
+    //   还被旧网关 startsWith('seedance') 拒 (doubao- 前缀进不去) → "未知的视频模型"。
+    //   归一化在后端 normalizeSeedanceModel 做, 前端只传 id, 别再引入第四套命名。
+    { value: 'factory-seedance-2.5', label: 'Seedance 2.5 (工厂)', desc: 'Alrc 中转 · 按秒计费, 需 FACTORY_VIDEO_KEY', priority: 21 },
+    { value: 'factory-seedance-2', label: 'Seedance 2 (工厂)', desc: 'Alrc 中转 · 1080p×5.1, 需 FACTORY_VIDEO_KEY', priority: 22 },
+    { value: 'factory-seedance-2-fast', label: 'Seedance 2 Fast (工厂)', desc: 'Alrc 中转 · 720p 快速, 需 FACTORY_VIDEO_KEY', priority: 23 },
+    { value: 'factory-seedance-2-mini', label: 'Seedance 2 Mini (工厂)', desc: 'Alrc 中转 · 480p 最省, 需 FACTORY_VIDEO_KEY', priority: 24 },
     { value: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', desc: '免费档, 易 429 限流', priority: 30 },
     { value: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版', desc: '支持图生视频/首尾帧/参考, 需 AGNES_VIDEO_API_KEY', priority: 40 },
 ];

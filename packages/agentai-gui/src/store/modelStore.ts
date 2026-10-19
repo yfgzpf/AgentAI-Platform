@@ -205,11 +205,14 @@ const FACTORY_IMAGE_MODELS: ModelConfig[] = [
 // 与 factory-registry.ts 的 4 条视频分组严格 1:1 (subModel 完全一致),
 // 走 FACTORY_VIDEO_KEY 分组密钥, provider='alrc' (经 chat 路由的工厂分支 +
 // video 路由的 seedance 工厂分支消费)。
+// 2026-10-20 (富哥批准): 工厂视频 4 条默认 enabled: true —— 否则"设置里配了密钥,
+// 生视频页却看不到模型"。没配 FACTORY_VIDEO_KEY 时由前端 engineStatus 灰显兜底
+// (VIDEO_ENGINES name 与本 id 同套, 查询键对齐), 不会出现"能选但必失败"。
 const FACTORY_VIDEO_MODELS: ModelConfig[] = [
-  { id: 'factory-seedance-2.5', label: 'Seedance 2.5', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#7C3AED', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2.5'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
-  { id: 'factory-seedance-2', label: 'Seedance 2', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#8B5CF6', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
-  { id: 'factory-seedance-2-fast', label: 'Seedance 2 Fast', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#A78BFA', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2-fast'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
-  { id: 'factory-seedance-2-mini', label: 'Seedance 2 Mini', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#C4B5FD', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2-mini'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
+  { id: 'factory-seedance-2.5', label: 'Seedance 2.5', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#7C3AED', enabled: true, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2.5'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
+  { id: 'factory-seedance-2', label: 'Seedance 2', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#8B5CF6', enabled: true, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
+  { id: 'factory-seedance-2-fast', label: 'Seedance 2 Fast', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#A78BFA', enabled: true, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2-fast'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
+  { id: 'factory-seedance-2-mini', label: 'Seedance 2 Mini', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_VIDEO_KEY', color: '#C4B5FD', enabled: true, isBuiltIn: true, provider: 'alrc', models: ['doubao-seedance-2-mini'], contextWindow: 128000, isCommercial: true, groupLabel: '模型工厂·生视频', modelType: 'video' },
 ];
 
 // ===== 第三方免费聚合 (SenseNova/LongCat) =====
@@ -403,7 +406,7 @@ export const useModelStore = create<ModelState>()(
     }),
     {
       name: 'agentai-models',
-      version: 17,
+      version: 18,
       migrate: migrateModelStore,
     },
   ),
@@ -417,6 +420,17 @@ export const useModelStore = create<ModelState>()(
  * 因此 v16 只需处理「v15 漏掉的情况」, 不必也不应改写 v15 的结论。
  */
 export function migrateModelStore(persisted: any, version: number): any {
+  // v18 (2026-10-20, 富哥批准): 工厂视频 4 条目默认启用。DEFAULT_MODELS 里已把
+  //   enabled 改 true, 但已持久化的老用户 localStorage 里还是 false → 出现
+  //   "设置里配了密钥, 生视频页却看不到模型"的割裂。这里原地翻 true (不重建对象)。
+  //   没配 FACTORY_VIDEO_KEY 的由前端 engineStatus 灰显兜底, 翻 true 不会造成"能选必失败"。
+  if (version < 18 && Array.isArray(persisted?.models)) {
+    for (const m of persisted.models) {
+      if (typeof m?.id === 'string' && m.id.startsWith('factory-seedance-') && m.modelType === 'video') {
+        m.enabled = true;
+      }
+    }
+  }
   // v17 (2026-10-19): DeepSeek 官方把 deepseek-v4-flash 下架, 统一为 deepseek-flash。
   //   已持久化的模型条目里 models[] 还留着旧名 → 发给上游会 400 model not found。
   //   这里原地重写 models[]/label (不重建对象, 避免覆盖用户自定义的 baseURL/apiKey/enabled)。

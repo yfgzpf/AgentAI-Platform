@@ -149,3 +149,39 @@ describe('migrateModelStore — v16 已下架 agnes id 兜底', () => {
     expect(migrateModelStore({ activeModelId: 'deepseek' }, 15).commercialKeys).toEqual({});
   });
 });
+
+/**
+ * persist 迁移回归 — v18 (2026-10-20, 富哥批准"可以先"): 工厂视频 4 条目默认启用
+ * -------------------------------------------------
+ * 背景: DEFAULT_MODELS 里工厂视频 enabled 改 true, 但已持久化的老用户 localStorage
+ * 里还是 false → "设置里配了密钥, 生视频页却看不到模型"。v18 块原地翻 true。
+ */
+describe('migrateModelStore — v18 工厂视频默认启用', () => {
+  it('version<18 时 factory-seedance-* 视频条目 enabled 翻 true (原地改写, 其他字段不动)', () => {
+    const out = migrateModelStore({
+      models: [
+        { id: 'factory-seedance-2', modelType: 'video', enabled: false, label: 'Seedance 2', baseURL: 'https://custom' },
+        { id: 'factory-seedance-2.5', modelType: 'video', enabled: false },
+        { id: 'other', modelType: 'chat', enabled: false },
+      ],
+    }, 17);
+    const f2 = out.models.find((m: any) => m.id === 'factory-seedance-2');
+    expect(f2.enabled).toBe(true);
+    expect(f2.label).toBe('Seedance 2');
+    expect(f2.baseURL).toBe('https://custom');
+    const other = out.models.find((m: any) => m.id === 'other');
+    expect(other.enabled).toBe(false);
+  });
+
+  it('version>=18 不重跑 (幂等, 用户手动关过的不被翻回来)', () => {
+    const out = migrateModelStore({ models: [{ id: 'factory-seedance-2', modelType: 'video', enabled: false }] }, 18);
+    expect(out.models[0].enabled).toBe(false);
+  });
+
+  it('DEFAULT_MODELS 里工厂视频 4 条默认 enabled: true (新用户开箱即见)', () => {
+    const models = useModelStore.getState().models;
+    const factoryVideos = models.filter((m: any) => m.id.startsWith('factory-seedance-') && m.modelType === 'video');
+    expect(factoryVideos.length).toBe(4);
+    for (const m of factoryVideos) expect((m as any).enabled).toBe(true);
+  });
+});

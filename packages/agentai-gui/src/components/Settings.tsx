@@ -317,6 +317,10 @@ const FACTORY_IMAGE_MODEL_LIST: { id: string; label: string; color: string; pric
 // 之前视频分组 groupModels 是 [] (显示占位"服务端尚未分配模型"), 导致 Settings 里
 // "对应支持模型名"这一环断了 —— 用户填了视频密钥也不知道到底解锁了哪些模型。
 // ⚠️ 价格数字来自 Alrc 截图口径 (按秒计费, 各分辨率不同), 官方价目表未核 —— 只用于 UI 展示。
+// 🔒 2026-10-20: 本清单的 id 是**上游真实模型名** (测试探针 testModel 直接拿它打 ALRO,
+//   见下方 group.id === 'video' ? 'doubao-seedance-2.5')。**不要**为了和下拉/engines 目录
+//   "对齐"把它改成 factory-seedance-* —— 那是 modelStore 条目 id, 不是上游名, 改了探测必失败。
+//   三处命名分工: 本清单=上游真实名 / modelStore id=下拉值 / VIDEO_ENGINES name=灰显查询键。
 const FACTORY_VIDEO_MODEL_LIST: { id: string; label: string; color: string; price: string; desc: string }[] = [
   { id: 'doubao-seedance-2.5', label: 'Seedance 2.5', color: '#7C3AED', price: '按秒计费', desc: 'Alrc 中转 · 旗舰画质' },
   { id: 'doubao-seedance-2', label: 'Seedance 2', color: '#8B5CF6', price: '按秒计费', desc: 'Alrc 中转 · 1080p 标准' },

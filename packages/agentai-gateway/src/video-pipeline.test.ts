@@ -231,7 +231,23 @@ describe('V4 前后端模型值一致', () => {
   });
 
   it('后端错误信息列出的可用模型与前端一致', () => {
+    // 2026-10-20: 从 4 个内置扩到 8 个 (含工厂 4 变体)。
+    // 源码里是两行字符串拼接, codeOnly 不合并跨行 → 分两段断言 (仍锁 8 个全列出)。
     expect(videoCode).toMatch(/agnes-video-2\.5 \/ agnes \/ cogvideo \/ seedance-2\.5/);
+    expect(videoCode).toMatch(/factory-seedance-2\.5 \/ factory-seedance-2 \/ factory-seedance-2-fast \/ factory-seedance-2-mini/);
+  });
+
+  it('★ VideoGen MODELS 的工厂 value 与 modelStore 工厂 id 同一套 (2026-10-20 第四处硬编码契约)', () => {
+    // 实锤: MODELS 的 value 曾是 doubao-seedance-* (上游真实名), 而 engineStatus[m.value]
+    // 用 m.value 查后端 engines 目录 (factory-seedance-*) → 键名对不上, 灰显失效;
+    // 用户选到的 doubao-seedance-2 在旧网关还报"未知的视频模型"。
+    // 前端只传 id, 归一交给后端 normalizeSeedanceModel, 不能再引入第四套命名。
+    const modelStoreSrc = rd('packages/agentai-gui/src/store/modelStore.ts');
+    const factoryVideoIds = [...codeOnly(modelStoreSrc).matchAll(/\{ id: '(factory-seedance-[^']+)'/g)].map((m) => m[1]!);
+    for (const id of factoryVideoIds) {
+      expect(videoGenSrc, `VideoGen MODELS 缺 ${id}`).toContain("value: '" + id + "'");
+    }
+    expect(codeOnly(videoGenSrc), 'MODELS 的 value 不应再用上游真实名 doubao-seedance-*').not.toMatch(/value: 'doubao-seedance-/);
   });
 
   it('★ 前端提交时确实带上 model（否则后端无法按模型分发）', () => {
