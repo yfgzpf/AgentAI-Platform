@@ -125,6 +125,7 @@ export const TOOL_GROUPS: Record<string, string[]> = {
         'save_target_state',        // 长周期目标状态记忆 (跨会话继承进度)
         'load_target_state',        // 目标状态读回
         'classify_response',        // 响应识别 WAF/限流/验证码
+        'impact_proof',             // 影响证明链 (决定报告能不能过审)
     ],
 
     // 音乐控制组

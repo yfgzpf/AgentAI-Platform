@@ -1019,6 +1019,14 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       headers: { type: 'object', description: '响应头 (键值对)' },
       body: { type: 'string', description: '响应体文本 (或对象会被 JSON 化)' },
     }, required: ['status'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'impact_proof', description: '【影响证明链 (决定报告能否过审)】把"发现了漏洞特征"补成"证明了真实影响"。厂商判"无影响"通常不是洞太浅, 而是证据链不完整 (只说"能下载", 没说"是谁的数据/有多少/能造成什么")。\n\n🔑 三个动作:\n- action:"plan" (默认) + vulnType → 该类型的分步证明链 (idor/unauth-read/ssrf/file-read/payment/unauth-panel/sqli/xss), 每步标明"记录什么"和"到哪必须停"\n- action:"check" + step → 动手前自检是否踩红线 (sqlmap dump/读 /etc/shadow/取云 AK/批量下载 PII/接管他人账号), 踩了返回等效合法做法\n- action:"evaluate" + evidence → 证据强度打分 A/B/C, C 级明确不允许出报告\n\n⛔ 定级依据是"能影响", 不是"已损害"。证明越权成立/元数据可达即可, 不需要真拿走别人的数据 — 真造成损害不仅违法, 还会被 SRC 拒收封号。', parameters: { type: 'object', properties: {
+      action: { type: 'string', enum: ['plan', 'check', 'evaluate'], description: '默认 plan' },
+      vulnType: { type: 'string', description: '漏洞类型/关键词 (idor/越权/未授权读取/ssrf/文件读取/支付/未授权后台/sqli/xss), 中英文都认' },
+      target: { type: 'string', description: '目标 (可选)' },
+      hasTwoAccounts: { type: 'boolean', description: '越权类: 是否已有两个测试账号 (没有会提示先注册, 不许拿真实用户试)' },
+      step: { type: 'string', description: 'action=check 时: 你打算执行的这一步' },
+      evidence: { type: 'object', description: 'action=evaluate 时: {hasRequestResponse,hasCrossAccount,hasScaleEstimate,hasSensitiveProof,rawPiiSaved,actedOnOtherUser,usedRealCredential,causedRealLoss}' },
+    }, required: [] }, parallelSafe: true, riskLevel: 'low' },
   { name: 'search_vulns', description: '【漏洞库召回】查本工作区历史漏洞 (vulns.jsonl), 支持按目标根域/漏洞类型/等级过滤。打新目标前先查"同类资产以前出过什么洞", 避免重复劳动。',
     parameters: { type: 'object', properties: {
       target: { type: 'string', description: '目标 host 或根域 (查 u51.com 能召回 api.u51.com 等子域)' },
@@ -3092,6 +3100,42 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const a = classifyResponse(status, headers, body);
       return { success: true, output: formatAnalysis(a), data: a };
     } catch (e: any) { return { success: false, output: `classify_response 失败: ${e.message}` }; }
+  },
+  // ═══ 2026-10-19: 影响证明链 (决定赏金报告能否过审的核心能力) ═══
+  // 厂商判"无影响"多半不是洞太浅, 而是证据链不完整 (只说"能下载", 没说"是谁的数据、
+  // 有多少、能造成什么")。本工具把"发现特征 → 结构化证明影响"这一步固化下来,
+  // 并用红线机检挡住"为了证明而真的去造成损害"的错误做法。
+  impact_proof: async (args, ctx) => {
+    try {
+      const mod = await import('./pentest/impact-proof.js');
+      const action = String(args.action || 'plan');
+
+      if (action === 'check') {
+        const v = mod.checkRedLine(String(args.step || ''));
+        if (!v.blocked) return { success: true, output: '✅ 未踩红线, 可以执行', data: v };
+        return {
+          success: false,
+          output: `⛔ 这一步踩红线: ${v.reason}\n\n✅ 等效的合法做法: ${v.alternative}\n\n(定级看的是"能影响", 不是"已损害" — 用可达性/越权成立来证明, 比真去造成损害更安全也更有效)`,
+          data: v,
+        };
+      }
+
+      if (action === 'evaluate') {
+        const g = mod.gradeEvidence(args.evidence && typeof args.evidence === 'object' ? args.evidence : {});
+        // C 级视为失败: 明确告诉 AI "现在报出去会被判无影响", 而不是让它硬报
+        return {
+          success: g.grade !== 'C',
+          output: `${mod.formatEvidenceGrade(g)}\n\n${g.grade === 'C' ? '❌ 不要生成报告 — 先按影响证明链补齐证据' : '✅ 可以进入 bounty_report'}`,
+          data: g,
+        };
+      }
+
+      const plan = mod.planImpactProof(String(args.vulnType || ''), {
+        target: args.target ? String(args.target) : undefined,
+        hasTwoAccounts: typeof args.hasTwoAccounts === 'boolean' ? args.hasTwoAccounts : undefined,
+      });
+      return { success: true, output: mod.formatImpactPlan(plan), data: plan };
+    } catch (e: any) { return { success: false, output: `impact_proof 失败: ${e.message}` }; }
   },
   report_vulnerability: async (args, ctx) => {
     try {

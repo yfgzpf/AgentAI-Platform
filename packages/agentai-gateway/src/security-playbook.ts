@@ -70,6 +70,9 @@ pentest_pipeline({ target }) 一键跑 规划→侦察→执行→验证 四角�
 - 要"盲测不确定是否真中" → **oob_register + oob_check** (盲 XSS/SSRF/异步 RCE/DNS 外带, 网关自带回连监听, 不依赖第三方 OAST)。别凭"可能触发了"主观判断
 - 要"多天 engagement 不重复劳动" → **save_target_state / load_target_state** (记录目标已扫资产/已测端点/已排除项/待打攻击面/WAF遭遇, 跨会话继承进度)。pentest_pipeline 开工自动注入, 阶段收尾随手 save
 - 要"判断响应是否被 WAF 拦/限流/验证码" → **classify_response** (http_replay 已自动附加分析; 也可手动分析 browser/手工 fetch 的响应)。被拦时按建议退避/换 UA/加 XFF/走 browser, 别硬刚
+- 要"把'能下载'变成'能定级'" → **impact_proof**: plan=证明链+停线, check=查红线, evaluate=打分 (C 级不许出报告)
+- ⛔ **发现特征不许停**: 走完证明链, 答全"谁受影响/前置条件/最坏后果"。但不许为证明而真造成损害
+  (批量拿 PII/取云 AK/接管账号/真实扣款) — 违法且 SRC 拒收。**定级看"能影响"不是"已损害"**。
 - 要"在 Kali/WSL 里装工具或跑命令" → **wsl_exec** (数组化, 不经 cmd.exe)。
   ⛔ **绝对不要用 run_command 跑 wsl ... bash -lc "长脚本"** —— cmd.exe 会剥掉外层引号,
   wsl.exe 再拆一次词, 内层 bash 的参数被截断成只剩第一个词 (报 syntax error near unexpected token)。
@@ -98,6 +101,7 @@ export const SECURITY_OPS_TOOLS: ReadonlySet<string> = new Set([
   //   否则 AI 开工先查一下历史经验, 却被判成"偏离"而被纠正, 荒谬。
   'search_pentest_experience', 'search_vulns', 'record_pentest_experience', 'pentest_pipeline',
   'wsl_exec', 'bounty_report', 'oob_register', 'oob_check', 'save_target_state', 'load_target_state', 'classify_response',
+  'impact_proof',
 ]);
 
 /**
