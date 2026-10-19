@@ -73,11 +73,15 @@ export function parseCronField(expr: string, min: number, max: number, allowSeve
       hi = slash >= 0 ? max : lo;
     }
 
-    // 周日写成 7 也认
-    if (allowSeven) {
-      if (lo === 7) lo = 0;
-      if (hi === 7) hi = 0;
+    // 周日写成 7 也认; 且 0-7 / a-7 是"跨周日"区间, 必须展开 lo..6 再并上 0。
+    // 旧实现 `if (hi === 7) hi = 0` 有 bug: `0-7` 塌成 {0} (只剩周日),
+    // `1-7` 变 lo>hi 直接判非法 —— 用户写"每天"用 0-7 时就中招。
+    if (allowSeven && hi === 7) {
+      for (let v = lo; v <= 6; v += step) out.add(v);
+      out.add(0);
+      continue;
     }
+    if (allowSeven && lo === 7) lo = 0;
 
     if (lo < min || hi > max || lo > hi) return null;
     for (let v = lo; v <= hi; v += step) out.add(v);
@@ -117,16 +121,4 @@ export function cronMatches(f: CronFields, date: Date): boolean {
   if (dowAny) return domHit;
   // 两者都被限定 → vixie cron 惯例: OR
   return domHit || dowHit;
-}
-
-/**
- * 兼容老的 `* / N` 语义: 返回"N 分钟一次"的间隔 (毫秒), 非该形态返回 null。
- * 保留它是因为历史任务里有 `* / 30 * * * *` 这类写法, 走分钟级匹配一样能算出来。
- */
-export function legacyIntervalMs(expression: string): number | null {
-  const m = String(expression ?? '').match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
-  if (!m) return null;
-  const n = parseInt(m[1]!, 10);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return n * 60 * 1000;
 }

@@ -7,7 +7,7 @@
  * 这些任务**全在按小时乱跑**, 用户设定的时间点根本不生效。
  */
 import { describe, it, expect } from 'vitest';
-import { parseCron, parseCronField, cronMatches, legacyIntervalMs } from '../cron-parse.js';
+import { parseCron, parseCronField, cronMatches } from '../cron-parse.js';
 
 const at = (h: number, m: number, day = 15) => new Date(2026, 9, day, h, m, 0, 0); // 2026-10-15 是周四
 
@@ -31,6 +31,14 @@ describe('cron-parse: 字段解析', () => {
 
   it('周日可写 7', () => {
     expect([...parseCronField('7', 0, 6, true)!]).toEqual([0]);
+  });
+
+  it('跨周日区间 0-7 / 1-7 / 5-7 必须展开成"整周/周一到周日/周五六日"', () => {
+    // 旧实现把 hi=7 折成 0: 0-7 塌成 {0} (只剩周日), 1-7 直接判非法
+    expect([...parseCronField('0-7', 0, 6, true)!].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect([...parseCronField('1-7', 0, 6, true)!].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect([...parseCronField('5-7', 0, 6, true)!].sort((a, b) => a - b)).toEqual([0, 5, 6]);
+    expect([...parseCronField('0-7/2', 0, 6, true)!].sort((a, b) => a - b)).toEqual([0, 2, 4, 6]);
   });
 });
 
@@ -87,12 +95,7 @@ describe('cron-parse: 时间匹配', () => {
 });
 
 describe('cron-parse: 兼容旧写法', () => {
-  it('legacyIntervalMs 只认单段 * / N', () => {
-    expect(legacyIntervalMs('*/30 * * * *')).toBe(30 * 60 * 1000);
-    expect(legacyIntervalMs('0 2 * * *')).toBeNull();
-  });
-
-  it('`*/N` 用 cron 匹配也能算出来 (无需特判)', () => {
+  it('`*/N` 用 cron 匹配就能算出来 (无需特判遗留接口)', () => {
     const f = parseCron('*/6 * * * *')!;
     expect(cronMatches(f, at(0, 0))).toBe(true);
     expect(cronMatches(f, at(0, 6))).toBe(true);
