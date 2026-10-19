@@ -17,6 +17,8 @@ const rd = (rel: string) => readFileSync(nodePath.join(ROOT, rel), 'utf-8');
 const videoSrc = rd('packages/agentai-gateway/src/routes/video.ts');
 const ffmpegSrc = rd('packages/agentai-gateway/src/ffmpeg.ts');
 const videoGenSrc = rd('packages/agentai-gui/src/components/VideoGen.tsx');
+const storyboardSrc = rd('packages/agentai-gui/src/components/StoryboardPanel.tsx');
+const taskManagerSrc = rd('packages/agentai-gui/src/services/videoTaskManager.ts');
 const chatSrc = rd('packages/agentai-gateway/src/routes/chat.ts');
 
 /**
@@ -337,3 +339,64 @@ describe('V6 Seedance 尾帧: 提交索要 + 查询解析', () => {
 });
 
 void NL;
+// ════════════════════════════════════════════════════════════════════════
+// V7 上游视频错误分类 (2026-10-20)
+// 事故 (富哥实锤): 生视频"不论选哪个模型"都提示"队列已满" ——
+//   ALRO 工厂返回 `HTTP 503:` (响应体为空), 网关 res.status(resp.status) 原样透传,
+//   前端 `resp.status === 503` 就判队列满 → 盲重试 5 次 × 30s = 白等 2.5 分钟。
+//   而上游 503 的性质完全不同 (繁忙 / 通道不支持 / 模型不可用 / 分组无权限),
+//   一律当"队列满"重试 = 白等 + 误导。
+// ════════════════════════════════════════════════════════════════════════
+describe('V7 上游视频错误分类', () => {
+  it('空响应体 503 → upstream_busy + 可重试, 且文案点明"无法区分繁忙/不可用"', { timeout: 20000 }, async () => {
+    // 真调用 (不是源码文本断言): 该用例要 import 整个路由模块, 单独跑约 1.6s,
+    // 并行时更慢 —— 显式放宽 timeout, 避免全量跑时被误判成失败。
+    const { classifyUpstreamVideoError } = await import('./routes/video.js');
+    const r = classifyUpstreamVideoError(503, '', { model: 'doubao-seedance-2', source: 'ALRO 工厂' });
+    expect(r.code).toBe('upstream_busy');
+    expect(r.retryable).toBe(true);
+    expect(r.hint).toContain('响应体为空');
+    expect(r.hint).toContain('doubao-seedance-2');
+  });
+
+  it('403 分组 → group_forbidden + **不可重试** (等再久也没用)', async () => {
+    const { classifyUpstreamVideoError } = await import('./routes/video.js');
+    const r = classifyUpstreamVideoError(403, '{"error":{"message":"无权访问 国内模型 分组"}}');
+    expect(r.code).toBe('group_forbidden');
+    expect(r.retryable).toBe(false);
+    expect(r.hint).toMatch(/令牌/);
+  });
+
+  it('429 → rate_limited + 可重试; 404/400/未知 → 不可重试', async () => {
+    const { classifyUpstreamVideoError } = await import('./routes/video.js');
+    expect(classifyUpstreamVideoError(429, '').code).toBe('rate_limited');
+    expect(classifyUpstreamVideoError(429, '').retryable).toBe(true);
+    expect(classifyUpstreamVideoError(404, 'model_not_found').retryable).toBe(false);
+    expect(classifyUpstreamVideoError(400, '').code).toBe('bad_request');
+    expect(classifyUpstreamVideoError(418, '').retryable).toBe(false);
+  });
+
+  it('★ 四个引擎的错误透传都带 code + retryable + 诊断日志', () => {
+    // 不带 code/retryable → 前端无法区分"该退避"还是"该立刻报错"
+    const withCode = (videoCode.match(/code:\s*cls\.code/g) || []).length;
+    expect(withCode, '工厂/火山/Agnes Flash/智谱 四处都应带 code').toBeGreaterThanOrEqual(4);
+    const withRetryable = (videoCode.match(/retryable:\s*cls\.retryable/g) || []).length;
+    expect(withRetryable).toBeGreaterThanOrEqual(4);
+    // 上游失败必须留痕 (响应体为空时只有日志能事后定位)
+    expect(videoCode).toMatch(/工厂 seedance 提交失败 status=/);
+    expect(videoCode).toMatch(/视频引擎提交失败 status=/);
+  });
+
+  it('★ 前端不再用「任何 503 = 队列已满」判定退避', () => {
+    const sb = codeOnly(storyboardSrc);
+    const tm = codeOnly(taskManagerSrc);
+    expect(sb, 'StoryboardPanel 仍有 resp.status === 503 判定').not.toMatch(/resp\.status === 503/);
+    expect(tm, 'videoTaskManager 仍有 resp.status === 503 判定').not.toMatch(/resp\.status === 503/);
+    // 改按后端给的 code / retryable 决定退避
+    expect(sb).toMatch(/data\.retryable === true/);
+    expect(sb).toMatch(/code === 'upstream_busy'/);
+    expect(tm).toMatch(/data\.retryable === true/);
+    // 不可重试时要显示真实原因 (error + hint), 不是干巴巴一个 HTTP 码
+    expect(sb).toMatch(/\[data\.error, data\.hint\]/);
+  });
+});

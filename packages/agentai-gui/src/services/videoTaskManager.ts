@@ -340,10 +340,14 @@ submitTask(params: {
         // 2026-10-11 实测: agnes 免费档返回 429「您已达到免费用户的 API 速率限制」,
         //    该额度一旦耗尽, 重试多久都不会成功, 必须让用户看到可执行的下一步。
         //    同时补上 429 —— 原先只认 503, 429 会被立刻标失败(丢失退避机会)。
-        const isThrottled = resp.status === 503 || resp.status === 429
+        // 2026-10-20: 503 不再一律退避 (上游空响应体 503 / 分组无权限 / 模型不可用 退避
+        //   多少次都不会成功, 只会白等并掩盖真实原因) —— 改按后端 code/retryable 判定。
+        //   429 保留状态码兜底: 它的语义就是"限流", 退避永远有意义。
+        const isThrottled = resp.status === 429
+          || data.retryable === true
           || data.code === 'video_queue_full'
-          || String(data.error).includes('队列')
-          || String(data.error).includes('速率限制');
+          || data.code === 'upstream_busy'
+          || data.code === 'rate_limited';
         if (isThrottled) {
           const tries = ((next as any)._throttleTries || 0) + 1;
           (next as any)._throttleTries = tries;

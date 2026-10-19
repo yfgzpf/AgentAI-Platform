@@ -153,6 +153,80 @@ export function normalizeSeedanceModel(requested: string): string | null {
 }
 
 /**
+ * 上游视频引擎错误分类 (2026-10-20)
+ * ==================================================================
+ * 事故 (富哥实锤): 生视频"不论选哪个模型"都提示"队列已满" ——
+ *   ALRO 工厂返回 `HTTP 503` (响应体为空), 网关 res.status(resp.status) 原样透传,
+ *   前端 `resp.status === 503` 就判"队列满" → 盲重试 5 次 × 30s = 白等 2.5 分钟。
+ *   而上游 503 的性质**完全不同**: 真繁忙(可重试) / 通道不支持 / 模型不可用 / 分组没权限。
+ *   一律当"队列满"重试 = 白等 + 误导 (用户以为等一下就好, 实际等多久都不会成功)。
+ *
+ * 现在: 统一打上 code + retryable, 前端按 code 决定退避还是立即失败并显示真实原因。
+ * 另: 每次上游失败都打诊断日志 —— 上游返回空响应体时, 只有日志能事后定位。
+ */
+export interface UpstreamVideoError {
+  code: 'group_forbidden' | 'rate_limited' | 'upstream_busy' | 'model_unavailable' | 'bad_request' | 'unknown';
+  /** true = 退避后重试有意义; false = 重试一万次也不会变, 必须让用户看到原因 */
+  retryable: boolean;
+  hint: string;
+}
+
+export function classifyUpstreamVideoError(
+  status: number,
+  body: string,
+  ctx?: { model?: string; source?: string },
+): UpstreamVideoError {
+  const b = String(body || '');
+  const where = ctx?.source ? ` (${ctx.source}${ctx.model ? ' ' + ctx.model : ''})` : '';
+
+  if (status === 403 || /无权访问[\s\S]{0,20}分组|forbidden|permission denied/i.test(b)) {
+    return {
+      code: 'group_forbidden',
+      retryable: false,
+      hint: `上游拒绝访问${where}: 令牌缺该模型所属分组的权限 —— 重试无用。`
+        + '请到 ALRO 令牌管理勾选全部分组 (或换一把全权限令牌), 其余 FACTORY_*_KEY 留空即可。',
+    };
+  }
+  if (status === 429 || /rate.?limit|速率限制|too many requests/i.test(b)) {
+    return {
+      code: 'rate_limited',
+      retryable: true,
+      hint: `上游限流${where}: 30~60s 后可重试。连续限流请换模型, 或检查该 provider 的额度。`,
+    };
+  }
+  if (status === 503 || /queue.?full|队列已满|service.?unavailable|overloaded|temporarily unavailable/i.test(b)) {
+    return {
+      code: 'upstream_busy',
+      retryable: true,
+      hint: b.trim()
+        ? `上游繁忙${where}: ${b.slice(0, 160)} —— 可重试, 或换模型。`
+        : `上游返回 503 且**响应体为空**${where}: 无法区分"通道繁忙"与"该模型/通道不可用"。`
+          + '建议先换 CogVideoX-Flash (智谱免费) 验证生成链路本身通不通; 若只有工厂模型 503, '
+          + '多半是该通道对当前令牌/分组暂不可用, 可稍后重试或换工厂其它变体。',
+    };
+  }
+  if (status === 404 || /model.?not.?found|模型不存在|未开放|无可用渠道/i.test(b)) {
+    return {
+      code: 'model_unavailable',
+      retryable: false,
+      hint: `上游没有这个模型/无可用渠道${where}: 重试无用, 请换模型或核对模型名。`,
+    };
+  }
+  if (status === 400 || status === 422) {
+    return {
+      code: 'bad_request',
+      retryable: false,
+      hint: `上游判定请求参数非法${where}: ${b.slice(0, 160) || '(无响应体)'}`,
+    };
+  }
+  return {
+    code: 'unknown',
+    retryable: false,
+    hint: `上游返回 HTTP ${status}${where}: ${b.slice(0, 160) || '(空响应体)'}`,
+  };
+}
+
+/**
  * 自定义模型 (BYOK) 凭证解析 —— 2026-10-13
  * ==================================================================
  * 修复前的断裂 (用户实机反馈"自定义模型填了 Key 却从不生效"):
@@ -1528,21 +1602,19 @@ async function submitSeedanceViaFactory(
       return;
     }
     const errText = await resp.text().catch(() => '');
-    // 2026-10-20: ALRO 分组 403 透传可操作指引 (与 llm-router 的 chat 链路同款)。
-    // 旧令牌只挂部分分组时, 工厂视频调用静默 403, 用户只看到一句英文原文, 无从下手。
-    if (resp.status === 403) {
-      const gm = errText.match(/无权访问[：:\s]*([\s\S]*?)\s*分组/);
-      if (gm) {
-        const groupName = gm[1]!.replace(/\s+/g, '');
-        return res.status(403).json({
-          error: `ALRO 令牌无权访问「${groupName}」分组 (model=${subModel})。`
-            + '这不是代码问题 —— 请到 ALRO 令牌管理重新生成「全权限」令牌 (勾选全部分组), '
-            + '填入 .env 的 ALRC_API_KEY 即可 (网关自动回退主令牌), 或补齐 FACTORY_VIDEO_KEY。',
-        });
-      }
-    }
-    res.status(resp.status || 502).json({
-      error: `Alrc 工厂视频返回 HTTP ${resp.status}: ${errText.slice(0, 200)}`,
+    // 2026-10-20: 统一错误分类 —— 上游失败打上 code/retryable + 诊断日志。
+    //   事故: 工厂返回空响应体 503, 前端"任何 503 = 队列满"盲重试 5 次, 白等 2.5 分钟。
+    //   现在空响应体也会明确写出"无法区分繁忙/不可用"并给出换模型的下一步。
+    const cls = classifyUpstreamVideoError(resp.status, errText, { model: subModel, source: 'ALRO 工厂' });
+    console.warn(
+      `[video] 工厂 seedance 提交失败 status=${resp.status} code=${cls.code} model=${subModel}`
+      + ` body=${errText ? errText.slice(0, 200) : '(空)'}`,
+    );
+    return res.status(resp.status || 502).json({
+      error: `Alrc 工厂视频返回 HTTP ${resp.status}${errText ? ': ' + errText.slice(0, 200) : ': (上游响应体为空)'}`,
+      code: cls.code,
+      retryable: cls.retryable,
+      hint: cls.hint,
     });
   } catch (e: any) {
     res.status(500).json({ error: `Alrc 工厂视频请求失败: ${e.message}` });
@@ -1586,8 +1658,16 @@ async function submitSeedanceVariant(
       }
     }
     const errText = await resp.text().catch(() => '');
-    res.status(resp.status || 502).json({
-      error: `${keyLabel} 视频引擎返回 HTTP ${resp.status}: ${errText.slice(0, 200)}`,
+    const cls = classifyUpstreamVideoError(resp.status, errText, { model: volModel, source: keyLabel });
+    console.warn(
+      `[video] 视频引擎提交失败 status=${resp.status} code=${cls.code} model=${volModel} `
+      + `source=${keyLabel} body=${errText ? errText.slice(0, 200) : '(空)'}`,
+    );
+    return res.status(resp.status || 502).json({
+      error: `${keyLabel} 视频引擎返回 HTTP ${resp.status}${errText ? ': ' + errText.slice(0, 200) : ': (上游响应体为空)'}`,
+      code: cls.code,
+      retryable: cls.retryable,
+      hint: cls.hint,
     });
   } catch (e: any) {
     res.status(500).json({ error: `Seedance 请求失败: ${e.message}` });
@@ -1767,18 +1847,16 @@ async function submitAgnesFlash(
     });
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
-      console.error(`[Agnes Flash] HTTP ${resp.status}: ${errText.slice(0, 500)}`);
-      // P0: 速率限制 (429) 或服务不可用 (503) 时明确告知用户
-      const isRateLimit = resp.status === 429;
-      const isServiceError = resp.status >= 500;
-      const hint = isRateLimit
-        ? 'Agnes Flash API 速率限制 (429), 请稍后重试或降低生成频率'
-        : isServiceError
-        ? 'Agnes Flash API 服务暂时不可用, 请稍后重试'
-        : '';
+      // 2026-10-20: 统一分类 (原来只区分 429/5xx, 其余无 hint, 且不带 code/retryable)
+      const cls = classifyUpstreamVideoError(resp.status, errText, { source: 'Agnes Flash' });
+      console.error(
+        `[Agnes Flash] HTTP ${resp.status} code=${cls.code} body=${errText ? errText.slice(0, 300) : '(空)'}`,
+      );
       return res.status(resp.status).json({
-        error: `Agnes Video 2.5 Flash 返回 HTTP ${resp.status}: ${errText.slice(0, 300)}`,
-        hint,
+        error: `Agnes Video 2.5 Flash 返回 HTTP ${resp.status}${errText ? ': ' + errText.slice(0, 300) : ': (上游响应体为空)'}`,
+        code: cls.code,
+        retryable: cls.retryable,
+        hint: cls.hint || 'Agnes Flash API 暂时不可用, 请稍后重试或换模型',
         provider: 'agnes-flash',
       });
     }
@@ -1835,7 +1913,17 @@ async function submitCogVideo(res: any, zhipuKey: string, prompt: string, image?
       }
     }
     const errText = await resp.text().catch(() => '');
-    return res.status(resp.status).json({ error: `CogVideoX HTTP ${resp.status}: ${errText.slice(0, 200)}` });
+    const cls = classifyUpstreamVideoError(resp.status, errText, { source: 'CogVideoX(智谱)' });
+    console.warn(
+      `[video] 视频引擎提交失败 status=${resp.status} code=${cls.code} source=CogVideoX(智谱) `
+      + `body=${errText ? errText.slice(0, 200) : '(空)'}`,
+    );
+    return res.status(resp.status).json({
+      error: `CogVideoX HTTP ${resp.status}${errText ? ': ' + errText.slice(0, 200) : ': (上游响应体为空)'}`,
+      code: cls.code,
+      retryable: cls.retryable,
+      hint: cls.hint,
+    });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
   }

@@ -1165,11 +1165,15 @@ Plain solid white background, studio lighting, photorealistic, high detail. The 
       const resp = await fetch(`${httpUrl}/v1/video`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyWithKey) });
       const data = await resp.json();
       if (data.taskId) return { taskId: data.taskId, provider: data.provider };
-      // 检测队列已满 — 503 + video_queue_full
-      const errStr = String(data.error || '') + String(data.message || '') + String(data.code || '');
-      const isQueueFull = resp.status === 503 || errStr.includes('video_queue_full') || errStr.includes('队列已满');
-      // 检测速率限制 — 429
-      const isRateLimit = resp.status === 429 || errStr.includes('429') || errStr.includes('rate_limit') || errStr.includes('速率限制');
+      // 2026-10-20: 只按后端给的 code/retryable 退避, **不再"任何 503 都当队列已满"**。
+      //   事故 (富哥实锤): 上游 (ALRO 工厂等) 返回空响应体 503, 网关原样透传,
+      //   旧判定 `resp.status === 503` 一律当队列满 → 盲重试 5 次 × 30s = 白等 2.5 分钟,
+      //   而上游 503 也可能是"通道不支持/模型不可用", 等多久都不会成功。
+      const code = String(data.code || '');
+      const retryable = data.retryable === true;
+      const isQueueFull = retryable && (code === 'video_queue_full' || code === 'upstream_busy');
+      // 429 保留状态码兜底 (语义明确=限流, 退避有意义); 503 不再无条件当队列满
+      const isRateLimit = resp.status === 429 || code === 'rate_limited';
       if (isQueueFull && retry < 4) {
         onRetry?.(retry + 1, `视频队列已满, 30s 后重试 (${retry + 1}/5)...`);
         await new Promise(r => setTimeout(r, 30000));
@@ -1181,7 +1185,8 @@ Plain solid white background, studio lighting, photorealistic, high detail. The 
         await new Promise(r => setTimeout(r, 60000));
         continue;
       }
-      return { error: data.error || data.message || `HTTP ${resp.status}` };
+      // 不可重试 (分组无权限/模型不可用/参数非法) → 立刻给真实原因, 不再耗 5 轮退避
+      return { error: [data.error, data.hint].filter(Boolean).join('\n') || `HTTP ${resp.status}` };
     }
     return { error: '重试次数用尽' };
   };
