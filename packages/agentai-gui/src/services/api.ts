@@ -344,7 +344,7 @@ case 'debate': window.dispatchEvent(new CustomEvent('agentai:debate', { detail: 
 case 'dream': window.dispatchEvent(new CustomEvent('agentai:dream', { detail: data })); break;
               case 'timeout': window.dispatchEvent(new CustomEvent('agentai:timeout', { detail: data })); break;
               case 'resume': handlers.onNotice?.({ kind: 'reconnect', text: data?.msg || 'SSE 断线恢复中…' }); break;
-              case 'context_compressed': handlers.onNotice?.({ kind: 'compress', text: `已自动压缩上下文 (保留 ${data.after} 条关键记忆, 压缩 ${data.compressed} 条)` }); break;
+              case 'context_compressed': handlers.onNotice?.({ kind: 'compress', text: `已自动压缩上下文 (保留 ${data.after} 条消息, 压缩 ${data.compressed} 条)` }); break;
               case 'working_memory': handlers.onNotice?.({ kind: 'memory', text: `已生成工作记忆摘要 (第 ${data.iteration} 轮)` }); break;
               case 'done': handlers.onDone?.({ provider: data.provider, content: data.content, usage: data.usage, displayModel: data.displayModel }); return;
               case 'error': handlers.onError?.(data.error || data.text || 'Unknown error'); return;

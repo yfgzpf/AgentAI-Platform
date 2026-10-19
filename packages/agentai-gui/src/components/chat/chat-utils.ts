@@ -284,8 +284,21 @@ export function detectAndInsertImage(
     const imgMatch = text.match(/([^\s`'"]+\.(png|jpg|jpeg|gif|webp|bmp))/i);
     if (imgMatch && !/^\//.test(imgMatch[1])) {
       // SVG 文件通常不是生成的图片，跳过
-      if (imgMatch[2] === 'svg') return;
+      if (imgMatch[2].toLowerCase() === 'svg') return;
       const imgPath = imgMatch[1];
+
+      // ═══ 2026-10-19 P0 修: 路径必须"真的像个路径" ═══
+      // 事故 (富哥截图): AI 引用了页面源码里的 CSS
+      //   `.message{height:36px;padding-left:120px;background:url(https://errors.aliyun.com/images/x.png)`
+      //   → 旧正则把整段 CSS 当文件名, 渲染出 `?path=.message{height:36px...` 的裂图链接。
+      // 规则: 带 CSS/HTML 元字符、以点开头、或过长的, 一律不认。
+      const plausible =
+        imgPath.length <= 200
+        && !/[{}();=<>"']/.test(imgPath)   // 注意: 反斜杠不能禁 —— Windows 路径就是反斜杠
+        && !imgPath.startsWith('.')
+        && /\.(png|jpe?g|gif|webp|bmp)$/i.test(imgPath);
+      if (!plausible) return;
+
       const imgName = imgPath.split(/[\\/]/).pop() || imgPath;
       // ⚠️ 2026-10-17: 必须是**网关绝对地址**, 不能用相对 `/api/files/...`。
       //   相对路径在 GUI 与网关不同源时会打到前端自己(5173) 而不是网关(18789),
@@ -293,15 +306,26 @@ export function detectAndInsertImage(
       //   与本文件上方 generate_image 分支(L92-94) 的既有写法保持一致。
       const gatewayHttp = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws([s]?):\/\//, 'http$1://') || 'http://127.0.0.1:18789';
       const dlUrl = `${gatewayHttp}/api/files/download?path=${encodeURIComponent(imgPath)}`;
-      updateMessage(botId, (m: any) => ({
-        ...m,
-        segments: [...m.segments, {
-          kind: 'text',
-          // 补一句提示: 这类"文字里提到的图片"可能只是文件名被提到, 并不真实存在。
-          // 实机里模型经常编名字(poc-01-xxx.png 磁盘上根本没有), 所以不承诺能打开。
-          text: `\n\n> 🖼️ **已生成图片**: [${imgName}](${dlUrl})\n\n![${imgName}](${dlUrl})\n\n> ℹ️ 若图裂开, 说明该文件在磁盘上不存在(常见于只在文字里被提到)。已用 save_evidence 落盘的截图会显示在图片区。\n`,
-        }],
-      }));
+      updateMessage(botId, (m: any) => {
+        const segs: any[] = m.segments || [];
+        // ═══ 2026-10-19 P0 修: 同一个文件名只提示一次 ═══
+        // 事故: 工具反复返回同一份结果 (或模型在每轮里都引用同一个文件名) →
+        //   每次都追加一条"已生成图片", 一屏十几条完全一样的内容。
+        const already = segs.some((s: any) =>
+          (s.kind === 'image' && (s.filePath === imgPath || s.alt === imgName))
+          || (s.kind === 'text' && typeof s.text === 'string' && s.text.includes(imgName)),
+        );
+        if (already) return m;
+        return {
+          ...m,
+          segments: [...segs, {
+            kind: 'text',
+            // 补一句提示: 这类"文字里提到的图片"可能只是文件名被提到, 并不真实存在。
+            // 实机里模型经常编名字(poc-01-xxx.png 磁盘上根本没有), 所以不承诺能打开。
+            text: `\n\n> 🖼️ **已生成图片**: [${imgName}](${dlUrl})\n\n![${imgName}](${dlUrl})\n\n> ℹ️ 若图裂开, 说明该文件在磁盘上不存在(常见于只在文字里被提到)。已用 save_evidence 落盘的截图会显示在图片区。\n`,
+          }],
+        };
+      });
       return;
     }
   }

@@ -145,3 +145,64 @@ describe('detectAndInsertImage — 文本回退分支 (window mock)', () => {
     expect(fn).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 2026-10-19 P0: 长任务里"已生成图片"刷屏 + 裂图
+ *
+ * 事故 (富哥截图):
+ *   1. 同一个 fenbiLogo.xxx.png 连着渲染十几条一模一样的"已生成图片"卡片;
+ *   2. AI 引用页面源码里的 CSS
+ *      `.message{height:36px;padding-left:120px;background:url(https://.../x.png)`
+ *      → 旧正则把整段 CSS 当文件名, 生成 ?path=.message{height:36px... 的裂图链接。
+ */
+describe('detectAndInsertImage — 刷屏/裂图修复 (2026-10-19)', () => {
+  const makeUpdater = () => {
+    const fn = vi.fn();
+    return { fn, update: (id: string, f: (m: any) => any) => fn(id, f) };
+  };
+
+  beforeAll(() => {
+    (globalThis as any).window = { __AGENTAI_GATEWAY__: 'ws://127.0.0.1:18789' };
+  });
+  afterAll(() => {
+    delete (globalThis as any).window;
+  });
+
+  it('CSS/HTML 片段里的 .png 不被当成文件路径 (不出裂图链接)', () => {
+    const { fn, update } = makeUpdater();
+    const css = '.message{height:36px;padding-left:120px;background:url(https://errors.aliyun.com/images/TB1Pam.png)';
+    detectAndInsertImage('bot1', 'some_tool', css, update);
+    // 要么根本没触发, 要么 transform 原样返回
+    for (const call of fn.mock.calls) {
+      const transform = call[1];
+      const before = { segments: [] };
+      expect(transform(before)).toBe(before);
+    }
+  });
+
+  it('同一个文件名重复出现 → 只插入一次', () => {
+    const { fn, update } = makeUpdater();
+    let msg: any = { segments: [] };
+
+    detectAndInsertImage('bot1', 'some_tool', '截图: fenbiLogo.e73a.png', update);
+    expect(fn).toHaveBeenCalledTimes(1);
+    msg = fn.mock.calls[0][1](msg);
+    expect(msg.segments.length).toBe(1);
+
+    // 第二次再遇到同一个文件 → 不新增
+    detectAndInsertImage('bot1', 'some_tool', '又提到 fenbiLogo.e73a.png 了', update);
+    const after = fn.mock.calls[1][1](msg);
+    expect(after).toBe(msg);
+    expect(after.segments.length).toBe(1);
+  });
+
+  it('不同文件名各自插入一次 (去重不能一刀切)', () => {
+    const { fn, update } = makeUpdater();
+    let msg: any = { segments: [] };
+    detectAndInsertImage('bot1', 'some_tool', 'a1.png', update);
+    msg = fn.mock.calls[0][1](msg);
+    detectAndInsertImage('bot1', 'some_tool', 'b2.png', update);
+    msg = fn.mock.calls[1][1](msg);
+    expect(msg.segments.length).toBe(2);
+  });
+});

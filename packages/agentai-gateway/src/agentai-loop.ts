@@ -4016,35 +4016,32 @@ if (isComplexTask) {
           }
 
           const summary = parts.join('\n\n');
-          // ═══ 智能核心: 用 compressContext 补充关键决策和工具使用记录 ═══
+
+          // ═══ 2026-10-19 P0: 旧摘要必须折叠, 绝不能累积 ═══
+          // 事故 (富哥实锤): 前端被"已自动压缩上下文"刷屏, 而"保留条数"从 46 涨到 298。
+          // 根因: 回写 appendOnlyLog 时保留了**所有**以 "# 对话历史摘要" 开头的 system 消息,
+          //   而每次压缩都会新造一条 → 摘要一条条叠加 → messages.length 只增不减 →
+          //   `messages.length > MAX_MSGS(30)` 永远成立 → **每一轮都压缩 + 每轮都发提示**,
+          //   对话被提示刷爆, 而且真正发给模型的上下文里塞了几十份重复摘要。
+          // 修: 取出旧摘要 → 折进新摘要 → 全局只保留最新一份 (不变量由 context-compress 保证)。
+          const compressMod = await import('./context-compress.js');
+          const { base: baseSystem, summaries: prevSummaries } = compressMod.partitionSystemMessages(systemMsgs);
+          const prevFolded = compressMod.foldSummaries(prevSummaries, 1200);
+
+          // 智能核心: 用 compressContext 补充关键决策和工具使用记录 (失败则降级)
+          let summaryBody = summary;
           try {
             const { compressContext } = await import('./intelligent-core.js');
             const compressed = compressContext(old.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '') })));
-            if (compressed.summary) {
-              const summaryParts = [summary, '', compressed.summary];
-              const summaryContent = `# 对话历史摘要 (${old.length} 条消息已压缩)\n${summaryParts.join('\n').slice(0, 4000)}`;
-              messages = [
-                ...systemMsgs,
-                { role: 'system' as const, content: summaryContent },
-                ...recent,
-              ];
-            } else {
-              const summaryContent = `# 对话历史摘要 (${old.length} 条消息已压缩)\n${summary.slice(0, 4000)}`;
-              messages = [
-                ...systemMsgs,
-                { role: 'system' as const, content: summaryContent },
-                ...recent,
-              ];
-            }
-          } catch {
-            // 智能核心加载失败, 降级到原有逻辑
-            const summaryContent = `# 对话历史摘要 (${old.length} 条消息已压缩)\n${summary.slice(0, 4000)}`;
-            messages = [
-              ...systemMsgs,
-              { role: 'system' as const, content: summaryContent },
-              ...recent,
-            ];
-          }
+            if (compressed.summary) summaryBody = `${summary}\n\n${compressed.summary}`;
+          } catch { /* 智能核心不可用 → 只用结构化摘要 */ }
+
+          const summaryHeader = `${compressMod.SUMMARY_PREFIX} (累计 ${old.length} 条消息已压缩)`;
+          const mergedSummary = prevFolded
+            ? `${summaryHeader}\n## 更早的摘要 (已折叠)\n${prevFolded}\n\n${summaryBody}`
+            : `${summaryHeader}\n${summaryBody}`;
+          const summaryContent = mergedSummary.slice(0, 4000);
+          messages = compressMod.buildCompressedMessages(baseSystem, summaryContent, recent);
           // ═══ 2026-06-27 修复: 压缩结果同步到 appendOnlyLog ═══
           // 之前只影响本次发送的 messages, 不写回 log,
           // 导致换模型/新session后旧消息全部再次出现
@@ -4056,17 +4053,25 @@ if (isComplexTask) {
           //   → AI 下一轮既看不到原始历史, 也看不到摘要 → 表现为"从头开始"
           // 现在: 保留摘要类 system, 只过滤掉工具指令类 system
           //   (指令类 system 由 directives 通道管理, 不该常驻 log)
-          const SUMMARY_PREFIX = '# 对话历史摘要';
+          // 前缀复用模块常量 (语义唯一来源), 顺带保证"只有一条摘要"这条不变量
           const newLog = [...messages.filter(
             (m) => m.role !== 'system'
-              || (typeof m.content === 'string' && m.content.startsWith(SUMMARY_PREFIX)),
+              || (typeof m.content === 'string' && m.content.startsWith(compressMod.SUMMARY_PREFIX)),
           )];
           if (newLog.length > 0) {
             this.context.appendOnlyLog = newLog;
           }
           console.log(`[history-compress] ${systemMsgs.length + nonSystem.length} → ${messages.length} msgs (users:${userRequests.length} tools:${toolSuccessCount}+${errorsHit.length}err files:${filesModified.size})`);
           // 2026-10-19: 推前端提示 —— "达到阈值自动压缩"现在对用户可见
-          this.emit('context_compressed', { before: systemMsgs.length + nonSystem.length, after: messages.length, compressed: old.length });
+          // 但要**节流**: 长任务里压缩可能连续触发, 每轮发一条会把对话刷成流水账
+          // (富哥实锤: 一屏几十条"已自动压缩上下文")。首次必发, 之后 90s 一次,
+          // 或者一次压掉 >=15 条 (值得说一句)。
+          const nowMs = Date.now();
+          const lastEmitAt = (this as any)._lastCompressEmitAt || 0;
+          if (compressMod.shouldNotifyCompress(lastEmitAt, nowMs, old.length)) {
+            (this as any)._lastCompressEmitAt = nowMs;
+            this.emit('context_compressed', { before: systemMsgs.length + nonSystem.length, after: messages.length, compressed: old.length });
+          }
         }
       }
 

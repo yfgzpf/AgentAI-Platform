@@ -1208,13 +1208,24 @@ const [loading, setLoading] = useState(false);
         }));
       },
       // 2026-10-17: 非致命提示 (本地限流即将自动重试) —— 不报错, 只是告诉用户在等
+      // 2026-10-19 P0: 提示必须"覆盖", 不能"追加"。
+      // 事故 (富哥实锤): 长渗透任务里压缩提示每轮弹一条, 一屏几十条
+      // "⏳ 已自动压缩上下文 (保留 N 条…)", 把对话拉得极长且完全没法看。
+      // 规则: 同类提示 (info.kind) 只占一条状态行, 后续同 kind 直接替换文本。
       onNotice: (info: any) => {
-        updateMessage(botId, (m: any) => ({
-          ...m, segments: [...m.segments, {
-            kind: 'text',
-            text: `\n\n⏳ ${info.text}\n`,
-          }],
-        }));
+        const kind = info.kind || 'notice';
+        const text = `\n\n⏳ ${info.text}\n`;
+        updateMessage(botId, (m: any) => {
+          const segs: any[] = m.segments || [];
+          const idx = segs.findIndex((s: any) => s.kind === 'text' && s.noticeKind === kind);
+          if (idx >= 0) {
+            if (segs[idx].text === text) return m; // 文本没变 → 不动, 避免无谓重渲染
+            const next = segs.slice();
+            next[idx] = { ...next[idx], text };
+            return { ...m, segments: next };
+          }
+          return { ...m, segments: [...segs, { kind: 'text', text, noticeKind: kind }] };
+        });
       },
       // 2026-10-17 P0-2: 长耗时工具心跳 (后端每 30s 发一次)。
       // 这是根治: 工具跑多久都持续续上 idle 计时器, 前端不会再误判无响应。
