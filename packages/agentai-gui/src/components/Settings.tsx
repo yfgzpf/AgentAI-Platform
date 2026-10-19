@@ -367,6 +367,13 @@ export const Settings: React.FC = () => {
     }
     return init;
   });
+  // 2026-10-19: 单主令牌模式 —— 一把 ALRC_API_KEY 全权限令牌覆盖 ALRO 全部分组。
+  //   ALRO 已合并为「全权限单令牌」, 用户只需在此填一把令牌, 点「应用并填充全部分组」
+  //   即自动写入 ALRC_API_KEY + 全部 FACTORY_*_KEY (覆盖旧的分组密钥), 无需分别粘贴 6 次。
+  const [masterKey, setMasterKey] = useState<string>(() =>
+    getApiKey('ALRC_API_KEY') || (commercialKeys as Record<string, string>)['ALRC_API_KEY'] || ''
+  );
+  const [savingMaster, setSavingMaster] = useState(false);
   const [testingKey, setTestingKey] = useState<string | null>(null);
   const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>({});
   const [alrcExpanded, setAlrcExpanded] = useState(false); // ALRC 子模型列表折叠状态
@@ -903,6 +910,50 @@ return (
                         </div>
                       }
                     />
+
+                    {/* 2026-10-19: 单主令牌入口 —— 一把 ALRC_API_KEY 解锁全部模型 */}
+                    <div style={{ marginBottom: 14, padding: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--accent)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                        <span style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: 'var(--fg-2)' }}>🔑 主令牌 (ALRC_API_KEY)</span>
+                        <Tag color="purple" style={{ fontSize: 'var(--fs-micro)' }}>一把令牌解锁全部</Tag>
+                      </div>
+                      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)', marginBottom: 8, lineHeight: 1.7 }}>
+                        ALRO 现已合并为「全权限单令牌」。只需在此填入一把全权限令牌，点击右侧按钮即可自动填充到下方全部 6 个分组（覆盖旧的分组密钥），无需分别粘贴。重启网关后，启动日志的 ALRO 分组探测应全部显示 ✅。
+                      </div>
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Input.Password
+                          value={masterKey}
+                          onChange={e => setMasterKey(e.target.value)}
+                          placeholder="sk-... 全权限令牌"
+                          style={{ flex: 1 }}
+                        />
+                        <Button
+                          type="primary"
+                          icon={savingMaster ? <LoadingOutlined /> : <ThunderboltOutlined />}
+                          disabled={!masterKey.trim()}
+                          loading={savingMaster}
+                          onClick={async () => {
+                            const key = masterKey.trim();
+                            if (!key) { message.warning('请输入主令牌'); return; }
+                            setSavingMaster(true);
+                            try {
+                              // 1) 主令牌本身 (网关 ENV_KEY_MAP['alrc'] || ALRC_API_KEY)
+                              await saveApiKeyToGateway('alrc', key, 'ALRC_API_KEY');
+                              // 2) 同步填充到全部分组 (覆盖旧密钥, 确保任意路由路径都走这把令牌)
+                              for (const g of FACTORY_KEY_GROUPS) {
+                                setFactoryKeys(prev => ({ ...prev, [g.envVar]: key }));
+                                await saveApiKeyToGateway(`factory-${g.id}`, key, g.envVar);
+                              }
+                              message.success('✅ 主令牌已应用到全部分组，重启网关后生效');
+                            } finally {
+                              setSavingMaster(false);
+                            }
+                          }}
+                        >
+                          应用并填充全部分组
+                        </Button>
+                      </Space.Compact>
+                    </div>
 
                     {/* 模型工厂: 按分组显示密钥+模型列表 */}
                     <div style={{ marginBottom: 12 }}>
