@@ -30,6 +30,8 @@ import { modelMetrics } from './model-metrics-service.js';
 import { sanitizeToolMessages } from './message-utils.js';
 // [模型工厂] 单一真源 — subModel → 分组密钥映射 (含此前漏掉的 seedance 2.5)
 import { SUBMODEL_TO_GROUP_ENV } from './factory-registry.js';
+// [ALRO 分组权限探测] 纯函数: 启动探测每个类别能否调用, 对抗厂家改分组静默 403
+import { probeAlroAccess, formatAlroProbeLog } from './alro-probe.js';
 
 // 免费模型池: 这些可以互相切换 (sensenova/longcat 有免费额度, 也加入)
 // ★ 2026-10-10: 提取为模块级导出, 消除三处名单不统一 (见下)。
@@ -388,6 +390,8 @@ export class AgentAIRouter extends EventEmitter {
   private _lastSuccessAt = new Map<ProviderId, number>();
   /** 主动健康检查定时器 */
   private _healthCheckTimer: ReturnType<typeof setInterval> | null = null;
+  /** ALRO 分组权限探测只跑一次 (recheck 可能被多次调用) */
+  private _alroProbeDone = false;
 
   /** 每个 provider 是否支持 reasoning_content (流式响应急时检测, 不写死) */
   private _hasReasoningSupport = new Map<ProviderId, boolean>();
@@ -576,6 +580,50 @@ factory: 'FACTORY_CHAT_KEY',
     const unavailableFree = unavailableProviders.filter(p => FREE_POOL.includes(p));
     if (unavailableFree.length > 0) {
       console.warn(`[router] ⚠️ 以下免费模型不可用: ${unavailableFree.join(', ')}`);
+    }
+
+    // ═══ 2026-10-19: ALRO 分组权限探测 ═══
+    // ALRO 已合并为「全权限单令牌」, 但本项目历史上按 6 分组密钥配置; 厂家改分组 /
+    // 旧令牌过期时调用会静默 403, 错误被吞成"模型暂时繁忙"。recheck 阶段顺带探测一次,
+    // 日志直接报每个类别能否调用 (✅/❌), 重启网关即可看见哪个分组失效。
+    if (!this._alroProbeDone) {
+      this._alroProbeDone = true;
+      void this.probeAlroGroupAccess();
+    }
+  }
+
+  /**
+   * ALRO 分组权限探测 (启动一次)。
+   * 对每个类别用"实际会走的密钥"发一次极小请求, 报告可调用性。
+   * 失败绝不抛异常, 只记日志, 不影响网关启动。
+   */
+  private async probeAlroGroupAccess(): Promise<void> {
+    const alroEnvs = [
+      'ALRC_API_KEY', 'FACTORY_CHAT_KEY', 'FACTORY_GPT_KEY', 'FACTORY_CLAUDE_KEY',
+      'FACTORY_GROK_KEY', 'FACTORY_IMAGE_KEY', 'FACTORY_VIDEO_KEY',
+    ];
+    const hasAny = alroEnvs.some((k) => !!process.env[k]);
+    if (!hasAny) return; // 没配任何 ALRO 密钥, 跳过探测
+
+    const base = (process.env['ALRC_BASE_URL'] || 'https://alro.huazhiweilai.com/v1').replace(/\/+$/, '');
+    const clean = (v?: string) => (v ? v.trim().replace(/^[,;\s"'`]+|[,;\s"'`]+$/g, '') : undefined);
+    const masterKey = clean(process.env['ALRC_API_KEY']);
+
+    console.log('[router] ALRO 分组权限探测 (单令牌合并分组后理论上应全部 ✅):');
+    try {
+      const results = await probeAlroAccess({
+        baseUrl: base,
+        resolveKey: (envVar) => clean(process.env[envVar]),
+        masterKey,
+      });
+      for (const line of formatAlroProbeLog(results)) console.log(`[router]${line}`);
+      const forbids = results.filter((r) => r.status === 'forbidden');
+      if (forbids.length > 0) {
+        console.warn(`[router] ⚠️ ALRO 有 ${forbids.length} 个类别 403 无权限: ` +
+          `${forbids.map((r) => r.category).join('/')} — 去 ALRO 重新生成全权限令牌并填 ALRC_API_KEY`);
+      }
+    } catch (e: any) {
+      console.warn(`[router] ALRO 探测异常: ${String(e?.message || e).slice(0, 80)}`);
     }
   }
 
