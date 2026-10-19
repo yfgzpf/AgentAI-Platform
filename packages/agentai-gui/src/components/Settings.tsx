@@ -270,18 +270,20 @@ interface ALRCModel {
   color: string;
   priceIn: string;
   priceOut: string;
-  priceCache?: string;
+  /** 缓存读取价格 (可选, 与官方价目表口径一致时才展示) */
+  priceCacheRead?: string;
+  /** 缓存创建价格 (可选) */
+  priceCacheCreate?: string;
   level?: string;
 }
 // ===== 模型工厂模型列表 (按量计费) =====
 // 与 ALRO 平台 (https://alro.huazhiweilai.com) 实际可用模型保持同步
 const FACTORY_MODEL_LIST: ALRCModel[] = [
   // DeepSeek
-  // 2026-10-13 修正: 原写 `deepseek-flash`, 但 modelStore 工厂条目是
-  //   factory-deepseek-v4-flash → models:['deepseek-v4-flash']。
-  //   id 对不上会导致下面的"启用"按钮查不到条目(改为按 models[] 反查后,
-  //   反查也必须用同一个真实模型名)。ALRO 聚合侧仍接受 v4-flash 这个名字。
-  { id: 'deepseek-v4-flash', label: 'DeepSeek Flash (V4.1) ⭐', color: 'var(--success)', priceIn: '$0.345', priceOut: '$1.04', level: '高性价比' },
+  // 2026-10-19: 官方已把 `deepseek-v4-flash` 下架, 统一为 `deepseek-flash` ——
+  //   模型设置同步改名 (id 必须与 modelStore 的 models[] 一致, 否则"启用"按钮反查不到)。
+  //   价格按 DeepSeek 官方价目表 (人民币 / 1M tokens), 含缓存读/缓存创建两档。
+  { id: 'deepseek-flash', label: 'DeepSeek Flash ⭐', color: 'var(--success)', priceIn: '¥1.1110', priceOut: '¥4.4460', priceCacheRead: '¥0.0440', priceCacheCreate: '¥4.4460', level: '高性价比' },
   // 2026-10-11: deepseek-v4-pro 已下线, 从计费列表移除
   // 智谱 GLM
   { id: 'glm-4.7', label: 'GLM 4.7', color: '#3B82F6', priceIn: '$0.103', priceOut: '$0.31', level: '智谱' },
@@ -937,7 +939,7 @@ return (
                                   setTestingKey(group.envVar);
                                   // 2026-10-13: video 测试模型由 seedance-1.0-lite (已不存在于 Alrc Seedance 分组)
                                   // 改为真实的 doubao-seedance-2.5, 否则「验证」恒报 model_not_found。
-                                  const testModel = group.id === 'chat' ? 'deepseek-v4-flash' : group.id === 'image' ? 'nano-banana' : group.id === 'video' ? 'doubao-seedance-2.5' : group.id;
+                                  const testModel = group.id === 'chat' ? 'deepseek-flash' : group.id === 'image' ? 'nano-banana' : group.id === 'video' ? 'doubao-seedance-2.5' : group.id;
                                   const ok = await testConnection('https://alro.huazhiweilai.com/v1', key, testModel, `factory-${group.id}`);
                                   setTestingKey(null);
                                   if (ok) {
@@ -992,7 +994,11 @@ return (
                                               {isEnabled && <Tag style={{ marginLeft: 4, fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 4px' }} color="purple">已启用</Tag>}
                                             </div>
                                             <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>
-                                              {'priceIn' in m ? `输入 ${m.priceIn}/1M · 输出 ${m.priceOut}/1M` : `按次 ${m.price}`}
+                                              {'priceIn' in m
+                                                ? `输入 ${m.priceIn}/1M · 输出 ${m.priceOut}/1M`
+                                                  + (m.priceCacheRead ? ` · 缓存读 ${m.priceCacheRead}/1M` : '')
+                                                  + (m.priceCacheCreate ? ` · 缓存写 ${m.priceCacheCreate}/1M` : '')
+                                                : `按次 ${m.price}`}
                                               {m.level && <span> · <Tag style={{ fontSize: 'var(--fs-micro)', lineHeight: '14px', padding: '0 4px' }}>{m.level}</Tag></span>}
                                             </div>
                                           </div>

@@ -360,11 +360,15 @@ describe('改-5 pro 下线 — 注册表 / 别名兜底', () => {
     expect(CLASSIFIER_SRC).toMatch(/complexityRange: \['ultraSimple', 'hard'\]/);
   });
 
-  it('router 层按 provider 作用域做别名兜底 (中继厂商不能被误改成 deepseek-flash)', () => {
+  it('router 层按 provider 作用域做别名兜底 (各厂商目录独立, 不能一刀切)', () => {
     expect(ROUTER_SRC).toMatch(/const RETIRED_MODEL_ALIASES: Record<string, string>/);
     expect(ROUTER_SRC).toMatch(/'deepseek:deepseek-v4-pro': 'deepseek-flash'/);
-    // 中继厂商目录里没有 deepseek-flash, 只能退到它们认识的 deepseek-v4-flash
-    expect(ROUTER_SRC).toMatch(/'alrc:deepseek-v4-pro': 'deepseek-v4-flash'/);
+    // 2026-10-19: alrc/factory 上游也已把 deepseek-v4-flash 下架并改名为 deepseek-flash
+    //   (模型设置同步改名) → 它们现在也收敛到新名, 旧断言 ('→ deepseek-v4-flash') 已过时。
+    expect(ROUTER_SRC).toMatch(/'alrc:deepseek-v4-pro': 'deepseek-flash'/);
+    expect(ROUTER_SRC).toMatch(/'alrc:deepseek-v4-flash': 'deepseek-flash'/);
+    // 真正的安全不变量: sensenova 目录未确认改名, 必须仍保留旧名 (不能被顺手统一掉)
+    expect(ROUTER_SRC).toMatch(/'sensenova:deepseek-v4-pro': 'deepseek-v4-flash'/);
     // 两个 modelName 计算分支都必须过别名
     expect(ROUTER_SRC.match(/modelName = resolveRetiredModelAlias\(id,/g)?.length).toBe(2);
   });
@@ -422,10 +426,15 @@ describe('改-8 历史压缩不再吞掉 user 消息', () => {
     // 原实现 head.slice(-10) 之外的东西全进摘要后丢弃, 用户原始诉求不再是真实 user turn
     // → router 注入泛泛的"请继续完成之前的任务。" → 空回复 → 救援链 → 任务中断。
     expect(LOOP_SRC).toMatch(/const headUsers = head\.filter\(m => m\.role === 'user'\)/);
-    expect(LOOP_SRC).toMatch(/const carriedUsers = headUsers\.length <= 3/);
+    // 2026-10-19 C3: 上限由 3 提到 5 (压缩改按真实 promptTokens 触发后不再每轮都压,
+    // 可以多留用户原话)。旧断言 <= 3 是 C1 修好前的历史值。
+    expect(LOOP_SRC).toMatch(/const carriedUsers = headUsers\.length <= 5/);
     expect(LOOP_SRC).toMatch(/const recent = \[\.\.\.carriedUsers, \.\.\.tail\]/);
-    // 三个重建 messages 的分支都必须用 recent (而非裸 tail)
-    expect(LOOP_SRC.match(/\.\.\.recent,/g)?.length, 'summary 分支必须带上 carriedUsers').toBe(3);
+    // 2026-10-19: 原来 success/else/catch 三条分支各写一遍 messages 构造, 现已收敛为一处,
+    // 且必须把 recent 传进去 (否则被压掉的用户诉求又丢)。
+    expect(LOOP_SRC).toMatch(/messages = compressMod\.buildCompressedMessages\(baseSystem, summaryContent, recent\)/);
+    // 回归防护: 绝不能再把"全部 system 消息"摊进重建结果 —— 那正是摘要累积/前端刷屏的根因
+    expect(LOOP_SRC).not.toMatch(/\.\.\.systemMsgs,[\s\S]{0,80}content: summaryContent/);
   });
 
   it('摘要输入仍包含 user (否则被压掉的诉求连摘要里都看不到)', () => {
@@ -528,7 +537,7 @@ describe('改-10 死循环护栏误杀 (批次3)', () => {
     // run() 开头必须清零这两个 + 上一轮的硬停标志/水位线
     const resetIdx = LOOP_SRC.indexOf('this._failTracker.clear();');
     expect(resetIdx).toBeGreaterThan(-1);
-    const resetBlock = LOOP_SRC.slice(resetIdx, resetIdx + 900);
+    const resetBlock = LOOP_SRC.slice(resetIdx, resetIdx + 1800); // 2026-10-19: 中间新增注释, 窗口放宽
     expect(resetBlock, '_hardStopCount 跨任务累积 → 第2次误判直接 force break').toMatch(/this\._hardStopCount = 0;/);
     expect(resetBlock, '_toolCallHistory 跨任务残留 → 旧签名被当重复跳过').toMatch(/this\._toolCallHistory\.clear\(\);/);
     expect(resetBlock).toMatch(/this\._hardStopNext = false;/);
@@ -1086,7 +1095,8 @@ describe('长任务心跳修复 (2026-10-17)', () => {
     // 必须 unref, 否则心跳定时器会拖住进程退出
     expect(LOOP_SRC, '心跳定时器必须 unref').toMatch(/\(hb as any\)\.unref\?\.\(\)/);
     // 必须 finally 清理, 否则 dispatch 抛错就泄漏定时器
-    expect(LOOP_SRC).toMatch(/try \{[\s\S]{0,200}await this\.registry\.dispatch\(callsToDispatchFinal, ctx\);[\s\S]{0,120}\} finally \{[\s\S]{0,80}clearInterval\(hb\)/);
+    // 2026-10-19: dispatch 的 catch 块新增了"崩溃也补 tool:result"的兜底, try→finally 距离变长
+    expect(LOOP_SRC).toMatch(/try \{[\s\S]{0,200}await this\.registry\.dispatch\(callsToDispatchFinal, ctx\);[\s\S]{0,1500}\} finally \{[\s\S]{0,80}clearInterval\(hb\)/);
   });
 
   it('后端: 自动重试的 dispatch 也包心跳 (超时类错误最容易静默)', () => {

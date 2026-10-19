@@ -38,7 +38,12 @@ export interface AlrcModelEntry {
  */
 export const ALRC_MODELS: Record<string, AlrcModelEntry> = {
   // ===== 对话分组 FACTORY_CHAT_KEY =====
-  'alrc-deepseek-v4-flash': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', groupEnv: 'FACTORY_CHAT_KEY' },
+  // 2026-10-19: 官方已把 deepseek-v4-flash 下架, 统一为 deepseek-flash (模型设置的改名依据)。
+  //   ⚠️ key 仍保留 alrc-deepseek-v4-flash —— GUI 侧 id 是 factory-deepseek-v4-flash
+  //   (由 buildFactoryAliases 按 key 生成), 改 key 会让已持久化的启用状态/会话解析不到。
+  //   真正的上游模型名看 subModel, 所以这里改 subModel 就够了。
+  'alrc-deepseek-v4-flash': { provider: 'alrc', subModel: 'deepseek-flash', label: 'DeepSeek Flash', groupEnv: 'FACTORY_CHAT_KEY' },
+  'alrc-deepseek-flash': { provider: 'alrc', subModel: 'deepseek-flash', label: 'DeepSeek Flash', groupEnv: 'FACTORY_CHAT_KEY' },
   'alrc-glm-4.7': { provider: 'alrc', subModel: 'glm-4.7', label: 'GLM 4.7', groupEnv: 'FACTORY_CHAT_KEY' },
   'alrc-glm-5': { provider: 'alrc', subModel: 'glm-5', label: 'GLM 5', groupEnv: 'FACTORY_CHAT_KEY' },
   'alrc-glm-5.1': { provider: 'alrc', subModel: 'glm-5.1', label: 'GLM 5.1', groupEnv: 'FACTORY_CHAT_KEY' },
@@ -52,7 +57,7 @@ export const ALRC_MODELS: Record<string, AlrcModelEntry> = {
   'alrc-minimax-m3': { provider: 'alrc', subModel: 'MiniMax/MiniMax-M3', label: 'MiniMax M3', groupEnv: 'FACTORY_CHAT_KEY' },
   'alrc-hy3': { provider: 'alrc', subModel: 'hy3', label: 'HY3', groupEnv: 'FACTORY_CHAT_KEY' },
   // 2026-10-11: V4 Pro 官方已下线 → 保留为别名指向 flash (旧持久化数据静默降级)
-  'alrc-deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (原 Pro 别名)', groupEnv: 'FACTORY_CHAT_KEY' },
+  'alrc-deepseek-v4-pro': { provider: 'alrc', subModel: 'deepseek-flash', label: 'DeepSeek Flash (原 Pro 别名)', groupEnv: 'FACTORY_CHAT_KEY' },
 
   // ===== GPT 分组 FACTORY_GPT_KEY =====
   'alrc-gpt-5.4': { provider: 'alrc', subModel: 'gpt-5.4', label: 'GPT-5.4', groupEnv: 'FACTORY_GPT_KEY' },

@@ -62,18 +62,23 @@ export const DEEPSEEK_FLASH_MODEL = 'deepseek-flash';
  * 残留的 pro 名字在**发出请求前**被静默改写, 不报 400
  * ("The supported API model names are deepseek-flash, ...")。
  *
- * ⚠️ 必须按 provider 分作用域: 官方端点改名了, 但中继厂商 (alrc/factory/sensenova)
- * 的上游目录里**没有 `deepseek-flash` 这个名字**, 只认自己的 `deepseek-v4-flash`。
- * 若全局替换会把 alrc 的 flash 请求打成不存在的模型。
+ * ⚠️ 必须按 provider 分作用域: 官方端点改名了, 中继厂商的目录各自独立。
+ * 2026-10-19 更新: alrc/factory 也已随官方把 `deepseek-v4-flash` 下架并改为
+ *   `deepseek-flash` (模型设置同步改名), 因此 alrc/factory 现在也收敛到新名;
+ *   sensenova 目录未确认改名, 暂时仍保留 `deepseek-v4-flash`。
  */
 const RETIRED_MODEL_ALIASES: Record<string, string> = {
   // 官方 deepseek 端点: pro 下线 + flash 由 deepseek-v4-flash 更名为 deepseek-flash
   'deepseek:deepseek-v4-pro': 'deepseek-flash',
   'deepseek:deepseek-v4-flash': 'deepseek-flash',
   'deepseek:deepseek-v4-flash-vision-exp': 'deepseek-flash',
-  // 中继厂商: 只把 pro 退到它们已知的 deepseek-v4-flash (不要改成 deepseek-flash)
-  'alrc:deepseek-v4-pro': 'deepseek-v4-flash',
-  'factory:deepseek-v4-pro': 'deepseek-v4-flash',
+  // 中继厂商: alrc/factory 已同步官方改名 → 一律收敛到 deepseek-flash
+  // (旧名 deepseek-v4-flash 在上游已下架, 继续发会 400 model not found)
+  'alrc:deepseek-v4-pro': 'deepseek-flash',
+  'alrc:deepseek-v4-flash': 'deepseek-flash',
+  'factory:deepseek-v4-pro': 'deepseek-flash',
+  'factory:deepseek-v4-flash': 'deepseek-flash',
+  // sensenova 的上游目录未确认改名 —— 保守起见仍用旧名
   'sensenova:deepseek-v4-pro': 'deepseek-v4-flash',
   // 2026-10-12: Agnes 2.0 全系官方下架 (实测 HTTP 503「分组 default 下模型无可用渠道」),
   //   上游 /models 目录只剩 agnes-2.5-flash / agnes-2.5-pro* / agnes-3.0-flash。

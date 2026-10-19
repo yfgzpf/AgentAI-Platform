@@ -172,7 +172,10 @@ export const FACTORY_KEY_GROUPS = [
 
 // 模型工厂对话模型 (实际可用, 2026-08-15 同步)
 const FACTORY_CHAT_MODELS: ModelConfig[] = [
-  { id: 'factory-deepseek-v4-flash', label: 'DeepSeek V4 Flash', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['deepseek-v4-flash'], contextWindow: 64000, isCommercial: true, groupLabel: '国内·DeepSeek', modelType: 'chat' },
+  // 2026-10-19: 官方把 deepseek-v4-flash 下架, 统一为 deepseek-flash (模型设置同步改名)。
+  //   ⚠️ id 保持 factory-deepseek-v4-flash 不变 —— 它是持久化/会话解析的键,
+  //   改了要做 id 迁移且会波及 factory-registry 的别名生成; 真正发给上游的是 models[]。
+  { id: 'factory-deepseek-v4-flash', label: 'DeepSeek Flash', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#10B981', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['deepseek-flash'], contextWindow: 64000, isCommercial: true, groupLabel: '国内·DeepSeek', modelType: 'chat' },
   // 2026-10-11: factory-deepseek-v4-pro 已删除 (pro 官方下线)
   { id: 'factory-glm-4.7', label: 'GLM 4.7', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#3B82F6', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-4.7'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
   { id: 'factory-glm-5', label: 'GLM 5', baseURL: FACTORY_BASE, apiKeyEnv: 'FACTORY_CHAT_KEY', color: '#2563EB', enabled: false, isBuiltIn: true, provider: 'alrc', models: ['glm-5'], contextWindow: 128000, isCommercial: true, groupLabel: '国内·智谱', modelType: 'chat' },
@@ -400,7 +403,7 @@ export const useModelStore = create<ModelState>()(
     }),
     {
       name: 'agentai-models',
-      version: 16,
+      version: 17,
       migrate: migrateModelStore,
     },
   ),
@@ -414,6 +417,19 @@ export const useModelStore = create<ModelState>()(
  * 因此 v16 只需处理「v15 漏掉的情况」, 不必也不应改写 v15 的结论。
  */
 export function migrateModelStore(persisted: any, version: number): any {
+  // v17 (2026-10-19): DeepSeek 官方把 deepseek-v4-flash 下架, 统一为 deepseek-flash。
+  //   已持久化的模型条目里 models[] 还留着旧名 → 发给上游会 400 model not found。
+  //   这里原地重写 models[]/label (不重建对象, 避免覆盖用户自定义的 baseURL/apiKey/enabled)。
+  //   只动 provider==='alrc' 的企业条目 —— SuperAPI / SenseNova 的目录是它们自己的命名,
+  //   不能跟着改 (改了反而打不到模型)。
+  if (version < 17 && Array.isArray(persisted?.models)) {
+    for (const m of persisted.models) {
+      if (m?.provider === 'alrc' && Array.isArray(m.models) && m.models.includes('deepseek-v4-flash')) {
+        m.models = m.models.map((x: string) => (x === 'deepseek-v4-flash' ? 'deepseek-flash' : x));
+        if (m.label === 'DeepSeek V4 Flash') m.label = 'DeepSeek Flash';
+      }
+    }
+  }
   // v16: 已下线/隐藏 agnes id 兜底 —— 本块**放在所有历史块之后执行**, 只负责补漏:
   //   ① `agnes-2.0` / `agnes-2.0-flash` 官方 2026-10-12 下架 (实测 503), 不能留在 activeModelId;
   //   ② `agentai` 是 HIDDEN_MODEL_IDS 里的兼容 id, 历史上会被 removeModel 回写成 activeModelId
