@@ -12,7 +12,7 @@ function mockFetch(status: number, body = '') {
 }
 
 describe('probeAlroAccess', () => {
-  it('6 个类别全部探测, 不抛异常', async () => {
+  it('文本类别探测成功, 图像/视频 skipped (2026-10-20: 创建计费任务, 不自动探测)', async () => {
     const fetchImpl = mockFetch(200);
     const results = await probeAlroAccess({
       baseUrl: 'https://alro.huazhiweilai.com/v1',
@@ -21,7 +21,12 @@ describe('probeAlroAccess', () => {
       fetchImpl,
     });
     expect(results.length).toBe(ALRO_PROBE_MODELS.length);
-    expect(results.every((r) => r.status === 'ok')).toBe(true);
+    const chat = results.filter((r) => !ALRO_PROBE_MODELS.find((e) => e.category === r.category)?.skipReason);
+    expect(chat.every((r) => r.status === 'ok'), '文本类别应全部 ok').toBe(true);
+    // 图像/视频: 不发请求 (省钱), 且状态标 skipped 而不是伪造 ok/403
+    const skipped = results.filter((r) => r.status === 'skipped');
+    expect(skipped.map((r) => r.category).sort()).toEqual(['生图', '视频']);
+    expect(fetchImpl.mock.calls.length, '只应探测文本类别').toBe(chat.length);
   });
 
   it('分组密钥优先于主令牌', async () => {
@@ -60,7 +65,9 @@ describe('probeAlroAccess', () => {
       resolveKey: () => undefined,
       fetchImpl,
     });
-    expect(results.every((r) => r.status === 'no-key')).toBe(true);
+    expect(results.filter((r) => r.status === 'no-key').length).toBe(
+      ALRO_PROBE_MODELS.filter((e) => !e.skipReason).length,
+    );
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -72,7 +79,11 @@ describe('probeAlroAccess', () => {
       masterKey: 'sk-test',
       fetchImpl,
     });
-    expect(results.every((r) => r.status === 'error')).toBe(true);
+    const probed = results.filter((r) => r.status !== 'skipped');
+    expect(probed.length).toBeGreaterThan(0);
+    expect(probed.every((r) => r.status === 'error')).toBe(true);
+    // skipped 的两项没有发请求, 所以不受网络异常影响 (2026-10-20)
+    expect(results.filter((r) => r.status === 'skipped').length).toBe(2);
   });
 
   it('baseUrl 末尾斜杠被清理', async () => {

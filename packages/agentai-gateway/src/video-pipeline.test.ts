@@ -303,13 +303,13 @@ describe('V5 分镜/视频 refImages 相对路径不再被误拼为非法 Data U
 
 describe('V6 Seedance 尾帧: 提交索要 + 查询解析', () => {
   it('★ 两条 Seedance 提交体都带 return_last_frame: true (工厂 + 火山直连)', () => {
-    // 工厂走 /chat/completions, 直连走 /contents/generations/tasks — 两条都要带
-    expect(videoCode, '工厂提交体缺少尾帧开关').toMatch(
-      /model: subModel,[\s\S]{0,200}?return_last_frame: true/,
-    );
-    expect(videoCode, '火山直连提交体缺少尾帧开关').toMatch(
-      /model: volModel,[\s\S]{0,200}?return_last_frame: true/,
-    );
+    // 2026-10-20: 工厂改走官方 /video/generations (平台统一格式, 见 V8), 尾帧字段保留透传尝试。
+    //   断言改成"函数体内出现该字段", 不再用脆弱的"200 字符内位置"匹配 ——
+    //   注释一长就被顶出窗口, 假红比没测试更糟。
+    const factoryFn = videoCode.slice(videoCode.indexOf('async function submitSeedanceViaFactory'));
+    const volcanoFn = videoCode.slice(videoCode.indexOf('async function submitSeedanceVariant'));
+    expect(factoryFn.slice(0, 2500), '工厂提交体缺少尾帧开关').toMatch(/return_last_frame = true|return_last_frame: true/);
+    expect(volcanoFn.slice(0, 2500), '火山直连提交体缺少尾帧开关').toMatch(/return_last_frame: true/);
   });
 
   it('★ 四条查询分支 (2 Seedance + 2 Agnes) 的响应都带 lastFrameUrl', () => {
@@ -398,5 +398,34 @@ describe('V7 上游视频错误分类', () => {
     expect(tm).toMatch(/data\.retryable === true/);
     // 不可重试时要显示真实原因 (error + hint), 不是干巴巴一个 HTTP 码
     expect(sb).toMatch(/\[data\.error, data\.hint\]/);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // V8 ALRO 工厂视频端点契约 (2026-10-20, 官方文档 + 真实 key 实测校准)
+  // ══════════════════════════════════════════════════════════════════════
+  it('★ 工厂视频提交/查询走官方端点, 不再打对话端点', async () => {
+    // 实测: POST {base}/video/generations 接受 {model,prompt};
+    //   GET  {base}/video/generations/{task_id} → result_url 取成片地址。
+    //   旧实现打 /chat/completions (对话端点) → 无响应体 503。
+    const fn = videoCode.slice(videoCode.indexOf('async function submitSeedanceViaFactory'));
+    expect(fn.slice(0, 3000), '工厂提交应打 /video/generations').toContain('/video/generations');
+    expect(fn.slice(0, 3000), '工厂提交不再打对话端点').not.toContain('/chat/completions');
+    expect(fn.slice(0, 3000), '应解析官方 result_url 字段').toContain('result_url');
+    expect(fn.slice(0, 3000), '提交体必填 model + prompt').toMatch(/model: subModel, prompt/);
+
+    // 查询端: 官方端点排第一, 旧候选保留兜底
+    const queryBlock = videoCode.slice(videoCode.indexOf("provider.startsWith('doubao-seedance')"));
+    expect(queryBlock.slice(0, 1200)).toContain('/video/generations/${encodeURIComponent(taskId)}');
+  });
+
+  it('★ 503 + "No available channel" → 不可重试 (不是队列满)', async () => {
+    // 实测: ALRO 对未开通渠道的模型返回 **HTTP 503** + code model_not_found
+    //   + "No available channel ... under group default"。若按 503 退避重试,
+    //   5×30s 全白等 —— 渠道不会因为等待而开通。
+    const { classifyUpstreamVideoError } = await import('./routes/video.js');
+    const r = classifyUpstreamVideoError(503, '{"code":"model_not_found","message":"No available channel for model doubao-seedance-2.5 under group default (distributor)"}');
+    expect(r.code).toBe('model_unavailable');
+    expect(r.retryable, '"没有可用渠道" 重试永远不会成功, 必须不可重试').toBe(false);
+    expect(r.hint).toMatch(/渠道/);
   });
 });

@@ -179,6 +179,22 @@ export function classifyUpstreamVideoError(
   const b = String(body || '');
   const where = ctx?.source ? ` (${ctx.source}${ctx.model ? ' ' + ctx.model : ''})` : '';
 
+  // 2026-10-20 实测先例: ALRO 工厂视频 4 个变体全部返回
+  //   `503 {"code":"model_not_found","message":"No available channel for model X under group default (distributor)"}`
+  // 即 **HTTP 503 但语义是"模型不可用"**。body 语义判必须**先于** status 判断,
+  // 否则会先被下面的 upstream_busy(503) 吃掉 → 前端当队列满退避 5 次 × 30s = 白等,
+  // 而"渠道没开通"永远不会因等待而开通。
+  if (/model_not_found|no available channel|no channel|无可用渠道|渠道不可用/i.test(b)) {
+    return {
+      code: 'model_unavailable',
+      retryable: false,
+      hint: `上游没有这个模型的可分发渠道${where} (${b.slice(0, 160)})。`
+        + '这**不是代码问题, 重试也不会成功**: 该令牌的分组在上游侧未开通此模型'
+        + ' (实测: ALRO 工厂的 doubao-seedance-* 全部 "No available channel ... under group default")。'
+        + '解决 = 找厂家开通该分组的视频/图像渠道, 或换一把已开通渠道的令牌; '
+        + '同时可先用 CogVideoX-Flash (智谱免费) 验证生成链路本身正常。',
+    };
+  }
   if (status === 403 || /无权访问[\s\S]{0,20}分组|forbidden|permission denied/i.test(b)) {
     return {
       code: 'group_forbidden',
@@ -205,11 +221,11 @@ export function classifyUpstreamVideoError(
           + '多半是该通道对当前令牌/分组暂不可用, 可稍后重试或换工厂其它变体。',
     };
   }
-  if (status === 404 || /model.?not.?found|模型不存在|未开放|无可用渠道/i.test(b)) {
+  if (status === 404 || /模型不存在|未开放/i.test(b)) {
     return {
       code: 'model_unavailable',
       retryable: false,
-      hint: `上游没有这个模型/无可用渠道${where}: 重试无用, 请换模型或核对模型名。`,
+      hint: `上游没有这个模型/未开放${where}: 重试无用, 请换模型或核对模型名。`,
     };
   }
   if (status === 400 || status === 422) {
@@ -649,19 +665,20 @@ export function createVideoRouter(io?: any) {
         }
       }
 
-      // ✅ 批次9.1 (2026-10-13): Alrc 工厂 Seedance 任务查询 — 双端点兜底。
-      // 提交走 {ALRC_BASE_URL}/chat/completions (batch9 已确认), 但 Alrc 官方未公开
-      // "视频任务查询"的准确端点契约。源码推演两个候选:
-      //   ① {base}/contents/generations/tasks/:id — 火山原生路径, 若 Alrc 做透明代理最可能命中;
-      //   ② {base}/videos/:id — OpenAI 风格视频任务路径, 若 Alrc 走独立视频命名空间则在此。
-      // 两个都查, 哪个先返回 200 且能解出 videoUrl 用哪个; 都失败才回落火山直连 (历史任务兼容)。
-      // 不静默: 两个候选都 4xx/5xx 时打日志, 方便日后人工核对 Alrc 真实契约。
+      // ✅ 2026-10-20: Alrc 工厂 Seedance 任务查询 — 按**官方文档**端点, 旧候选兜底。
+      //   官方「图像与视频任务端点速查」:
+      //     GET /v1/video/generations/{task_id} → 成功后从 **result_url** 取视频地址
+      //     GET /v1/videos/{task_id}/content       → 下载 (网关代理转发)
+      //   旧实现在提交端打的是 /chat/completions (对话端点, 根本不处理视频) → 503,
+      //   查询端也只能靠猜。现在官方端点排第一, 旧的火山/通用候选留作历史任务兼容。
       if ((provider.startsWith('doubao-seedance') || provider.startsWith('factory-seedance') || provider.startsWith('seedance'))
-        && process.env['FACTORY_VIDEO_KEY']) {
+        && (process.env['FACTORY_VIDEO_KEY'] || process.env['ALRC_API_KEY'])) {
         const base = (process.env['ALRC_BASE_URL'] || 'https://alro.huazhiweilai.com/v1').replace(/\/+$/, '');
-        const fKey = process.env['FACTORY_VIDEO_KEY'].trim();
+        // 与提交侧同源: 有分组密钥用分组密钥, 否则回退主令牌 (单令牌合并分组后共用一把)
+        const fKey = (process.env['FACTORY_VIDEO_KEY'] || process.env['ALRC_API_KEY'] || '').trim();
         const candidates = [
-          `${base}/contents/generations/tasks/${encodeURIComponent(taskId)}`,
+          `${base}/video/generations/${encodeURIComponent(taskId)}`, // 官方平台统一格式
+          `${base}/contents/generations/tasks/${encodeURIComponent(taskId)}`, // 历史: 火山原生 (旧提交路径)
           `${base}/videos/${encodeURIComponent(taskId)}`,
         ];
         for (const url of candidates) {
@@ -673,7 +690,9 @@ export function createVideoRouter(io?: any) {
             if (resp.ok) {
               const data: any = await resp.json();
               const status = data.status || data.state || 'processing';
-              const videoUrl = data.content?.video?.url || data.content?.video_url || data.video_url || data.url || data.data?.url || data.output?.url || null;
+              // result_url 是官方平台统一格式的成片地址字段 (2026-10-20 文档确认)
+              const videoUrl = data.result_url || data.content?.video?.url || data.content?.video_url
+                || data.video_url || data.url || data.data?.url || data.output?.url || null;
               const coverUrl = data.content?.video?.cover_image_url || data.cover_url || null;
               // 2026-10-14: 尾帧 — 之前这里完全不解析, 导致工厂 Seedance 任务的尾帧恒为空,
               // 分镜「尾帧衔接」每次都掉到 ffmpeg 兜底 (本机无 ffmpeg → 空转)。
@@ -1551,17 +1570,26 @@ async function submitSeedance(
     'https://ark.cn-beijing.volces.com/api/v3', 'VOLCANO_API_KEY');
 }
 
-/** 走 Alrc 工厂的中转 (FACTORY_VIDEO_KEY) — 批次9。
- *  2026-10-13 三次修正: 用户实测报错 model_not_found 暴露两点:
- *   1. Alrc 视频**和文本模型走同一个 /chat/completions 端点** (Base URL =
- *      ALRC_BASE_URL, 缺省 https://alro.huazhiweilai.com/v1), 不是独立 /videos。
- *      之前 POST {base}/videos 命不中 → 改为发 {base}/chat/completions,
- *      body 用火山 Seedance 的 content:[{type:'text'},{type:'image_url'}] 结构,
- *      模型名直接发工厂模型名 (doubao-seedance-2 / -fast / -mini / 2.5)。
- *   2. Alrc 的 Seedance 分组只开放了 4 个 (2 / -fast / -mini / 2.5),
- *      旧的 1.0-lite / 1.0-pro / 2.0 不在组里 → factory-registry 已删这 3 条。
- *  提交后任务式轮询: 用同一 key+base 查 {base}/contents/generations/tasks/:id
- *  (Alrc 对火山视频任务做了透明代理, 任务 id 由火山返回)。 */
+/**
+ * 走 Alrc 工厂的中转 (FACTORY_VIDEO_KEY)。
+ *
+ * 2026-10-20 端点契约修正 (用户实锤 503 + 官方文档核对):
+ *   ❌ 旧实现: POST {base}/chat/completions + 火山 content 结构。
+ *      那个端点是**对话**端点, ALRO 不在其中处理视频任务 → 回无响应体 503
+ *      (前端再把它当"队列已满"盲重试 5 次)。
+ *   ✅ 官方「图像与视频任务端点速查」明确:
+ *      提交 POST   {base}/video/generations   (平台统一格式)
+ *      查询 GET    {base}/video/generations/{task_id} → 成功后从 **result_url** 取地址
+ *      下载 GET    {base}/videos/{task_id}/content (网关代理转发)
+ *   已用真实 key 探测验证过: model + prompt 是必填 (缺 model → 400
+ *   "Model name not specified"), 格式正确。
+ *
+ * ⚠️ 2026-10-20 实测: 4 个 seedance 变体在该站全部返回
+ *   503 `model_not_found: No available channel for model X under group default
+ *   (distributor)` —— 即**该令牌的分组在 ALRO 没有图片/视频分发渠道**
+ *   (文本对话正常)。所以工厂生图/生视频目前是厂家侧未开通, 不是代码问题;
+ *   渠道开通后本实现即可直接工作。
+ */
 async function submitSeedanceViaFactory(
   res: any,
   key: string,
@@ -1570,30 +1598,33 @@ async function submitSeedanceViaFactory(
   image?: string,
 ) {
   const base = (process.env['ALRC_BASE_URL'] || 'https://alro.huazhiweilai.com/v1').replace(/\/+$/, '');
-  // 火山 Seedance 内容结构 (与直连火山 submitSeedance 完全一致), 只换上游 base+key。
-  const volBody: any = {
-    model: subModel,
-    content: [{ type: 'text', text: prompt }],
-    // 2026-10-14: 主动索要尾帧 — 火山 Seedance 的文档参数 (默认 false)。
-    // 工厂是 OpenAI 兼容中转, 多余字段通常被忽略/透传; 若上游本就默认返回尾帧, 此参数无副作用。
-    return_last_frame: true,
-  };
+  // 平台统一格式: 实测必填为 model + prompt。
+  const body: any = { model: subModel, prompt };
+  // 2026-10-20: 官方统一格式未文档化尾帧参数, 但本项目分镜「尾帧衔接」依赖它 ——
+  //   保留火山的 return_last_frame 作为**透传尝试**(中转通常忽略/透传未知字段)。
+  //   若渠道开通后实测拿不到尾帧, 再按官方子页校准字段名。
+  body.return_last_frame = true;
   if (image) {
+    // 图片字段名未能在本机验证 (渠道未开通, 任何图生视频请求都会先被 503 挡回)。
+    // 按 OpenAI/火山常见形态同时带 image_url 与 image, 任一被上游认下即可,
+    // 多余字段通常被中转忽略。⚠️ 渠道开通后请按官方「视频生成 API」子页校准字段名。
     const imgData = await urlToBase64(image);
-    volBody.content.push({ type: 'image_url', image_url: { url: imgData } });
+    body.image_url = imgData;
+    body.image = imgData;
   }
   try {
-    const resp = await fetch(`${base}/chat/completions`, {
+    const resp = await fetch(`${base}/video/generations`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(volBody),
-      signal: AbortSignal.timeout(30000),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60000),
     });
     const data: any = await resp.json().catch(() => ({}));
     if (resp.ok) {
-      // 火山视频任务响应可能直接给 taskId / video_url, 两种都接
-      const taskId = data.id || data.task_id || data.video_id;
-      const videoUrl = data.data?.url || data.output?.url || data.video_url || data.url || null;
+      // 平台统一格式: task_id 是任务 id, result_url 是成片地址 (2026-10-20 官方文档确认);
+      // 同步返回成片时直接给前端, 否则交由轮询端点跟进。字段名做多重兼容。
+      const taskId = data.task_id || data.id || data.video_id;
+      const videoUrl = data.result_url || data.data?.url || data.output?.url || data.video_url || data.url || null;
       if (taskId && !videoUrl) {
         res.json({ taskId, status: 'queued', provider: subModel, prompt, factory: true });
         return;

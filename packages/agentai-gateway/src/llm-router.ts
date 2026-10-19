@@ -616,7 +616,7 @@ factory: 'FACTORY_CHAT_KEY',
         resolveKey: (envVar) => clean(process.env[envVar]),
         masterKey,
       });
-      for (const line of formatAlroProbeLog(results)) console.log(`[router]${line}`);
+      for (const line of formatAlroProbeLog(results, base)) console.log(`[router]${line}`);
       // ═══ 2026-10-19: 「5❌同源」合并提示 ═══
       // 同源 domestic 令牌时, 5 个 403 其实只需一把全权限 ALRC_API_KEY, 避免误判缺 5 把密钥
       const forbiddenSummary = summarizeAlroForbidden(results);
