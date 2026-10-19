@@ -1022,7 +1022,6 @@ factory: 'FACTORY_CHAT_KEY',
       const errorMsg = (err as Error).message || String(err);
       console.error(`[router] ❌ Provider ${provider.id} failed: ${errorMsg.slice(0, 200)}`);
       this.recordFailure(provider, err as Error);
-      noteFail(provider?.id, err);
       this.emit('provider:failed', { provider: provider.id, err });
       
       // ===== Phase 2: 记录失败指标 =====
@@ -2293,9 +2292,9 @@ if (id === 'sensenova') {
     // 之前 token 用量只进 usage 字段, 没有任何日志输出, 排查"说一句话就断"
     // 类膨胀问题无据可依。现在: >40K 走 warn, 否则 debug (默认级别不打)。
     if (totalTokens > 40_000) {
-      logger.warn(`[router] 大上下文: prompt=${promptTokens} total=${totalTokens} model=${req.model} source=${source}`);
+      console.warn(`[router] 大上下文: prompt=${promptTokens} total=${totalTokens} model=${req.model} source=${source}`);
     } else {
-      logger.debug(`[router] 用量: prompt=${promptTokens} total=${totalTokens} model=${req.model} source=${source}`);
+      console.debug(`[router] 用量: prompt=${promptTokens} total=${totalTokens} model=${req.model} source=${source}`);
     }
 
     return {
