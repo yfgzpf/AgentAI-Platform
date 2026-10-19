@@ -1781,3 +1781,31 @@ describe('上下文仲裁策略收敛 (2026-10-17, 批 2-C)', () => {
     } finally { rmSync(tmp, { recursive: true, force: true }); }
   });
 });
+
+/**
+ * 2026-10-19 P0: 长任务被"断线即处决" + "重试自杀"
+ *
+ * 事故 (富哥): 某个 ~500 步的长任务跑完之后, "所有模型全部是中断状态, 完整任务无法完成"。
+ * 日志里 "[SSE] 客户端断开/连接" 高频交替, 而原实现:
+ *   ① req.on('close') 立刻 loop.abort() —— 断一次就处决长任务;
+ *   ② 前端 _retry 重连被当成"新消息", 触发"压制前一个未完成对话" → 又 abort 一次。
+ * 两条叠加 = 断线 → 重连 → 自杀 → 断线 …… 任何模型都跑不完。
+ */
+describe('SSE 断线: 不立刻处决长任务 (2026-10-19)', () => {
+  const CHAT = readFileSync(new URL('./routes/chat.ts', import.meta.url), 'utf-8');
+
+  it('断线走宽限计时器, 而不是立即 abort', () => {
+    expect(CHAT).toMatch(/const CLOSE_GRACE_MS = \d+_?\d*;/);
+    expect(CHAT).toMatch(/closeGraceTimer = setTimeout\(/);
+    // 反例: 不允许在 close 里直接 abortHandler()
+    expect(CHAT).not.toMatch(/req\.on\('close',\s*\(\)\s*=>\s*\{[\s\S]{0,120}abortHandler\(\);[\s\S]{0,40}\}\)/);
+  });
+
+  it('正常结束会清掉宽限计时器 (完成的任务不被误杀)', () => {
+    expect(CHAT).toMatch(/res\.on\('finish',[\s\S]{0,160}clearTimeout\(closeGraceTimer\)/);
+  });
+
+  it('断线重试不触发"压制前一个对话" (否则是在杀自己的任务)', () => {
+    expect(CHAT).toMatch(/if \(prevEntry && !isAnswer && !isRetry\)/);
+  });
+});

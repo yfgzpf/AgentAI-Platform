@@ -550,8 +550,11 @@ const sendEvent = (event: string, data: any) => {
         const prevEntry = activeLoops.get(sessionKey);
         // P0 修复: ask_user 答案不走压制模式 — 旧 loop 的上下文必须保留
         // 前端发送 isAnswer=true 表示这是对 AI 追问的回答, 不应杀掉旧 loop
+        // 2026-10-19 P0: **断线重试也不走压制** —— 前端 _retry 是对**同一个任务**的
+        //   重连续跑, 若把它当"新消息"去 abort 前一个 loop, 等于自己在杀自己的任务:
+        //   断线 → 重连 → 压制并 abort → 断线 → 重连 …… 最终"所有模型都中断"。
         const isAnswer = req.body.isAnswer === true;
-        if (prevEntry && !isAnswer) {
+        if (prevEntry && !isAnswer && !isRetry) {
           console.log(`[chat] 🛑 压制前一个未完成的对话 | session=${sessionKey}`);
           try { prevEntry.abort(); } catch {}
           activeLoops.delete(sessionKey);
@@ -1354,13 +1357,34 @@ const sendEvent = (event: string, data: any) => {
 activeLoops.set(sessionId || 'default', { loop, abort: abortHandler });
 activeLoops.set(sessionKey, { loop, abort: abortHandler }); // 供新消息压制用
 
-// P0 修复: SSE 断开时中止 loop — 用户切对话后后台任务立即停止
-// 否则 loop 会继续跑 → 调用工具 → HookCapture 找不到 session → 返回 undefined → AI 空回复 → 死循环
+// ═══ 2026-10-19 P0: 断线不立刻杀任务, 给 20s 宽限 ═══
+// 事故 (富哥): 长任务跑到 500 步后"所有模型全是中断状态, 完整任务无法完成"。
+// 实测日志里 "[SSE] 客户端断开/连接" 高频交替 (前端自动重连 + 代理/浏览器抖动),
+// 而原实现在 req.close 时**立即** loop.abort():
+//   断一次 → 长任务被处决 → 前端重连重发 → 新请求又"压制前一个未完成对话" →
+//   再 abort 一次 …… 循环下去, 任何模型都跑不完, 看起来就是"全都中断"。
+// 现在: 断线只记一笔并起宽限计时器; 只有"宽限期内没重连"才真正中止。
+//   正常结束 (res.finish) 会清掉计时器, 所以完成的任务不会被误杀。
+const CLOSE_GRACE_MS = 20_000;
+let runFinished = false;
+let closeGraceTimer: NodeJS.Timeout | null = null;
+
+res.on('finish', () => {
+  runFinished = true;
+  if (closeGraceTimer) { clearTimeout(closeGraceTimer); closeGraceTimer = null; }
+});
+
 req.on('close', () => {
-  if (!loopAborted) {
-    console.log(`[chat] SSE 客户端断开, 中止 loop: ${sessionKey}`);
+  if (runFinished || loopAborted) return;
+  if (closeGraceTimer) return; // 已经在宽限期内, 不重复起表
+  console.warn(`[chat] SSE 断开, ${CLOSE_GRACE_MS / 1000}s 宽限内等待重连: ${sessionKey}`);
+  closeGraceTimer = setTimeout(() => {
+    closeGraceTimer = null;
+    if (runFinished || loopAborted) return;
+    console.log(`[chat] 宽限期结束仍无重连, 中止 loop: ${sessionKey}`);
     abortHandler();
-  }
+  }, CLOSE_GRACE_MS);
+  closeGraceTimer.unref?.();
 });
 
           // 注入前端系统规则 (文件时间线/版本回退/浏览器元素识别等)
