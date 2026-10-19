@@ -104,16 +104,18 @@ const VIDEO_ENGINES: Array<{ name: string; label: string; env: string[]; priorit
   //   agnes-video-2.5 正式版功能最全 (图生视频/首尾帧/参考), 但同样限流, 排最后。
   { name: 'cogvideo', label: 'CogVideoX-Flash (智谱免费)', env: ['ZHIPU_API_KEY'], priority: 10 },
   { name: 'seedance-2.5', label: 'Seedance 2.5 (火山引擎)', env: ['VOLCANO_API_KEY'], priority: 20 },
-  // ✅ 批次9.1 (2026-10-13): 工厂 Seedance 4 个变体入 engines 目录。
+  // ✅ 批次9.1 (2026-10-13) + 2026-10-20 修正: 工厂 Seedance 4 个变体入 engines 目录。
   // 之前 engines 只列 4 个内置引擎, 前端 VideoGen allModelOptions 查 engineStatus[m.value]
-  // (m.value = doubao-seedance-*) 永远 undefined → 工厂条目永不禁用 → 没配 FACTORY_VIDEO_KEY
-  // 也能点, 点了才 400。入列后 engineAvailable 自动按 env 判定, 前端灰显逻辑对齐内置引擎。
-  // priority 21-24 排在火山 seedance (20) 之后、agnes (30) 之前 —— 工厂 = 火山同族但走中转,
-  // 只有单独配了 FACTORY_VIDEO_KEY 时才可用, 不抢火山直连的顺序。
-  { name: 'doubao-seedance-2.5', label: 'Seedance 2.5 (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 21 },
-  { name: 'doubao-seedance-2', label: 'Seedance 2 (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 22 },
-  { name: 'doubao-seedance-2-fast', label: 'Seedance 2 Fast (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 23 },
-  { name: 'doubao-seedance-2-mini', label: 'Seedance 2 Mini (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 24 },
+  // 永远 undefined → 工厂条目永不禁用 → 没配 FACTORY_VIDEO_KEY 也能点, 点了才 400。
+  // ⚠️ 2026-10-20: name 必须与 modelStore.ts 工厂视频条目的 **id** 一致 (factory-seedance-*)!
+  //   批次9.1 当时把 name 写成 doubao-seedance-*, 而前端 m.value = m.id = factory-seedance-*,
+  //   查询键依然对不上 —— 那个"修复"实际没生效, 灰显逻辑到现在都是坏的。
+  //   priority 21-24 排在火山 seedance (20) 之后、agnes (30) 之前 —— 工厂 = 火山同族但走中转,
+  //   只有单独配了 FACTORY_VIDEO_KEY 时才可用, 不抢火山直连的顺序。
+  { name: 'factory-seedance-2.5', label: 'Seedance 2.5 (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 21 },
+  { name: 'factory-seedance-2', label: 'Seedance 2 (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 22 },
+  { name: 'factory-seedance-2-fast', label: 'Seedance 2 Fast (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 23 },
+  { name: 'factory-seedance-2-mini', label: 'Seedance 2 Mini (工厂)', env: ['FACTORY_VIDEO_KEY'], priority: 24 },
   { name: 'agnes', label: 'Agnes Video 2.5 Flash (免费)', env: ['AGENTAI_API_KEY', 'AGNES_API_KEY'], priority: 30 },
   { name: 'agnes-video-2.5', label: 'Agnes Video 2.5 正式版', env: ['AGNES_VIDEO_API_KEY'], priority: 40 },
 ];
@@ -126,6 +128,28 @@ function availableEnginesByPriority(): typeof VIDEO_ENGINES {
 /** 引擎是否已具备可用 Key (env 列表中任一为真即可) */
 function engineAvailable(e: { env: string[] }): boolean {
   return e.env.some((k) => !!process.env[k]);
+}
+
+/**
+ * Seedance 模型名归一化 (2026-10-20 P0 修复)
+ * ==================================================================
+ * 三套命名现实 (修复前互相对不上, 用户选工厂 seed 模型恒报"未知的视频模型"):
+ *   ① 前端下拉 value  = modelStore 工厂条目 id      → factory-seedance-2.5
+ *   ② engines 目录 name / modelStore models[0]      → doubao-seedance-2.5
+ *   ③ 官方直连条目 id                                → seedance-2.5
+ * 原提交端只认 ③ (startsWith('seedance')), ①②全掉 400。
+ *
+ * 统一归一成上游真实模型名 doubao-seedance-<variant>; 不是 seedance 返回 null。
+ * variant 白名单与 factory-registry 的 Seedance 分组一致 (ALRO 只开放这 4 个)。
+ */
+export const SEEDANCE_VARIANTS = ['2.5', '2', '2-fast', '2-mini'] as const;
+
+export function normalizeSeedanceModel(requested: string): string | null {
+  const m = /^(?:factory-)?(?:doubao-)?seedance-(.+)$/.exec(String(requested || '').trim());
+  if (!m) return null;
+  const variant = m[1]!;
+  if (!(SEEDANCE_VARIANTS as readonly string[]).includes(variant)) return null;
+  return `doubao-seedance-${variant}`;
 }
 
 /**
@@ -416,22 +440,28 @@ export function createVideoRouter(io?: any) {
       }
 
       // ---- Seedance (火山引擎 / Alrc 工厂 二选一) ----
-      if (requested.startsWith('seedance')) {
-        // ✅ 批次9: 4 个 seedance subModel 都支持走 Alrc 工厂 (FACTORY_VIDEO_KEY)。
-        // GUI 的 modelStore.ts 工厂视频条目 models[0] 与本路由的 requested 完全一致
-        // (doubao-seedance-2 / -fast / -mini / 2.5), 所以"命中 SUBMODEL_TO_GROUP_ENV
-        // 且配了 FACTORY_VIDEO_KEY" = 用户选了工厂视频密钥 → 走工厂; 否则回退火山直连。
-        const subModel = requested.replace(/^seedance-/, 'doubao-seedance-').replace(/^doubao-seedance-2\.$/, 'doubao-seedance-2');
-        const isFactoryVideo = !!process.env['FACTORY_VIDEO_KEY'] && !!SUBMODEL_TO_GROUP_ENV[subModel];
+      // ✅ 2026-10-20 P0 修复: 原门槛 `requested.startsWith('seedance')` 只认官方条目 id
+      //   (seedance-2.5), 而前端下拉实际传的是 modelStore 工厂条目 **id** (factory-seedance-2.5)
+      //   或 engines 目录 name / models[0] (doubao-seedance-2.5) —— 两种都进不来,
+      //   直接掉到 400「未知的视频模型」(用户实锤: 生视频选工厂 seed 模型即报错)。
+      //   421-423 行旧注释声称"models[0] 与 requested 完全一致"是写错的: models[0] 是
+      //   doubao-seedance-*, 同样过不了 startsWith('seedance')。
+      //   现在三种前缀统一归一成 doubao-seedance-<variant>。
+      const seedanceSubModel = normalizeSeedanceModel(requested);
+      if (seedanceSubModel) {
+        // ✅ 4 个 seedance 变体都支持走 Alrc 工厂 (FACTORY_VIDEO_KEY)。
+        // 命中 SUBMODEL_TO_GROUP_ENV 且配了 FACTORY_VIDEO_KEY = 用户选了工厂视频密钥 → 走工厂;
+        // 否则回退火山直连 (VOLCANO_API_KEY)。
+        const isFactoryVideo = !!process.env['FACTORY_VIDEO_KEY'] && !!SUBMODEL_TO_GROUP_ENV[seedanceSubModel];
         if (isFactoryVideo) {
           const fKey = process.env['FACTORY_VIDEO_KEY']!.trim();
-          console.log(`[video] 走 Alrc 工厂 seedance (${subModel}) — FACTORY_VIDEO_KEY`);
-          return await submitSeedanceViaFactory(res, fKey, subModel, prompt, image);
+          console.log(`[video] 走 Alrc 工厂 seedance (${seedanceSubModel}) — FACTORY_VIDEO_KEY`);
+          return await submitSeedanceViaFactory(res, fKey, seedanceSubModel, prompt, image);
         }
         const key = process.env['VOLCANO_API_KEY'];
         if (!key) {
           return res.status(400).json({
-            error: `所选模型「${subModel}」需要 FACTORY_VIDEO_KEY (Alrc 工厂) 或 VOLCANO_API_KEY (火山直连)，但未配置。`,
+            error: `所选模型「${seedanceSubModel}」需要 FACTORY_VIDEO_KEY (Alrc 工厂) 或 VOLCANO_API_KEY (火山直连)，但未配置。`,
             requiredEnv: ['FACTORY_VIDEO_KEY', 'VOLCANO_API_KEY'],
             requestedModel: requested,
           });
@@ -464,12 +494,13 @@ export function createVideoRouter(io?: any) {
           if (only.name === 'seedance-2.5') {
             return await submitSeedance(res, process.env['VOLCANO_API_KEY']!, prompt, image);
           }
-          // ✅ 批次9.1: 工厂 seedance 自动选中 — 4 个变体 name 都以 'doubao-seedance-' 开头,
-          // 与 submitSeedanceViaFactory 的 subModel 参数 (requested 侧同名) 一致。
+          // ✅ 2026-10-20: 工厂 seedance 自动选中 — engines name 与 modelStore 工厂条目 id
+          // 一致 (factory-seedance-*), 经 normalizeSeedanceModel 归一成上游真实名提交。
           // 只有配了 FACTORY_VIDEO_KEY 才会被 engineAvailable 选到这里 (env 判定), 所以 ! 断言安全。
-          if (only.name.startsWith('doubao-seedance')) {
+          const autoSubModel = normalizeSeedanceModel(only.name);
+          if (autoSubModel) {
             const fKey = process.env['FACTORY_VIDEO_KEY']!.trim();
-            return await submitSeedanceViaFactory(res, fKey, only.name, prompt, image);
+            return await submitSeedanceViaFactory(res, fKey, autoSubModel, prompt, image);
           }
         }
         return res.status(400).json({
@@ -482,7 +513,8 @@ export function createVideoRouter(io?: any) {
       }
 
       return res.status(400).json({
-        error: `未知的视频模型: ${requested}。可用: agnes-video-2.5 / agnes / cogvideo / seedance-2.5`,
+        error: `未知的视频模型: ${requested}。可用: agnes-video-2.5 / agnes / cogvideo / seedance-2.5`
+          + ' / factory-seedance-2.5 / factory-seedance-2 / factory-seedance-2-fast / factory-seedance-2-mini',
         requestedModel: requested,
       });
     } catch (e: any) {
@@ -550,7 +582,7 @@ export function createVideoRouter(io?: any) {
       //   ② {base}/videos/:id — OpenAI 风格视频任务路径, 若 Alrc 走独立视频命名空间则在此。
       // 两个都查, 哪个先返回 200 且能解出 videoUrl 用哪个; 都失败才回落火山直连 (历史任务兼容)。
       // 不静默: 两个候选都 4xx/5xx 时打日志, 方便日后人工核对 Alrc 真实契约。
-      if ((provider.startsWith('doubao-seedance') || provider.startsWith('seedance'))
+      if ((provider.startsWith('doubao-seedance') || provider.startsWith('factory-seedance') || provider.startsWith('seedance'))
         && process.env['FACTORY_VIDEO_KEY']) {
         const base = (process.env['ALRC_BASE_URL'] || 'https://alro.huazhiweilai.com/v1').replace(/\/+$/, '');
         const fKey = process.env['FACTORY_VIDEO_KEY'].trim();
@@ -585,8 +617,8 @@ export function createVideoRouter(io?: any) {
         // 工厂两端点都没查到 → 不拦截, 继续走下面的火山直连兜底
       }
 
-      // Seedance/火山引擎任务查询
-      if (provider.startsWith('doubao-seedance') || provider.startsWith('seedance')) {
+      // Seedance/火山引擎任务查询 (兼容 factory- 前缀形态)
+      if (provider.startsWith('doubao-seedance') || provider.startsWith('factory-seedance') || provider.startsWith('seedance')) {
         const volcanoKey = process.env['VOLCANO_API_KEY'];
         if (volcanoKey) {
           try {
@@ -1496,6 +1528,19 @@ async function submitSeedanceViaFactory(
       return;
     }
     const errText = await resp.text().catch(() => '');
+    // 2026-10-20: ALRO 分组 403 透传可操作指引 (与 llm-router 的 chat 链路同款)。
+    // 旧令牌只挂部分分组时, 工厂视频调用静默 403, 用户只看到一句英文原文, 无从下手。
+    if (resp.status === 403) {
+      const gm = errText.match(/无权访问[：:\s]*([\s\S]*?)\s*分组/);
+      if (gm) {
+        const groupName = gm[1]!.replace(/\s+/g, '');
+        return res.status(403).json({
+          error: `ALRO 令牌无权访问「${groupName}」分组 (model=${subModel})。`
+            + '这不是代码问题 —— 请到 ALRO 令牌管理重新生成「全权限」令牌 (勾选全部分组), '
+            + '填入 .env 的 ALRC_API_KEY 即可 (网关自动回退主令牌), 或补齐 FACTORY_VIDEO_KEY。',
+        });
+      }
+    }
     res.status(resp.status || 502).json({
       error: `Alrc 工厂视频返回 HTTP ${resp.status}: ${errText.slice(0, 200)}`,
     });

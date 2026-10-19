@@ -54,7 +54,25 @@ describe('V1 视频模型严格按 reqModel 分发', () => {
     expect(videoCode).toMatch(/requested\s*===\s*'agnes-video-2\.5'/);
     expect(videoCode).toMatch(/requested\s*===\s*'agnes'/);
     expect(videoCode).toMatch(/requested\s*===\s*'cogvideo'/);
-    expect(videoCode).toMatch(/requested\.startsWith\('seedance'\)/);
+    // 2026-10-20: seedance 从 startsWith('seedance') 改为 normalizeSeedanceModel 归一
+    // (旧门槛只认官方 id, 前端实际传的 factory-seedance-* / doubao-seedance-* 全掉 400)
+    expect(videoCode).toMatch(/normalizeSeedanceModel\(requested\)/);
+  });
+
+  it('★ seedance 三种前缀形态都能进分发 (2026-10-20 P0 回归)', () => {
+    // 用户实锤: 生视频选工厂 seed 模型报"未知的视频模型" —— 前端下拉传的是
+    // modelStore 工厂条目 id (factory-seedance-2.5), 旧门槛 startsWith('seedance') 不匹配。
+    // normalizeSeedanceModel 必须把三种形态统一归一成 doubao-seedance-<variant>。
+    expect(videoCode).toMatch(/export function normalizeSeedanceModel/);
+    expect(videoCode).toMatch(/SEEDANCE_VARIANTS/);
+    // 归一正则同时吃 factory- / doubao- / 裸 seedance- 前缀
+    expect(videoCode).toMatch(/\(\?:factory-\)\?\(\?:doubao-\)\?seedance-/);
+  });
+
+  it('★ 未知 seedance 变体不被误放行 (白名单外仍走 400)', () => {
+    // seedance-3 / seedance-9-pro 这类不存在: normalizeSeedanceModel 返回 null,
+    // 不能因为"前缀像 seedance"就放行到上游收 model_not_found。
+    expect(videoCode).toMatch(/includes\(variant\)\) return null/);
   });
 
   it('每个分支缺 key 都返回明确错误（含 requiredEnv），不静默换引擎', () => {
@@ -68,6 +86,29 @@ describe('V1 视频模型严格按 reqModel 分发', () => {
 
   it('未知模型返回 400 而不是随便挑一个引擎', () => {
     expect(videoCode).toMatch(/未知的视频模型/);
+  });
+
+  it('★ engines 目录 name 与 modelStore 工厂视频 id 一致 (灰显逻辑的对齐契约)', () => {
+    // 2026-10-20 实锤: 批次9.1 把 engines name 写成 doubao-seedance-*, 而前端
+    // engineStatus[m.value] 的 m.value = modelStore 条目 id (factory-seedance-*) →
+    // 查询键永远 undefined → 工厂条目永不禁用 (没配 FACTORY_VIDEO_KEY 也能选)。
+    // 这条契约锁死"两处命名必须同一套", 谁再单改一头谁红。
+    const modelStoreSrc = rd('packages/agentai-gui/src/store/modelStore.ts');
+    const factoryVideoIds = [...codeOnly(modelStoreSrc).matchAll(/\{ id: '(factory-seedance-[^']+)'/g)].map((m) => m[1]!);
+    const engineNames = [...videoCode.matchAll(/\{ name: '(factory-seedance-[^']+)'/g)].map((m) => m[1]!);
+    expect(factoryVideoIds.length, 'modelStore 应有 4 个工厂视频条目').toBe(4);
+    expect(engineNames.sort()).toEqual(factoryVideoIds.sort());
+  });
+
+  it('★ VideoGen MODEL_CAPS 覆盖全部工厂视频 id (否则时长/参考图被默认值砍半)', () => {
+    const modelStoreSrc = rd('packages/agentai-gui/src/store/modelStore.ts');
+    const factoryVideoIds = [...codeOnly(modelStoreSrc).matchAll(/\{ id: '(factory-seedance-[^']+)'/g)].map((m) => m[1]!);
+    const capsKeys = [...codeOnly(videoGenSrc).matchAll(/'(factory-seedance-[^']+)':\s*SEEDANCE_CAPS/g)].map((m) => m[1]!);
+    expect(capsKeys.sort()).toEqual(factoryVideoIds.sort());
+  });
+
+  it('★ 轮询端认 factory-seedance 前缀 (提交/轮询两端规则一致)', () => {
+    expect(videoCode).toMatch(/provider\.startsWith\('factory-seedance'\)/);
   });
 
   it('★ 轮询侧：cogvideox-flash 不会被误判成 Agnes Flash', () => {

@@ -70,6 +70,16 @@ interface ModelCapabilities {
   ignoresParams?: boolean;
 }
 
+/** Seedance 系共用能力 (火山直连 + 工厂 4 变体完全一致: 30s / 1080p / 50 参考图) */
+const SEEDANCE_CAPS: ModelCapabilities = {
+  maxSeconds: 30,
+  sizes: ['720P', '1080P'],
+  maxRefImages: 50,
+  maxRefAudios: 50,
+  supportsKeyframe: false,
+  supportsFirstFrame: true,
+};
+
 const MODEL_CAPS: Record<string, ModelCapabilities> = {
   'agnes-video-2.5': {
     maxSeconds: 12,
@@ -88,14 +98,14 @@ const MODEL_CAPS: Record<string, ModelCapabilities> = {
     supportsKeyframe: true,
     supportsFirstFrame: true,
   },
-  'seedance-2.5': {
-    maxSeconds: 30,
-    sizes: ['720P', '1080P'],
-    maxRefImages: 50,
-    maxRefAudios: 50,
-    supportsKeyframe: false,
-    supportsFirstFrame: true,
-  },
+  'seedance-2.5': SEEDANCE_CAPS,
+  // 2026-10-20: 工厂 seedance 4 变体补 caps。不补则 getModelCaps 落默认值
+  // (maxSeconds 12 / maxRefImages 5) —— 用户选工厂模型时时长和参考图被悄悄砍半,
+  // 而 seedance 实际支持 30s / 50 张。id 与 modelStore.ts FACTORY_VIDEO_MODELS 一致。
+  'factory-seedance-2.5': SEEDANCE_CAPS,
+  'factory-seedance-2': SEEDANCE_CAPS,
+  'factory-seedance-2-fast': SEEDANCE_CAPS,
+  'factory-seedance-2-mini': SEEDANCE_CAPS,
   'cogvideo': {
     maxSeconds: 10,
     sizes: ['720P'],
