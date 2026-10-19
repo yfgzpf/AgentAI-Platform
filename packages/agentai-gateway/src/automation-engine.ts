@@ -15,6 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { isUserTaskActive } from './runtime-activity.js';
+import { parseCron, cronMatches } from './cron-parse.js';
 
 // ===== 类型定义 =====
 
@@ -385,17 +386,35 @@ export class AutomationEngine extends EventEmitter {
 
   private scheduleCron(job: CronJob): void {
     if (this._timers.has(job.id)) return;
-    // 简化实现: 每 N 分钟执行 (cron 表达式 "*/N * * * *")
-    const match = job.expression.match(/\*\/(\d+)/);
-    if (!match) {
-      console.warn(`[automation] 不支持的 cron 表达式: ${job.expression}, 使用默认 60 分钟`);
+
+    // ═══ 2026-10-19 P0: 真正解析 cron, 不再只认 `*/N` ═══
+    // 事故 (启动日志): "[automation] 不支持的 cron 表达式: 0 2 * * *, 使用默认 60 分钟"
+    // 连刷 10 次 —— 每日备份 / 日志清理 / Git 同步这些任务全被降级成"每 60 分钟"，
+    // 用户设定的时间点完全不生效。现在支持 * / N / a-b / a-b/n / 逗号枚举。
+    const parsed = parseCron(job.expression);
+    if (!parsed) {
+      console.warn(`[automation] 无法解析 cron: ${job.expression}, 降级为每小时整点 (请检查表达式)`);
     }
-    const intervalMs = (match ? parseInt(match[1]!) : 60) * 60 * 1000;
+
+    let lastFiredMinute = -1;
+    // 30s 检查一次: 整分钟边界抖动也不会漏触发; 同一分钟只放行一次
     const timer = setInterval(() => {
+      const now = new Date();
+      const minuteKey = Math.floor(now.getTime() / 60_000);
+      if (minuteKey === lastFiredMinute) return;
+
+      if (parsed) {
+        if (!cronMatches(parsed, now)) return;
+      } else if (now.getMinutes() !== 0) {
+        return; // 降级: 每小时整点
+      }
+
+      lastFiredMinute = minuteKey;
       this.emit('cron:tick', job);
       job.lastRun = Date.now();
       this.save();
-    }, intervalMs);
+    }, 30_000);
+    (timer as any).unref?.();
     this._timers.set(job.id, timer);
   }
 
