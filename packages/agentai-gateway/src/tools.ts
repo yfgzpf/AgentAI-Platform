@@ -1114,13 +1114,14 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       depth: { type: 'string', enum: ['quick', 'deep'], description: 'quick=每目标浅扫 (nmap 指纹+最小探针, 默认); deep=全工具重扫 (nuclei 全模板+sqlmap+ffuf)' },
     }, required: [] }, parallelSafe: false, riskLevel: 'critical' },
   // ═══ 2026-10-19: wsl_exec (绕开 cmd.exe 的 WSL 执行器) ═══
-  { name: 'wsl_exec', description: '【WSL 命令执行 (不经 cmd.exe, 引号安全)】在 WSL 发行版里跑命令, 参数**数组化**传递, 全程不经过 Windows cmd.exe → 多层 shell 嵌套的引号破坏被根治。\n\n🔑 触发场景: 要在 Kali/WSL 里装工具 (go install / apt install)、查环境 (which go)、跑扫描器 (nuclei/httpx/subfinder)。\n⛔ **不要用 run_command 跑 `wsl ... bash -lc "长命令"`** —— 实锤会坏: cmd.exe 剥掉外层引号后, wsl.exe 用 CommandLineToArgvW 重新拆词, bash 的 -c 参数被截断成只剩 "export" (报 `syntax error near unexpected token \'(\'`)。要跑长命令, 用本工具把整段脚本作为 **args 数组的一个元素** 传进去。\n\n⚙️ 参数: command (WSL 内可执行名, 如 "bash" / "which" / "apt-get"); args (字符串数组, 直接送进 WSL, 不做 shell 拆词); distro (默认 kali-linux); user (默认 root); timeout_ms (默认 120s, 上限 600s)。\n\n💡 例: 装 subfinder → wsl_exec({ command: "bash", args: ["-lc", "export PATH=$PATH:/root/go/bin && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"] })\n⚠️ 发行版没装时本工具会明确报错 (Agent 的 wsl.exe 被程序黑名单挡, 装不了, 不是偷懒) —— 那时用 enum_subdomains (纯 JS) 顶替, 别卡住。',
+  { name: 'wsl_exec', description: '【WSL 命令执行 (不经 cmd.exe, 引号安全)】在 WSL 发行版里跑命令, 参数**数组化**传递, 全程不经过 Windows cmd.exe → 多层 shell 嵌套的引号破坏被根治。\n\n🔑 触发场景: 要在 Kali/WSL 里装工具 (go install / apt install)、查环境 (which go)、跑扫描器 (nuclei/httpx/subfinder)。\n⛔ **不要用 run_command 跑 `wsl ... bash -lc "长命令"`** —— 实锤会坏: cmd.exe 剥掉外层引号后, wsl.exe 用 CommandLineToArgvW 重新拆词, bash 的 -c 参数被截断成只剩 "export" (报 `syntax error near unexpected token \'(\'`)。要跑长命令, 用本工具把整段脚本作为 **args 数组的一个元素** 传进去。\n\n⚙️ 参数: command (WSL 内可执行名, 如 "bash" / "which" / "apt-get"); args (字符串数组, 直接送进 WSL, 不做 shell 拆词); distro (默认 kali-linux); user (默认 root); timeout_ms (默认 120s, 上限 600s, 仅同步路径生效); background (默认按命令形态自动判定)。\n\n🔄 **长任务自动转后台**: 命令是脚本执行 (bash xxx.sh) 或扫描器 (nmap/nuclei/ffuf/...) 时, 本工具**立即返回 jobId 不阻塞主循环** — 你用 job_output({jobId}) 看实时输出 / wait_for_job({jobId, timeoutMs:30000}) 等结果 / stop_job({jobId}) 收工。传 background:false 可强制同步 (仅适合 which/ls 这类秒回命令)。\n💡 例: 装 subfinder → wsl_exec({ command: "bash", args: ["-lc", "export PATH=$PATH:/root/go/bin && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"] })\n⚠️ 发行版没装时本工具会明确报错 (Agent 的 wsl.exe 被程序黑名单挡, 装不了, 不是偷懒) —— 那时用 enum_subdomains (纯 JS) 顶替, 别卡住。',
     parameters: { type: 'object', properties: {
       command: { type: 'string', description: 'WSL 内的可执行名 (如 bash / which / apt-get / go)' },
       args: { type: 'array', items: { type: 'string' }, description: '参数数组, 原样送达不做 shell 拆词 (整段脚本就放一个元素里)' },
       distro: { type: 'string', description: '发行版 (默认 kali-linux)' },
       user: { type: 'string', description: 'WSL 用户 (默认 root)' },
       timeout_ms: { type: 'number', description: '超时毫秒 (默认 120000, 上限 600000)' },
+      background: { type: 'boolean', description: 'true=强制转后台 (立即返回 jobId, 用 job_output/wait_for_job 轮询); false=强制同步; 不传则按命令形态自动判定 (脚本/扫描器→后台, 短命令→同步)' },
     }, required: ['command'] }, parallelSafe: false, riskLevel: 'high' },
   // ═══ 2026-10-19: 串链挖洞 (深度挖洞的一键入口) ═══
   { name: 'pentest_pipeline', description: '【深度挖洞串链】对**单个授权目标**一键跑 规划→侦察→执行→复核 四角色串链 (pentest_planner → pentest_recon → pentest_exploit → pentest_validator), 每阶段自动继承上一阶段的产出。开工前还会注入本工作区+全局的历史经验/漏洞库, 让 AI 复用已验证手法而不是每次从零开始。\n\n🔑 触发场景: 用户说"深挖这个站/挖深一点/认真测这个目标/串链打这个站"; 或你判断单目标值得投入超过 12 次工具调用时。与 batch_pentest 的区别: batch 是"广度取胜"(扫很多目标, 每个浅扫), 本工具是"深度取胜"(一个目标挖透)。\n\n⚙️ 参数: target (必填, 授权范围内的 host); mode ("quick"=跳过规划阶段, 默认 / "deep"=含规划+更长超时); stageTimeoutMs (可选, 每阶段超时毫秒, 默认 quick 150s / deep 300s); skipPlanner (可选, true=强制跳过规划阶段)。\n\n🔒 安全: 入口先查授权 (不在 scope.json 直接拒绝并提示 grant_scope); 执行与复核阶段各自再过子智能体自己的 scope 闸门; 归属平台档案自动注入 (report 报给对的 SRC)。\n\n📤 返回: 四阶段逐段状态表 (成功/超时/失败 + 耗时 + 摘要) + 漏洞落盘提示。某阶段失败**不中断整链** (上游产出仍可用), 但失败阶段的输出不会被继承下去。',
@@ -4941,6 +4942,60 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const argv = Array.isArray(args.args) ? args.args.map((a: any) => String(a)) : [];
       const timeout = Math.min(Number(args.timeout_ms) || 120_000, 600_000);
 
+      // ★ 2026-10-21 午后: 长任务自动转后台 — 治"主循环被同步调用钉死" (富哥实锤):
+      //   recon2.sh 跑 5 分钟被超时杀, duration=300038ms, 期间主循环一步都动不了,
+      //   SSE 5 分钟无事件 → 前端看着像卡死 ("子智能体就不动一样")。
+      //   且日志证明 spawn 完全正常 (STDOUT 有 "== full 59 aliv" 扫描输出) —
+      //   真凶从来不是 PATH/-u root, 是**长任务同步阻塞**。
+      // 识别: 脚本执行 (bash/sh/python xxx.sh) 或扫描器类命令 → 默认转后台,
+      //   立即返回 jobId (bgJobs 同款形态, job_output/wait_for_job/stop_job 原样兼容),
+      //   AI 轮询拿实时输出 (D3 已修: 每个 chunk 同步落 job.output)。
+      // 短命令 (which/ls/echo) 仍同步; args.background===false 可强制同步。
+      const scriptLike =
+        /\b(bash|sh|zsh|fish|python3?|perl|ruby|nuclei|nmap|ffuf|gobuster|nikto|sqlmap|subfinder|httpx|masscan|amass|dirsearch|wpscan|dalfox|x8)\b/i.test(command)
+        || (argv.length > 0 && /\.(sh|py|pl|rb)$/i.test(argv[argv.length - 1]));
+      if (scriptLike && args.background !== false) {
+        try {
+          const { spawn } = await import('node:child_process');
+          const exe = resolveWslExe();
+          const spawnArgv = user ? ['-u', user, '-d', distro, '--', command, ...argv] : ['-d', distro, '--', command, ...argv];
+          const id = ++jobIdCounter;
+          const child = spawn(exe, spawnArgv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+          let output = '';
+          const job = { pid: child.pid, running: true, output: '', cmd: `wsl: ${command} ${argv.join(' ')}`.slice(0, 120) };
+          bgJobs.set(id, job);
+          const _feed = (d: Buffer) => {
+            output += d.toString();
+            if (output.length > BG_JOB_OUTPUT_MAX) output = output.slice(-BG_JOB_OUTPUT_MAX);
+            job.output = output;
+          };
+          child.stdout.on('data', _feed);
+          child.stderr.on('data', _feed);
+          child.on('exit', (code: any) => {
+            const j = bgJobs.get(id);
+            if (j) { j.running = false; j.output = output + (code ? `\n[exit code: ${code}]` : ''); }
+            _pruneBgJobs();
+          });
+          // spawn 失败只发 'error' 不发 'exit' → 必须收敛 running, 否则 wait_for_job 等满超时只拿到空 (同 run_background D3 教训)
+          child.on('error', (e: any) => {
+            const j = bgJobs.get(id);
+            if (j) { j.running = false; j.output = output + `\n[spawn error] ${e?.message || e}`; }
+            _pruneBgJobs();
+          });
+          return {
+            success: true,
+            output:
+              `⏳ 长任务已转**后台**执行 (Job ${id}, wsl pid ${child.pid}) — 主循环不被阻塞, 你可以继续做别的事 (分析已有数据/派子任务/回答用户)。\n` +
+              `轮询进度: job_output({ jobId: ${id} })(实时输出) 或 wait_for_job({ jobId: ${id}, timeoutMs: 30000 })(建议 30s+, 别用默认 5s 空转);\n` +
+              `提前收工: stop_job({ jobId: ${id} })。全部后台任务: list_jobs。\n` +
+              `⚠️ 别再对同一任务重复发起 wsl_exec — 先轮询这个 job 的结果。`,
+            data: { jobId: id, background: true, distro, user, command, args: argv },
+          };
+        } catch {
+          // spawn 同步抛错 (沙箱拦截/EMFILE/句柄耗尽) → 不假报失败, 落进同步路径拿完整诊断
+        }
+      }
+
       // ★ 2026-10-21: 统一走 wsl-runtime —— 治 execFile('wsl', ['-u','root',...])
       //   报 "Command failed" (非零退出+无输出) 的两个假设:
       //   ① Node 进程 PATH 不含 System32 → 绝对路径解析 System32\wsl.exe
@@ -4973,7 +5028,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           `\n   本工具已优先用绝对路径; 仍失败说明 wsl.exe 被移动/删除, 或网关进程被安全软件拦。` +
           `\n   若网关不是从终端启动的 (桌面端/服务方式), 其 PATH 可能不含 System32。`;
       } else if (r.timedOut) {
-        advice = `\n\n⏱ 超时。拆分命令逐条跑 (别一次串 4 个 go install), 或加大 timeout_ms (上限 600000); 跑不完的长任务改用 run_background 后台执行。`;
+        advice = `\n\n⏱ 超时。脚本/扫描器类命令 (bash xxx.sh / nmap / nuclei...) **已默认自动转后台** — 如果这条还是同步超时, 说明它的形态不在自动识别里, 显式传 background: true 强制转后台, 或把命令拆小、加大 timeout_ms (上限 600000)。`;
       } else if (/not a recognized distribution|没有安装分发版|找不到指定的分发版|no installed distributions/i.test(diag)) {
         advice = `\n\n❗ WSL 发行版 "${distro}" 不可用。` +
           `\n   ✅ 让用户在本机 PowerShell 跑 "wsl --install -d kali-linux" (Agent 的 wsl.exe 被程序黑名单挡, 无法代劳)。` +
