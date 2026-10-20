@@ -52,6 +52,59 @@ async function downloadToTempFile(url: string): Promise<string | null> {
   } catch { return null; }
 }
 
+/** 高清档位 (智谱 CogView 免费模型不支持, 会被悄悄降级到标准分辨率) */
+const HIRES_TIERS = new Set(['2K', '3K', '4K']);
+export function tierDowngradeNotice(size: string): string | undefined {
+  return HIRES_TIERS.has((size || '').toUpperCase())
+    ? '智谱 CogView 免费模型不支持 2K/3K/4K 高清档位，已按标准分辨率生成（如需高清请选用 ALRC 付费模型）'
+    : undefined;
+}
+
+/**
+ * Agnes 文生图 (图生图失败时的**真实**降级) — 返回与正常分支同构的 payload, 失败返回 null。
+ * 与之前的"空头支票"不同: 这里真的发一次不带参考图的文生图请求, 而非只打一行 warn 然后啥也不返回。
+ */
+async function agnesText2ImgPayload(
+  apiKey: string,
+  finalPrompt: string,
+  tier: string,
+  finalRatio: string,
+  negativePrompt?: string,
+): Promise<any | null> {
+  const body: any = {
+    model: 'agnes-image-2.5-flash',
+    prompt: finalPrompt,
+    size: tier,
+    ratio: finalRatio,
+    extra_body: { response_format: 'url' },
+  };
+  if (negativePrompt) body.negative_prompt = negativePrompt;
+  try {
+    const resp = await fetch('https://api.agnes-ai.cn/v1/images/generations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!resp.ok) return null;
+    const data: any = await resp.json();
+    const imageUrl = data.data?.[0]?.url || data.url || data.image_url;
+    if (!imageUrl) return null;
+    const localPath = await downloadToTempFile(imageUrl);
+    return {
+      url: localPath ? `/api/files/download?path=${encodeURIComponent(localPath)}` : imageUrl,
+      localPath: localPath || undefined,
+      originalUrl: imageUrl,
+      prompt: finalPrompt,
+      size: tier,
+      ratio: finalRatio,
+      provider: 'agnes-image-2.5-flash (图生图失败降级)',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** 像素尺寸映射到档位尺寸 */
 function mapSizeToTier(size: string): { tier: string; ratio: string } {
   // 支持档位式直接传入: 1K / 2K / 3K / 4K
@@ -230,10 +283,11 @@ export function createImageRouter() {
               const imageUrl = data.data?.[0]?.url;
               if (imageUrl) {
                 const localPath = await downloadToTempFile(imageUrl);
+                const notice = tierDowngradeNotice(size);
                 if (localPath) {
-                  return res.json({ url: `/api/files/download?path=${encodeURIComponent(localPath)}`, localPath, originalUrl: imageUrl, prompt, size, provider: 'cogview-3-flash' });
+                  return res.json({ url: `/api/files/download?path=${encodeURIComponent(localPath)}`, localPath, originalUrl: imageUrl, prompt, size, provider: 'cogview-3-flash', ...(notice ? { notice } : {}) });
                 }
-                return res.json({ url: imageUrl, prompt, size, provider: 'cogview-3-flash' });
+                return res.json({ url: imageUrl, prompt, size, provider: 'cogview-3-flash', ...(notice ? { notice } : {}) });
               }
             }
           } catch (e: any) {
@@ -312,12 +366,15 @@ export function createImageRouter() {
         });
         if (!resp.ok) {
           const errText = await resp.text().catch(() => '');
-          // 错误分类: 429 限流 / 402 余额不足 → 明确提示; 其他 → 降级到文生图
+          // 错误分类: 429 限流 / 402 余额不足 → 明确提示, 不静默降级
           if (resp.status === 429) return res.status(429).json({ error: 'API 限流, 请稍后重试', code: 'RATE_LIMITED' });
           if (resp.status === 402) return res.status(402).json({ error: '余额不足, 请充值', code: 'INSUFFICIENT_BALANCE' });
-          console.warn('[agnes-image] img2img failed, falling back to text2img:', resp.status);
-          // 降级: 去掉参考图, 用文生图继续
-        } else {
+          // 其他错误 → 真实降级到文生图 (去掉参考图), 而非空头支票
+          console.warn('[agnes-image] img2img 失败, 真实降级文生图:', resp.status, errText.slice(0, 120));
+          const fb = await agnesText2ImgPayload(apiKey, finalPrompt, tier, finalRatio, negative_prompt);
+          if (fb) return res.json(fb);
+          return res.status(resp.status).json({ error: `图生图失败 (HTTP ${resp.status}: ${errText.slice(0, 200)}), 文生图降级也失败`, code: 'IMG2IMG_FAILED' });
+        }
         const data: any = await resp.json();
         const imageUrl = data.data?.[0]?.url || data.url || data.image_url;
         if (imageUrl) {
@@ -327,8 +384,10 @@ export function createImageRouter() {
           }
           return res.json({ url: imageUrl, prompt, size: tier, ratio: finalRatio, provider: 'agnes-image-2.5 (图生图)' });
         }
-        return res.json({ url: '', provider: 'none', ...(data || {}) });
-        } // end else (img2img resp.ok)
+        // P0: 200 但解析不到地址 → 真实降级文生图; 仍拿不到 → 明确报错, 绝不返回空 url 让前端"假成功"
+        const fb2 = await agnesText2ImgPayload(apiKey, finalPrompt, tier, finalRatio, negative_prompt);
+        if (fb2) return res.json(fb2);
+        return res.status(500).json({ error: '图生图已生成但未能解析出图片地址, 文生图降级也失败', code: 'GENERATED_BUT_NO_URL' });
       } else {
         // 纯文生图: 使用 agnes-image-2.5-flash
         const body: any = {
@@ -368,9 +427,10 @@ export function createImageRouter() {
                 const zd: any = await zr.json();
                 const zu = zd.data?.[0]?.url;
                 if (zu) {
+                  const notice = tierDowngradeNotice(size);
                   const lp = await downloadToTempFile(zu);
-                  if (lp) return res.json({ url: `/api/files/download?path=${encodeURIComponent(lp)}`, localPath: lp, originalUrl: zu, prompt, size, provider: 'cogview-3-flash (降级)' });
-                  return res.json({ url: zu, prompt, size, provider: 'cogview-3-flash (降级)' });
+                  if (lp) return res.json({ url: `/api/files/download?path=${encodeURIComponent(lp)}`, localPath: lp, originalUrl: zu, prompt, size, provider: 'cogview-3-flash (降级)', ...(notice ? { notice } : {}) });
+                  return res.json({ url: zu, prompt, size, provider: 'cogview-3-flash (降级)', ...(notice ? { notice } : {}) });
                 }
               }
             } catch (e: any) { console.warn('[cogview] fallback error:', e.message); }
@@ -386,7 +446,8 @@ export function createImageRouter() {
           }
           return res.json({ url: imageUrl, prompt, size: tier, ratio: finalRatio, provider: 'agnes-image-2.1' });
         }
-        return res.json({ url: '', provider: 'none', ...(data || {}) });
+        // P0: 200 但解析不到地址 → 明确报错, 绝不返回空 url 让前端"假成功"
+        return res.status(500).json({ error: '图片已生成但未能解析出地址, 请重试或联系管理员', code: 'GENERATED_BUT_NO_URL' });
       }
     } catch (e: any) {
       return res.status(500).json({ error: e.message });

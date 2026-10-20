@@ -26,7 +26,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { spawnSync } from 'child_process';
+import { spawnSync, execSync } from 'child_process';
+import { createHash } from 'crypto';
 import { readMemory, writeMemory } from './memory.js';
 import { getGlobalSandbox } from './sandbox/index.js';
 // 2026-10-15 P0/P1 修复: 渗透授权/限频/参数安检共用模块 (与 agentai-loop 的 pentest 闸门、
@@ -37,12 +38,17 @@ import {
 } from './pentest-scope-guard.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { ReadTracker } from './tools/read-tracker.js';
+// 2026-10-21 富哥拍板: 赏金/渗透任务禁派子智能体的代码闸门 (与 agentai-loop 内联 spawn 同源)
+import { checkSubagentSpawnPolicy } from './subagent-policy.js';
+// 2026-10-21: WSL 进程启动单一真源 (绝对路径 wsl.exe + 用户回退 + 分层诊断)
+import { wslRun, formatWslFailure, resolveWslExe } from './wsl-runtime.js';
 import { currentRequestWorkspace } from './request-scope.js';
 import { readFileSmart } from './read-file-decoder.js';
 import { CaptchaHandler, detectCaptchaFromHtml, type CaptchaInfo } from './captcha-handler.js';
 import { runSandboxedSkill } from './safety/code-runner.js';
 import { pascalEditor } from './pascal-editor.js';
 import { urlToBase64 } from './routes/video.js';
+import { textHasStatus, isPlatformProtectedWritePath } from './message-utils.js';
 
 /**
  * 静态扫描 Python 代码的危险模式
@@ -338,7 +344,53 @@ export async function main(args = {}) {
 }
 
 const bgJobs = new Map<number, any>();
-let jobIdCounter = 0;
+/**
+ * 2026-10-20 D4: jobId 基底带进程启动时间戳 — 防重启撞号。
+ * 事故 (富哥实锤): 模块级 counter 从 0 起, 每次改代码重启网关后 id 从 1 重发 →
+ *   appendOnlyLog / 前端 UI 里留存的旧「Job 7」撞上新进程的 job 7,
+ *   job_output(7) **串台** (A 任务的扫描输出被当成 B 任务的结果)。
+ *   时间戳基底让两次不同进程的 id 区间几乎不可能重叠 (同秒重启也有随机段保底)。
+ */
+const JOB_ID_BASE = (Date.now() % 100_000_000) * 1000 + Math.floor(Math.random() * 1000);
+let jobIdCounter = JOB_ID_BASE;
+/** 2026-10-20 D3: 后台任务 output 累积上限 (超限保留尾部 — 早出的噪点价值最低) */
+const BG_JOB_OUTPUT_MAX = 200_000;
+/**
+ * 2026-10-20 F6: 退出后保留的最近 job 数 — bgJobs 原先只进不出 (全库仅一处 set,
+ * 零 delete), 每个 job 含 ≤200KB output 永不回收; 而系统修完超时死循环后力推
+ * run_background 跑长扫描 → 长任务 N 个扫描 = 200KB×N 内存无释放。
+ * Map 保插入序, 最早的在前; 只驱已退出的旧 job, 运行中的不受影响。
+ */
+const BG_JOBS_KEEP = 20;
+const _pruneBgJobs = () => {
+  if (bgJobs.size <= BG_JOBS_KEEP) return;
+  let excess = bgJobs.size - BG_JOBS_KEEP;
+  for (const k of [...bgJobs.keys()]) {
+    if (excess <= 0) break;
+    bgJobs.delete(k);
+    excess--;
+  }
+};
+
+/**
+ * 2026-10-20 D4: 网关进程退出时杀光后台 job 的子进程树。
+ * 事故: spawn(shell:true) 的子进程在父进程重启后成**孤儿** — 没人 kill 没人读,
+ *   渗透扫描脱离管控继续打目标 (授权范围内的进程在用户不知情下续跑)。
+ *   Windows 用 taskkill /T /F 杀整树 (shell:true 的 pid 只是 cmd.exe 外壳),
+ *   POSIX 用 kill(-pid) 进程组; process 'exit' handler 只能同步执行, 故用 execSync。
+ */
+process.on('exit', () => {
+  for (const j of bgJobs.values()) {
+    if (!j.running || !j.pid) continue;
+    try {
+      if (process.platform === 'win32') {
+        execSync(`taskkill /PID ${j.pid} /T /F`, { stdio: 'ignore' });
+      } else {
+        process.kill(-j.pid, 'SIGKILL');
+      }
+    } catch { /* 进程已自行退出或杀不掉 — 尽力而为, 不阻塞退出 */ }
+  }
+});
 
 /**
  * 活跃计划（2026-10-06 从模块级变量改为 per-workspace + 磁盘持久化）
@@ -742,6 +794,20 @@ const SENSITIVE_READ_PATHS = [
  * 匹配 prompt 规则的文件。现改为放行 + 警告。
  */
 async function sandboxGuard(p: string, op: 'read' | 'write' | 'delete', size?: number): Promise<{ success: boolean; output: string } | null> {
+  // 2026-10-20 G2/G3: 平台级敏感写路径 — 先于沙箱开关判定。
+  // 沙箱 (sb) 是用户自定义层, 平台红线层必须压过它: 授权生效文件/凭证文件的
+  // 写入完整性与"用户给沙箱配了什么规则"无关, 也与运行模式 (auto 等) 无关。
+  if ((op === 'write' || op === 'delete') && isPlatformProtectedWritePath(p)) {
+    const norm = p.replace(/\\/g, '/').toLowerCase();
+    const isScope = /\/\.agentai\/scope\.json$/.test(norm);
+    return {
+      success: false,
+      output: `[安全拒绝] 写入平台保护路径被阻止: ${p}\n`
+        + (isScope
+          ? '授权生效文件 (.agentai/scope.json) 只能由人类在设置页确认后写入; AI 请改用 grant_scope 提交授权提案 (pending), 由用户确认生效。'
+          : '该路径属于凭证/授权类敏感文件; 如确需修改请由用户手动操作, 或使用专用工具 (如 save_api_key 保存密钥)。'),
+    };
+  }
   const sb = getGlobalSandbox();
   if (!sb) {
     // 2026-10-05: 沙箱未启用时，仍对**凭证类路径**硬拒。
@@ -904,6 +970,9 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       evidence: { type: 'string', description: '验证证据 (关键响应片段 / 复现步骤描述)' },
       evidencePaths: { type: 'array', items: { type: 'string' }, description: '证据文件路径数组 (截图 png / 响应日志), 由 save_evidence 生成, 提交平台时作为可下载附件' },
       platform: { type: 'string', description: '可选: 目标赏金平台 (补天/漏洞盒子/阿里SRC/HackerOne...)' },
+      endpoint: { type: 'string', description: '可选: 具体接口/路径 (如 /api/v1/user), 用于跨报告查重; 不传则从 poc 首行 URL 推断' },
+      impactGrade: { type: 'string', enum: ['A','B','C'], description: '可选: check_impact_proof 得出的证据强度等级; 高危提交门槛要求 ≥B' },
+      force: { type: 'boolean', description: '可选: 确认不是重复后强制落盘 (默认 false — 30 天内同指纹会被拒绝)' },
     }, required: ['title','target','severity'] }, parallelSafe: false, riskLevel: 'low' },
   // ===== 2026-10-16 证据链: 截图/响应落盘成实体文件, 平台提交可下载 =====
   { name: 'save_evidence', description: '【证据落盘】把截图 (base64) 或响应文本存成 .agentai/evidence/ 下的实体文件, 返回文件路径。赏金平台提交要"可下载的截图/日志", 光在对话里显示没用。\n\n🔑 触发场景: pentest 挖到洞 → browser_screenshot 拿到 base64 截图 → save_evidence 落盘 → 把返回的 path 挂到 report_vulnerability 的 evidencePaths。多张证据可多次调, 或用 saveText 存响应片段。\n\n💡 示例: save_evidence({ title:"xss-proof", imageBase64:"<...>", target:"www.bestpay.com.cn" }) → { path:".agentai/evidence/vuln-xss-.../screenshot-1.png" }',
@@ -915,6 +984,23 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       filename: { type: 'string', description: '可选: 图片文件名 (如 poc1-unauth-api.png)。**强烈建议给** —— 留空会用 screenshot-<时间戳>.png, 之后你在汇报里容易记错名字对不上文件。不含路径, 只给文件名。' },
       textFilename: { type: 'string', description: '可选: saveText 的文件名 (如 response-unauth.txt)。同上, 不含路径。' },
     }, required: ['title'] }, parallelSafe: false, riskLevel: 'low' },
+  // ===== 2026-10-20 ② 赏金证据固化: 防篡改哈希证据包 (与 save_evidence 互补) =====
+  // save_evidence 存"给人看的" (截图/文本); 本工具存"给平台看的" — 一份含完整
+  // 请求/响应/脱敏数据的 JSON 证据包 + SHA-256 哈希, 提交 SRC/漏洞平台时证明
+  // "这份证据从我固化那一刻起未被改动"。赏金审核争议 (平台说证据被改过) 的唯一硬通货。
+  { name: 'save_and_hash_evidence', description: '【防篡改证据固化】把一个已验证漏洞的完整请求/响应/脱敏数据打成一份 JSON 证据包落盘, 并计算整包 SHA-256 哈希。赏金平台提交时引用该哈希 = 证据自固化时刻起未被篡改的密码学证明。\n\n🔑 触发场景: 复现成功拿到 request/response 原文后 (http_replay / curl / browser 抓到), 调本工具固化; 之后在 report_vulnerability 里写 "证据包 SHA-256: <hash>", 平台方重算哈希即可验真。\n\n⚙️ 参数: vuln_type (必填, 如 IDOR_Data_Leak) + request_raw / response_raw / extracted_sensitive_data (至少一项) + target (关联目标, 归组用) + title (可选, 文件名标识) + notes (可选, 补充说明)。\n\n🔍 action=verify: 复核一份证据包是否被改过 — 传 evidence_path + expected_sha256, 工具重算磁盘文件的哈希对比, 返回 MATCH / MISMATCH。\n\n📦 包格式: agentai-evidence/v1 (schema/vuln_type/captured_at/三段原文/截断登记), 哈希覆盖磁盘真实字节; 超长字段按 200KB 截断并在包内 truncated_fields 登记 — 不假装完整。\n\n💡 示例:\nsave_and_hash_evidence({ vuln_type:"IDOR_Data_Leak", target:"api.example.com", request_raw:"GET /v1/user/1002 ...", response_raw:"HTTP/1.1 200 ...\\"phone\\":\\"138****1234\\"", extracted_sensitive_data:"138****1234 / 张三" }) → { sha256:"e3b0c442...", path:".agentai/evidence/..." }\nsave_and_hash_evidence({ action:"verify", evidence_path:".../....json", expected_sha256:"e3b0c442..." }) → MATCH',
+    parameters: { type: 'object', properties: {
+      action: { type: 'string', enum: ['save', 'verify'], description: 'save=固化证据包 (默认); verify=复核证据包哈希' },
+      vuln_type: { type: 'string', description: '漏洞类型 (save 必填), 如 IDOR_Data_Leak / XSS_Reflected / OSS_Public_Read' },
+      request_raw: { type: 'string', description: '完整 HTTP 请求报文 (含方法行/头/体)' },
+      response_raw: { type: 'string', description: '完整 HTTP 响应报文 (含状态行/头/体)' },
+      extracted_sensitive_data: { type: 'string', description: '提取到的敏感数据 — **必须已脱敏** (138****1234), 禁止明文入库' },
+      target: { type: 'string', description: '关联目标 (URL/域名, 写进证据目录名便于归组)' },
+      title: { type: 'string', description: '可选: 证据标识 (文件名用, 如 idor-user-order)' },
+      notes: { type: 'string', description: '可选: 补充说明 (利用条件/影响范围)' },
+      evidence_path: { type: 'string', description: 'verify 用: 证据包文件路径' },
+      expected_sha256: { type: 'string', description: 'verify 用: 当初固化时拿到的 SHA-256' },
+    }, required: [] }, parallelSafe: false, riskLevel: 'low' },
   // ===== 2026-10-16 第一梯队挖洞工具 (子域枚举 / JS端点提取 / HTTP重放) =====
   // 背景: 审查报告 PENTEST_REVIEW_2026-10-15 第二问 — "能扫但扫不深"。
   // 赏金 80% 的洞在没人管的子域上 (enum_subdomains), 现代 SPA 隐藏 API 全在前端 JS 里
@@ -938,6 +1024,79 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       follow_redirect: { type: 'boolean', description: '是否跟随 30x 跳转 (默认 true, 最多 3 跳, 每跳校验授权)' },
       timeout_ms: { type: 'number', description: '超时毫秒 (默认 15000, 上限 60000)' },
     }, required: ['method','url'] }, parallelSafe: false, riskLevel: 'high' },
+  // ===== 2026-10-21 决定性能力: 响应差异对比 (越权/未授权/IDOR 的判定核心) =====
+  // 单次 http_replay 只能看到"一个响应"; 高危权限漏洞的判定永远需要"同一资源两种身份"对比。
+  // 旧实现靠模型肉眼读两段 body → 误报/漏报的源头。本工具把对比做成机械判定。
+  { name: 'diff_replay', description: '【响应差异对比 · 越权核心】对同一资源用两组身份/凭证各发一次请求 (A=正常/高权限, B=无认证/低权限/他人账号), 自动对比状态码、响应长度、JSON 字段集、敏感数据, 输出 auth-bypass / permission-diff / data-leak 判定。\n\n🔑 触发场景 (高危必用):\n- IDOR/BOLA: A 用自己 token 读 id=1001, B 用另一账号 token 读同一 id\n- 未授权: A 带 Cookie, B 完全不带 Cookie\n- 认证绕过: A 正常请求, B 改 JWT/X-Original-URL/路径大小写\n\n⚙️ 参数: url (A 的地址) + url_b (可选, B 的地址, 默认同 url) + method + headers_a / headers_b (两组身份头) + body。\n\n🔒 安全: 两个 host 都过授权闸门; readonly 目标拒绝写方法; CRLF 头注入拒绝; 每次请求过限频。\n\n📤 返回: verdict (auth-bypass/permission-diff/data-leak/identical) + risk + 命中信号 + 下一步建议。\n\n💡 示例: diff_replay({ url:"https://api.x.com/v1/order/1001", headers_a:{"Authorization":"Bearer A_TOKEN"}, headers_b:{"Authorization":"Bearer B_TOKEN"}, label_a:"用户A", label_b:"用户B" })',
+    parameters: { type: 'object', properties: {
+      url: { type: 'string', description: 'A 身份请求的 URL (必须在授权范围内)' },
+      url_b: { type: 'string', description: '可选: B 身份请求的 URL (默认与 url 相同; 用于对比不同资源 id)' },
+      method: { type: 'string', enum: ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'], description: 'HTTP 方法 (默认 GET)' },
+      headers_a: { type: 'object', description: 'A 身份请求头 (如 {"Authorization":"Bearer A"})', additionalProperties: { type: 'string' } },
+      headers_b: { type: 'object', description: 'B 身份请求头 (如 {"Authorization":"Bearer B"} 或留空表示无认证)', additionalProperties: { type: 'string' } },
+      identity_a: { type: 'string', description: '可选: 从凭证池取 A 的请求头 (identity_manage 保存的 label)' },
+      identity_b: { type: 'string', description: '可选: 从凭证池取 B 的请求头 (双账号 BOLA 必用)' },
+      body: { type: 'string', description: '请求体 (两组共用)' },
+      label_a: { type: 'string', description: 'A 的身份标签 (如 "用户A"/"已登录"), 仅用于文案' },
+      label_b: { type: 'string', description: 'B 的身份标签 (如 "用户B"/"未登录")' },
+      follow_redirect: { type: 'boolean', description: '是否跟随 30x (默认 false — 登录跳转本身就是信号)' },
+      timeout_ms: { type: 'number', description: '超时毫秒 (默认 15000, 上限 60000)' },
+      max_items: { type: 'number', description: 'JSON 列表最多取前 N 条 (默认 2, 上限 5 — 防批量拉取)' },
+    }, required: ['url'] }, parallelSafe: false, riskLevel: 'high' },
+  // ===== 2026-10-21 决定性能力: 技术栈指纹 → 定向攻击面 =====
+  { name: 'fingerprint_target', description: '【技术栈指纹 → 定向攻击面】识别目标框架并给出"这个技术栈该试什么"的具体入口 (不是泛泛的 OWASP 清单)。\n\n🔑 触发场景: recon 阶段拿到首个响应后先调本工具; 或已知 headers/body 想判断框架。\n\n🧬 支持识别: Spring Boot (actuator/swagger)、Apache Shiro (rememberMe)、ThinkPHP (路由)、若依 RuoYi (/prod-api)、JeecgBoot、Nacos (默认鉴权)、Laravel、Django、ASP.NET (ViewState)、WordPress、Node/Express、Tomcat、Fastjson、Nginx/Apache。\n\n📤 返回: 技术栈 + 置信度 + 证据 + 定向检查清单 (每条带停线)。\n\n⚙️ 参数: url (自动抓取, 过授权闸门) 或 headers/body/cookies (纯本地分析)。\n\n💡 示例: fingerprint_target({ url:"https://app.x.com" }) → Spring Boot(95%) → /actuator、/v2/api-docs、全量接口 diff_replay',
+    parameters: { type: 'object', properties: {
+      url: { type: 'string', description: '目标 URL (会自动发一次 GET, 过授权闸门); 与 headers/body 二选一' },
+      headers: { type: 'object', description: '已有的响应头 (本地分析不联网)', additionalProperties: { type: 'string' } },
+      body: { type: 'string', description: '已有的响应体 (本地分析不联网)' },
+      cookies: { type: 'array', items: { type: 'string' }, description: 'Cookie 列表 (如 ["rememberMe=deleteMe"])' },
+      follow_redirect: { type: 'boolean', description: 'url 模式是否跟随跳转 (默认 true)' },
+      timeout_ms: { type: 'number', description: '超时毫秒 (默认 15000)' },
+    }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  // ===== 2026-10-21 工具层扩展: 多身份 / 请求变异 / 复核 / 历史资产 / 查重 =====
+  { name: 'identity_manage', description: '【多身份凭证池】管理 A/B 两个账号的请求头 (Authorization/Cookie), 供 diff_replay 做 BOLA/IDOR 双账号对比。\n\n⚙️ action: list (只回 header 名, 不回值) / save (label+role+headers) / remove (label)。\n\n🔒 安全: 落盘 .agentai/pentest/identities.json (尝试 0600); 列表脱敏; 拒绝 CRLF; 不接受 Host 覆写。',
+    parameters: { type: 'object', properties: {
+      action: { type: 'string', enum: ['list', 'save', 'remove'], description: '操作' },
+      label: { type: 'string', description: '身份标识 (如 userA/userB/admin)' },
+      role: { type: 'string', enum: ['self', 'other', 'admin', 'guest'], description: '角色 (用于自动配 A/B)' },
+      headers: { type: 'object', description: '完整请求头 (如 {"Authorization":"Bearer xxx"})', additionalProperties: { type: 'string' } },
+      note: { type: 'string', description: '备注 (如 "普通用户, 已实名")' },
+    }, required: ['action'] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'request_mutator', description: '【请求变异引擎】只生成变体、不发请求: 去认证、X-Forwarded-For、X-Original-URL、路径大小写/尾斜杠/双斜杠/..;/、%2e、HPP 重复参数、方法覆盖。用于网关/框架处理差异导致的"打不中"。',
+    parameters: { type: 'object', properties: {
+      url: { type: 'string', description: '原始 URL' },
+      method: { type: 'string', description: '方法 (默认 GET)' },
+      headers: { type: 'object', description: '原始请求头', additionalProperties: { type: 'string' } },
+      body: { type: 'string', description: '请求体 (可选)' },
+      limit: { type: 'number', description: '最多生成多少个变体 (默认 20, 上限 40)' },
+    }, required: ['url'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'recheck_finding', description: '【提交后状态复核】对已提交漏洞发一次**只读 GET**, 记录 200→401/403/404 快照 (修复后不认账的硬证据)。\n\n⚙️ 参数: id (漏洞记录 id) 或 target+endpoint。只读、过授权闸门与限频、不带认证头。\n\n📤 返回: fixed / still-vulnerable / changed / unknown + 快照路径。',
+    parameters: { type: 'object', properties: {
+      id: { type: 'string', description: '漏洞记录 id (从 vulns.jsonl 找)' },
+      target: { type: 'string', description: '目标 host (id 找不到时用)' },
+      endpoint: { type: 'string', description: '接口路径 (id 找不到时用, 如 /api/user/1001)' },
+    }, required: [] }, parallelSafe: false, riskLevel: 'low' },
+  { name: 'historical_assets', description: '【历史资产】从 Wayback CDX / Common Crawl 拉取目标域的历史 URL, 找已下线但仍在跑的老接口。只查公开归档, 不打目标。',
+    parameters: { type: 'object', properties: {
+      domain: { type: 'string', description: '根域 (如 example.com)' },
+      source: { type: 'string', enum: ['wayback', 'commoncrawl', 'both'], description: '数据源 (默认 both)' },
+      limit: { type: 'number', description: '最多返回多少条 (默认 80)' },
+    }, required: ['domain'] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'js_deep_scan', description: '【前端 JS 深挖】扫描 JS/HTML: 隐藏 API 端点、source map、硬编码密钥 (脱敏)、内网地址。\n\n⚙️ 参数: url (自动抓取, 过授权闸门) 或 content (纯本地分析)。\n\n⚠️ 密钥只回脱敏值, 用于定位, 不要外传。',
+    parameters: { type: 'object', properties: {
+      url: { type: 'string', description: 'JS/HTML URL (自动抓取)' },
+      content: { type: 'string', description: '已有 JS/HTML 文本 (本地分析)' },
+      baseUrl: { type: 'string', description: '可选: 相对路径的基准 URL (仅展示用)' },
+    }, required: [] }, parallelSafe: true, riskLevel: 'low' },
+  { name: 'duplicate_check', description: '【提交前查重】用 目标+类型+接口/标题 指纹查历史漏洞: 30 天内同指纹 = 重复; 7 天内同目标同类型 ≥2 = 批量灌水风险。',
+    parameters: { type: 'object', properties: {
+      target: { type: 'string', description: '目标 host' },
+      vulnType: { type: 'string', description: '漏洞类型' },
+      title: { type: 'string', description: '标题' },
+      endpoint: { type: 'string', description: '接口/路径 (可选)' },
+      poc: { type: 'string', description: 'PoC (可选, 用于推断接口)' },
+      windowDays: { type: 'number', description: '重复判定窗口天数 (默认 30)' },
+    }, required: ['target'] }, parallelSafe: true, riskLevel: 'low' },
   // ===== 2026-10-15 kali 扫描器 + 授权对话化 =====
   // wsl_scan: 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等扫描器 (白名单 + 先过授权闸门)。
   // 本机 Windows 装不了 Kali 本体, 但 WSL 里有 kali-linux 发行版, 子智能体经 wsl_scan 真能驱动它。
@@ -1703,6 +1862,29 @@ function buildOcrFailureHint(imagePath: string, error: string, candidates: strin
  * 输出 = 现场事实 (platform/ComSpec/文件可见性/PATH 头几段) + 分岔建议,
  * 让 AI 不再瞎猜"PATH 问题"而反复重试同一条命令。
  */
+/**
+ * 非零退出码的结果判定 (2026-10-20, 富哥实锤: "工具结果误报导致很多工具失败")
+ *
+ * ⚠️ 退出码语义因工具而异, 「0 = 成功」只对一部分工具成立:
+ *   grep 无匹配 → 1 / test·diff 判假 → 1 / nmap 主机不可达 → 1 /
+ *   ffuf·httpx 无发现 → 1 / sqlmap 无可利用 → 1 / wsl 内命令 exit 1 → wsl.exe 也 1
+ *   这些场景**都有完整 stdout** — 原实现一律判失败, AI 收到
+ *   "Error: exit code 1" + 满屏有用输出 → 反复重试或绕道写脚本 (误报实锤)。
+ *
+ * 规则: 非零退出码 + 有实质输出 (stdout 或 stderr) → success:true,
+ *   输出前缀说明退出码语义, AI 依据内容判断; 无任何输出 → 才判真失败。
+ */
+export function nonzeroExitVerdict(code: number | null, stdout: string, stderr: string): { success: boolean; prefix: string } {
+  const hasOut = !!(stdout && stdout.trim()) || !!(stderr && stderr.trim());
+  if (hasOut) {
+    return {
+      success: true,
+      prefix: `⚠️ 命令退出码 ${code ?? 'null'} (非 0)。注意: 很多工具用非零退出码表达「无结果/布尔假」而非错误 (如 grep 无匹配=1、nmap 主机不可达=1、ffuf/httpx 无发现、test/diff 判假) — 以下是完整输出, 请依据内容判断, 不要仅凭退出码就原样重试。\n\n`,
+    };
+  }
+  return { success: false, prefix: '' };
+}
+
 export function buildRunCommandFailureHint(err: any, command: string): string {
   const msg = String(err?.message || err || '');
   const plat = process.platform;
@@ -2778,10 +2960,28 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const id = ++jobIdCounter;
       const child = spawn(command, [], { cwd: args.cwd, shell: true, stdio: ['pipe','pipe','pipe'], windowsHide: true });
       let output = '';
-      child.stdout.on('data', (d: Buffer) => { output += d.toString(); });
-      child.stderr.on('data', (d: Buffer) => { output += d.toString(); });
-      bgJobs.set(id, { pid: child.pid, running: true, output: '' });
-      child.on('exit', () => { const j = bgJobs.get(id); if (j) { j.running = false; j.output = output; } });
+      // ═══ 2026-10-20 D3: job.output 实时更新 (原实现 exit 时才赋值) ═══
+      // 事故: AI 用 job_output 轮询一个跑 10 分钟的扫描, 前 9 分钟每次都是空输出
+      //   → AI 判定「卡死/无产出」→ 杀进程重跑 (长任务监控主力通道实质残缺)。
+      // 修法: stdout/stderr 的每个 chunk 同步落 job.output; 带上限 200KB 保留尾部
+      //   (job_output 本来就 slice 尾部, 早出的噪点在长任务里价值最低)。
+      const job = { pid: child.pid, running: true, output: '' };
+      bgJobs.set(id, job);
+      const _feed = (d: Buffer) => {
+        output += d.toString();
+        if (output.length > BG_JOB_OUTPUT_MAX) output = output.slice(-BG_JOB_OUTPUT_MAX);
+        job.output = output;
+      };
+      child.stdout.on('data', _feed);
+      child.stderr.on('data', _feed);
+      child.on('exit', () => { const j = bgJobs.get(id); if (j) { j.running = false; j.output = output; } _pruneBgJobs(); });
+      // 2026-10-20 D3: spawn 失败 (命令不存在/权限) 只发 'error' 不发 'exit' →
+      //   job.running 永为 true → wait_for_job 等满超时只拿到「失败 + 空输出」。
+      child.on('error', (e: any) => {
+        const j = bgJobs.get(id);
+        if (j) { j.running = false; j.output = output + `\n[spawn error] ${e?.message || e}`; }
+        _pruneBgJobs();
+      });
       return { success: true, output: `Job ${id} started, pid ${child.pid}`, data: { jobId: id } };
     } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; }
   },
@@ -2889,12 +3089,18 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         });
         child.on('close', (code: number) => {
           finish(() => {
+            const rawOut = stdout + (stderr ? `\nSTDERR:\n${stderr}` : '');
+            // 2026-10-20: 非零退出码 ≠ 失败 (grep 无匹配/nmap 主机不可达/ffuf 无发现
+            //   都是 exit 1 却有完整输出)。有输出 → 放行 + 前缀说明, AI 依据内容判断;
+            //   无输出才是真失败。原实现一律 reject → 工具结果误报实锤。
             if (code !== 0) {
+              const v = nonzeroExitVerdict(code, stdout, stderr);
+              if (v.success) { resolve(v.prefix + rawOut); return; }
               const e: any = new Error(`exit code ${code}`);
               e.stdout = stdout; e.stderr = stderr; e.code = code;
               reject(e); return;
             }
-            resolve(stdout + (stderr ? `\nSTDERR:\n${stderr}` : ''));
+            resolve(rawOut);
           });
         });
       });
@@ -3213,8 +3419,75 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         platformWarn = '⚠️ platform 为空: 该 target 未匹配任何已确认的平台档案, 提交前请自行确认投给哪个平台';
       }
 
-      const vulnsDir = path.join(ws, '.agentai', 'vulns');
-      fs.mkdirSync(vulnsDir, { recursive: true });
+      // ═══ 2026-10-20: 提交前查重 (平台"同系统同类型批量忽略"的硬防线) ═══
+      // 旧实现直接 append, 同一洞可反复入库; 同一 host+类型短期刷多条,
+      // 正是厂商回一句"已知不再收取"后整批作废的高发场景。
+      const expMod = await import('./pentest/experience.js');
+      const normKey = (s: any) => String(s || '').toLowerCase().replace(/[\s\-_/\\:?&=]+/g, '');
+      const inferEndpoint = (pocText: string): string => {
+        const m = String(pocText || '').match(/https?:\/\/[^\s"'<>]+/);
+        if (m) { try { const u = new URL(m[0]); return u.pathname + (u.search || ''); } catch { /* fallthrough */ } }
+        const m2 = String(pocText || '').match(/\b(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/\S*)/i);
+        return m2 ? m2[1] : '';
+      };
+      const hostKey = String(args.target || '').toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/[:/].*$/, '');
+      const typeKey = normKey(args.vulnType || 'unknown');
+      const titleKey = normKey(args.title);
+      const endpointKey = normKey(args.endpoint || inferEndpoint(String(args.poc || '')));
+      const impactGrade = ['A', 'B', 'C'].includes(String(args.impactGrade))
+        ? String(args.impactGrade) : undefined;
+
+      const nowMs = Date.now();
+      const DUP_WINDOW_MS = 30 * 24 * 3600 * 1000;   // 30 天内同指纹 = 重复
+      const BULK_WINDOW_MS = 7 * 24 * 3600 * 1000;   // 7 天内同 host+类型 ≥2 = 批量灌水预警
+      const existingVulns = expMod.readWorkspaceVulns(ws);
+      const sameFingerprint = existingVulns.filter((v: any) => {
+        const age = nowMs - (Number(v.ts) || 0);
+        if (age < 0 || age > DUP_WINDOW_MS) return false;
+        if (normKey(v.vulnType) !== typeKey) return false;
+        if (!expMod.hostMatches(String(v.target || ''), hostKey)) return false;
+        const vEndpoint = normKey(v.endpoint || inferEndpoint(String(v.poc || '')));
+        return (!!titleKey && normKey(v.title) === titleKey) ||
+          (!!endpointKey && !!vEndpoint && vEndpoint === endpointKey);
+      });
+      // 验证升级例外: validator 复核后会用同一标题/同接口再报一次并标 verified ——
+      // 这不是重复灌水, 而是把 unverified 升级为 verified / 补证据强度, 必须放行。
+      const isUpgrade = sameFingerprint.length > 0 && (
+        (status === 'verified' && sameFingerprint.every((v: any) => String(v.status || 'unverified') !== 'verified')) ||
+        (!!impactGrade && sameFingerprint.every((v: any) => !v.impactGrade))
+      );
+      if (sameFingerprint.length > 0 && args.force !== true && !isUpgrade) {
+        const dupLines = sameFingerprint.slice(0, 5).map((v: any) =>
+          `  - ${v.id || '(无id)'} | ${v.title || ''} | ${v.target || ''} | ${new Date(Number(v.ts) || 0).toISOString().slice(0, 10)} | status=${v.status || '?'}`);
+        return {
+          success: false,
+          output: `⛔ 拒绝落盘: 30 天内已有同指纹漏洞 (同目标 + 同类型 + ${endpointKey ? '同接口' : '同标题'}), 避免重复提交被平台整批判"已知不收"。\n${dupLines.join('\n')}\n\n若确认不是同一个洞 (例如不同参数 / 不同利用路径), 传 force:true 重试; 若只是把已有记录升级为 verified / 补证据强度, 也传 force:true。`,
+          data: { duplicate: true, duplicates: sameFingerprint.slice(0, 5) },
+        };
+      }
+      const sameTypeIn7d = existingVulns.filter((v: any) => {
+        const age = nowMs - (Number(v.ts) || 0);
+        return age >= 0 && age <= BULK_WINDOW_MS &&
+          normKey(v.vulnType) === typeKey && expMod.hostMatches(String(v.target || ''), hostKey);
+      });
+      const upgradeNote = isUpgrade
+        ? `\n🔁 同指纹记录 ${sameFingerprint[0].id || ''} 已存在; 本次作为${status === 'verified' ? '验证' : '证据强度'}升级落盘 (报告聚合会保留升级后的版本)。`
+        : '';
+      const bulkWarn = !isUpgrade && sameTypeIn7d.length >= 2
+        ? `\n⚠️ 批量风险: 同目标同类型 (${args.vulnType || 'unknown'}) 7 天内已有 ${sameTypeIn7d.length} 条, 平台可能视为同批灌水而整体降级/忽略。建议合并为一个报告, 或优先提交影响最大的一条。`
+        : '';
+
+      // ═══ 2026-10-20: 证据文件哈希入库 (提交争议时可直接引用) ═══
+      const evidenceDigests = evidencePaths.map((p: string) => {
+        const abs = path.isAbsolute(p) ? p : path.join(ws, p);
+        try {
+          const buf = fs.readFileSync(abs);
+          return { path: p, sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length };
+        } catch {
+          return { path: p, sha256: '', bytes: 0, missing: true };
+        }
+      });
+
       const ts = new Date().toISOString().slice(0, 10);
       const id = `vuln-${ts}-${(args.vulnType || 'x').replace(/[^a-z0-9]/gi, '_').slice(0, 12)}`;
       const record = {
@@ -3222,6 +3495,12 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         title: args.title, target: args.target,
         severity: args.severity, vulnType: args.vulnType || 'unknown',
         poc: args.poc || '', evidence, evidencePaths,
+        // 2026-10-20: 查重维度 + 证据强度 + 证据哈希 (报告聚合/审核争议都要用)
+        endpoint: args.endpoint || inferEndpoint(String(args.poc || '')),
+        impactGrade,
+        supersedes: isUpgrade ? (sameFingerprint[0].id || undefined) : undefined,
+        evidenceDigests,
+        project: expMod.projectSlugOf(String(args.target || '')),
         platform,
         platformAuto,// true = 由 target 反查得出(而非 AI 显式声明)
         // 2026-10-17: 归属可信度 —— false = AI 凭印象填的, 且无法与平台档案核对
@@ -3229,9 +3508,8 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         platformWarn,  // 归属存疑的具体原因(提交前必看)
         status,  // unverified(默认) / verified / reported
       };
-      // 追加到 JSONL (与 memory.jsonl 同构, 跨会话可召回)
-      const file = path.join(vulnsDir, 'vulns.jsonl');
-      fs.appendFileSync(file, JSON.stringify(record) + '\n');
+      // 2026-10-20: 按根域写入项目分库 (旧 workspace 级文件只读兼容, 不再写入)
+      const file = expMod.appendVuln(ws, record);
       // 2026-10-18: 挖到即固化经验 (富哥: "挖成功了应该固化, 打下一个目标时能检索")
       // 纯本地派生, 不额外调 LLM; 失败静默, 绝不影响落库。
       try {
@@ -3248,9 +3526,12 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           source: 'auto',
         });
       } catch { /* 经验固化失败不影响落库 */ }
+      const digestLine = evidenceDigests.length
+        ? evidenceDigests.map((d: any) => `${d.missing ? '⚠️缺失' : '🔒'} ${path.basename(d.path)}${d.sha256 ? ` SHA-256:${d.sha256}` : ''}`).join('\n  ')
+        : '(仅文本证据, 无文件哈希)';
       return {
         success: true,
-        output: `✅ 漏洞已落盘: ${id} [${status}]\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${platform ? `平台: ${platform}${platformAuto ? ' (由目标自动反查)' : ''}${platformTrusted ? '' : ' **(不可信: 凭印象填的, 无法核对)**'}\n` : '⚠️ 平台: 未识别 —— 该目标不属于任何已确认的 SRC 平台, 请确认是否要提交或换平台\n'}${platformWarn ? `${platformWarn}\n` : ''}证据文件: ${evidencePaths.length ? evidencePaths.join(', ') : '(仅文本证据)'}\n路径: ${file}\n下次同类目标可直接召回这条参考。${status === 'unverified' ? '\n提示: 复现验证通过后可更新为 verified (赏金平台提交需 verified)。' : ''}`,
+        output: `✅ 漏洞已落盘: ${id} [${status}]\n标题: ${args.title}\n目标: ${args.target} (${args.severity}/${args.vulnType || 'unknown'})\n${platform ? `平台: ${platform}${platformAuto ? ' (由目标自动反查)' : ''}${platformTrusted ? '' : ' **(不可信: 凭印象填的, 无法核对)**'}\n` : '⚠️ 平台: 未识别 —— 该目标不属于任何已确认的 SRC 平台, 请确认是否要提交或换平台\n'}${platformWarn ? `${platformWarn}\n` : ''}证据文件: ${evidencePaths.length ? evidencePaths.join(', ') : '(仅文本证据)'}\n  证据摘要:\n  ${digestLine}\n项目分库: ${file}${impactGrade ? `\n证据强度: ${impactGrade} 级` : '\n证据强度: 未评估 (高危提交前请先调 check_impact_proof)'}${upgradeNote}${bulkWarn}\n下次同类目标可直接召回这条参考。${status === 'unverified' ? '\n提示: 复现验证通过后可更新为 verified (赏金平台提交需 verified)。' : ''}`,
         data: record,
       };
     } catch (e: any) { return { success: false, output: `report_vulnerability 失败: ${e.message}` }; }
@@ -3329,6 +3610,87 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       };
     } catch (e: any) { return { success: false, output: `save_evidence 失败: ${e.message}` }; }
   },
+  // ===== 2026-10-20 ② 防篡改证据包 (save / verify 双动作) =====
+  // 与 save_evidence 的分工: 那个存"给人看的"截图/文本; 本工具把 request_raw /
+  // response_raw / extracted_sensitive_data 打成规范化 JSON 包 + SHA-256。
+  // 哈希覆盖的是**磁盘真实字节** (写完再读回来算), 不是入参字符串 — 防止
+  // "说的和落盘的不一致"。verify 动作让平台方/用户能独立重算验真。
+  save_and_hash_evidence: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+
+      // ── verify: 重算磁盘文件哈希, 对比预期值 ──
+      if (String(args.action || 'save') === 'verify') {
+        const fp = String(args.evidence_path || '').trim();
+        const want = String(args.expected_sha256 || '').trim().toLowerCase().replace(/^sha256:/, '');
+        if (!fp || !want) return { success: false, output: '❌ verify 需要 evidence_path + expected_sha256。' };
+        if (!fs.existsSync(fp)) return { success: false, output: `❌ 证据包不存在: ${fp}` };
+        const got = createHash('sha256').update(fs.readFileSync(fp)).digest('hex');
+        const ok = got === want;
+        return {
+          success: ok,
+          output: ok
+            ? `✅ 证据包完整性验证通过 (MATCH)\n  文件: ${fp}\n  SHA-256: ${got}\n该证据包自固化后未被篡改。`
+            : `🚨 证据包已被篡改 (MISMATCH)!\n  文件: ${fp}\n  预期: ${want}\n  实际: ${got}\n差异说明文件在固化后被改动 — 提交平台时此包不可信。`,
+          data: { match: ok, actual: got, expected: want, path: fp },
+        };
+      }
+
+      // ── save: 打规范化证据包 + 落盘 + 算哈希 ──
+      const vulnType = String(args.vuln_type || '').trim();
+      if (!vulnType) {
+        return { success: false, output: '❌ vuln_type 必填 (如 IDOR_Data_Leak / XSS_Reflected / OSS_Public_Read)。' };
+      }
+      const req = args.request_raw != null ? String(args.request_raw) : '';
+      const res = args.response_raw != null ? String(args.response_raw) : '';
+      const sens = args.extracted_sensitive_data != null ? String(args.extracted_sensitive_data) : '';
+      const notes = args.notes != null ? String(args.notes) : '';
+      if (!req && !res && !sens) {
+        return { success: false, output: '❌ 无内容可固化: request_raw / response_raw / extracted_sensitive_data 至少给一项。' };
+      }
+      // 目录约定与 save_evidence 完全一致 (按目标归组; bounty_report/前端按同约定找)
+      const targetSlug = String(args.target || 'no-target').replace(/[^a-z0-9.-]/gi, '_').slice(0, 64);
+      const titleSlug = String(args.title || vulnType).replace(/[^\w.-]/g, '_').slice(0, 32);
+      const evDir = path.join(ws, '.agentai', 'evidence', `${targetSlug}-${titleSlug}`);
+      fs.mkdirSync(evDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      // 字段封顶 200KB: 响应体可能是整页 HTML/转存二进制。截断并在包内登记
+      // truncated_fields — 哈希依然覆盖磁盘真实字节, 截断是明示的事实不是隐瞒。
+      const FIELD_MAX = 200_000;
+      const truncated: string[] = [];
+      const cap = (name: string, v: string): string => {
+        if (v.length <= FIELD_MAX) return v;
+        truncated.push(name);
+        return v.slice(0, FIELD_MAX) + `\n[truncated by agentai: original ${v.length} bytes]`;
+      };
+      const pkg = {
+        schema: 'agentai-evidence/v1',
+        tool: 'save_and_hash_evidence',
+        vuln_type: vulnType,
+        target: String(args.target || ''),
+        title: String(args.title || ''),
+        captured_at: new Date().toISOString(),
+        request_raw: cap('request_raw', req),
+        response_raw: cap('response_raw', res),
+        extracted_sensitive_data: cap('extracted_sensitive_data', sens),
+        notes: cap('notes', notes),
+        truncated_fields: truncated,
+      };
+      // 规范化序列化: 固定 key 顺序 + 2 空格缩进 → 同一输入永远同一字节 → 哈希可比对
+      const body = JSON.stringify(pkg, null, 2);
+      const file = path.join(evDir, `${stamp}-${vulnType.replace(/[^\w.-]/g, '_').slice(0, 40)}.json`);
+      fs.writeFileSync(file, body, 'utf-8');
+      // 哈希覆盖磁盘真实字节 (写完读回), 不是入参 — 说的和落盘的必须一致
+      const bytes = fs.readFileSync(file);
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      const truncNote = truncated.length ? `\n⚠️ 已截断字段: ${truncated.join(', ')} (包内 truncated_fields 有登记, 哈希仍有效)` : '';
+      return {
+        success: true,
+        output: `✅ 防篡改证据包已固化 → ${file}\n  SHA-256: ${sha256}\n  大小: ${bytes.length} 字节 | 固化时间: ${pkg.captured_at}${truncNote}\n\n📌 提交报告时引用: "证据包 SHA-256: ${sha256} (固化于 ${pkg.captured_at})" — 平台方用 action=verify 重算即可验真。\n把路径传进 report_vulnerability 的 evidencePaths。\nEVIDENCE_PATHS: ${file}\nEVIDENCE_SHA256: ${sha256}`,
+        data: { evidencePaths: [file], sha256, capturedAt: pkg.captured_at, dir: evDir, truncatedFields: truncated },
+      };
+    } catch (e: any) { return { success: false, output: `save_and_hash_evidence 失败: ${e.message}` }; }
+  },
   // ===== 2026-10-19 赏金报告聚合: 把 .agentai/vulns/ 的零散记录拼成平台级可过审报告 =====
   // 实机断头路: exploit/validator 阶段把漏洞落进 vulns.jsonl + evidence/, 但**没有任何东西
   // 把它们聚合成一份能贴到 SRC 平台的报告** —— pentest_pipeline 末尾只"建议按 bounty-report
@@ -3338,17 +3700,12 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   bounty_report: async (args, ctx) => {
     try {
       const ws = (ctx as any)?.workspace || getWs();
-      const vulnsFile = path.join(ws, '.agentai', 'vulns', 'vulns.jsonl');
-      if (!fs.existsSync(vulnsFile)) {
-        return { success: true, output: `📭 暂无漏洞库: ${vulnsFile}\n请先用 report_vulnerability 落盘漏洞, 再用本工具出报告。` };
+      // 2026-10-20: 旧 workspace 级文件 + 各项目分库一起读 (项目隔离后不丢历史)
+      const expMod = await import('./pentest/experience.js');
+      const all: any[] = expMod.readWorkspaceVulns(ws);
+      if (all.length === 0) {
+        return { success: true, output: `📭 暂无漏洞库: ${path.join(ws, '.agentai', 'vulns', 'vulns.jsonl')}\n请先用 report_vulnerability 落盘漏洞, 再用本工具出报告。` };
       }
-      // 容错解析 JSONL (坏行跳过, 不连坐)
-      const lines = fs.readFileSync(vulnsFile, 'utf-8').split('\n').map((s) => s.trim()).filter(Boolean);
-      const all: any[] = [];
-      for (const ln of lines) {
-        try { all.push(JSON.parse(ln)); } catch { /* 跳过坏行 */ }
-      }
-      if (all.length === 0) return { success: true, output: `📭 漏洞库为空 (${vulnsFile})` };
 
       // ── 过滤 ──
       const target = String(args.target || '').trim().toLowerCase();
@@ -3368,15 +3725,42 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         return true;
       });
 
-      // 严重度降序, 同严重度按时间倒序 (新发现在前)
+      // 严重度降序 → 质量优先 (verified / 有强度评估) → 时间倒序 (新发现在前)
+      const qualityOf = (v: any) =>
+        (String(v.status || '').toLowerCase() === 'verified' ? 2 : 0) + (v.impactGrade ? 1 : 0);
       rows.sort((a, b) => {
         const ra = SEV_RANK[String(a.severity || '').toLowerCase()] ?? 0;
         const rb = SEV_RANK[String(b.severity || '').toLowerCase()] ?? 0;
-        return rb - ra || (b.ts || 0) - (a.ts || 0);
+        return rb - ra || (qualityOf(b) - qualityOf(a)) || (b.ts || 0) - (a.ts || 0);
       });
+      // 2026-10-20: 同指纹只保留"最好的一条" —— validator 升级会追加 verified 记录,
+      // 报告里不能再出现 unverified + verified 两条同一洞 (否则等于自己制造重复提交)。
+      const fpSeen = new Set<string>();
+      for (let i = 0; i < rows.length;) {
+        const v = rows[i];
+        const fp = `${String(v.target || '').toLowerCase()}|${String(v.vulnType || '').toLowerCase()}|` +
+          `${String(v.endpoint || v.title || '').toLowerCase().replace(/\s+/g, '')}`;
+        if (fpSeen.has(fp)) { rows.splice(i, 1); continue; }
+        fpSeen.add(fp);
+        i++;
+      }
       if (rows.length === 0) {
         return { success: true, output: `📭 按当前过滤条件 (target=${target || '*'}, platform=${platform || '*'}, minSeverity=${minSev || '*'}, status=${statusFilter || '*'}) 无命中漏洞。` };
       }
+
+      // ═══ 2026-10-20: 提交门槛 (高危必须 verified + 真实证据 + 强度 ≥B) ═══
+      // 只标注不隐藏: 详细章节仍保留全部记录, 但"可提交清单"只列 PASS 的,
+      // 防止 AI 把 C 级/无证据的高危直接贴到平台。
+      // 2026-10-21: 门槛逻辑抽到 pentest/project-summary.ts (单一真源) ——
+      //   前端项目视图与 bounty_report 必须用同一套规则, 否则会"报告说能交、面板说不能交"。
+      const { evaluateSubmissionGate } = await import('./pentest/project-summary.js');
+      const gateOf = (v: any): { ok: boolean; reasons: string[] } =>
+        evaluateSubmissionGate(v, (p) => { try { return fs.existsSync(p); } catch { return false; } });
+      const gated = rows.map((v) => ({ v, gate: gateOf(v) }));
+      const passRows = gated.filter((x) => x.gate.ok);
+      const blockedRows = gated.filter((x) => !x.gate.ok);
+      const gateMap = new Map<any, { ok: boolean; reasons: string[] }>();
+      for (const g of gated) gateMap.set(g.v, g.gate);
 
       // ── 统计 ──
       const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
@@ -3393,6 +3777,20 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         if (counts[k]) md += `| ${k.toUpperCase()} | ${counts[k]} |\n`;
       }
       md += `\n> 影响面: 涉及目标 ${new Set(rows.map((v) => v.target)).size} 个, 命中平台 ${new Set(rows.map((v) => v.platform).filter(Boolean)).size} 个。\n`;
+      md += `> 提交门槛: ✅ 可提交 **${passRows.length}** 条 / ❌ 未达门槛 **${blockedRows.length}** 条 (只提交 ✅ 清单里的条目)。\n`;
+
+      md += `\n## 二、可提交清单\n\n`;
+      if (passRows.length === 0) {
+        md += `> ⚠️ 无漏洞通过提交门槛。先补证据 / 独立复核 / 做证据强度评估, 不要直接提交。\n`;
+      } else {
+        passRows.forEach((x, i) => {
+          const v = x.v;
+          const sha = (Array.isArray(v.evidenceDigests) ? v.evidenceDigests : [])
+            .find((d: any) => d && d.sha256)?.sha256;
+          md += `${i + 1}. **[${String(v.severity || '?').toUpperCase()}]** ${v.title || v.id} — \`${v.target}\` — 记录 ${v.id}` +
+            (sha ? ` — 证据 SHA-256: \`${sha}\`` : '') + '\n';
+        });
+      }
 
       for (const sev of ['critical', 'high', 'medium', 'low', 'info', 'unknown']) {
         const group = rows.filter((v) => String(v.severity || 'unknown').toLowerCase() === sev);
@@ -3405,6 +3803,15 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           md += `- **归属平台**: ${v.platform ? v.platform : '未识别'}${v.platformTrusted ? '' : ' ⚠️(归属不可信, 提交前需核对)'}\n`;
           if (v.platformWarn) md += `- **归属警告**: ${v.platformWarn}\n`;
           md += `- **记录ID**: ${v.id}\n`;
+          const gate = gateMap.get(v);
+          md += `- **提交门槛**: ${gate?.ok ? '✅ 可提交' : `❌ 不可提交 — ${(gate?.reasons || ['未知原因']).join('; ')}`}\n`;
+          if (v.impactGrade) md += `- **证据强度**: ${String(v.impactGrade).toUpperCase()} 级\n`;
+          if (Array.isArray(v.evidenceDigests) && v.evidenceDigests.length) {
+            md += `- **证据哈希** (平台可独立重算):\n`;
+            for (const d of v.evidenceDigests) {
+              md += `  - ${path.basename(String(d?.path || ''))}: ${d?.sha256 ? `SHA-256 \`${d.sha256}\`` : '⚠️ 哈希不可用 (文件缺失)'}\n`;
+            }
+          }
           if (v.poc) md += `\n**PoC / 复现步骤**:\n\`\`\`\n${v.poc}\n\`\`\`\n`;
           if (v.evidence) md += `\n**证据 (文本)**:\n\n${v.evidence}\n`;
           if (Array.isArray(v.evidencePaths) && v.evidencePaths.length) {
@@ -3432,10 +3839,23 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
 
       const summary =
         `✅ 已生成赏金报告: ${rows.length} 个漏洞 (C:${counts.critical} H:${counts.high} M:${counts.medium} L:${counts.low} I:${counts.info})\n`
+        + `🚦 提交门槛: ✅ 可提交 ${passRows.length} 条 / ❌ 未达门槛 ${blockedRows.length} 条 — **只提交"可提交清单"里的条目**, 其余先补证据/复核。\n`
         + (savedPath ? `📄 报告已落盘: ${savedPath}\n` : '')
-        + `可直接复制下方 markdown 提交到 SRC 平台 (注意: ⚠️ 标记的归属不可信项需先核对)。\n\n`
+        + `⚠️ 归属不可信 (标 ⚠️) 的条目需先核对平台再提交。\n\n`
         + md;
-      return { success: true, output: summary, data: { count: rows.length, counts, report: savedPath || null, markdown: md } };
+      return {
+        success: true,
+        output: summary,
+        data: {
+          count: rows.length,
+          counts,
+          pass: passRows.length,
+          blocked: blockedRows.length,
+          blockedItems: blockedRows.slice(0, 20).map((x) => ({ id: x.v.id, title: x.v.title, reasons: x.gate.reasons })),
+          report: savedPath || null,
+          markdown: md,
+        },
+      };
     } catch (e: any) { return { success: false, output: `bounty_report 失败: ${e.message}` }; }
   },
   // ===== 2026-10-19 OOB 回连接收器: 填补盲测盲区 (盲 XSS/SSRF/异步 RCE/DNS 外带) =====
@@ -3706,6 +4126,16 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         if (sb) stateBrief = `\n${sb}\n`;
       } catch { /* 状态读失败不阻断主流程 */ }
 
+      // ②-ter 攻击 Playbook 注入 (2026-10-21 决定性能力)
+      // exploit 阶段不能只靠模型"凭记忆猜 payload" —— 注入结构化打法:
+      // 入口 → 候选 payload → 响应特征 → 影响判定 → 停线。默认取收益最高的 4 个。
+      let playbookBrief = '';
+      try {
+        const { selectPlaybooks, formatPlaybooks } = await import('./pentest/knowledge/playbooks.js');
+        const pb = formatPlaybooks(selectPlaybooks({ limit: 4 }));
+        if (pb) playbookBrief = `\n${pb}\n`;
+      } catch { /* Playbook 不可用不阻断主流程 */ }
+
       // ③ 平台档案注入 (与 batch_pentest 同源: 决定 report 报给哪家)
       let platCtx = '';
       try {
@@ -3732,26 +4162,33 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           role: 'pentest_planner', label: '规划', ms: Math.round(deepMs * 0.6),
           task: `为 ${h} 规划本轮渗透路线: 这类资产/业务形态最值得打的入口在哪 (认证/越权/支付/文件上传/弱口令…), ` +
             `列出 3-6 个具体攻击面并按"预期收益/成功率"排序。不要泛泛而谈"做 SQL 注入测试"这种, ` +
-            `要具体到"登录接口的验证码绕过""订单查询接口的横向越权"。优先结合上面的历史经验。`,
+            `要具体到"登录接口的验证码绕过""订单查询接口的横向越权"。` +
+            `**优先级铁律: 权限类 (IDOR/BOLA/未授权) > 业务逻辑/支付 > SSRF/信息泄露 > 注入类** —— 前者才是平台认的高危。` +
+            `优先结合上面的历史经验和 Playbook。`,
         });
       }
       stages.push(
         {
           role: 'pentest_recon', label: '侦察', ms: deepMs,
           task: `对 ${h} 做资产侦察: 子域/存活探测/端口指纹/JS 端点/接口清单。` +
-            `产出必须是一份**结构化的"可打点清单"**: 每个入口写清 URL + 方法 + 参数 + 是否需登录 + 值得注意的地方。` +
+            `**拿到首个响应后必须先调 fingerprint_target(识别框架)**, 再按它返回的"技术栈→定向攻击面"组织清单 ` +
+            `(如 Spring→actuator/swagger, 若依→/prod-api, Shiro→rememberMe)。` +
+            `产出必须是一份**结构化的"可打点清单"**: 每个入口写清 URL + 方法 + 参数 + 是否需登录 + 该入口该试哪类漏洞 (对应 Playbook)。` +
             `后续阶段完全依赖这份清单, 写不清楚等于没做。`,
         },
         {
           role: 'pentest_exploit', label: '执行', ms: deepMs,
-          task: `按侦察清单逐个做**最小化 PoC**, 优先级按"预期收益"。` +
-            `每个疑似洞: 先 save_evidence 落盘 (请求+响应/截图), 再 report_vulnerability。` +
+          task: `按侦察清单逐个做**最小化 PoC**, 严格按注入的 Playbook 执行, 到 stopLine 必须停。` +
+            `**权限类端点必须先 diff_replay**: A=正常/高权限身份, B=无认证/另一账号, 让工具判定 auth-bypass/permission-diff/data-leak, ` +
+            `不要只发一次请求就凭肉眼下结论。` +
+            `每个疑似洞: 先 save_evidence 落盘 (请求+响应/截图), 再用 save_and_hash_evidence 固化哈希, 最后 report_vulnerability。` +
             `只报**你真的复现了**的, 拿不准的写进"待确认"别硬报 — 误报会扣分。`,
         },
         {
           role: 'pentest_validator', label: '复核', ms: Math.round(deepMs * 0.8),
           task: `独立复核上游结论: 逐条检查是否真复现、是否属于该平台可报类型、是否有重复/低危灌水。` +
-            `对**不可复现的直接标 false 并说明原因**, 对真实的高危补齐证据链 (请求/响应/截图都要能自证)。`,
+            `**权限类结论必须用 diff_replay 独立重放** (你自己选两种身份, 只依据原始响应判定, 不要相信上游的评级)。` +
+            `对**不可复现的直接标 false 并说明原因**, 对真实的高危补齐证据链 (请求/响应/截图/SHA-256 都要能自证)。`,
         },
       );
 
@@ -3766,18 +4203,44 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
 
       const results: Array<{ role: string; label: string; ok: boolean; ms: number; summary: string }> = [];
       let carried = ''; // 阶段继承: 上一阶段输出的摘要
+      const pipelineStartedAt = Date.now();
+
+      // ═══ 2026-10-20: 验证者信息隔离 ═══
+      // VALIDATOR_PROMPT 声称"刻意看不到执行者的推理过程", 但旧实现把 exploit
+      // 阶段的 carried 原样喂给 validator → 验证者看到结论就只会复读。
+      // 现在 validator 不继承上游叙述, 只拿"待复核证据清单"(id/target/type/证据路径/PoC),
+      // 标题与评级故意不给, 让它自己重新判定。
+      const buildValidatorBrief = async (): Promise<string> => {
+        try {
+          const { readWorkspaceVulns, hostMatches } = await import('./pentest/experience.js');
+          const rows = readWorkspaceVulns(ws).filter((v: any) => hostMatches(String(v.target || ''), h));
+          if (!rows.length) {
+            return '\n\n━━━ 待复核清单 ━━━\n本轮暂无落盘漏洞。若上游声称有发现, 只依据你独立复现的结果判定; 无证据一律 FAIL/UNRESOLVED。\n━━━ 清单结束 ━━━\n';
+          }
+          const lines = rows.slice(-12).map((v: any) => {
+            const ev = Array.isArray(v.evidencePaths) && v.evidencePaths.length
+              ? v.evidencePaths.join(', ') : '(无附件)';
+            return `- ${v.id || '(无id)'} | ${v.target || '?'} | ${v.vulnType || '?'} | 证据: ${ev} | PoC: ${String(v.poc || '').slice(0, 200).replace(/\n/g, ' ')}`;
+          });
+          return `\n\n━━━ 待复核证据清单 (只依据原始证据; 不要继承执行者的结论/评级) ━━━\n${lines.join('\n')}\n━━━ 清单结束 ━━━\n`;
+        } catch { return ''; }
+      };
 
       for (const [i, st] of stages.entries()) {
         if (!isPentestRole(st.role)) {
           results.push({ role: st.role, label: st.label, ok: false, ms: 0, summary: `未知角色 ${st.role}` });
           continue;
         }
-        const inherit = carried ? `\n\n━━━ 上一阶段 (${results[results.length - 1]?.label || '上游'}) 的产出 (直接继承, 不要重做) ━━━\n${carried}\n━━━ 继承结束 ━━━\n` : '';
+        const isValidator = st.role === 'pentest_validator';
+        const inherit = !isValidator && carried
+          ? `\n\n━━━ 上一阶段 (${results[results.length - 1]?.label || '上游'}) 的产出 (直接继承, 不要重做) ━━━\n${carried}\n━━━ 继承结束 ━━━\n`
+          : '';
+        const validatorBrief = isValidator ? await buildValidatorBrief() : '';
         emitProgress(i, stages.length, st.label, '开始');
         const t0 = Date.now();
         try {
           const out = await withTimeout(
-            runSubagent(st.role, st.task + inherit + platCtx + expBrief + stateBrief, router, registry,
+            runSubagent(st.role, st.task + inherit + validatorBrief + playbookBrief + platCtx + expBrief + stateBrief, router, registry,
               (ctx as any)?.userId || 'default', ws, ctx?.model, ctx?.modelName),
             st.ms,
             `${st.label}阶段`,
@@ -3809,6 +4272,48 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
 
       const okCount = results.filter(r => r.ok).length;
       const failed = results.filter(r => !r.ok);
+
+      // ═══ 2026-10-20: 失败经验自动闭环 ═══
+      // 旧实现只有 report_vulnerability 成功时才自动固化经验, 阶段失败/0 命中
+      // 全靠 AI "记得"去调 record_pentest_experience —— 实际几乎不会发生, 于是
+      // 同一个坑下次重踩。这里在链结束时无条件落盘 (纯本地, 不调 LLM)。
+      let expNote = '';
+      try {
+        const { recordExperience, readWorkspaceVulns, hostMatches } = await import('./pentest/experience.js');
+        let recorded = 0;
+        if (okCount > 0) {
+          for (const r of failed) {
+            recordExperience(ws, {
+              kind: 'failure',
+              target: h,
+              technique: r.role,
+              outcome: `${r.label}阶段未完成: ${String(r.summary).slice(0, 200)}`,
+              lesson: `${r.label}阶段失败 (${r.role}): ${String(r.summary).slice(0, 300)}。下次先修阶段问题, 不要原样重复。`,
+              source: 'auto',
+            });
+            recorded++;
+          }
+          const foundNow = readWorkspaceVulns(ws).filter((v: any) =>
+            hostMatches(String(v.target || ''), h) && (Number(v.ts) || 0) >= pipelineStartedAt).length;
+          if (foundNow === 0) {
+            recordExperience(ws, {
+              kind: 'failure',
+              target: h,
+              technique: 'pipeline:no-finding',
+              outcome: `全链路完成 ${okCount}/${results.length} 阶段, 本轮 0 命中`,
+              lesson: `${h} 本轮无命中。已完成阶段: ${results.filter(r => r.ok).map(r => r.label).join('/')}。下次换攻击面/换入口, 不要重复同一清单。`,
+              source: 'auto',
+            });
+            recorded++;
+          } else {
+            expNote = `\n🧠 本轮新增命中 ${foundNow} 条, 已自动固化失败教训 ${recorded} 条。`;
+          }
+        }
+        if (recorded > 0 && !expNote) {
+          expNote = `\n🧠 已自动固化本轮失败教训 ${recorded} 条 (下次开场经验库自动带回, 不用再手动调 record_pentest_experience)。`;
+        }
+      } catch { /* 经验固化失败不影响串链结果 */ }
+
       const lines = [
         `🔗 串链挖洞完成 (mode=${mode}, target=${h}): ${okCount}/${results.length} 阶段完成。`,
         ...results.map(r => `  ${r.ok ? '✅' : '❌'} ${r.label} (${r.role}) ${Math.round(r.ms / 1000)}s — ${r.summary.slice(0, 160).replace(/\n+/g, ' ')}`),
@@ -3816,8 +4321,9 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         failed.length
           ? `⚠️ ${failed.length} 个阶段未完成: ${failed.map(f => f.label).join('/')}。已完成阶段的产出仍有效, 可直接采用。`
           : '✅ 四阶段全部跑完, 结论已由 validator 独立复核。',
-        '📌 漏洞与证据已由 exploit/validator 阶段直接落盘 (.agentai/vulns/ + .agentai/evidence/)。',
-        '💡 下一步建议: ① 按 bounty-report 出平台能过审的报告 ② 让 AI 用 record_pentest_experience 固化本轮经验 ③ 无命中则 pentest_pipeline({ mode:"deep" }) 重跑或换目标。',
+        '📌 漏洞与证据已由 exploit/validator 阶段直接落盘 (.agentai/pentest/projects/<root>/ + .agentai/evidence/)。',
+        '💡 下一步建议: ① 按 bounty-report 出平台能过审的报告 (只提交"可提交清单") ② 无命中则换攻击面重跑, 不要原样重复。',
+        ...(expNote ? [expNote] : []),
       ];
       // ═══ 2026-10-19 P0: 全阶段失败不能报 success ═══
       // 旧实现恒返回 success:true → 前端工具卡片是绿色 ✅, AI 也以为执行成功 →
@@ -4065,7 +4571,350 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         output: lines + '\n\n' + formatAnalysis(analysis),
         data: { status: resp.status, headers: resp.headers, body: capped.body.slice(0, 6000), redirects: resp.redirects, durationMs, target: u.hostname, analysis },
       };
-    } catch (e: any) { return { success: false, output: `http_replay 失败: ${e.message}` }; }
+    } catch (e: any) {
+      // 2026-10-20: 网络层失败必须分类 + 可行动 — 原始 message ("fetch failed" /
+      //   "ETIMEDOUT") 不含任何可操作信息, AI 只能原样重试同一 URL (死循环实锤)。
+      const msg = String(e?.message || e);
+      let advice = '';
+      if (/timed?\s*out|ETIMEDOUT|abort/i.test(msg)) {
+        advice = '请求超时 — 目标响应慢或被 WAF 挂起。换法: 加大 timeout_ms (上限 60000); 先用 browser_navigate 看站点是否活着; 或换一个静态资源路径 (如 /favicon.ico) 试探连通性。别原样重试同一请求。';
+      } else if (/ECONNREFUSED|connection refused/i.test(msg)) {
+        advice = '连接被拒绝 — 端口未监听或服务已下线。换法: 确认协议/端口 (http vs https, 443 vs 8443); 先用 enum_subdomains / browser_navigate 确认资产存活再重放。';
+      } else if (/certificate|SSL|TLS|self.?signed/i.test(msg)) {
+        advice = 'TLS 证书问题 — 证书链不完整/过期。本工具默认容忍自签名, 此错说明是更深层问题: 换 browser_navigate (浏览器有完整证书视图) 或让用户确认目标证书状态。';
+      } else if (/ENOTFOUND|getaddrinfo|DNS/i.test(msg)) {
+        advice = 'DNS 解析失败 — 域名不存在或解析器不可达。换法: 检查域名拼写; 用 enum_subdomains 枚举真实子域; 或先确认解析再重放。';
+      } else if (/scope|授权|越界|403|forbidden/i.test(msg)) {
+        advice = '可能撞授权闸门 — 确认目标 host 在 .agentai/scope.json 授权范围, 不在就先 grant_scope({target}) 再重试。';
+      }
+      return { success: false, output: `http_replay 失败: ${msg}\n\n💡 ${advice || '检查 URL/网络后换一个请求参数重试 (如换 method/路径/header), 别原样重试。'}` };
+    }
+  },
+  // ===== 2026-10-21 决定性能力 ①: 双身份响应差异对比 =====
+  // 越权类高危的判定标准只有一个: 同一资源在两种身份下响应不同。
+  // 本工具把"发两次 + 机械对比"收成一个动作, 避免模型肉眼读两段 body 产生误报。
+  diff_replay: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const method = String(args.method || 'GET').toUpperCase();
+      const rawA = String(args.url || '').trim();
+      const rawB = String(args.url_b || rawA).trim();
+      if (!rawA) return { success: false, output: '❌ url 必填。' };
+      const parseUrl = (raw: string): URL | null => {
+        try { return new URL(raw); } catch { return null; }
+      };
+      const uA = parseUrl(rawA);
+      const uB = parseUrl(rawB);
+      if (!uA) return { success: false, output: `❌ 无法解析 URL: ${rawA}` };
+      if (!uB) return { success: false, output: `❌ 无法解析 url_b: ${rawB}` };
+      for (const u of [uA, uB]) {
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          return { success: false, output: `❌ 只支持 http/https (收到 ${u.protocol})。` };
+        }
+        if (!isTargetInScope(ws, u.hostname)) {
+          return { success: false, output: `❌ diff_replay 越界: ${u.hostname} 不在授权范围。先 grant_scope({target:"${u.hostname}"}) 再试。` };
+        }
+      }
+      const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+      if (WRITE_METHODS.has(method) && (getTargetMode(ws, uA.hostname) === 'readonly' || getTargetMode(ws, uB.hostname) === 'readonly')) {
+        return { success: false, output: `🔒 目标处于只读授权模式, 已拒绝 ${method}。越权验证请只用 GET/HEAD 读取。` };
+      }
+      const sanitize = (raw: any): Record<string, string> => {
+        const out: Record<string, string> = {};
+        const obj = raw && typeof raw === 'object' ? raw : {};
+        for (const [k, v] of Object.entries(obj)) {
+          const name = String(k), val = String(v);
+          if (/[\r\n]/.test(name) || /[\r\n]/.test(val)) throw new Error(`header ${name} 含 CRLF, 已拒绝`);
+          if (/^host$/i.test(name)) continue;
+          out[name] = val;
+        }
+        if (!Object.keys(out).some(h => /^user-agent$/i.test(h))) {
+          out['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PulseFlow-Pentest/1.0';
+        }
+        return out;
+      };
+      // 2026-10-21: 支持从多身份凭证池按 label 取请求头 (双账号 BOLA 对比)
+      const { resolveIdentityHeaders } = await import('./pentest/identity-pool.js');
+      const idA = args.identity_a ? resolveIdentityHeaders(ws, String(args.identity_a)) : {};
+      const idB = args.identity_b ? resolveIdentityHeaders(ws, String(args.identity_b)) : {};
+      const headersA = sanitize({ ...idA, ...(args.headers_a || {}) });
+      const headersB = sanitize({ ...idB, ...(args.headers_b || {}) });
+      const body = args.body != null ? String(args.body) : undefined;
+      const follow = args.follow_redirect === true; // 默认 false: 登录跳转本身是信号
+      const timeoutMs = Math.min(Number(args.timeout_ms) || 15_000, 60_000);
+      const { httpRequestRaw } = await import('./http-replay.js');
+      const { diffResponses, formatDiffVerdict } = await import('./pentest/response-diff.js');
+
+      await pentestRateLimit(ws, 5);
+      const respA = await httpRequestRaw(method, uA, headersA, body, { follow, timeoutMs, maxRedirects: 3, isTargetInScope: (h: string) => isTargetInScope(ws, h) });
+      await pentestRateLimit(ws, 5);
+      const respB = await httpRequestRaw(method, uB, headersB, body, { follow, timeoutMs, maxRedirects: 3, isTargetInScope: (h: string) => isTargetInScope(ws, h) });
+
+      const capN = Math.min(Math.max(Number(args.max_items) || 2, 1), 5);
+      const bodyA = capListBody(String(respA.body || ''), capN).body.slice(0, 100_000);
+      const bodyB = capListBody(String(respB.body || ''), capN).body.slice(0, 100_000);
+      const labelA = String(args.label_a || '身份A');
+      const labelB = String(args.label_b || '身份B');
+      const verdict = diffResponses(
+        { status: respA.status, headers: respA.headers || {}, body: bodyA },
+        { status: respB.status, headers: respB.headers || {}, body: bodyB },
+        { aAuthed: Object.keys(headersA).length > 0, bAuthed: Object.keys(headersB).length > 0, labelA, labelB },
+      );
+      const lines = [
+        `🔍 差异对比: ${method} ${uA.toString()}${uB.toString() !== uA.toString() ? ` → ${uB.toString()}` : ''}`,
+        `- ${labelA}: ${respA.status} (${String(respA.body || '').length} 字符)`,
+        `- ${labelB}: ${respB.status} (${String(respB.body || '').length} 字符)`,
+        '',
+        formatDiffVerdict(verdict, { labelA, labelB }),
+      ];
+      return {
+        success: true,
+        output: lines.join('\n'),
+        data: {
+          verdict: verdict.verdict, risk: verdict.risk, score: verdict.score, signals: verdict.signals,
+          a: { status: respA.status, length: String(respA.body || '').length },
+          b: { status: respB.status, length: String(respB.body || '').length },
+        },
+      };
+    } catch (e: any) {
+      return { success: false, output: `diff_replay 失败: ${e?.message || e}\n\n💡 两次请求必须只差身份 (URL/参数/Header); 若 A/B 资源不同, 传 url_b 并确保两者都在授权范围。` };
+    }
+  },
+  // ===== 2026-10-21 决定性能力 ②: 技术栈指纹 → 定向攻击面 =====
+  fingerprint_target: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { detectTechStack, attackSurfaceFor, formatFingerprintBrief } = await import('./pentest/tech-fingerprint.js');
+      let headers: Record<string, string> = (args.headers && typeof args.headers === 'object') ? args.headers : {};
+      let body = args.body != null ? String(args.body) : '';
+      let cookies: string[] = Array.isArray(args.cookies) ? args.cookies.map(String) : [];
+      const targetUrl = String(args.url || '').trim();
+      if (targetUrl) {
+        let u: URL;
+        try { u = new URL(targetUrl); } catch { return { success: false, output: `❌ 无法解析 URL: ${targetUrl}` }; }
+        if (!isTargetInScope(ws, u.hostname)) {
+          return { success: false, output: `❌ fingerprint_target 越界: ${u.hostname} 不在授权范围。先 grant_scope 再试。` };
+        }
+        await pentestRateLimit(ws, 5);
+        const { httpRequestRaw } = await import('./http-replay.js');
+        const resp = await httpRequestRaw('GET', u, {}, undefined, {
+          follow: args.follow_redirect !== false,
+          timeoutMs: Math.min(Number(args.timeout_ms) || 15_000, 60_000),
+          maxRedirects: 3,
+          isTargetInScope: (h: string) => isTargetInScope(ws, h),
+        });
+        headers = resp.headers || {};
+        body = String(resp.body || '').slice(0, 200_000);
+        const setCookies = Object.entries(headers).filter(([k]) => /^set-cookie$/i.test(k)).map(([, v]) => String(v));
+        cookies = [...cookies, ...setCookies];
+      }
+      if (!Object.keys(headers).length && !body && !cookies.length) {
+        return { success: false, output: '❌ 需要 url, 或至少提供 headers/body/cookies 之一。' };
+      }
+      const hits = detectTechStack({ headers, body, cookies, url: targetUrl });
+      const surfaces = attackSurfaceFor(hits);
+      if (!hits.length) {
+        return {
+          success: true,
+          output: '🔍 未匹配到已知框架特征。建议: 先 GET /、/favicon.ico、/robots.txt、/sitemap.xml, 把响应头与报错页再喂给 fingerprint_target; 或直接按通用 Playbook (IDOR/未授权/信息泄露) 推进。',
+          data: { hits: [], surfaces: [] },
+        };
+      }
+      return {
+        success: true,
+        output: formatFingerprintBrief(hits, surfaces),
+        data: { hits, surfaces },
+      };
+    } catch (e: any) {
+      return { success: false, output: `fingerprint_target 失败: ${e?.message || e}` };
+    }
+  },
+  // ===== 2026-10-21 工具层扩展 ①: 多身份凭证池 =====
+  identity_manage: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const mod = await import('./pentest/identity-pool.js');
+      const action = String(args.action || 'list');
+      if (action === 'list') {
+        const list = mod.listIdentities(ws);
+        if (!list.length) return { success: true, output: '📭 凭证池为空。用 identity_manage({action:"save", label:"userA", role:"self", headers:{Authorization:"Bearer ..."}}) 添加。', data: { identities: [] } };
+        const lines = list.map(i => `- ${i.label} [${i.role}] headers: ${i.headerKeys.join(', ') || '(无)'}${i.note ? ` — ${i.note}` : ''}`);
+        return { success: true, output: `🔐 凭证池 (${list.length}, 值已脱敏):\n${lines.join('\n')}`, data: { identities: list } };
+      }
+      if (action === 'save') {
+        const rec = mod.upsertIdentity(ws, {
+          label: String(args.label || ''),
+          role: args.role,
+          headers: args.headers,
+          note: args.note,
+        });
+        if (!rec) return { success: false, output: '❌ save 需要 label。' };
+        return { success: true, output: `✅ 已保存身份 ${rec.label} [${rec.role}] (headers: ${Object.keys(rec.headers).join(', ') || '无'})`, data: { label: rec.label, role: rec.role } };
+      }
+      if (action === 'remove') {
+        const ok = mod.removeIdentity(ws, String(args.label || ''));
+        return { success: ok, output: ok ? `🗑️ 已删除身份 ${args.label}` : `未找到身份 ${args.label}` };
+      }
+      return { success: false, output: '❌ action 必须是 list/save/remove。' };
+    } catch (e: any) { return { success: false, output: `identity_manage 失败: ${e?.message || e}` }; }
+  },
+  // ===== 2026-10-21 工具层扩展 ②: 请求变异 (只生成, 不发送) =====
+  request_mutator: async (args) => {
+    try {
+      const { generateRequestVariants, formatRequestVariants } = await import('./pentest/request-mutator.js');
+      const list = generateRequestVariants({
+        url: String(args.url || ''),
+        method: args.method,
+        headers: args.headers,
+        body: args.body,
+      }, Number(args.limit) || 20);
+      if (!list.length) return { success: false, output: '❌ url 无法解析或为空。' };
+      return {
+        success: true,
+        output: formatRequestVariants(list) + '\n\n💡 用 http_replay / diff_replay 逐个验证; 不要一次全发。',
+        data: { variants: list.map(v => ({ label: v.label, reason: v.reason, method: v.method, url: v.url })) },
+      };
+    } catch (e: any) { return { success: false, output: `request_mutator 失败: ${e?.message || e}` }; }
+  },
+  // ===== 2026-10-21 工具层扩展 ③: 提交后状态复核 =====
+  recheck_finding: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { readWorkspaceVulns } = await import('./pentest/experience.js');
+      const { buildRecheckRequest, classifyRecheck, appendRecheck } = await import('./pentest/recheck.js');
+      const records = readWorkspaceVulns(ws);
+      let rec: any = args.id ? records.find((v: any) => String(v.id) === String(args.id)) : null;
+      if (!rec && args.target) rec = { id: `adhoc-${Date.now()}`, target: args.target, endpoint: args.endpoint, title: 'adhoc recheck' };
+      if (!rec) return { success: false, output: '❌ 找不到记录: 传 id, 或 target + endpoint。' };
+      const plan = buildRecheckRequest(rec);
+      if (!plan) return { success: false, output: '❌ 该记录没有 endpoint, 无法生成只读复核请求。请补 endpoint 或手动指定。' };
+
+      let u: URL;
+      try { u = new URL(plan.url); } catch { return { success: false, output: `❌ URL 无法解析: ${plan.url}` }; }
+      if (!isTargetInScope(ws, u.hostname)) {
+        return { success: false, output: `❌ 复核越界: ${u.hostname} 不在授权范围。先 grant_scope 再试。` };
+      }
+      await pentestRateLimit(ws, 3);
+      const { httpRequestRaw } = await import('./http-replay.js');
+      const resp = await httpRequestRaw('GET', u, {}, undefined, {
+        follow: false, timeoutMs: 15_000, maxRedirects: 0,
+        isTargetInScope: (h: string) => isTargetInScope(ws, h),
+      });
+      const hash = createHash('sha256').update(String(resp.body || '')).digest('hex');
+      const baselineStatus = Number(rec.baselineStatus || rec.recheckBaselineStatus || 0);
+      const judged = baselineStatus > 0
+        ? classifyRecheck(baselineStatus, resp.status, rec.baselineHash, hash)
+        : { verdict: 'unknown' as const, note: `首次复核: 已建立基线 ${resp.status}; 下次对比 200→403/404` };
+      appendRecheck(ws, {
+        id: `rc-${Date.now()}`,
+        recheckOf: String(rec.id || ''),
+        target: String(rec.target || u.hostname),
+        endpoint: rec.endpoint ? String(rec.endpoint) : u.pathname,
+        ts: Date.now(),
+        baselineStatus: baselineStatus || resp.status,
+        currentStatus: resp.status,
+        baselineHash: rec.baselineHash,
+        currentHash: hash,
+        verdict: judged.verdict,
+        note: judged.note,
+      });
+      return {
+        success: true,
+        output: `🔁 复核 ${rec.id || rec.target}: GET ${plan.url} → ${resp.status}\n判定: **${judged.verdict}** — ${judged.note}\n快照已写入 .agentai/pentest/rechecks.jsonl`,
+        data: { verdict: judged.verdict, baselineStatus: baselineStatus || resp.status, currentStatus: resp.status, hash },
+      };
+    } catch (e: any) { return { success: false, output: `recheck_finding 失败: ${e?.message || e}` }; }
+  },
+  // ===== 2026-10-21 工具层扩展 ④: 历史资产 + JS 深挖 =====
+  historical_assets: async (args) => {
+    try {
+      const domain = String(args.domain || '').trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+      if (!domain) return { success: false, output: '❌ domain 必填。' };
+      const limit = Math.min(Math.max(Number(args.limit) || 80, 1), 200);
+      const src = String(args.source || 'both');
+      const { parseWaybackCdx, parseCommonCrawlIndex, mergeAssetUrls } = await import('./pentest/asset-intel.js');
+      const fetchText = async (url: string): Promise<string> => {
+        const r = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      };
+      const notes: string[] = [];
+      let wayback: string[] = [];
+      let cc: string[] = [];
+      if (src === 'wayback' || src === 'both') {
+        try {
+          wayback = parseWaybackCdx(await fetchText(`https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(domain + '/*')}&output=json&collapse=urlkey&fl=original&limit=${limit}`), limit);
+        } catch (e: any) { notes.push(`Wayback 失败: ${e?.message || e}`); }
+      }
+      if (src === 'commoncrawl' || src === 'both') {
+        try {
+          let idx = 'CC-MAIN-2024-10';
+          try {
+            const coll = JSON.parse(await fetchText('https://index.commoncrawl.org/collinfo.json'));
+            if (Array.isArray(coll) && coll[0]?.id) idx = String(coll[0].id);
+          } catch { /* 用默认索引 */ }
+          cc = parseCommonCrawlIndex(await fetchText(`https://index.commoncrawl.org/${idx}-index?url=${encodeURIComponent(domain + '/*')}&output=json&limit=${limit}`), limit);
+        } catch (e: any) { notes.push(`Common Crawl 失败: ${e?.message || e}`); }
+      }
+      const urls = mergeAssetUrls(wayback, cc).slice(0, limit);
+      if (!urls.length && notes.length) return { success: false, output: `❌ 历史资产拉取失败:\n${notes.join('\n')}` };
+      return {
+        success: true,
+        output: `🕰️ ${domain} 历史资产 ${urls.length} 条${notes.length ? ` (部分失败: ${notes.join('; ')})` : ''}\n${urls.slice(0, 40).map(u => `- ${u}`).join('\n')}`,
+        data: { count: urls.length, urls, notes },
+      };
+    } catch (e: any) { return { success: false, output: `historical_assets 失败: ${e?.message || e}` }; }
+  },
+  js_deep_scan: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { scanJsContent, formatAssetIntel } = await import('./pentest/asset-intel.js');
+      let content = String(args.content || '');
+      const url = String(args.url || '').trim();
+      if (!content && url) {
+        let u: URL;
+        try { u = new URL(url); } catch { return { success: false, output: `❌ URL 无法解析: ${url}` }; }
+        if (!isTargetInScope(ws, u.hostname)) return { success: false, output: `❌ js_deep_scan 越界: ${u.hostname} 不在授权范围。` };
+        await pentestRateLimit(ws, 5);
+        const { httpRequestRaw } = await import('./http-replay.js');
+        const resp = await httpRequestRaw('GET', u, {}, undefined, {
+          follow: true, timeoutMs: 20_000, maxRedirects: 3,
+          isTargetInScope: (h: string) => isTargetInScope(ws, h),
+        });
+        content = String(resp.body || '');
+      }
+      if (!content) return { success: false, output: '❌ 需要 url 或 content 之一。' };
+      const result = scanJsContent(content, String(args.baseUrl || url || ''));
+      const text = formatAssetIntel({ js: result });
+      return {
+        success: true,
+        output: text || '未发现端点/密钥/内网地址 (可能是压缩混淆或纯静态页)。',
+        data: result,
+      };
+    } catch (e: any) { return { success: false, output: `js_deep_scan 失败: ${e?.message || e}` }; }
+  },
+  // ===== 2026-10-21 工具层扩展 ⑤: 提交前查重 =====
+  duplicate_check: async (args, ctx) => {
+    try {
+      const ws = (ctx as any)?.workspace || getWs();
+      const { readWorkspaceVulns } = await import('./pentest/experience.js');
+      const { findDuplicateVulns } = await import('./pentest/duplicate-check.js');
+      const r = findDuplicateVulns(readWorkspaceVulns(ws), {
+        target: args.target, vulnType: args.vulnType, title: args.title,
+        endpoint: args.endpoint, poc: args.poc,
+      }, { duplicateWindowDays: Number(args.windowDays) || 30 });
+      const lines = [
+        `🔍 指纹: ${r.fingerprint}`,
+        r.duplicates.length
+          ? `⛔ 30 天内同指纹 ${r.duplicates.length} 条 (建议合并/不重复提交):`
+          : '✅ 未发现同指纹历史记录。',
+        ...r.duplicates.slice(0, 5).map((v: any) => `  - ${v.id || '?'} | ${v.title || ''} | ${new Date(Number(v.ts) || 0).toISOString().slice(0, 10)} | status=${v.status || '?'}`),
+        r.bulkRisk
+          ? `⚠️ 同目标同类型 7 天内已有 ${r.bulkCount} 条 — 平台可能视为批量灌水, 建议合并报告。`
+          : '',
+      ].filter(Boolean);
+      return { success: true, output: lines.join('\n'), data: r };
+    } catch (e: any) { return { success: false, output: `duplicate_check 失败: ${e?.message || e}` }; }
   },
   // ===== 2026-10-15 kali 扫描器接线: wsl_scan 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等 =====
   // ═══ 2026-10-19: wsl_exec — 绕开 cmd.exe 的 WSL 命令执行器 (引号地狱的根治) ═══
@@ -4084,7 +4933,6 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   //   真正要管的是"别打到未授权外部目标", 那是 scope 闸门的职责, 与本工具无关。
   wsl_exec: async (args, ctx) => {
     try {
-      const { execFile } = await import('child_process');
       const distro = String(args.distro || 'kali-linux');
       const user = String(args.user || 'root');
       const command = String(args.command || '').trim();
@@ -4093,45 +4941,59 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const argv = Array.isArray(args.args) ? args.args.map((a: any) => String(a)) : [];
       const timeout = Math.min(Number(args.timeout_ms) || 120_000, 600_000);
 
-      const full = ['-u', user, '-d', distro, '--', command, ...argv];
-      const out = await new Promise<string>((resolve, reject) => {
-        const child = execFile('wsl', full, {
-          timeout, maxBuffer: 5 * 1024 * 1024, windowsHide: true, encoding: 'utf-8',
-        }, (err: any, so: any, se: any) => {
-          if (err) { err.stdout = so; err.stderr = se; reject(err); return; }
-          resolve(String(so ?? '') + (se ? `\nSTDERR:\n${se}` : ''));
-        });
-        (child as any)?.on?.('error', () => { /* 统一走 callback */ });
-      });
-      const txt = (out || '').trim().slice(0, 8000);
-      return {
-        success: true,
-        output: txt || '(ok, 无输出)',
-        data: { distro, user, command, args: argv },
-      };
-    } catch (e: any) {
-      const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
-      const se = e.stderr ? `\nSTDERR:\n${String(e.stderr).slice(0, 2000)}` : '';
-      // 失败必须"可行动": 这类失败最常见是 (a) 发行版没装 (b) 命令不存在 (c) 真超时
-      const blob = `${e.message || ''}${so}${se}`;
-      let advice = '';
-      if (/not a recognized distribution|没有安装分发版|找不到指定的分发版|no installed distributions/i.test(blob)) {
-        advice = `\n\n❗ WSL 发行版 "${String(args.distro || 'kali-linux')}" 不可用。` +
-          `\n   这不是命令写错 —— 是环境没装/没初始化。` +
-          `\n   ✅ 正确做法: ① 告诉用户在本机 PowerShell 跑 "wsl --install -d kali-linux";` +
-          `\n   ② 本工具**无法代劳** (Agent 环境的 wsl.exe 被程序黑名单挡, 不是偷懒);` +
-          `\n   ③ 装好前, 子域枚举用 enum_subdomains (纯 JS, 跨平台不依赖 WSL), ` +
-          `存活探测用 http_replay/browser_navigate 顶替, 别卡在这。`;
-      } else if (/command not found|No such file or directory|未找到命令/i.test(blob)) {
-        advice = `\n\n❗ WSL 里没有这个命令。先确认工具是否已装: ` +
-          `wsl_exec({ command: "ls", args: ["/usr/bin"] }) 或 ` +
-          `wsl_exec({ command: "which", args: ["<工具名>"] })。` +
-          `Kali 工具链安装要用户本人在 Kali 终端跑 (apt install nmap nuclei sqlmap ffuf gobuster nikto subfinder httpx)。`;
-      } else if (/timed out|timeout|ETIMEDOUT/i.test(blob)) {
-        advice = `\n\n⏱ 超时。拆分命令逐条跑 (别一次串 4 个 go install), ` +
-          `或加大 timeout_ms (上限 600000)。`;
+      // ★ 2026-10-21: 统一走 wsl-runtime —— 治 execFile('wsl', ['-u','root',...])
+      //   报 "Command failed" (非零退出+无输出) 的两个假设:
+      //   ① Node 进程 PATH 不含 System32 → 绝对路径解析 System32\wsl.exe
+      //   ② -u root 前置失败 (发行版 root 未启用) → 静默失败自动回退默认用户重试
+      // 超时杀进程树: wsl.exe 的孙进程 (go/nmap 等) 不随 execFile 超时而死 (同 wsl_scan)
+      let wslChild: any = null;
+      const treeTimer = setTimeout(() => { killProcessTree(wslChild?.pid); }, timeout + 5000);
+      (treeTimer as any).unref?.();
+      const r = await wslRun({ distro, user, command, args: argv, timeout, onSpawn: (c: any) => { wslChild = c; } });
+      clearTimeout(treeTimer);
+
+      // 2026-10-20 语义保留: 非零退出 + 有输出 ≠ 失败
+      //   (Kali 里 ffuf 无发现 / which 未命中都是 exit 1 却有完整输出)
+      const verdict = (!r.ok && typeof r.exitCode === 'number' && r.exitCode !== 0 && (r.stdout || r.stderr).trim())
+        ? nonzeroExitVerdict(r.exitCode, r.stdout, r.stderr)
+        : null;
+      if (r.ok || verdict?.success) {
+        const txt = ((verdict?.prefix || '') + r.stdout + (r.stderr ? `\nSTDERR:\n${r.stderr}` : '')).trim().slice(0, 8000);
+        return {
+          success: true,
+          output: txt || '(ok, 无输出)',
+          data: { distro, user: r.usedUser, command, args: argv, ...(r.fellBack ? { fellBackToDefaultUser: true } : {}) },
+        };
       }
-      return { success: false, output: `wsl_exec 失败: ${e.message || e}${so}${se}${advice}` };
+      // 失败: 分层诊断 (exe 路径 / exit code / 是否回退过) + 按失败层给可行动建议
+      const diag = formatWslFailure(r, distro);
+      let advice = '';
+      if (r.spawnError) {
+        advice = `\n\n❗ 连 wsl.exe 都没启动起来 (尝试路径: ${r.exe})。` +
+          `\n   本工具已优先用绝对路径; 仍失败说明 wsl.exe 被移动/删除, 或网关进程被安全软件拦。` +
+          `\n   若网关不是从终端启动的 (桌面端/服务方式), 其 PATH 可能不含 System32。`;
+      } else if (r.timedOut) {
+        advice = `\n\n⏱ 超时。拆分命令逐条跑 (别一次串 4 个 go install), 或加大 timeout_ms (上限 600000); 跑不完的长任务改用 run_background 后台执行。`;
+      } else if (/not a recognized distribution|没有安装分发版|找不到指定的分发版|no installed distributions/i.test(diag)) {
+        advice = `\n\n❗ WSL 发行版 "${distro}" 不可用。` +
+          `\n   ✅ 让用户在本机 PowerShell 跑 "wsl --install -d kali-linux" (Agent 的 wsl.exe 被程序黑名单挡, 无法代劳)。` +
+          `\n   装好前: 子域枚举用 enum_subdomains (纯 JS), 存活探测用 http_replay/browser_navigate 顶替, 别卡住。`;
+      } else if (/command not found|No such file or directory|未找到命令/i.test(diag)) {
+        advice = `\n\n❗ WSL 里没有这个命令。先确认工具是否已装: ` +
+          `wsl_exec({ command: "ls", args: ["/usr/bin"] }) 或 wsl_exec({ command: "which", args: ["<工具名>"] }) 。` +
+          `\n   Kali 工具链安装要用户本人在 Kali 终端跑 (apt install nmap nuclei sqlmap ffuf gobuster nikto subfinder httpx)。`;
+      } else {
+        advice = `\n\n🔍 仍失败且原因不明时, 请用户在**网关所在的终端**跑这 4 条并把输出贴回来:` +
+          `\n   where wsl` +
+          `\n   wsl.exe -d ${distro} -u root -- echo ok` +
+          `\n   wsl.exe -d ${distro} -- echo ok` +
+          `\n   wsl.exe -l -v` +
+          `\n   (本工具已自动试过: 绝对路径 → 指定用户 → 默认用户回退, 见上方诊断)` +
+          `\n   扫描类需求可先换 wsl_scan (白名单 8 工具, 同一 WSL 通道, 无需 bash -lc)。`;
+      }
+      return { success: false, output: `wsl_exec 失败:\n${diag}${advice}` };
+    } catch (e: any) {
+      return { success: false, output: `wsl_exec 失败: ${e.message || e}` };
     }
   },
   wsl_scan: async (args, ctx) => {
@@ -4167,6 +5029,8 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       // 4. 限频 (P1-2): 与 scope_guard rate_limit 共用令牌桶, 防连发真实扫描打崩目标
       await pentestRateLimit(ws, Number(args.max_rps) || 3);
       // 5. argv 数组直调 wsl.exe (不走 cmd /c, 少一层 shell 解析; 数组化 + 黑名单双保险)
+      // ★ 2026-10-21: 用绝对路径 (resolveWslExe) — 治 Node 进程 PATH 不含 System32
+      //   时 execFile('wsl') 找不到的问题 (与 wsl_exec 同一真源)
       const argv = ['-d', 'kali-linux', '--', tool, ...extra, targetHost!];
       const timeoutMs = Math.min(Number(args.timeout_ms) || 60_000, 180_000);
       // ⚠️ 2026-10-17 P2: execFile 的 timeout 也只杀直接子进程 (wsl.exe),
@@ -4181,12 +5045,21 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           reject(e);
         }, timeoutMs + 5000);
         (timer as any).unref?.();
-        wslChild = execFile('wsl', argv, {
+        wslChild = execFile(resolveWslExe(), argv, {
           timeout: timeoutMs + 5000, maxBuffer: 5 * 1024 * 1024,
           windowsHide: true, encoding: 'utf-8',
         }, (err: any, so: any, se: any) => {
           clearTimeout(timer);
-          if (err) { const e: any = new Error(String(err.message)); e.stdout = so; e.stderr = se; reject(e); return; }
+          if (err) {
+            // 2026-10-20: 扫描器非零退出码 ≠ 失败 — nuclei 无发现/nmap 主机不可达/
+            //   sqlmap 无可利用都是 exit 1 却有完整报告。有输出 → 放行 + 前缀说明;
+            //   'ETIMEDOUT' 等字符串 code 是超时/环境错误, 仍走 catch 的 advice。
+            if (typeof err.code === 'number') {
+              const v = nonzeroExitVerdict(err.code, String(so ?? ''), String(se ?? ''));
+              if (v.success) { resolve(v.prefix + String(so ?? '') + (se ? `\nSTDERR:\n${se}` : '')); return; }
+            }
+            const e: any = new Error(String(err.message)); e.stdout = so; e.stderr = se; reject(e); return;
+          }
           resolve(String(so ?? '') + (se ? `\nSTDERR:\n${se}` : ''));
         });
       });
@@ -5008,6 +5881,16 @@ ${violations.map(v => `• ${v}`).join('\n')}
       const registry = ctx?._registry;
       const router = ctx?._router;
       if (!router || !registry) return { success: false, output: 'Subagent unavailable (no router/registry)' };
+
+      // ★ 2026-10-21 富哥拍板: 赏金/渗透任务禁止派子智能体 (代码闸门, 提示词只是双保险)。
+      //   返回 success:true —— 这是"策略性不派"而非执行失败:
+      //   若报 failure, 会被误报防御体系计为 tool failure → 熔断/救援链误触发,
+      //   且模型可能反复重试同一请求。把理由当正常输出交给 AI, 它知道该换哪条路。
+      //   注: pentest_pipeline 直连 runSubagent, 不经此处 (显式编排链, 富哥拍板保留)。
+      const spawnPolicy = checkSubagentSpawnPolicy({ type, task, workspace: getWs() });
+      if (!spawnPolicy.allowed) {
+        return { success: true, output: spawnPolicy.reason };
+      }
 
       // Battle 模式: 多 Agent 竞争择优
       if (type === 'battle') {
@@ -7265,6 +8148,28 @@ Write-Output 'OK'`;
     try {
       const { code, language = 'javascript', timeout_ms = 30000, context } = args;
       if (!code) return { success: false, output: 'code required' };
+      // ★ 2026-10-21: 识别"把 WSL 命令冒充成代码" (富哥实锤: AI 调不到 wsl_exec 时
+      //   把 `wsl -u root -d kali-linux -- bash -lc "..."` 整段塞进 run_code,
+      //   JS 沙箱把它当字符串 echo 回来 → "跑了但什么都没发生")。
+      //   这里是**重定向**不是执行: 告诉 AI 换 wsl_exec (数组化, 不经 cmd.exe),
+      //   并把命令里的结构拆成它该用的参数形态。success:true — 策略性拒绝, 非失败。
+      //   判定只查**首行** (以 wsl/wsl.exe + 选项开头): 合法 JS/Python 的首行不可能
+      //   长这样, 而代码中部出现 "wsl --status" 字样 (日志/字符串) 不误伤。
+      const codeStr = String(code);
+      const firstLine = codeStr.split('\n')[0].trim();
+      if (/^(wsl\.exe|wsl)\s+-/i.test(firstLine)) {
+        const distroM = codeStr.match(/-d\s+([A-Za-z0-9._-]+)/);
+        const userM = codeStr.match(/-u\s+([A-Za-z0-9._-]+)/);
+        const distro = distroM?.[1] || 'kali-linux';
+        const user = userM?.[1] || 'root';
+        return {
+          success: true,
+          output: `⛔ 这是一条 WSL 命令, 不是代码 — run_code 是 JS/Python 沙箱, 只能把它当字符串 echo, 什么都执行不了。\n` +
+            `✅ 改用 wsl_exec (数组化直达 WSL, 不经 cmd.exe 拆词):\n` +
+            `   wsl_exec({ command: "bash", args: ["-lc", "<整段脚本原样放这里>"], distro: "${distro}", user: "${user}" })\n` +
+            `扫描类需求 (nmap/nuclei/sqlmap/ffuf/...) 用 wsl_scan({ target, tool, args })。`,
+        };
+      }
       // AI 自主根据任务大小传 timeout_ms, 安全上限 10 分钟
       const timeout = Math.min(timeout_ms, 600_000);
 
@@ -7900,7 +8805,9 @@ Write-Output 'OK'`;
   return { success: true, output, data: { remote, branch, url: remoteUrl } };
   } catch (pushError: any) {
   const errMsg = pushError.message || '';
-  if (errMsg.includes('Permission denied') || errMsg.includes('Authentication failed') || errMsg.includes('403') || errMsg.includes('401')) {
+  // ⚠️ 2026-10-20: 401/403 判定改 textHasStatus 锚定 — 裸 includes 会把 remote
+  //   名/URL 里的数字误判成鉴权失败 (llm-router 同款裸数字事故)。
+  if (errMsg.includes('Permission denied') || errMsg.includes('Authentication failed') || textHasStatus(errMsg, 401, 403)) {
   return {
   success: false,
   output: `❌ 推送失败: Git 认证失败\n\n请配置 Git 凭证:\n1. SSH: 添加 SSH key 到 ~/.ssh/\n2. HTTPS: 配置 git credential helper\n3. Token: 使用 personal access token\n\n当前远程: ${remoteUrl}`,

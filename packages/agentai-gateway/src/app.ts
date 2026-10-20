@@ -14,6 +14,7 @@ import { createChatRouter, ChatRouterDeps } from './routes/chat.js';
 import { runWithWorkspace, workspaceFromRequest } from './request-scope.js';
 import { createAdminRouter } from './routes/admin.js';
 import { createSessionsRouter, memoryRouter } from './routes/sessions.js';
+import { createSubagentArtifactsRouter } from './routes/subagent-artifacts.js';
 import { createProfileRouter, setIndustryEngine } from './routes/profile.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createGovernorRouter } from './routes/governor.js';
@@ -185,6 +186,7 @@ app.use(cors({
   app.use(createHealthRouter(deps as HealthRouterDeps));
   app.use('/api/wechat', wechatRouter);
   app.use('/api/sessions', createSessionsRouter(deps.persistentMemory));
+  app.use('/api/subagent-artifacts', createSubagentArtifactsRouter());  // 2026-10-21 子智能体「任务产物」区
   app.use('/api/memory', memoryRouter);  // v3.1 跨会话记忆统计 (GUI 注入面板用)
   // 记忆可视化 API
   app.get('/v1/memory/list', (_req, res) => {

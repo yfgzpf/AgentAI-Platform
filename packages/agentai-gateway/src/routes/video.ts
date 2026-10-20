@@ -153,6 +153,51 @@ export function normalizeSeedanceModel(requested: string): string | null {
 }
 
 /**
+ * 视频任务响应解析辅助 (2026-10-20 修复「视频生成成功但前端不显示」)
+ * ==================================================================
+ * 根因: ALRO(new-api 系) 的视频任务查询响应常被包在 `data.data` 信封里,
+ *   真实的 status / result_url 都在里层。旧提取链只查顶层字段, 一旦字段名
+ *   对不上, videoUrl 就是 null, 但 status 仍按透传值走 → 前端"显示成功却没视频"。
+ * 三件套: 解包信封 + 广撒网取 URL + 状态归一 (兼容大小写 / new-api 'succeeded')。
+ */
+export function unwrapVideoPayload(data: any): any {
+  if (data && typeof data === 'object' && !Array.isArray(data)
+    && data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+    return data.data;
+  }
+  return data;
+}
+
+/** 从任意形状的视频任务响应里提取成片地址 (只认 http(s) 链接) */
+export function extractVideoUrl(raw: any): string | null {
+  if (!raw || typeof raw !== 'object') return null;
+  // ✅ 沿 .data 信封链下钻 (new-api 可能嵌套 data.data), 最多 4 层, 用 seen 防环。
+  const seen = new Set<any>();
+  let cur: any = raw;
+  for (let depth = 0; depth < 4 && cur && typeof cur === 'object' && !seen.has(cur); depth++) {
+    seen.add(cur);
+    const cands = [
+      cur.result_url, cur.video_url, cur.url, cur.output?.url, cur.output?.[0]?.url,
+      cur.content?.video?.url, cur.content?.video_url, cur.video?.url,
+      cur.videos?.[0]?.url, cur.result?.video_url, cur.outputs?.[0]?.url,
+    ];
+    for (const c of cands) {
+      if (typeof c === 'string' && /^https?:\/\//.test(c.trim())) return c.trim();
+    }
+    cur = cur.data;
+  }
+  return null;
+}
+
+/** 归一化任务状态: 大小写不敏感, 兼容 new-api 'succeeded' 等终态写法 */
+export function normalizeVideoTaskStatus(raw: any): 'done' | 'failed' | 'pending' {
+  const s = String(raw?.status ?? raw?.state ?? 'processing').toLowerCase().trim();
+  if (['completed', 'success', 'succeeded', 'done', 'finished'].includes(s)) return 'done';
+  if (['failed', 'error', 'cancelled', 'canceled'].includes(s)) return 'failed';
+  return 'pending';
+}
+
+/**
  * 上游视频引擎错误分类 (2026-10-20)
  * ==================================================================
  * 事故 (富哥实锤): 生视频"不论选哪个模型"都提示"队列已满" ——
@@ -546,7 +591,7 @@ export function createVideoRouter(io?: any) {
         if (isFactoryVideo) {
           const fKey = process.env['FACTORY_VIDEO_KEY']!.trim();
           console.log(`[video] 走 Alrc 工厂 seedance (${seedanceSubModel}) — FACTORY_VIDEO_KEY`);
-          return await submitSeedanceViaFactory(res, fKey, seedanceSubModel, prompt, image);
+          return await submitSeedanceViaFactory(res, fKey, seedanceSubModel, prompt, { seconds, images: reqImages, aspectRatio, size: agnesSize });
         }
         const key = process.env['VOLCANO_API_KEY'];
         if (!key) {
@@ -556,7 +601,7 @@ export function createVideoRouter(io?: any) {
             requestedModel: requested,
           });
         }
-        return await submitSeedance(res, key, prompt, image);
+        return await submitSeedance(res, key, prompt, image, { seconds, images: reqImages, aspectRatio, size: agnesSize });
       }
 
       // ---- 未指定 model: 按优先级自动选, 并如实告知用了哪个 ----
@@ -582,7 +627,7 @@ export function createVideoRouter(io?: any) {
             return await submitCogVideo(res, process.env['ZHIPU_API_KEY']!, prompt, image, end_frame);
           }
           if (only.name === 'seedance-2.5') {
-            return await submitSeedance(res, process.env['VOLCANO_API_KEY']!, prompt, image);
+            return await submitSeedance(res, process.env['VOLCANO_API_KEY']!, prompt, image, { seconds, images: reqImages, aspectRatio, size: agnesSize });
           }
           // ✅ 2026-10-20: 工厂 seedance 自动选中 — engines name 与 modelStore 工厂条目 id
           // 一致 (factory-seedance-*), 经 normalizeSeedanceModel 归一成上游真实名提交。
@@ -590,7 +635,7 @@ export function createVideoRouter(io?: any) {
           const autoSubModel = normalizeSeedanceModel(only.name);
           if (autoSubModel) {
             const fKey = process.env['FACTORY_VIDEO_KEY']!.trim();
-            return await submitSeedanceViaFactory(res, fKey, autoSubModel, prompt, image);
+            return await submitSeedanceViaFactory(res, fKey, autoSubModel, prompt, { seconds, images: reqImages, aspectRatio, size: agnesSize });
           }
         }
         return res.status(400).json({
@@ -681,6 +726,8 @@ export function createVideoRouter(io?: any) {
           `${base}/contents/generations/tasks/${encodeURIComponent(taskId)}`, // 历史: 火山原生 (旧提交路径)
           `${base}/videos/${encodeURIComponent(taskId)}`,
         ];
+        // ✅ 2026-10-20 修复: 多候选里记录"已到终态但没地址"的最差情况, 不立即返回空地址。
+        let terminalNoUrl: { status: string; raw: any } | null = null;
         for (const url of candidates) {
           try {
             const resp = await fetch(url, {
@@ -689,25 +736,45 @@ export function createVideoRouter(io?: any) {
             });
             if (resp.ok) {
               const data: any = await resp.json();
-              const status = data.status || data.state || 'processing';
-              // result_url 是官方平台统一格式的成片地址字段 (2026-10-20 文档确认)
-              const videoUrl = data.result_url || data.content?.video?.url || data.content?.video_url
-                || data.video_url || data.url || data.data?.url || data.output?.url || null;
-              const coverUrl = data.content?.video?.cover_image_url || data.cover_url || null;
+              // 解包 new-api 信封: 真实 status / result_url 常在 data.data 里
+              const payload = unwrapVideoPayload(data);
+              const normStatus = normalizeVideoTaskStatus(payload);
+              const rawStatus = payload.status || payload.state || data.status || data.state || 'processing';
+              // 信封内外都尝试取地址 (信封里取不到再退到顶层)
+              const videoUrl = extractVideoUrl(payload) || extractVideoUrl(data);
+              const coverUrl = payload.content?.video?.cover_image_url || payload.cover_url
+                || data.content?.video?.cover_image_url || data.cover_url || null;
               // 2026-10-14: 尾帧 — 之前这里完全不解析, 导致工厂 Seedance 任务的尾帧恒为空,
               // 分镜「尾帧衔接」每次都掉到 ffmpeg 兜底 (本机无 ffmpeg → 空转)。
               const lastFrameUrl = pickLastFrameUrl(data);
-              // 能解出 url 或明确任务状态 → 命中, 直接返回
-              if (videoUrl || status !== 'processing') {
-                if (videoUrl && !lastFrameUrl) {
+              // ✅ 拿到地址直接返回 (不论状态如何, 有地址即可视为完成)
+              if (videoUrl) {
+                if (!lastFrameUrl) {
                   console.warn(`[video] seedance(工厂) 已出视频但未解析到尾帧, 响应顶层字段: ${Object.keys(data).join(',')}`);
                 }
-                return res.json({ status, videoUrl, coverUrl, lastFrameUrl, raw: JSON.stringify(data) });
+                return res.json({ status: rawStatus, videoUrl, coverUrl, lastFrameUrl, raw: JSON.stringify(data) });
+              }
+              // 没拿到地址, 但已到终态 → 记下, 继续试其他候选 URL
+              if (normStatus === 'done' || normStatus === 'failed') {
+                terminalNoUrl = { status: String(rawStatus), raw: data };
               }
             }
           } catch {}
         }
-        // 工厂两端点都没查到 → 不拦截, 继续走下面的火山直连兜底
+        // ✅ 2026-10-20: 所有候选都查到且已到终态, 但就是没地址 → 明确告知前端,
+        //   绝不返回"完成但空地址"让前端静默显示成功。
+        if (terminalNoUrl) {
+          console.warn(`[video] 工厂 seedance 任务 ${taskId} 状态=${terminalNoUrl.status} 但未解析到视频地址, 响应字段: ${Object.keys(terminalNoUrl.raw).join(',')}`);
+          return res.json({
+            status: terminalNoUrl.status,
+            videoUrl: null,
+            coverUrl: null,
+            lastFrameUrl: null,
+            warning: '视频已生成完成，但网关未能从上游响应中解析出视频地址。请稍后重试，或前往 ALRO 平台直接下载。',
+            raw: JSON.stringify(terminalNoUrl.raw),
+          });
+        }
+        // 工厂两端点都没查到 (仍 processing) → 不拦截, 继续走下面的火山直连兜底
       }
 
       // Seedance/火山引擎任务查询 (兼容 factory- 前缀形态)
@@ -720,9 +787,11 @@ export function createVideoRouter(io?: any) {
             });
             if (resp.ok) {
               const data: any = await resp.json();
-              const status = data.status || data.state || 'processing';
-              const videoUrl = data.content?.video?.url || data.content?.video_url || data.video_url || data.url || null;
-              const coverUrl = data.content?.video?.cover_image_url || data.cover_url || null;
+              const payload = unwrapVideoPayload(data);
+              const status = payload.status || payload.state || data.status || data.state || 'processing';
+              const videoUrl = extractVideoUrl(payload) || extractVideoUrl(data);
+              const coverUrl = payload.content?.video?.cover_image_url || payload.cover_url
+                || data.content?.video?.cover_image_url || data.cover_url || null;
               // 2026-10-14: 同上 — 火山直连也补上尾帧解析 (提交时已带 return_last_frame: true)
               const lastFrameUrl = pickLastFrameUrl(data);
               if (videoUrl && !lastFrameUrl) {
@@ -1565,9 +1634,25 @@ async function submitSeedance(
   key: string,
   prompt: string,
   image?: string,
+  opts?: { seconds?: string; images?: string[]; aspectRatio?: string; size?: string },
 ) {
   return submitSeedanceVariant(res, key, 'doubao-seedance-2.5', prompt, image,
-    'https://ark.cn-beijing.volces.com/api/v3', 'VOLCANO_API_KEY');
+    'https://ark.cn-beijing.volces.com/api/v3', 'VOLCANO_API_KEY', opts);
+}
+
+/**
+ * 参考图出站适配 (2026-10-21): 火山契约 image_url.url 接受公网 URL 或 base64。
+ * 公网 URL 直传 (请求体轻、上游自行拉取); 本机/内网地址上游够不到, 才转 base64。
+ */
+async function toUpstreamImage(url: string): Promise<string> {
+  const t = String(url || '').trim();
+  const m = /^https?:\/\/([^/:]+)/.exec(t);
+  if (m) {
+    const host = m[1]!.toLowerCase();
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '[::1]' || host.endsWith('.local');
+    if (!isLocal) return t; // 公网 URL 直传
+  }
+  return urlToBase64(t); // data: URI / 内网地址 / 相对路径 → 转 base64
 }
 
 /**
@@ -1595,7 +1680,7 @@ async function submitSeedanceViaFactory(
   key: string,
   subModel: string,
   prompt: string,
-  image?: string,
+  opts?: { seconds?: string; images?: string[]; aspectRatio?: string; size?: string },
 ) {
   const base = (process.env['ALRC_BASE_URL'] || 'https://alro.huazhiweilai.com/v1').replace(/\/+$/, '');
   // 平台统一格式: 实测必填为 model + prompt。
@@ -1604,13 +1689,27 @@ async function submitSeedanceViaFactory(
   //   保留火山的 return_last_frame 作为**透传尝试**(中转通常忽略/透传未知字段)。
   //   若渠道开通后实测拿不到尾帧, 再按官方子页校准字段名。
   body.return_last_frame = true;
-  if (image) {
-    // 图片字段名未能在本机验证 (渠道未开通, 任何图生视频请求都会先被 503 挡回)。
-    // 按 OpenAI/火山常见形态同时带 image_url 与 image, 任一被上游认下即可,
-    // 多余字段通常被中转忽略。⚠️ 渠道开通后请按官方「视频生成 API」子页校准字段名。
-    const imgData = await urlToBase64(image);
-    body.image_url = imgData;
-    body.image = imgData;
+  // ✅ 2026-10-21: 时长/画幅/分辨率/参考图透传 —— 之前只传 model+prompt, 两个用户实锤事故:
+  //   ① 分镜发 duration:'10s' 生成了 5s (网关解析了 seconds 但只喂 Agnes, 工厂分支拿不到 → 上游默认 5s);
+  //   ② 分镜发的是 images **数组**, 网关解构只取单数 image (分镜路径恒 undefined) → 工厂一张图都没收到,
+  //      纯文生视频, 角色/场景参考全丢。
+  //   ALRO 是中转平台, 契约与火山一致 (用户拍板): duration=整数秒, ratio=画幅, resolution=清晰度,
+  //   image_url=首帧参考, images=参考图数组全量透传。字段名等渠道额度恢复后按实际响应校准。
+  const durNum = parseInt(opts?.seconds || '5', 10);
+  if (Number.isFinite(durNum) && durNum > 0) body.duration = durNum;
+  if (opts?.aspectRatio) body.ratio = opts.aspectRatio;
+  if (opts?.size) {
+    const reso = String(opts.size).toLowerCase();
+    if (/^(720p|1080p|1k|2k|4k)$/.test(reso)) body.resolution = reso;
+  }
+  const imgs = (opts?.images || []).filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+  if (imgs.length > 0) {
+    // 第一张作首帧参考 (分镜语义: 上一镜尾帧/场景图打头); 火山契约 image_url 接受公网 URL 或 base64,
+    // 公网 URL 直传 (内网/data: 才转 base64), 避免 5×2MB base64 撑爆请求体。
+    body.image_url = await toUpstreamImage(imgs[0]!);
+    body.image = body.image_url;
+    if (imgs.length > 1) body.images = imgs; // 全量参考透传, 供上游支持多参考图时使用
+    console.log(`[video] 工厂 seedance 透传: duration=${body.duration}s ratio=${body.ratio || '默认'} resolution=${body.resolution || '默认'} 参考图=${imgs.length}张`);
   }
   try {
     const resp = await fetch(`${base}/video/generations`, {
@@ -1661,6 +1760,7 @@ async function submitSeedanceVariant(
   image: string | undefined,
   upstreamBase: string,
   keyLabel: string,
+  opts?: { seconds?: string; images?: string[]; aspectRatio?: string; size?: string },
 ): Promise<void> {
   const volBody: any = {
     model: volModel,
@@ -1669,9 +1769,22 @@ async function submitSeedanceVariant(
     // (查询结果的 content.last_frame_url)。不传则默认 false, 尾帧恒缺 → 分镜接戏空转。
     return_last_frame: true,
   };
-  if (image) {
-    const imgData = await urlToBase64(image);
-    volBody.content.push({ type: 'image_url', image_url: { url: imgData } });
+  // ✅ 2026-10-21: 与工厂分支同源修的三个丢弃 —— 时长/画幅/参考图, 火山原生契约全支持:
+  //   duration=整数秒 (top-level), ratio=画幅, 图像 content 项带 role: first_frame/reference_images。
+  const durNum = parseInt(opts?.seconds || '5', 10);
+  if (Number.isFinite(durNum) && durNum > 0) volBody.duration = durNum;
+  if (opts?.aspectRatio) volBody.ratio = opts.aspectRatio;
+  const rawImgs = opts?.images?.length ? opts.images : (image ? [image] : []);
+  const imgs = rawImgs.filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+  for (let i = 0; i < imgs.length; i++) {
+    volBody.content.push({
+      type: 'image_url',
+      image_url: { url: await toUpstreamImage(imgs[i]!) },
+      role: i === 0 ? 'first_frame' : 'reference_images',
+    });
+  }
+  if (imgs.length > 0) {
+    console.log(`[video] 火山 seedance 透传: duration=${volBody.duration}s ratio=${volBody.ratio || '默认'} 参考图=${imgs.length}张 (role: first_frame + reference_images)`);
   }
   try {
     const resp = await fetch(`${upstreamBase}/contents/generations/tasks`, {
@@ -1813,7 +1926,7 @@ async function queryAgnesVideo25(
     if (!resp.ok) return res.status(resp.status).json({ error: `HTTP ${resp.status}` });
     const data: any = await resp.json();
     const status = data.status || data.state || 'processing';
-    const videoUrl = data.video_url || data.url || data.video?.url || data.output?.[0]?.url || data.result?.video_url || null;
+    const videoUrl = extractVideoUrl(data);
     const coverUrl = data.cover_url || data.poster || data.cover || data.video?.cover_url || null;
     // P0: 提取 API 返回的尾帧 URL (统一走 pickLastFrameUrl — 兼容各上游字段名)
     const lastFrameUrl = pickLastFrameUrl(data);
@@ -1914,7 +2027,7 @@ async function queryAgnesFlash(res: any, apiKey: string, videoId: string) {
     if (!resp.ok) return res.status(resp.status).json({ error: `HTTP ${resp.status}` });
     const data: any = await resp.json();
     const status = data.status || data.state || 'processing';
-    const videoUrl = data.video_url || data.url || data.video?.url || data.output?.[0]?.url || null;
+    const videoUrl = extractVideoUrl(data);
     const coverUrl = data.cover_url || data.poster || data.cover || null;
     // P0: 提取 API 返回的尾帧 URL (统一走 pickLastFrameUrl — 兼容各上游字段名)
     const lastFrameUrl = pickLastFrameUrl(data);

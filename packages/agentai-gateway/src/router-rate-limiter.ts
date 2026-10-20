@@ -15,6 +15,7 @@
  */
 
 import { globalRateLimiter, ProviderStatus } from './rate-limiter.js';
+import { textHasStatus } from './message-utils.js';
 
 /**
  * 增强路由器，添加速率限制控制
@@ -104,7 +105,9 @@ export function enhanceRouterWithRateLimit(router: any): void {
       globalRateLimiter.recordRequest(bestProvider, estimatedTokens, false);
       
       // 如果是429错误（速率限制），标记该模型为不可用
-      if (error.message?.includes('429') || error.message?.includes('rate limit')) {
+      // ⚠️ 2026-10-20: 429 判定改 textHasStatus 锚定 — 裸 includes('429') 会把
+      //   UUID/编号误判成限流 → 误冷却 60s (llm-router 同款裸数字事故)。
+      if (textHasStatus(error.message, 429) || error.message?.includes('rate limit')) {
         console.warn(`[router-rate-limiter] ${bestProvider}触发429错误，标记为不可用`);
         
         // 自动重置该模型（等待速率限制解除）

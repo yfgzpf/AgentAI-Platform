@@ -28,6 +28,8 @@ import { analyzeGaps } from '../diagnosis/gap-analyzer-llm.js';
 // 2026-10-14 P2 冻结开关 (ESM 模块, 用 import 不用 require — dev 下 tsx 直跑 ESM, require 会 ReferenceError)
 import { setEvolutionFrozen, isEvolutionFrozen } from '../evolution-freeze.js';
 import { persistAttachmentImages } from '../attachment-store.js';
+// 2026-10-21: 会话 key 归一化 (反斜杠/正斜杠写法差异会让同一会话被当成两个)
+import { sessionKeyOf } from '../ws-paths.js';
 
 // Xuanji 实例
 const xuanji = new Xuanji({
@@ -239,7 +241,7 @@ const tryActivateIndustry = async (reqBody: any) => {
 
 
   r.post('/v1/chat', async (req: Request, res: Response) => {
-    const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile, taskId: requestTaskId, auto, contextInject, mode, sessionId: requestSessionId } = req.body;
+    const { message, userId = 'default', workspace: rawWorkspace, projectDir: rawProjectDir, framework, stream = false, profile, model: requestModel, emotion, contextWindow, _internal, attachments, thinking, systemRules, modelConfig, activeFile, taskId: requestTaskId, auto, contextInject, mode, sessionId: requestSessionId, _resumeFrom } = req.body;
     // SSE 断线恢复: 前端重试时带 _retry + _receivedDelta
     const isRetry = !!(req.body as any)._retry;
     const receivedDelta: string = (req.body as any)._receivedDelta || '';
@@ -546,7 +548,9 @@ const sendEvent = (event: string, data: any) => {
         }, 5_000);
 
         // ====== 新消息压制旧对话: 不再排队等待, 直接终止前一个任务 ======
-        const sessionKey = `${userId}:${workspace}`;
+        // 2026-10-21: 统一路径写法再拼 key —— 否则 `F:\x` 与 `F:/x` 会被当成两个会话,
+        //   压制失效 → 两个 run 并发, 上下文互相覆盖 (实机日志已复现)。
+        const sessionKey = sessionKeyOf(userId, workspace);
         const prevEntry = activeLoops.get(sessionKey);
         // P0 修复: ask_user 答案不走压制模式 — 旧 loop 的上下文必须保留
         // 前端发送 isAnswer=true 表示这是对 AI 追问的回答, 不应杀掉旧 loop
@@ -556,6 +560,9 @@ const sendEvent = (event: string, data: any) => {
         const isAnswer = req.body.isAnswer === true;
         if (prevEntry && !isAnswer && !isRetry) {
           console.log(`[chat] 🛑 压制前一个未完成的对话 | session=${sessionKey}`);
+          // 2026-10-21: 终止前先落断点 —— 用户发新消息不应让旧任务的进度凭空消失,
+          //   暂停后的快照会在下次说"继续"时被 findResumableTasks 召回。
+          try { (prevEntry as any).snapshotBeforeSupersede?.('new-message'); } catch { /* 快照失败不阻断接管 */ }
           try { prevEntry.abort(); } catch {}
           activeLoops.delete(sessionKey);
         } else if (prevEntry && isAnswer) {
@@ -563,7 +570,7 @@ const sendEvent = (event: string, data: any) => {
           // 不 abort 旧 loop, 但需要让旧 loop 知道答案已到 (通过 persistentMemory 注入)
         }
         // 释放前一个队列 (如果有), 让本次请求立即通过
-        const queueKey = `queue:${userId}:${workspace}`;
+        const queueKey = `queue:${sessionKey}`;
         if ((global as any).__msgQueues) {
           const prevResolve = (global as any).__msgQueues.get(queueKey + '_resolve');
           if (typeof prevResolve === 'function') { try { prevResolve(); } catch {} }
@@ -779,6 +786,12 @@ const sendEvent = (event: string, data: any) => {
             // 2026-10-16 会话级 checkpoint 归属: 用**前端会话 id**而非 loop 自带的随机 sessionId,
             // 否则每次请求都散成新目录, GUI 无法按会话列出可回退的轮次。
             checkpointSessionId: requestSessionId,
+            // ★ 2026-10-21: 补传 sessionId —— 子智能体产物靠它关联父会话,
+            //   父任务中断后前端要按 parentSessionId 找产物才能触发"唤醒续跑"。
+            //   之前只传了 checkpointSessionId → loop.opts.sessionId 为空串 →
+            //   产物的 parentSessionId 永远是 "" → 前端过滤 a.parentSessionId===activeId
+            //   永远匹配不上 → **唤醒机制从设计上就触发不了** (实锤: 产物里 parentSessionId="")。
+            sessionId: requestSessionId,
             // 2026-10-16 工作区隔离: 见文件末尾说明。isolation:'worktree' 时本回合
             // 在独立 git worktree 里执行, 并行会话改不到彼此的文件。
             isolation: (req.body?.isolation === 'worktree' ? 'worktree' : 'none') as 'worktree' | 'none',
@@ -944,12 +957,23 @@ const sendEvent = (event: string, data: any) => {
             step: info.step,
             description: info.description,
             toolName: info.name || info.toolName,
+            // ★ 2026-10-21 治「黑箱」: 带上正文流(delta)与深度思考流(thinking)。
+            //   之前只转发 4 类骨架事件 → 子智能体"说了什么/在想什么"全丢,
+            //   前端只看到"第N轮""调用工具: xxx" —— 用户完全看不到过程。
+            delta: typeof info.delta === 'string' ? info.delta : undefined,
+            text: typeof info.text === 'string' ? info.text : undefined,
             // 截断, 避免工具输出过长撑爆 SSE 帧
             result: typeof info.result === 'string' ? info.result.slice(0, 500) : undefined,
           });
         });
         loop.on('subagent:rejected', (info: any) => {
           sendEvent('subagent_rejected', info);
+        });
+        // ★ 2026-10-21: 主任务进入「等子智能体」状态 (富哥: 主导方要不断去看完成没有,
+        //   而不是中断)。服务端轮询等待期间通过本事件告知前端"主智能体在等", 避免
+        //   用户看到 AI 长时间无输出以为它卡死。
+        loop.on('subagent:waiting', (info: any) => {
+          sendEvent('subagent_waiting', { count: info.count, sessionId: info.sessionId });
         });
         loop.on('tool:stuck', (info: any) => {
           sendEvent('tool_stuck', { tool: info.tool, count: info.count });
@@ -1090,6 +1114,51 @@ const sendEvent = (event: string, data: any) => {
 
         // ====== 统一注入附件到上下文 (所有执行路径: loop.run / MasterController subtasks) ======
         let runMessage: string | { content: any[] } = message;
+
+        // ═══ 2026-10-21 子智能体「唤醒续跑」入口 ═══
+        // 场景: 主任务被用户中断, 但子智能体作为**独立任务单元**继续跑到底。
+        //   跑完后前端带着 `_resumeFrom` 发起**新的一次对话** —— 不是恢复旧 SSE
+        //   (旧连接已 res.end(), loop 实例已销毁, 没有可恢复的通道)。
+        //   这里把子智能体的成果构造成新输入, 让主智能体"看见"并接着把任务做完。
+        //
+        // 设计要点:
+        //   ① 走**同一个 sessionId** → 上文 checkpoint 能恢复, 主 AI 记得原始诉求
+        //   ② 成果用 UNTRUSTED delimiter 圈出 —— 子代理产出来自外部内容(网页/工具输出),
+        //      可能被埋入提示注入载荷, 与 agentai-loop 的回注机制保持同一防线
+        //   ③ 显式标记唤醒来源 → 用户能看到"这是子任务完成后的续跑", 不是幽灵复活
+        if (_resumeFrom && typeof _resumeFrom === 'object') {
+          const rf: any = _resumeFrom;
+          // 兼容两种载荷: 单个 { subagentId, result } / 多个 { results: [...] }
+          const items: any[] = Array.isArray(rf.results) ? rf.results : [rf];
+          const blocks: string[] = [];
+          for (const it of items) {
+            const subId = String(it?.subagentId || it?.id || '');
+            if (!subId) continue;
+            const subType = String(it?.type || 'subagent');
+            const subResult = String(it?.result || '').slice(0, 8000);
+            const subError = String(it?.error || '');
+            const subTask = String(it?.task || '').slice(0, 500);
+            const statusTag = subError ? '❌ 失败' : '✅ 完成';
+            const bodyText = subError
+              ? `子智能体 ${subType} 执行失败: ${subError}`
+              : subResult || '(子智能体未返回内容)';
+            blocks.push(
+`子任务「${subTask}」已${statusTag} (${subType} / ${subId})
+<<<UNTRUSTED subagent-output>>>
+${bodyText}
+<<<END UNTRUSTED>>>`
+            );
+          }
+          if (blocks.length > 0) {
+            const resumeText =
+`[子智能体唤醒] 下列子任务已全部结束, 请据此**继续完成原任务**, 不要重复已经做过的部分:
+${blocks.join('\n\n')}`;
+            runMessage = typeof runMessage === 'string' && runMessage.trim()
+              ? `${runMessage}\n\n${resumeText}`
+              : resumeText;
+            console.log(`[chat] 子智能体唤醒续跑: ${blocks.length} 个子任务 session=${sessionKeyOf(userId, workspace)}`);
+          }
+        }
         // 2026-10-19 P0: "继续"上下文注入真正落地。
         // 原先写进 loopOpts.contextInject (未声明 → ReferenceError), 而且 agentai-loop
         // 里根本没有 contextInject 的消费点 —— 传了也没人读, 整条功能是死的。
@@ -1598,6 +1667,8 @@ req.on('close', () => {
             activeFile,
             taskId: requestTaskId,  // 长任务快照: 透传 taskId
             checkpointSessionId: requestSessionId,  // 2026-10-16 会话级 checkpoint 归属会话
+            // ★ 2026-10-21: 补传 sessionId (子智能体产物关联父会话, 唤醒续跑要用)
+            sessionId: requestSessionId,
             // 2026-10-16 工作区隔离: 前端传 isolation:'worktree' 时, 本回合在独立
             // git worktree 里执行, 并行会话改不到彼此的文件。
             // 隔离失败会在响应的 isolation 字段如实上报, 不静默假装生效。
@@ -1626,6 +1697,8 @@ req.on('close', () => {
             thinkingBudget: thinking ? 4096 : undefined,
             taskId: requestTaskId,  // 长任务快照: 透传 taskId
             checkpointSessionId: requestSessionId,  // 2026-10-16 会话级 checkpoint 归属会话
+            // ★ 2026-10-21: 补传 sessionId (子智能体产物关联父会话, 唤醒续跑要用)
+            sessionId: requestSessionId,
             // 2026-10-16 工作区隔离: 前端传 isolation:'worktree' 时, 本回合在独立
             // git worktree 里执行, 并行会话改不到彼此的文件。
             // 隔离失败会在响应的 isolation 字段如实上报, 不静默假装生效。

@@ -69,15 +69,14 @@ describe('git 工具已脱离 shell', () => {
   });
 
   it('应存在 gitExec 辅助函数且使用 execFile（不经 shell）', () => {
-    const s = src();
-    expect(s).toContain('async function gitExec(');
-    // 2026-10-12 修正: 实现已从 execFile('git', args) 改成 execFile(gitBin, args) ——
-    //   DEF-11 修复了 Windows 上 execFile('git') 报 ENOENT 的问题, 先 where git 取完整路径。
-    //   本测试的**意图**是"经 execFile 传 argv 数组、不经 shell", gitBin 变量完全满足;
-    //   原先那句 `toMatch(/execFile\(\s*'git',\s*args,/)` 是钉死字面量的过时断言。
-    expect(s).toMatch(/execFile\(\s*(?:'git'|gitBin),\s*args,/);
+    // 2026-10-20: gitExec 已从 tools.ts 抽到独立的 git-runtime.ts (职责分离),
+    // 断言随之指向真实实现文件, 契约本身不变: argv 数组 + execFile + 平台探测路径。
+    const gitSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'git-runtime.ts'), 'utf-8');
+    expect(gitSrc).toContain('export async function gitExec(');
+    // 实现用 execFile(gitBin, args, ...), gitBin 满足"不经 shell 的 argv 数组"
+    expect(gitSrc).toMatch(/execFile\(\s*(?:'git'|gitBin),\s*args,/);
     // 保住真正的回归价值: gitBin 来源必须是平台判断/路径探测, 不能是被拼进 shell 的字符串
-    expect(s).toMatch(/const gitBin = process\.platform === 'win32'\s*\?\s*await findGitBinary\(\)\s*:\s*'git';/);
+    expect(gitSrc).toMatch(/const gitBin = process\.platform === 'win32'\s*\?\s*findGitBinary\(\)\s*:\s*'git';/);
   });
 
   it('git 工具块应使用 gitExec([...]) 参数数组形式', () => {

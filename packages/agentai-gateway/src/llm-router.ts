@@ -27,7 +27,7 @@ import { estimateMessagesTokens, estimateStringTokens, estimateToolCallsTokens, 
 import { routeByScore, getSubModel } from './model-classifier.js';
 import { getModelContextWindow, getDefaultContextWindow, getCapability } from './model-capabilities.js';
 import { modelMetrics } from './model-metrics-service.js';
-import { sanitizeToolMessages } from './message-utils.js';
+import { sanitizeToolMessages, textHasStatus } from './message-utils.js';
 // [模型工厂] 单一真源 — subModel → 分组密钥映射 (含此前漏掉的 seedance 2.5)
 import { SUBMODEL_TO_GROUP_ENV } from './factory-registry.js';
 import { probeAlroAccess, formatAlroProbeLog, summarizeAlroForbidden } from './alro-probe.js';
@@ -142,6 +142,29 @@ export function sanitizeForJson<T>(value: T): T {
     return out;
   }
   return value;
+}
+
+/**
+ * 流式结束原因判定 (2026-10-21)
+ * ============================================================================
+ * 旧实现只要没抛 streamError 就返回 'stop', 且不检查是否收到 [DONE] ——
+ * 于是"provider 提前断流 / 只输出一小段"也会被当成完整回复, loop 直接收工。
+ * 现在把三种情况分开:
+ *   stream_error — 流中断且已捕获错误
+ *   length       — provider 明确说 finish_reason=length (可走既有续写逻辑)
+ *   truncated    — 没收到 [DONE]、也没有 finish_reason, 但有内容 (疑似提前断流)
+ *   stop         — 正常结束
+ */
+export function decideStreamFinishReason(input: {
+  streamError?: string | null;
+  sawDone: boolean;
+  lastFinishReason?: string;
+  contentLen: number;
+}): 'stream_error' | 'length' | 'truncated' | 'stop' {
+  if (input.streamError) return 'stream_error';
+  if (String(input.lastFinishReason || '').toLowerCase() === 'length') return 'length';
+  if (!input.sawDone && input.contentLen > 0) return 'truncated';
+  return 'stop';
 }
 
 /**
@@ -823,7 +846,16 @@ factory: 'FACTORY_CHAT_KEY',
       // 402 余额不足 / 401 密钥失效是**确定性**错误: 同一 provider 重试 3 次 +
       // 救援链 L1/L3/L4 再打 3 次, 结果必然一模一样, 纯烧 180s 预算和用户时间。
       // 现在: 识别出账号级失败 → 立即带原因返回, 让 loop 直接告知用户收尾。
-      const _isAccountError = (e: any) => /402|401|余额|insufficient balance|unauthorized|invalid.*(key|token)|arrears|欠费/i.test(String(e?.message || e || ''));
+      // ⚠️ 2026-10-20 事故 (用户实机日志实锤): 原实现是裸 /402|401/ —
+      //   deepseek 一次普通 400 (重复 tool_call_id 触发) 的 request_id
+      //   "49ffb34a-34ca-40d2-a25a-77c53401727f" 恰好含 "401" 子串,
+      //   被误判账号级失败 → 跳过救援链 → 任务直接收尾 (用户还以为 Key 出了问题)。
+      //   状态码判定必须带 HTTP/code 锚点 (textHasStatus), 文本语义判据保留。
+      const _isAccountError = (e: any) => {
+        const s = String(e?.message || e || '');
+        return textHasStatus(s, 401, 402)
+          || /余额|insufficient balance|arrears|欠费|unauthori[sz]ed|invalid.*(?:key|token)|authentication.*(?:fail|error)/i.test(s);
+      };
       const premiumEmpty = (fatal = false): ChatResponse => ({
         content: '',
         provider: req.model as ProviderId,
@@ -1044,13 +1076,16 @@ factory: 'FACTORY_CHAT_KEY',
     const lastMsg = req.messages.filter((m) => m.role === 'user').pop();
     const lastUserText = (typeof lastMsg?.content === 'string' ? lastMsg.content : (lastMsg?.content != null ? JSON.stringify(lastMsg.content) : '')).slice(0, 200);
     // ═══ 2026-10-19 P0: 把失败原因升级为可执行结论 (402 余额是最高频且最容易被误判的一类) ═══
+    // ═══ 2026-10-20 F7: 裸数字状态码 → textHasStatus 锚定 (同 _isAccountError 修法) ═══
+    // failReasons 的 msg 含 request_id/时间戳 (实锤: 一条 HTTP 500 超时的失败原因里
+    // 时间戳数字被裸数字正则命中, 用户被建议"去平台充值") — 裸数字对 blob 匹配=误判。
     const blob = failReasons.map(r => `${r.id} ${r.msg}`).join(' | ');
     let advice = '请检查 .env 中的 API Key 配置或在设置页填写。';
-    if (/402|insufficient balance|余额|欠费|quota/i.test(blob)) {
+    if (textHasStatus(blob, 402) || /insufficient balance|余额|欠费|quota/i.test(blob)) {
       advice = '⚠️ 检测到【模型余额不足 (HTTP 402)】。这不是网络或 Key 问题 —— 请到对应模型平台充值/购买加量包，或在设置里切换到其他有余额的模型后再继续。';
-    } else if (/401|unauthor|invalid.*(key|token)|api key/i.test(blob)) {
+    } else if (textHasStatus(blob, 401) || /unauthor|invalid.*(key|token)|api key/i.test(blob)) {
       advice = '⚠️ 检测到【API Key 无效或已过期 (HTTP 401)】。请到设置页重新填写对应模型的密钥。';
-    } else if (/429|rate.?limit|too many requests/i.test(blob)) {
+    } else if (textHasStatus(blob, 429) || /rate.?limit|too many requests/i.test(blob)) {
       advice = '⚠️ 检测到【触发限流 (HTTP 429)】。所有可用模型都在冷却中，请等待 1~2 分钟后再试，或切换到其他模型。';
     } else if (/timeout|timed out|ETIMEDOUT|aborted/i.test(blob)) {
       advice = '⚠️ 检测到【请求超时】。请检查网络/代理设置，或在设置里切换到响应更快的模型。';
@@ -1901,8 +1936,11 @@ console.log(`[router] 🔍 ${id} 配置详情:`);
           fixed.push(m);
         } else if (m.role === 'tool') {
           // tool 消息: 只有 tool_call_id 在期望列表中才保留
+          // ⚠️ 2026-10-20: 同一 id 只收第一条 — 重复 tool 回复会让 deepseek
+          //   确定性 400 ("must be a response to a preceding message with
+          //   'tool_calls'"), 与 sanitizeToolMessages 的去重是同源修复。
           const tcId = (m as any).tool_call_id;
-          if (tcId && pendingToolIds.has(tcId)) {
+          if (tcId && pendingToolIds.has(tcId) && !matchedSet.has(tcId)) {
             fixed.push(m);
             matchedSet.add(tcId);
           } else {
@@ -2132,8 +2170,17 @@ if (id === 'agentai') {
         }
       } catch { /* 检测本身失败不影响发送 */ }
       if (_hadLoneSurrogate) {
+        // 2026-10-21: 不能只在发送前临时修 —— 原消息里的坏字符会一直留在历史里,
+        // 每次请求都重新检测并打印同一条告警 (实机日志每轮都刷)。
+        // 这里就地修复 (sanitizeForJson 返回新字符串), 后续请求不再复现。
+        for (const m of truncatedMessages) {
+          const c: any = (m as any)?.content;
+          if (typeof c === 'string' && typeof c.isWellFormed === 'function' && !c.isWellFormed()) {
+            (m as any).content = sanitizeForJson(c);
+          }
+        }
         console.warn(
-          '[router] ⚠️ 检测到孤立代理项 (emoji 被截断切半) — 已用 U+FFFD 修复后发送。' +
+          '[router] ⚠️ 检测到孤立代理项 (emoji 被截断切半) — 已就地修复为 U+FFFD。' +
           ' 不修的话上游会 400 "unexpected end of hex escape", 并把 provider 打进熔断。',
         );
       }
@@ -2245,6 +2292,9 @@ if (id === 'sensenova') {
         let streamModel = modelName;
         let contentTruncated = false;
         let streamError: Error | null = null;
+        // 2026-10-21: 记录协议级结束信号 — 没有它们就无法区分"正常结束"与"提前断流"
+        let sawDone = false;
+        let lastFinishReason = '';
 
         try {
           while (true) {
@@ -2257,12 +2307,14 @@ if (id === 'sensenova') {
             const trimmed = line.trim();
             if (!trimmed || !trimmed.startsWith('data:')) continue;
             const data = trimmed.slice(5).trim();
-            if (data === '[DONE]') continue;
+            if (data === '[DONE]') { sawDone = true; continue; }
             try {
               const rawChunk = JSON.parse(data);
               // Cline.bot 流式: chunk 也可能嵌套在 data 字段中
               const chunk = rawChunk.data || rawChunk;
-              const delta = chunk.choices?.[0]?.delta;
+              const choice0 = chunk.choices?.[0];
+              if (choice0?.finish_reason) lastFinishReason = String(choice0.finish_reason);
+              const delta = choice0?.delta;
               if (!delta) continue;
               // 文本内容 (有大小限制防止 OOM)
               if (delta.content) {
@@ -2326,14 +2378,25 @@ if (id === 'sensenova') {
           // 完全无内容 → 抛出, 触发 fallback
           throw streamError;
         }
-        console.info(`[router] SSE partial response: ${id} ${fullContent.length} chars, error: ${(streamError?.message || 'none').slice(0, 80)}`);
+        // 2026-10-21: 结束原因必须可判定 —— 旧实现恒 'stop', 截断也会被当成完成
+        const finishReason = decideStreamFinishReason({
+          streamError: streamError?.message || null,
+          sawDone,
+          lastFinishReason,
+          contentLen: fullContent.length,
+        });
+        console.info(
+          `[router] SSE ${finishReason === 'stop' ? 'complete' : 'partial'}: ${id} ${fullContent.length} chars, ` +
+          `finish=${finishReason}, done=${sawDone}, providerFinish=${lastFinishReason || 'none'}, ` +
+          `toolCalls=${toolCalls.length}, error=${(streamError?.message || 'none').slice(0, 80)}`
+        );
 
         return {
           content: fullContent,
           reasoningContent: fullThinking || undefined,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           model: streamModel,
-          finishReason: streamError ? 'stream_error' : 'stop',
+          finishReason,
           usage: {
             prompt_tokens: usage.prompt_tokens ?? usage.promptTokens ?? 0,
             completion_tokens: usage.completion_tokens ?? usage.completionTokens ?? 0,

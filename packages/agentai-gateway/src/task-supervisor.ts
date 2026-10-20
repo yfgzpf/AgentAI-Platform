@@ -15,6 +15,7 @@
 
 import { EventEmitter } from 'events';
 import type { TaskSnapshotManager } from './task-snapshot.js';
+import { textHasStatus } from './message-utils.js';
 
 // ===== 类型定义 =====
 
@@ -229,7 +230,9 @@ export class TaskSupervisor extends EventEmitter {
   detectInterruption(error?: Error | string): InterruptionReason {
     const errStr = (error instanceof Error ? error.message : error || '').toLowerCase();
     
-    if (errStr.includes('rate limit') || errStr.includes('429') || errStr.includes('too many requests')) {
+    // ⚠️ 2026-10-20: 429 判定改 textHasStatus 锚定 — 裸 includes('429') 会把
+    //   UUID/编号误判成限流 (llm-router 同款裸数字事故)。
+    if (errStr.includes('rate limit') || textHasStatus(errStr, 429) || errStr.includes('too many requests')) {
       return 'rate_limit';
     }
     if (errStr.includes('timeout') || errStr.includes('timed out')) {

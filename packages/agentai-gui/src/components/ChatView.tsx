@@ -95,6 +95,14 @@ const currentWorkspace = profileWs;
 // P0: antd message API (用于收藏提示等)
 const { message: messageApi } = App.useApp();
 
+/**
+ * 2026-10-21: 子智能体产物「自动唤醒」时间窗 (富哥拍板 15 分钟)。
+ * 重进页面发现本会话的子任务**已全部完成**时:
+ *   · 完成时间在 15 分钟内 → 自动唤醒主 AI 续跑 (跨页面关闭仍有效, "跑完不能白发")
+ *   · 超过 15 分钟 → 视为旧任务, 只在产物面板展示, 不自动烧 token
+ */
+const SUBAGENT_RESUME_WINDOW_MS = 15 * 60 * 1000;
+
 const [loading, setLoading] = useState(false);
   const loadingRef = useRef(false);
   useEffect(() => { loadingRef.current = loading; }, [loading]);
@@ -472,6 +480,290 @@ const [loading, setLoading] = useState(false);
   /* ═══ 子智能体事件已改为走 SSE (apiStream handlers: onSubagentStart/Done/Error/Progress),
      不再监听 Socket.io subagent:* — gateway 只发 SSE, 这些 Socket.io handler 永远不会触发 ═══ */
 
+  /* ═══ 2026-10-21 子智能体「唤醒续跑」═══
+     场景: 主任务被用户中断, 但子智能体作为**独立任务单元**继续跑 (网关侧刻意不随父中断)。
+       跑完后成果已落盘到「子任务产物」区, 但主智能体已经退出 → 需要一次**续跑**
+       把成果喂回去, 让主智能体接着把原任务做完 (富哥: "主任务不能丢呀")。
+     唤醒策略 (按拍板): **等该会话的子智能体全部完成, 再一次性唤醒** ——
+       避免 N 个子代理引发 N 次续跑 (上下文更整, 也更省)。 */
+  const [awaitingSubagents, setAwaitingSubagents] = useState(false);
+  /** 防止重复唤醒: 同一批子任务只唤醒一次 */
+  const resumeTriggeredRef = useRef<Set<string>>(new Set());
+  /** 网关地址 (轮询产物/状态用) */
+  const gwBase = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws(s?):\/\//, 'http$1://')
+    || 'http://127.0.0.1:18789';
+
+  /**
+   * 子智能体完成时检查: 该会话的子任务是否**全部**跑完。
+   * 全部完成 → 拉取产物 → 发起续跑 (带 _resumeFrom)。
+   * 若父任务仍活着 (还在跑) → 不唤醒, 结果会走原有的 _pendingSubagentResults 回注路径。
+   */
+  const checkSubagentsFinished = useCallback(async (subagentId: string) => {
+    try {
+      const sid = activeId;
+      if (!sid) return;
+      // 已经有一次唤醒在途 → 不重复
+      if (resumeTriggeredRef.current.has(sid)) return;
+      // 本地还有 running 的子智能体 → 还没齐, 等下一个完成事件
+      // 查网关: 该会话的子任务是否全部结束
+      const res = await fetch(`${gwBase}/api/subagent-artifacts/status?workspace=${encodeURIComponent(profileWs)}&sessionId=${encodeURIComponent(sid)}`);
+      if (!res.ok) return;
+      const data: any = await res.json();
+      if (!data?.hasSubagents) return;      // 从没派过子任务 → 无事可等
+      if (!data?.allFinished) return;      // 还有在跑 → 继续等
+      if (resumeTriggeredRef.current.has(sid)) return;
+      resumeTriggeredRef.current.add(sid);
+
+      // 拉产物详情, 组装唤醒载荷
+      const listRes = await fetch(`${gwBase}/api/subagent-artifacts?workspace=${encodeURIComponent(profileWs)}`);
+      const listData: any = await listRes.json().catch(() => null);
+      const allArtifacts: any[] = listData?.artifacts || [];
+      // 归属过滤: 优先按 parentSessionId 精确匹配。
+      // 兜底: parentSessionId 为空的历史产物(2026-10-21 修复前的产物) → 按 type+task 认领,
+      //       避免"明明跑完了却匹配不上 → 永远不唤醒"。
+      let artifacts = allArtifacts.filter((a: any) => a.parentSessionId === sid);
+      if (artifacts.length === 0) {
+        const known = useSessionStore.getState().sessions.find(s => s.id === sid);
+        void known;
+        // 本地已知的子智能体 id 集合 (前端 subagents state) — 用它认领无主产物
+        const localIds = new Set(subagents.map(s => s.id));
+        artifacts = allArtifacts.filter((a: any) => localIds.has(a.id));
+      }
+      if (artifacts.length === 0) return;
+
+      // 只取本会话的、且已结束的产物
+      const finished = artifacts.filter((a: any) => a.status !== 'running');
+      if (finished.length === 0) return;
+
+      setAwaitingSubagents(false);
+      // 合并多份成果 → 一次续跑
+      const merged = finished.map((a: any) => ({
+        subagentId: a.id,
+        type: a.type,
+        task: a.task,
+        result: a.result || '',
+        error: a.error || '',
+      }));
+      await triggerSubagentResume(merged, sid);
+    } catch (e: any) {
+      console.warn('[subagent] 唤醒检查失败:', e?.message);
+    }
+  }, [activeId, profileWs, gwBase, subagents]);
+
+  /**
+   * 发起续跑 —— 用子智能体成果构造新的一次对话请求。
+   * 走**同一个 sessionId** → 上文 checkpoint 能恢复, 主 AI 记得原始诉求。
+   */
+  const triggerSubagentResume = useCallback(async (results: any[], sid: string) => {    try {
+      const botId = `bot-resume-${Date.now()}`;
+      const provider = activeModelId;
+      const summary = results.map((r: any) => `• ${r.type}: ${r.error ? '失败' : '完成'}`).join('\n');
+      appendMessage({
+        id: botId,
+        role: 'assistant',
+        segments: [{
+          kind: 'text',
+          text: `⏰ 子智能体已全部完成 (${summary})\n\n正在唤醒主智能体接着完成原任务…`,
+        }],
+        ts: Date.now(),
+        status: 'processing',
+        streaming: true,
+        provider,
+      } as any);
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setLoading(true);
+
+      const baseHandlers = makeChatHandlers(botId, (id: string, fn: (m: any) => any) => {
+        updateMessage(id, fn);
+      });
+      const handlers = {
+        ...baseHandlers,
+        onNotice: (info: any) => {
+          if (info?.kind === 'reconnect') {
+            updateMessage(botId, (m: any) => ({
+              ...m, segments: [...(m.segments || []), { kind: 'text', text: `\n\n⏳ ${info.text}\n` }],
+            }));
+          }
+        },
+      } as any;
+
+      await apiStream(`${gwBase}/v1/chat`, {
+        message: '[子智能体已完成, 请继续原任务]',
+        stream: true,
+        model: provider,
+        mode,
+        userId: 'user',
+        workspace: profileWs,
+        projectDir: profileWs,
+        sessionId: sid,
+        _resumeFrom: { results },
+      }, handlers, controller.signal);
+      setLoading(false);
+      abortRef.current = null;
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        console.warn('[subagent] 唤醒续跑失败:', e?.message);
+      }
+      setLoading(false);
+      abortRef.current = null;
+    }
+  }, [activeModelId, mode, profileWs, gwBase, appendMessage, updateMessage]);
+
+  /* ═══ 2026-10-21 子智能体进度「轮询通道」 (SSE 断了也能看见它跑) ═══
+     实锤事故 (富哥报"子智能体根本就不动"):
+       主任务一停 → SSE 连接 res.end() 关闭 → 子智能体后续发的 subagent:progress
+       全部撞在已关闭连接上被丢弃 (chat.ts:535 的 catch 只打一行 warn) →
+       前端 setSubagents 只在 SSE 事件里更新 → 画面永远停在"正在调用 1 个工具" →
+       **用户以为它死了, 实际它一直在跑** (实测产物: 9 次工具调用/22 条 transcript 持续增长)。
+       更糟: 唤醒检查 checkSubagentsFinished 也只挂在 SSE 的 onSubagentDone 上 →
+       SSE 死了 → 永远不触发 → **唤醒续跑根本不会发生**。
+
+     解法: 引入**独立于 SSE 的轮询通道** —— 进度与终态一律从**落盘产物**读
+       (网关每 120ms 就把 transcript 写进 {workspace}/.agentai/subagent-artifacts/)。
+       SSE 活着时用 SSE (实时), SSE 断了就靠轮询兜底 —— 两条通道互补, 不丢事件。 */
+  useEffect(() => {
+    // 没有子智能体在跑 → 不轮询
+    const hasRunning = subagents.some(a => a.status === 'running');
+    if (!hasRunning && !awaitingSubagents) return;
+    if (!profileWs) return;
+
+    let cancelled = false;
+    const POLL_MS = 2000;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`${gwBase}/api/subagent-artifacts?workspace=${encodeURIComponent(profileWs)}`);
+        if (!res.ok) return;
+        const data: any = await res.json();
+        if (cancelled || !data?.success) return;
+        const artifacts: any[] = data.artifacts || [];
+        if (artifacts.length === 0) return;
+
+        // 把产物里的最新状态/过程**合并进**本地 subagents 状态
+        setSubagents(prev => {
+          if (prev.length === 0) return prev;
+          let changed = false;
+          const next = prev.map(sa => {
+            const a = artifacts.find((x: any) => x.id === sa.id);
+            if (!a) return sa;
+            const tr: any[] = a.transcript || [];
+            // 轮询来的 transcript 需要转成前端格式 (kind/text/tool)
+            const frontTr = tr.map((e: any) => ({ kind: e.kind, text: e.text, tool: e.tool }));
+            // 2026-10-21: 僵尸收敛 — 网关重启后磁盘上 status=running 的产物其实已死
+            //   (alive=false)。不收敛的话它会永远转圈, 且"全部完成"判定永远不成立。
+            const zombie = a.status === 'running' && a.alive === false;
+            const effStatus = zombie ? 'error' : a.status;
+            const statusChanged = sa.status !== effStatus;
+            const trChanged = frontTr.length !== (sa.transcript?.length || 0);
+            if (!statusChanged && !trChanged) return sa;
+            changed = true;
+            return {
+              ...sa,
+              status: effStatus as any,
+              result: a.result ?? sa.result,
+              error: zombie ? '后台子任务已不存在 (网关重启过), 按中断处理' : (a.error ?? sa.error),
+              transcript: frontTr.length ? frontTr : sa.transcript,
+              toolCalls: a.toolCalls ?? sa.toolCalls,
+              iterations: a.iterations ?? sa.iterations,
+              durationMs: a.durationMs ?? sa.durationMs,
+            };
+          });
+          return changed ? next : prev;
+        });
+
+        // 全部子任务完成 → 触发唤醒续跑 (不再依赖 SSE 的 onSubagentDone)
+        // 归属判定: parentSessionId 精确匹配优先; 否则用本地已知的子智能体 id 兜底
+        const localIds = new Set(subagents.map(s => s.id));
+        const mine = artifacts.filter((a: any) =>
+          a.parentSessionId === activeId || (a.parentSessionId === '' && localIds.has(a.id))
+        );
+        // 僵尸也算"结束" (它永远不会自己跑完, 按中断收口才能唤醒)
+        if (mine.length > 0 && mine.every((a: any) => a.status !== 'running' || a.alive === false)) {
+          await checkSubagentsFinished('poll');
+        }
+      } catch { /* 轮询失败静默, 下一轮再来 */ }
+    };
+
+    const t = setInterval(poll, POLL_MS);
+    poll(); // 立即拉一次
+    return () => { cancelled = true; clearInterval(t); };
+  }, [subagents, awaitingSubagents, profileWs, gwBase, activeId, checkSubagentsFinished]);
+
+  /* ═══ 2026-10-21 重进页面/切会话: 认领本会话的后台子智能体 ═══
+     实锤 (富哥): "如果在任务过程中用户误退出页面再进去, 后台在跑前端就没有接收了"。
+     根因: subagents 是组件级 useState, 挂载即为空 → 上方轮询通道的启动条件
+     (有 running) 不满足 → 后台在跑的子智能体对用户完全隐形; 唤醒检查也只挂在
+     SSE/轮询上 → 页面不打开就永远不触发 → 子智能体跑完也白发。
+     解法: 挂载/切会话即查落盘产物, 按 parentSessionId 认领本会话的:
+       · 有 alive 的 running → 灌入状态 → 上方轮询通道自动接上 (画面立刻显示后台进度)
+       · 全部已结束 (含网关重启僵尸 alive=false) 且完成时间在 15 分钟窗内 →
+         **自动唤醒**主 AI 续跑 (跨页面关闭仍有效); 超过窗口只展示不自动烧 token
+     防重入: resumeTriggeredRef 按 sessionId 去重; 本页有活跃流 (abortRef) 时不唤醒
+       (父 loop 可能还活着, 让它自己走 _pendingSubagentResults 回注)。 */
+  useEffect(() => {
+    if (!profileWs || !activeId) return;
+    let cancelled = false;
+    const discover = async () => {
+      try {
+        const res = await fetch(`${gwBase}/api/subagent-artifacts?workspace=${encodeURIComponent(profileWs)}`);
+        if (!res.ok) return;
+        const data: any = await res.json();
+        if (cancelled || !data?.success) return;
+        const artifacts: any[] = data.artifacts || [];
+        // 归属: 优先 parentSessionId 精确匹配 (2026-10-21 chat.ts 补传 sessionId 后的产物)
+        const mine = artifacts.filter((a: any) => a.parentSessionId === activeId);
+        if (mine.length === 0) return;
+
+        // ① 灌入本地状态 (SSE 已知的保留, 新发现的补上; 僵尸按 error 收敛)
+        setSubagents(prev => {
+          const knownIds = new Set(prev.map(s => s.id));
+          const added = mine
+            .filter((a: any) => !knownIds.has(a.id))
+            .map((a: any) => {
+              const zombie = a.status === 'running' && a.alive === false;
+              return {
+                id: a.id,
+                type: a.type || 'explore',
+                task: a.task || '',
+                status: (zombie ? 'error' : a.status) as any,
+                error: zombie ? '后台子任务已不存在 (网关重启过), 按中断处理' : a.error,
+                result: a.result,
+                transcript: (a.transcript || []).map((e: any) => ({ kind: e.kind, text: e.text, tool: e.tool })),
+                toolCalls: a.toolCalls,
+              };
+            });
+          return added.length > 0 ? [...prev, ...added] : prev;
+        });
+
+        // ② 全部已结束 (done/error/僵尸) → 窗口内自动唤醒
+        const allEnded = mine.every((a: any) => a.status !== 'running' || a.alive === false);
+        if (!allEnded) return;
+        if (resumeTriggeredRef.current.has(activeId)) return;
+        if (abortRef.current) return; // 本页有活跃流 — 父 loop 可能还活着, 不抢
+        const newest = Math.max(0, ...mine.map((a: any) => a.finishedAt || a.updatedAt || 0));
+        if (Date.now() - newest > SUBAGENT_RESUME_WINDOW_MS) return; // 旧任务不自动烧 token
+        resumeTriggeredRef.current.add(activeId);
+        const merged = mine.map((a: any) => {
+          const zombie = a.status === 'running' && a.alive === false;
+          return {
+            subagentId: a.id,
+            type: a.type,
+            task: a.task,
+            result: zombie ? '(子任务被网关重启中断, 无产出)' : (a.result || ''),
+            error: zombie ? '网关重启导致中断' : (a.error || ''),
+          };
+        });
+        setAwaitingSubagents(false);
+        await triggerSubagentResume(merged, activeId);
+      } catch { /* 发现失败静默 — 下次挂载/切会话再试 */ }
+    };
+    discover();
+    return () => { cancelled = true; };
+  }, [activeId, profileWs, gwBase, triggerSubagentResume]);
+
   const CTX_MAX = 1_000_000;
   const FOLD_THRESHOLD = 0.70;
   const tokenInfo = useMemo(() => {
@@ -661,7 +953,7 @@ const [loading, setLoading] = useState(false);
     //   让 store 里的消息 id 与流式响应的 id 一致，
     //   否则 ChatView:952 的 findIndex(m => m.id === id) 永远匹配不上，
     //   切会话时这条消息的流式更新会被丢弃（用户看起来就是"内容丢了"）。
-    addMessage(sessionId!, { id: userId, role: 'user', content: messageText, ts: Date.now() });
+    addMessage(sessionId!, { id: userId, role: 'user', content: messageText, ts: Date.now(), segments: userSegments });
 
     // 自动更新对话标题：取第一条用户消息前 30 字
     if (sessionId) {
@@ -1171,19 +1463,17 @@ const [loading, setLoading] = useState(false);
       onSubagentDone: (info: any) => {
         lastActivityTs = Date.now();
         const subagentResult = typeof info.result === 'string' ? info.result : JSON.stringify(info.result || '');
+        // ★ 2026-10-21: 终态**不再 5 秒删除**。
+        //   之前 done 后 5 秒整条被移除 → 子智能体的产出(结果/过程)对用户完全隐形,
+        //   用户根本来不及看。现在保留折叠行, 可随时展开查看结果与完整过程。
         setSubagents(prev => prev.map(a => a.id === info.id ? { ...a, status: 'done' as const, result: subagentResult } : a));
-        // 折叠后延迟移除已完成 Agent
-        setTimeout(() => {
-          setSubagents(prev => prev.filter(a => a.id !== info.id));
-        }, 5000);
+        // 唤醒检查: 该会话的子智能体是否已全部跑完 (全部完成 → 触发续跑)
+        checkSubagentsFinished(info.id);
       },
       onSubagentError: (info: any) => {
         lastActivityTs = Date.now();
         setSubagents(prev => prev.map(a => a.id === info.id ? { ...a, status: 'error' as const, error: info.error } : a));
-        // 与 done 一致: 短暂可见(5s)后移除, 避免失败记录永久驻留
-        setTimeout(() => {
-          setSubagents(prev => prev.filter(a => a.id !== info.id));
-        }, 5000);
+        // 与 done 一致: 失败也保留 (失败记录是排障证据), 不再 5 秒即焚
         // 2026-10-11 P1: 失败记录落盘 localStorage 审计 — GUI 面板移除后仍可事后查证
         // (之前面板清空 + 后端无记录 = 证据自毁, 用户无法复盘子智能体为何失败)
         try {
@@ -1192,11 +1482,36 @@ const [loading, setLoading] = useState(false);
           prev.push({ id: info.id, ts: Date.now(), error: info.error, task: info.task || '' });
           localStorage.setItem(key, JSON.stringify(prev.slice(-50))); // 最近 50 条
         } catch { /* best-effort */ }
+        checkSubagentsFinished(info.id);
       },
       onSubagentProgress: (info: any) => {
         lastActivityTs = Date.now();
         setSubagents(prev => prev.map(sa => {
           if (sa.id !== info.id) return sa;
+          // ★ 2026-10-21 治「黑箱」: delta(正文) / thinking(深度思考) 必须分流累积进
+          //   transcript —— 之前这两种事件落到兜底分支变成"思考中..."一行行 step,
+          //   子智能体"说了什么、在想什么"全部丢失 → 用户看到的是黑箱。
+          if (info.event === 'delta' && typeof info.delta === 'string' && info.delta) {
+            const tr = [...(sa.transcript || [])];
+            const last = tr[tr.length - 1];
+            // 连续的正文块合并 (后端已 120ms 节流, 这里再合并一次避免碎片过多)
+            if (last && last.kind === 'text') {
+              tr[tr.length - 1] = { ...last, text: last.text + info.delta };
+            } else {
+              tr.push({ kind: 'text', text: info.delta });
+            }
+            return { ...sa, transcript: tr };
+          }
+          if (info.event === 'thinking' && typeof info.text === 'string' && info.text) {
+            const tr = [...(sa.transcript || [])];
+            const last = tr[tr.length - 1];
+            if (last && last.kind === 'thinking') {
+              tr[tr.length - 1] = { ...last, text: last.text + info.text };
+            } else {
+              tr.push({ kind: 'thinking', text: info.text });
+            }
+            return { ...sa, transcript: tr };
+          }
           const stepDesc = info.event === 'tool_start'
             ? `🔧 调用工具: ${info.toolName || ''}`
             : info.event === 'tool_done'
@@ -1204,7 +1519,13 @@ const [loading, setLoading] = useState(false);
               : info.event === 'progress'
                 ? info.description || `迭代 ${info.iteration || ''}`
                 : `思考中...`;
-          return { ...sa, steps: [...(sa.steps || []), stepDesc].slice(-20) };
+          // 工具调用同时进 transcript (治黑箱: 工具名要能看到)
+          if (info.event === 'tool_start') {
+            const tr = [...(sa.transcript || [])];
+            tr.push({ kind: 'tool', text: `调用工具: ${info.toolName || ''}`, tool: info.toolName || '' });
+            return { ...sa, steps: [...(sa.steps || []), stepDesc].slice(-200), transcript: tr, toolCalls: (sa.toolCalls || 0) + 1 };
+          }
+          return { ...sa, steps: [...(sa.steps || []), stepDesc].slice(-200) };
         }));
       },
       // 2026-10-17: 非致命提示 (本地限流即将自动重试) —— 不报错, 只是告诉用户在等
@@ -1247,6 +1568,25 @@ const [loading, setLoading] = useState(false);
             kind: 'text',
             text: `\n\n> ⚠️ 工具 \`${info.tool}\` 疑似卡死 (${info.count} 次调用)\n`,
           }] };
+        });
+      },
+      // 2026-10-21: 主任务进入「等服务端子智能体」状态 (富哥: "任务主导方应该不断的
+      //   去看完成没有而不是中断任务呀?")。服务端轮询期间前端会看到主 AI 长时间
+      //   无输出 — 这行是解释, 不是卡死。同一等待批次只占一行 (noticeKind 覆盖)。
+      onSubagentWaiting: (info: any) => {
+        lastActivityTs = Date.now();
+        const n = Number(info?.count) || 0;
+        updateMessage(botId, (m: any) => {
+          const text = `\n\n⏳ 主智能体正在等待 ${n} 个子智能体完成 (服务端轮询中, 主任务不中断)…\n`;
+          const segs: any[] = m.segments || [];
+          const idx = segs.findIndex((s: any) => s.kind === 'text' && s.noticeKind === 'subagent_waiting');
+          if (idx >= 0) {
+            if (segs[idx].text === text) return m; // 数量没变 → 不动
+            const next = segs.slice();
+            next[idx] = { ...next[idx], text };
+            return { ...m, segments: next };
+          }
+          return { ...m, segments: [...segs, { kind: 'text', text, noticeKind: 'subagent_waiting' }] };
         });
       },
     };
@@ -1356,6 +1696,12 @@ await apiStream(base + '/v1/chat', {
       abortRef.current.abort();
       abortRef.current = null;
     }
+    // ★ 2026-10-21: 中断主任务时, 若还有子智能体在跑 → 进入"等待唤醒"态。
+    //   子智能体是**独立任务单元**(网关侧不随父中断), 会继续跑到底,
+    //   跑完后自动唤醒主智能体接着完成原任务 (富哥: "主任务不能丢呀")。
+    if (subagents.some(a => a.status === 'running')) {
+      setAwaitingSubagents(true);
+    }
     // 记录中止时排队的首条消息 (用户排队就是想替代当前任务)
     // 由 useEffect([loading]) 在 loading=false 后自动发送, 消除两队竞争
     setQueuedSends(prev => {
@@ -1373,7 +1719,7 @@ await apiStream(base + '/v1/chat', {
         segments: [...m.segments, { kind: 'text', text: '\n\n⏹ 已中止' }],
       }));
     }
-  }, [messages, updateMessage, handleSend]);
+  }, [messages, updateMessage, handleSend, subagents]);
 
   /**
    * 重新生成 AI 回复: 删除该 AI 消息及其后所有消息, 重发上一条用户消息
@@ -1960,8 +2306,31 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
         {/* 3D 可交互场景 (AI 调用 generate_3d_scene 生成) */}
         {scene3D && <Scene3DViewer scene={scene3D} />}
 
-        {/* 子智能体状态实时显示 (P2-9) — 2026-10-11: 折叠摘要改造, 全部终态后自动清空消失 */}
-        {subagents.length > 0 && <SubagentStatus agents={subagents} pending={subagents.some(a => a.status === 'running')} onAllFinished={() => setSubagents([])} />}
+        {/* 子智能体状态实时显示 (P2-9) — 2026-10-11: 折叠摘要改造
+            2026-10-21: 治黑箱 —— transcript 累积(正文/思考/工具) + 默认折叠 + 终态不删除 */}
+        {subagents.length > 0 && (
+          <SubagentStatus
+            agents={subagents}
+            pending={subagents.some(a => a.status === 'running')}
+            onAllFinished={() => setSubagents([])}
+            parentInterrupted={awaitingSubagents}
+          />
+        )}
+
+        {/* ★ 2026-10-21: 等待子智能体完成的占位提示 (主任务已中断, 子智能体仍在跑) */}
+        {awaitingSubagents && subagents.some(a => a.status === 'running') && (
+          <div style={{
+            margin: '8px 0', padding: '8px 10px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--accent-soft)',
+            border: '1px solid var(--border)',
+            fontSize: 'var(--fs-micro)', color: 'var(--muted)',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1s ease-in-out infinite' }} />
+            <span>主任务已中断, 子智能体仍在后台运行 —— 全部完成后会自动唤醒主智能体接着做 (成果也会存入「子任务产物」区)。</span>
+          </div>
+        )}
 
         {/* 脉象波形 — AI 生成中浮现 (望闻问切之「切」) */}
         <PulseLine active={loading} />

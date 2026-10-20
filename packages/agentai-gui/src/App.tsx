@@ -1385,9 +1385,9 @@ const accentColor = _effectiveTheme === 'midnight' ? '#8b6bff' : _effectiveTheme
         }}
       />
 
-      {/* Splash 启动欢迎页 (PulseFlow, 缩短停留避免拖慢进入; 可点击跳过) */}
+      {/* Splash 启动进入首页 (PulseFlow 极简 Logo + 标语; 停留约 3.5s, 可点击跳过) */}
       {splashVisible && (
-        <Splash onFinish={() => setSplashVisible(false)} duration={1400} minDuration={1100} />
+        <Splash onFinish={() => setSplashVisible(false)} duration={3500} minDuration={2800} />
       )}
 
       {/* 全局浏览器侧栏 — 任何页面可用, AI 自动化核心能力 */}

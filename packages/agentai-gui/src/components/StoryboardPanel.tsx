@@ -86,6 +86,12 @@ export interface Shot {
   /** API 返回的尾帧 (return_last_frame) — 续集功能用它跳过 ffmpeg 抽帧 */
   lastFrameUrl?: string;
   /**
+   * 2026-10-20: 提交成功后的上游任务 ID (持久化)。
+   * 事故: 分镜链路此前不存 taskId, 一旦轮询失败/前端没解析出 URL, 视频已在上游
+   * 生成却凭据尽失, 用户无从恢复。现在提交即落盘, 任何时候都能凭它向上游补捞成片。
+   */
+  lastTaskId?: string;
+  /**
    * 2026-10-14: 候选版本历史 — 单镜生成不满意可「重新生成」, 每次结果追加到这里 (不覆盖旧的),
    * `videoUrl` 始终指向其中被选用的那一版。全部候选按剧集归组展示, 供对比/选用/删除。
    */
@@ -1386,6 +1392,8 @@ Plain solid white background, studio lighting, photorealistic, high detail. The 
         sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, status: 'failed', error: result.error } : s); return { ...prev, episodes: eps }; });
         return;
       }
+      // 2026-10-20: 提交成功立即落盘 taskId — 之后轮询无论成败, 都可凭它向上游补捞成片
+      sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shotId ? { ...s, lastTaskId: result.taskId } : s); return { ...prev, episodes: eps }; });
       const videoResult = await pollVideo(result.taskId, result.provider || model);
       if (videoResult) {
         // ★ 2026-10-14: 追加候选版本 — 重新生成不再覆盖旧版, 每次结果都归到 (当前剧本的) 本镜下
@@ -1478,6 +1486,8 @@ Plain solid white background, studio lighting, photorealistic, high detail. The 
               failed++;
               sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, status: 'failed', error: result.error } : s); return { ...prev, episodes: eps }; });
             } else {
+              // 2026-10-20: 同单镜 — 提交成功立即落盘 taskId, 防止轮询失败后凭据尽失
+              sbWrite(token, prev => { const eps = [...prev.episodes]; eps[epIdx].shots = eps[epIdx].shots.map(s => s.id === shot.id ? { ...s, lastTaskId: result.taskId } : s); return { ...prev, episodes: eps }; });
               const videoResult = await pollVideo(result.taskId, result.provider || model);
               if (videoResult) {
                 succeeded++;
@@ -1509,6 +1519,56 @@ Plain solid white background, studio lighting, photorealistic, high detail. The 
     if (!switched) message.info(`批量生成${batchCancelled ? '已取消' : '完成'}: ${succeeded} 镜成功${failMsg}${cancelMsg}`, 5);
   };
 
+  // 2026-10-20: 视频恢复入口 — 生成成功但前端没拿到地址时, 凭 task_id 或视频地址直接写回对应镜次。
+  // 事故: 分镜链路此前不持久化 taskId, 一旦轮询失败/前端没解析出 URL, 已生成的视频凭据尽失, 用户无从恢复。
+  // 现在: ① 提交成功即落盘 lastTaskId (见 submitVideoTask 调用点); ② 这里提供手动恢复通道, 彻底堵死该故障模式。
+  const [restoreOpen, setRestoreOpen] = useState<{ ep: number; shot: number } | null>(null);
+  const [restoreVal, setRestoreVal] = useState('');
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreErr, setRestoreErr] = useState('');
+
+  const restoreVideo = async (ep: number, shotId: number, raw: string) => {
+    const v = (raw || '').trim();
+    if (!v) return;
+    setRestoreLoading(true); setRestoreErr('');
+    try {
+      let url = '';
+      let taskId = v;
+      if (/^https?:\/\//i.test(v)) {
+        url = v; // 直接贴视频地址
+      } else {
+        // 贴 task_id → 走网关查询 (网关已做信封解包 + 广撒网取地址)
+        const byok = resolveByokCredential(model);
+        const headers: Record<string, string> = {};
+        if (byok?.apiKey) { headers['X-Video-Api-Key'] = byok.apiKey; if (byok.baseUrl) headers['X-Video-Base-Url'] = byok.baseUrl; }
+        const resp = await fetch(`${httpUrl}/v1/video/${encodeURIComponent(v)}?provider=${encodeURIComponent(model)}`, { headers });
+        if (!resp.ok) throw new Error(`网关返回 HTTP ${resp.status}`);
+        const data = await resp.json();
+        url = data.videoUrl || data.video_url || data.url || data.result_url || '';
+        if (!url && data.raw) {
+          try {
+            const r = JSON.parse(data.raw);
+            url = r.result_url || r.video_url || r.url || (r.data && (r.data.result_url || r.data.video_url)) || '';
+          } catch { /* ignore */ }
+        }
+        if (!url) throw new Error('网关未能解析出视频地址 — 请先重启网关(pnpm dev:gateway)使修复生效, 或直接粘贴视频地址');
+      }
+      // 写回对应镜次: 设 videoUrl + lastTaskId + 标完成
+      const token = sbTokenRef.current;
+      sbWrite(token, prev => {
+        const eps = [...prev.episodes];
+        eps[ep].shots = eps[ep].shots.map(s => s.id === shotId ? { ...s, videoUrl: url, lastTaskId: taskId, status: 'completed', error: undefined } : s);
+        return { ...prev, episodes: eps };
+      });
+      setRestoreOpen(null);
+      message.success('视频已恢复到该镜');
+    } catch (e: any) {
+      setRestoreErr(e?.message || '恢复失败');
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
   const pollVideo = (taskId: string, provider: string): Promise<{ videoUrl: string; lastFrameUrl?: string } | null> => {
     // 2026-10-13 BYOK: 自定义模型的任务查询也必须带同一份凭证, 否则提交成功却永远查不到结果。
     // Key 走请求头而非 query (会进浏览器历史/访问日志)。与 videoTaskManager 一致。
@@ -1521,6 +1581,8 @@ Plain solid white background, studio lighting, photorealistic, high detail. The 
     return new Promise((resolve) => {
       let attempts = 0;
       let consecutiveErrors = 0;
+      // 2026-10-20: 终态但还没拿到地址时, 多等几轮再判失败 (上游可能迟几秒才填 URL)
+      let noUrlCount = 0;
       // 5s × 180 = 15 分钟。原先 60 次 (5 分钟) 对 1080P 正式版常常不够,
       // 任务其实还在跑就被判"超时"。
       const interval = setInterval(async () => {
@@ -1540,11 +1602,26 @@ Plain solid white background, studio lighting, photorealistic, high detail. The 
           consecutiveErrors = 0;
           const data = await resp.json();
           if (data.error) { clearInterval(interval); resolve(null); return; }
-          if (data.status === 'completed' || data.status === 'success') {
-            clearInterval(interval);
-            resolve({ videoUrl: data.videoUrl, lastFrameUrl: data.lastFrameUrl });
+          // ✅ 2026-10-20: 大小写不敏感 + 兼容 new-api 'succeeded' 终态
+          const normStatus = String(data.status || '').toLowerCase();
+          const terminalDone = ['completed', 'success', 'succeeded', 'done', 'finished'].includes(normStatus);
+          const terminalFail = ['failed', 'error', 'cancelled', 'canceled'].includes(normStatus);
+          if (terminalFail) { clearInterval(interval); resolve(null); return; }
+          if (terminalDone) {
+            // ✅ 广撒网取地址 (信封内外都试), 绝不以空 URL 当成功
+            const vurl =
+              data.videoUrl || data.video_url || data.url || data.result_url
+              || (data.data && (data.data.video_url || data.data.url || data.data.result_url))
+              || null;
+            if (vurl) {
+              clearInterval(interval);
+              resolve({ videoUrl: vurl, lastFrameUrl: data.lastFrameUrl || data.last_frame_url || null });
+              return;
+            }
+            // 终态但还没拿到地址: 多等几轮 (上游可能迟几秒才填 URL), 不立即判失败
+            if (++noUrlCount > 6) { clearInterval(interval); resolve(null); return; }
+            return; // 继续轮询
           }
-          else if (data.status === 'failed' || data.status === 'error') { clearInterval(interval); resolve(null); return; }
         } catch {
           if (++consecutiveErrors >= 3) { clearInterval(interval); resolve(null); return; }
         }
@@ -2007,6 +2084,12 @@ return (
                             onClick={() => generateSingleShot(epIdx, shot.id)} style={{ fontSize: 'var(--fs-micro)', padding: '0 6px' }}>
                             {shot.status === 'generating' ? '生成中' : shot.status === 'failed' ? '重试' : shot.status === 'completed' ? '重新生成' : '生成'}
                           </Button>
+                          {/* 2026-10-20: 视频恢复入口 — 凭 task_id 或视频地址把已生成但没显示的视频写回本镜 */}
+                          <Button size="small" type="default"
+                            onClick={() => { setRestoreVal(''); setRestoreErr(''); setRestoreOpen({ ep: epIdx, shot: shot.id }); }}
+                            style={{ fontSize: 'var(--fs-micro)', padding: '0 6px' }}>
+                            恢复
+                          </Button>
                           {(shot.videoVersions?.length || 0) > 1 && (
                             <Tag color="blue" style={{ fontSize: 'var(--fs-micro)', margin: 0 }}>
                               {shot.videoVersions!.length} 版
@@ -2283,6 +2366,29 @@ return (
         {zoomScene && (
           <img src={zoomScene.url} alt={zoomScene.name} style={{ width: '100%', borderRadius: 'var(--radius-md)' }} />
         )}
+      </Modal>
+
+      {/* 2026-10-20: 视频恢复 Modal — 凭 task_id 或视频地址把已生成但前端没显示的视频写回对应镜次 */}
+      <Modal
+        open={!!restoreOpen}
+        title="恢复视频到本镜"
+        okText="恢复"
+        cancelText="取消"
+        confirmLoading={restoreLoading}
+        onOk={() => restoreOpen && restoreVideo(restoreOpen.ep, restoreOpen.shot, restoreVal)}
+        onCancel={() => setRestoreOpen(null)}
+      >
+        <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: 8 }}>
+          粘贴 ALRO 任务 ID（如 <code>task_xxx</code>）或视频地址，即可把已生成但前端未显示的视频恢复到当前镜次。
+        </p>
+        <Input.TextArea
+          value={restoreVal}
+          onChange={e => setRestoreVal(e.target.value)}
+          placeholder="task_xxx 或 https://...mp4"
+          autoSize={{ minRows: 2, maxRows: 5 }}
+          style={{ fontFamily: 'monospace' }}
+        />
+        {restoreErr && <div style={{ color: 'var(--danger)', fontSize: 'var(--fs-micro)', marginTop: 8 }}>{restoreErr}</div>}
       </Modal>
 
       {/* 2026-10-13 缺图守卫 Modal — 未生成场景/角色图就生成视频时拦截 */}

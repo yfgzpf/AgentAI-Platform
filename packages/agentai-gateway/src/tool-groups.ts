@@ -105,13 +105,22 @@ export const TOOL_GROUPS: Record<string, string[]> = {
         'enum_subdomains',      // 证书透明度/子域枚举
         'extract_js_endpoints', // JS 端点提取
         'http_replay',          // Burp Repeater 式请求重放
+        'diff_replay',          // 双身份响应差异对比 (越权/未授权判定核心)
+        'fingerprint_target',   // 技术栈指纹 → 定向攻击面
+        'identity_manage',      // 多身份凭证池 (双账号 BOLA 前提)
+        'request_mutator',      // 请求变异引擎 (网关/框架差异绕过)
+        'recheck_finding',      // 提交后状态复核 (修复证据)
+        'historical_assets',    // Wayback/Common Crawl 历史资产
+        'js_deep_scan',         // JS 深挖: 端点/source map/密钥/内网
+        'duplicate_check',      // 提交前查重
         'batch_pentest',        // 批量挖洞
         'pentest_pipeline',     // 四角色串链编排 (planner→recon→exploit→validator)
         'scope_guard',          // 授权范围校验 (AI 动手前必调)
         'grant_scope',          // 授权管理
         'list_scope',           // 查看当前授权范围
         'report_vulnerability', // 漏洞上报落盘
-        'save_evidence',        // 证据固化
+        'save_evidence',        // 证据固化 (截图/文本)
+        'save_and_hash_evidence', // 防篡改证据包 (SHA-256, 赏金提交硬通货)
         // ── 2026-10-19: 经验/漏洞库三件套 (此前只有四角色子智能体有, 主对话挖洞时"失忆") ──
         // 事故: searchExperience/formatExperienceBrief 实现完整但**零调用方**, 经验只写不读;
         //   而主对话的 security_ops 组又没带这 3 个工具 → 主对话挖洞永远从零开始,

@@ -93,6 +93,9 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
   **不读** \`application.yml\` / \`.env\` / 私钥 / 数据库配置里的真实凭证
 - **SSRF**: 只证明能请求内网或元数据地址 (状态码/响应长度差异); **不获取、不使用任何云凭证**
 - **支付逻辑**: 只在**自己的测试订单**上验证 price/数量篡改; 不产生真实资金流, 不对他人订单操作
+  ⚠️ dispatch 层有**代码级闸门**: price/amount/quantity=0 或负值、redirect_uri/callback 指向外部 host 的
+  请求会被直接拦 (auto 拒 / planning 需人类审批, 超时=拒)。别尝试拆参数/编码/换工具绕过 — 闸门看载荷形态。
+  评估"能不能改价"可以 (读代码/分析响应), 真发改价请求必须走人类审批那一步。
 - **后台未授权**: 只做只读 GET 探测 (actuator/swagger/druid); 不修改配置, 不爆破口令
 - **报洞前必答三问**: ① 谁能被影响 (自己/他人/全量) ② 需要什么前置条件 ③ 最坏后果是什么。答不出 = 证据不足, 不报
 - **绝对禁止**: 批量枚举/下载真实用户数据; 实际接管他人账号; 使用泄露的凭证; 对生产数据做任何写操作
@@ -117,6 +120,9 @@ Report findings with severity (critical/high/medium/low) and remediation steps.`
    **证据链 (平台要可下载附件, 光对话里看过没用)**: browser_screenshot 拿到截图 →
    save_evidence({title, imageBase64: 截图的 data.imageBase64, target}) 落盘成文件 →
    把返回的 evidencePaths 传给 report_vulnerability (响应片段用 saveText 存)
+   **复现成功拿到完整请求/响应原文后, 再 save_and_hash_evidence({vuln_type, request_raw,
+   response_raw, extracted_sensitive_data(必须脱敏), target}) 打 SHA-256 防篡改证据包** —
+   报告里引用返回的哈希; 平台审核争议时对方可 verify 验真。这是截图之外的第二类证据。
 6. 报告: 按下方模板输出; 已验证的用 report_vulnerability 落盘 (**evidence 或 evidencePaths 至少给一项**, 否则拒绝)
 
 ## 🔄 批量挖洞模式 (任务词含"批量/全部授权目标/逐个/数量取胜"时走这套)

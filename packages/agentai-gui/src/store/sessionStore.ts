@@ -43,6 +43,13 @@ interface SessionMessage {
   role: string;
   content: string;
   ts: number;
+  /**
+   * 2026-10-21 修复: 此前只存 `content`(第一段纯文本), 工具段/图片段/widget/
+   * 思考过程(reasoning/thinking) 全丢 —— 切会话回来看见"空白容器"或残句。
+   * 现在存完整 segments, 恢复时不丢结构与推理链路。容量由 quota-safe pruner
+   * 对 segments 的同源瘦身兜底 (reasoning 保留宽松上限)。
+   */
+  segments?: any[];
 }
 
 /** 生成消息 ID（与 ChatView 的 botId/userId 格式兼容，便于按 id 定位） */
@@ -76,6 +83,8 @@ interface SessionState {
   deleteSession: (id: string) => void;
   setActive: (id: string) => void;
   addMessage: (sessionId: string, msg: SessionMessage) => void;
+  /** 2026-10-21: 批量 upsert, 一次 setState 写入多条(按 id 新增或覆盖), 避免逐条写盘 */
+  upsertMessages: (sessionId: string, msgs: SessionMessage[]) => void;
   clearSessionMessages: (sessionId: string) => void;
   getActive: () => Session | undefined;
   exportSession: (id: string) => string;
@@ -168,7 +177,20 @@ export const useSessionStore = create<SessionState>()(
           if (x.id !== sessionId) return x;
           // 2026-10-05 P0 修复: 补齐 id —— 否则 ChatView 的跨会话写入找不到目标消息
           const withId: SessionMessage = { id: msg.id || genMsgId(msg.role), ...msg };
-          return { ...x, messages: [...x.messages, withId].slice(-50), updatedAt: Date.now() };
+          return { ...x, messages: [...x.messages, withId].slice(-300), updatedAt: Date.now() };
+        }),
+      })),
+      upsertMessages: (sessionId, msgs) => set((s) => ({
+        sessions: s.sessions.map(x => {
+          if (x.id !== sessionId) return x;
+          let arr = [...x.messages];
+          for (const msg of msgs) {
+            const idx = arr.findIndex(m => m.id === msg.id);
+            const withId: SessionMessage = { id: msg.id || genMsgId(msg.role), ...msg };
+            if (idx >= 0) arr[idx] = withId;
+            else arr.push(withId);
+          }
+          return { ...x, messages: arr.slice(-300), updatedAt: Date.now() };
         }),
       })),
       clearSessionMessages: (sessionId) => set((s) => ({

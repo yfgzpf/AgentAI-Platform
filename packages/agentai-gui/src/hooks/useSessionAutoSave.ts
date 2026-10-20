@@ -8,91 +8,102 @@
  * 流程:
  *   1. 点击 sidebar 会话 → setActive(sessId) → useEffect(activeId) 触发
  *   2. 从 sessionStore 读取该会话的消息 → setMessages 原子替换
- *   3. 每30秒自动将当前消息推送到 gateway (备份)
+ *   3. 每30秒自动将当前消息推送到 localStorage (含完整 segments, 一次写盘)
+ *
+ * 2026-10-21 修复: 此前只存第一段纯文本(`content`), 工具段/图片/widget/思考过程
+ *   全部丢失 → 切会话回来看见空白容器或残句。现改为存完整 segments(经瘦身),
+ *   按 msg.id 去重 upsert(流式期间同一条消息反复写是覆盖而非重复 append)。
  */
 import { useEffect, useRef } from 'react';
 import { useChatStore, type ChatMessage } from '../store/chatStore';
 import { useSessionStore } from '../store/sessionStore';
+import { shrinkSessionSegments } from '../utils/quota-safe-storage';
 
 export function useSessionAutoSave(
   messages: ChatMessage[],
   activeId: string | null,
 ) {
-  const { addMessage, getMySessions } = useSessionStore();
+  const { upsertMessages } = useSessionStore();
   const { setMessages: setChatMessages, clearMessages } = useChatStore();
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const prevActiveIdRef = useRef<string | null>(activeId);
-  // ★ 修复: 记录已持久化的消息 key, 防止每 30 秒把同一批消息重复 append 到 localStorage,
-  // 旧逻辑导致 localStorage 单会话内堆积大量重复内容, 恢复出的"历史"全是重复消息。
-  const savedKeysRef = useRef<Set<string>>(new Set());
+  // 用 ref 持有最新值, 避免 30s 定时器/卸载回调捕获到过期闭包
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  const activeIdRef = useRef<string | null>(activeId);
+  messagesRef.current = messages;
+  activeIdRef.current = activeId;
 
-  /** 去重持久化单条消息到 sessionStore */
-  const persistMessage = (msg: ChatMessage) => {
-    const key = `${msg.role}|${msg.ts}|${msg.segments?.filter(s => s.kind === 'text').map(s => s.text).join('')}`;
-    if (savedKeysRef.current.has(key)) return; // 已保存过, 跳过
-    const textSegs = msg.segments.filter(s => s.kind === 'text');
-    const text = textSegs[0]?.text || '';
-    if (!text) return;
-    savedKeysRef.current.add(key);
-    // 2026-10-05 P0 修复: 透传 msg.id ——
-    //   ChatView 的会话隔离用 findIndex(m => m.id === id) 定位要更新的消息，
-    //   而这里的 id 来自流式响应的 botId/userId。若不传，store 会另生成一个 id
-    //   → 两者永远匹配不上 → 切会话时消息更新被丢弃 → 用户以为内容丢了。
-    addMessage(activeId!, { id: msg.id, role: msg.role, content: text, ts: msg.ts });
+  /** 把一条 ChatMessage 压成可持久化结构(含完整 segments, 经瘦身) */
+  const buildPayload = (msg: ChatMessage): any | null => {
+    if (!msg.id) return null;
+    const segs: any[] = Array.isArray(msg.segments) ? msg.segments : [];
+    if (segs.length === 0) return null; // 空消息不存
+    const textSegs = segs.filter(s => s.kind === 'text');
+    const content = textSegs[0]?.text || '';
+    // 完整 segments 入库(去 base64/截工具输出; reasoning/thinking 保留宽松上限)
+    const shrunk = shrinkSessionSegments(segs);
+    const p: any = { id: msg.id, role: msg.role, content, ts: msg.ts };
+    if (shrunk) p.segments = shrunk;
+    return p;
   };
 
-  /* ---- 会话切换: 从 localStorage 加载历史消息 ---- */
+  /** 批量持久化当前会话的全部消息(一次 setState, 避免逐条写盘) */
+  const persistAll = () => {
+    const aid = activeIdRef.current;
+    const msgs = messagesRef.current;
+    if (!aid || msgs.length === 0) return;
+    const payloads = msgs.map(buildPayload).filter(Boolean) as any[];
+    if (payloads.length) upsertMessages(aid, payloads);
+  };
+
+  /* ---- 会话切换: 从 localStorage 加载历史消息 (优先用 segments 完整还原) ---- */
+  const prevActiveIdRef = useRef<string | null>(activeId);
   useEffect(() => {
     if (!activeId || prevActiveIdRef.current === activeId) return;
-    const session = getMySessions().find(s => s.id === activeId);
+    const session = useSessionStore.getState().getMySessions().find(s => s.id === activeId);
 
-    // 切换会话 → 重置去重集合
-    savedKeysRef.current = new Set();
+    // 切换会话 → 重置去重游标
+    prevActiveIdRef.current = activeId;
 
     // 同步清空
     clearMessages();
-    prevActiveIdRef.current = activeId;
 
     if (session && session.messages.length > 0) {
-      const restored = session.messages.map((msg: any, i: number) => ({
-        // ★ 修复: 附带序号避免并发同 ts 的消息 id 冲突
-        id: `restored-${msg.ts}-${i}`,
-        role: msg.role as 'user' | 'assistant',
-        segments: [{ kind: 'text' as const, text: msg.content }],
-        ts: msg.ts,
-        status: 'done' as const,
-      }));
+      const restored = session.messages.map((msg: any, i: number) => {
+        const segs = Array.isArray(msg.segments) && msg.segments.length > 0
+          ? msg.segments
+          // 兼容历史数据: 老会话只有 content, 退化为单文本段
+          : [{ kind: 'text' as const, text: msg.content || '' }];
+        return {
+          // ★ 复用原始 id, 切回后再次持久化时按 id 覆盖, 不会造成重复
+          id: msg.id || `restored-${msg.ts}-${i}`,
+          role: msg.role as 'user' | 'assistant',
+          segments: segs,
+          ts: msg.ts,
+          status: 'done' as const,
+        };
+      });
       setChatMessages(restored);
     }
-  }, [activeId, clearMessages, getMySessions, setChatMessages]);
+  }, [activeId, clearMessages, setChatMessages]);
 
-  /* ---- Auto-save: 每30秒推送消息到 gateway (持久化备份, 已去重) ---- */
+  /* ---- Auto-save: 每30秒推送消息到 localStorage (含完整 segments, 一次写盘) ---- */
+  useEffect(() => {
+    const timer = setInterval(() => persistAll(), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  /* ---- 即时持久化: 当前会话无流式消息时, 落盘全部(一次 setState) ---- */
   useEffect(() => {
     if (!activeId || messages.length === 0) return;
-    const timer = setInterval(() => {
-      for (const msg of messages) persistMessage(msg);
-    }, 30000);
-    autoSaveTimerRef.current = timer;
-    return () => { clearInterval(timer); autoSaveTimerRef.current = null; };
-  }, [activeId, messages, persistMessage]);
-
-  /* ---- 保存最后一条非流式消息到 localStorage (即时持久化) ---- */
-  useEffect(() => {
-    if (!activeId || messages.length === 0) return;
-    const last = messages[messages.length - 1];
-    if (!last.streaming) persistMessage(last);
-  }, [messages, activeId, persistMessage]);
+    if (messages.some(m => m.streaming)) return; // 流式期间由 30s/卸载兜底, 避免每 token 写盘
+    persistAll();
+  }, [messages, activeId]);
 
   /* ---- P0 修复: beforeunload 强制刷盘 — 防止 F5 丢最后2秒消息 ---- */
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (!activeId || messages.length === 0) return;
-      // 强制保存所有未持久化的消息
-      for (const msg of messages) {
-        if (!msg.streaming) persistMessage(msg);
-      }
-    };
+    const handleBeforeUnload = () => { persistAll(); };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [activeId, messages, persistMessage]);
+  }, []);
+
+  return { persistAll };
 }

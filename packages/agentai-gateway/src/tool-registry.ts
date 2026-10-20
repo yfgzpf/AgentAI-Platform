@@ -350,7 +350,18 @@ export class ToolRegistry extends EventEmitter {
     // 额外检查：参数值中是否包含危险代码模式
     // P2 修复 (D7): run_code 工具豁免 — 它有自己的沙箱安全检查 (code-runner.ts)
     // 原来对 run_code 的 code 参数做正则匹配, 导致纯 fs 探测脚本被误报为 "dangerous code pattern"
-    const DANGEROUS_TOOL_EXEMPT = new Set(['run_code', 'skill_forge', 'create_tool']);
+    // 2026-10-20 再修 (富哥实锤: PoC 取证脚本 dev27.js 含 require('fs') 连废 6 次):
+    //   write_file 等同理 — 它们的参数是**惰性内容** (网关只落盘/打字/存档, 从不执行),
+    //   扫 require('fs') 零安全收益, 却让 AI 写不了任何碰文件系统的 Node 脚本。
+    //   豁免判据 = 「网关不会执行该参数」; 执行类工具 (run_command/run_background) 不豁免。
+    const DANGEROUS_TOOL_EXEMPT = new Set([
+      'run_code', 'skill_forge', 'create_tool',                    // 参数即代码: 各有沙箱/AST 扫描
+      'write_file', 'write_file_remote', 'multi_edit', 'preview_edit', // 文件内容 (落盘不执行)
+      'clipboard_write', 'keyboard_type', 'type_into_text', 'browser_type', // 打字/剪贴板 (惰性文本)
+      'remember',                                                  // 记忆内容 (惰性文本)
+      'save_evidence', 'report_vulnerability',                     // 证据/PoC 文本 (惰性存档)
+      'extract_js_endpoints',                                      // 待分析的 JS 源码 (惰性输入)
+    ]);
     if (!DANGEROUS_TOOL_EXEMPT.has(call.name)) {
       const dangerousPatterns = [
         /eval\s*\(/i,
@@ -361,7 +372,9 @@ export class ToolRegistry extends EventEmitter {
       ];
       for (const pattern of dangerousPatterns) {
         if (pattern.test(argsStr)) {
-          return { success: false, output: '', error: `Tool call blocked: dangerous code pattern detected (${call.name})` };
+          // 2026-10-20: 报错带上匹配到的模式 — 原来只报工具名, AI 无法归因就原样重试,
+          // 每次都被同一个正则拦, 形成死循环 (截图实锤 6 连废 + UNKNOWN 未知错误)。
+          return { success: false, output: '', error: `Tool call blocked: dangerous code pattern detected (${call.name}): 命中 ${pattern}` };
         }
       }
     }

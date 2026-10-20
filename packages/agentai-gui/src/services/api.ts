@@ -21,6 +21,8 @@ export interface ApiStreamHandlers {
   onSubagentDone?: (info: { id: string; result: string }) => void;
   onSubagentError?: (info: { id: string; error: string }) => void;
   onSubagentProgress?: (info: { id: string; event: string; iteration?: number; step?: number; description?: string; toolName?: string; result?: string }) => void;
+  /** 2026-10-21: 主任务进入「等服务端子智能体」状态 (富哥: 主导方不断去看完成没有, 不中断) */
+  onSubagentWaiting?: (info: { count: number; sessionId?: string }) => void;
   onToolStuck?: (info: { tool: string; count: number }) => void;
   /** 2026-10-17 P0: 长耗时工具执行期间每 30s 发一次心跳, 用于续上 idle 计时器 */
   onToolHeartbeat?: (info: { callId: string; name: string; pending?: number; retry?: number }) => void;
@@ -330,6 +332,7 @@ export async function apiStream(url: string, body: any, handlers: ApiStreamHandl
               case 'subagent_done': handlers.onSubagentDone?.(data); break;
               case 'subagent_error': handlers.onSubagentError?.(data); break;
               case 'subagent_progress': handlers.onSubagentProgress?.(data); break;
+              case 'subagent_waiting': handlers.onSubagentWaiting?.(data); break; // 2026-10-21: 主任务等服务端子任务
 case 'tool_stuck': handlers.onToolStuck?.(data); break;
 case 'tool_heartbeat': handlers.onToolHeartbeat?.(data); break; // 2026-10-17 P0: 长耗时工具心跳, 喂 idle 计时器
 case 'widget_show': handlers.onWidgetShow?.(data); break;

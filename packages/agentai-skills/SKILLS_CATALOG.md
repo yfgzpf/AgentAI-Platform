@@ -95,6 +95,7 @@
 - ppt-generator - PPT 生成
 - excel-generator - Excel 生成
 - doc-generator - 文档生成
+- formal-docx - 正式 Word 文档生成（封面/目录/表格/插图/页码 + 版面自检）
 - ai-writer - AI 写作
 - decoration-quotation - 装修报价
 

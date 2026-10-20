@@ -22,6 +22,7 @@ import { AutoMemoryPanel } from './AutoMemoryPanel';
 import { ProjectRulesPanel } from './ProjectRulesPanel';
 import { GeneratedFilesPanel } from './GeneratedFilesPanel';
 import { TaskPlanPanel } from './TaskPlanPanel';
+import { SubagentArtifactsPanel } from './SubagentArtifactsPanel';
 
 const TABS = [
   { key: 'context', label: '上下文', icon: <AimOutlined /> },
@@ -304,6 +305,10 @@ export const RightPanel: React.FC = () => {
                     <GeneratedFilesPanel />
                   </div>
                 )}
+                {/* ★ 2026-10-21 子智能体「任务产物」区 — 主任务中断后子智能体的成果不丢 */}
+                <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 4 }}>
+                  <SubagentArtifactsPanel />
+                </div>
               </>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 2px', fontSize: 'var(--fs-micro)', color: 'var(--muted-2)' }}>

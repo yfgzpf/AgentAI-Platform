@@ -366,6 +366,28 @@ const sendToVideo = (imageUrl: string) => {
             const timeoutId = setTimeout(() => controller.abort(), 60000);
             const r = await fetch(httpUrl + '/v1/image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal });
             clearTimeout(timeoutId);
+            // 2026-10-20: 非 2XX 先读原文再容错解析 — 网关 4xx/5xx 的 body 可能不是
+            //   JSON (代理层错误页 / 网关崩溃前的纯文本), 直接 r.json() 会抛
+            //   "Unexpected token <" 落进下面的 catch, 对外显示"网络错误" (误报:
+            //   真实是上游 403 分组无权限 / 500, 响应里带着明确原因)。
+            if (!r.ok) {
+                let detail = '';
+                try {
+                    const t = await r.text();
+                    try { const j = JSON.parse(t); detail = j.error || j.message || t.slice(0, 120); }
+                    catch { if (t.trim()) detail = t.slice(0, 160); }
+                } catch { /* 读 body 失败, 只剩状态码 */ }
+                const errText = `生成失败 (HTTP ${r.status})${detail ? ': ' + detail : ''}`;
+                message.error(errText);
+                if (mode === 'edit') {
+                    setEditMessages(prev => [...prev, {
+                        role: 'ai', content: errText,
+                        error: true,
+                        retryData: { prompt: actualPrompt, images: [...editInputImages], sourceImage: sourceImage || '', refImages: [...refImages] },
+                    }]);
+                }
+                return;
+            }
             const data = await r.json();
             if (data.error) {
                 message.error('生成失败: ' + data.error);
@@ -379,6 +401,8 @@ const sendToVideo = (imageUrl: string) => {
                 }
                 return;
             }
+            // P1b: 网关在智谱免费模型上悄悄降级了高清档位时, 透出提示让用户知情
+            if (data.notice) message.warning(data.notice);
             const item: HistoryItem = { id: `${Date.now()}`, prompt: actualPrompt, mode, url: data.url?.startsWith('/') ? httpUrl + data.url : data.url, size, ts: Date.now(), provider: data.provider, sourceUrl: sourceImage || undefined };
             setCurrent(item); setHistory(prev => [item, ...prev]);
             // 注册到 imageTaskManager — 历史持久化, 退出再进入不丢失

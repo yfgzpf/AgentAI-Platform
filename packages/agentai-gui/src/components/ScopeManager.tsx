@@ -17,8 +17,16 @@ import { GATEWAY_HTTP } from '../services/config';
 import { useProfileStore } from '../store';
 import { SrcPlatformImporter } from './SrcPlatformImporter';
 import { AuthAttestationPanel } from './AuthAttestationPanel';
+import { PentestProjectsPanel } from './PentestProjectsPanel';
 
-interface ScopeTarget { host: string; source: string; }
+interface ScopeTarget {
+  host: string;
+  source: string;
+  /** 2026-10-21: 目标级只读/全量 */
+  mode?: 'full' | 'readonly';
+  /** 2026-10-21: 授权到期时间 (ms); 过期后 scope_guard 视为未授权 */
+  expiresAt?: number;
+}
 
 interface ScopeState {
   targets: string[];
@@ -50,6 +58,8 @@ export const ScopeManager: React.FC = () => {
   const [newTarget, setNewTarget] = useState('');
   const [newMaxRps, setNewMaxRps] = useState<number | null>(null);
   const [newSource, setNewSource] = useState('');
+  // 2026-10-21: 可选授权有效期 (天); 不填 = 不过期
+  const [newExpireDays, setNewExpireDays] = useState<number | null>(null);
   // 来源筛选 (空 = 全部)
   const [filterSource, setFilterSource] = useState('');
   // 2026-10-15 P0-2: AI 的授权提案 (grant_scope 只写 pending, 人类在此确认)
@@ -165,6 +175,7 @@ export const ScopeManager: React.FC = () => {
     try {
       const body: Record<string, unknown> = { target: t, source: newSource.trim() || 'manual' };
       if (newMaxRps) body.maxRps = newMaxRps;
+      if (newExpireDays && newExpireDays > 0) body.expiresInDays = newExpireDays;
       const r = await fetch(wsUrl('v1/pentest/scope'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -176,6 +187,20 @@ export const ScopeManager: React.FC = () => {
         load();
       } else antdMsg.error(d.error || '授权失败');
     } catch { antdMsg.error('授权请求失败'); }
+  };
+
+  /** 2026-10-21: 切换目标级只读/全量 (后端 POST /scope 支持 mode) */
+  const handleSetMode = async (host: string, mode: 'full' | 'readonly', source?: string) => {
+    try {
+      const r = await fetch(wsUrl('v1/pentest/scope'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: host, source: source || 'manual', mode }),
+      });
+      const d = await r.json();
+      if (d.ok) { antdMsg.success(`${host} 已切换为${mode === 'readonly' ? '只读' : '全量'}模式`); load(); }
+      else antdMsg.error(d.error || '切换模式失败');
+    } catch { antdMsg.error('切换模式请求失败'); }
   };
 
   const handleRevoke = async (host: string) => {
@@ -294,6 +319,17 @@ export const ScopeManager: React.FC = () => {
           onChange={setNewMaxRps}
           style={{ width: 56, fontSize: 'var(--fs-micro)' }}
         />
+        <Tooltip title="可选: 授权有效天数。到期后 scope_guard 视为未授权, 需重新授权">
+          <InputNumber
+            size="small"
+            min={1}
+            max={3650}
+            placeholder="天"
+            value={newExpireDays}
+            onChange={setNewExpireDays}
+            style={{ width: 58, fontSize: 'var(--fs-micro)' }}
+          />
+        </Tooltip>
         <Button size="small" type="primary" icon={<PlusOutlined />} onClick={handleGrant}>
           授权
         </Button>
@@ -361,6 +397,9 @@ export const ScopeManager: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* ═══════════ 2026-10-21 项目视图 (按根域: 目标 + 发现 + 提交门槛) ═══════════ */}
+      <PentestProjectsPanel />
 
       {/* ═══════════ 2026-10-16 SRC 平台导入 (归属 + 授权目标 + 禁止项 一次提取) ═══════════ */}
       <SrcPlatformImporter onChanged={() => void load()} />
@@ -468,6 +507,24 @@ export const ScopeManager: React.FC = () => {
                       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-2)' }}>
                         {t.host}
                       </span>
+                      {/* 2026-10-21: 目标级只读/全量 (点击切换) */}
+                      <Tooltip title="点击切换: 只读只允许 GET/HEAD; 全量允许写方法">
+                        <Tag
+                          onClick={() => void handleSetMode(t.host, t.mode === 'readonly' ? 'full' : 'readonly', t.source)}
+                          color={t.mode === 'readonly' ? 'gold' : 'blue'}
+                          style={{ cursor: 'pointer', fontSize: 'var(--fs-micro)', margin: 0, borderRadius: 'var(--radius-sm)' }}
+                        >
+                          {t.mode === 'readonly' ? '只读' : '全量'}
+                        </Tag>
+                      </Tooltip>
+                      {/* 2026-10-21: 授权到期标记 */}
+                      {typeof t.expiresAt === 'number' && t.expiresAt > 0 && (
+                        t.expiresAt <= Date.now()
+                          ? <Tag color="red" style={{ fontSize: 'var(--fs-micro)', margin: 0, borderRadius: 'var(--radius-sm)' }}>已过期</Tag>
+                          : <Tag style={{ fontSize: 'var(--fs-micro)', margin: 0, borderRadius: 'var(--radius-sm)' }}>
+                              至 {new Date(t.expiresAt).toLocaleDateString('zh-CN')}
+                            </Tag>
+                      )}
                       <Button
                         size="small"
                         type="text"

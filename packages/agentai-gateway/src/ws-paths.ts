@@ -31,3 +31,15 @@ export function agentAiPath(ws: string, ...rest: string[]): string {
   const base = normWsPath(ws);
   return [base, '.agentai', ...rest].filter(Boolean).join('/');
 }
+
+/**
+ * 会话 key (2026-10-21)
+ * ============================================================================
+ * 事故: 日志里同时出现 `F:\挖洞赏金` 和 `F:/挖洞赏金`, 而 routes/chat.ts 直接拿
+ * 原始 workspace 拼 sessionKey → 同一个项目被当成两个会话 → 压制逻辑失效 →
+ * 两个 run 并发抢同一份上下文, 任务被互相顶掉。
+ * 现在统一走 normWsPath, 保证同一工作区只有一把钥匙。
+ */
+export function sessionKeyOf(userId: string, workspace: string): string {
+  return `${String(userId || 'default')}:${normWsPath(workspace) || 'cwd'}`;
+}

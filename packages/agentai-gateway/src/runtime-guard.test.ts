@@ -24,7 +24,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentAILoop, computeContextPolicy } from './agentai-loop.js';
@@ -920,7 +920,8 @@ describe('多 SRC 归属接线回归 (2026-10-16)', () => {
     const idx = guard.indexOf('export function isTargetInScope');
     const body = guard.slice(idx, idx + 2000);
     const denyAt = body.indexOf('isDeniedByAnyPlatform');
-    const allowAt = body.indexOf('const targets = readScope(ws)');
+    // 2026-10-21: allow 判定改用 readScopeWithSource (需要过滤已过期授权)
+    const allowAt = body.indexOf('const targets = readScopeWithSource(ws)');
     expect(denyAt).toBeGreaterThan(-1);
     expect(allowAt).toBeGreaterThan(-1);
     // deny 判定必须出现在 allow 判定之前
@@ -1488,7 +1489,10 @@ describe('上游临时繁忙退避重试 (2026-10-17)', () => {
     const idx = LOOP.indexOf("if (res?.provider === 'none' && this.opts.userPickedModel)");
     expect(idx).toBeGreaterThan(-1);
     const chunk = LOOP.slice(idx, idx + 5000);
-    expect(chunk).toMatch(/const authFailed = \/401\|403/);
+    // 2026-10-20: 状态码判定从裸 /401|403/ 改为 textHasStatus 锚定 —
+    //   裸数字会命中 UUID/request_id 里的同形子串 (llm-router 同款事故:
+    //   deepseek 普通 400 的 request_id 含 "401" → 误报"鉴权失败")。
+    expect(chunk).toMatch(/const authFailed = textHasStatus\(lastErr, 401, 403\)/);
     expect(chunk).toMatch(/const transient = !authFailed &&/);
     // 鉴权失败要说清"等也没用" (2026-10-19 f86288c 增强: 附带分组权限语境)
     expect(chunk).toMatch(/API Key \/ 分组权限问题, 等也没用/);
@@ -1598,6 +1602,136 @@ describe('命令未安装的分类 (command not found ≠ 路径不存在)', () 
     expect(chunk).toMatch(/install-pentest-tools\.ps1|apt-get install/);
     expect(chunk, '不能再把 AI 引去 list_directory').not.toMatch(/list_directory/);
   });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 网关闸门拦截 vs 未知错误 (2026-10-20)
+// 事故: write_file 写 PoC 脚本含 require('fs') 被 tool-registry 危险正则拦,
+//   classifyToolError 无 blocked 分支 → UNKNOWN「未知错误」→ AI 归不了因
+//   就原样重试, 连废 6 次。分支必须存在且**排最前** (确定性拒绝, 重试无意义)。
+// ═══════════════════════════════════════════════════════════════
+describe('网关闸门拦截的分类 (tool call blocked ≠ 未知错误)', () => {
+  const LOOP = readFileSync(new URL('./agentai-loop.ts', import.meta.url), 'utf-8');
+  // 锚定代码行 (不是注释行): 注释里也出现 TOOL_CALL_BLOCKED 字样
+  const blockedIdx = LOOP.indexOf("code: 'TOOL_CALL_BLOCKED'");
+
+  it('C13: TOOL_CALL_BLOCKED 分支存在且排在最前 (先于 COMMAND_NOT_FOUND)', () => {
+    const cmdIdx = LOOP.indexOf("code: 'COMMAND_NOT_FOUND'");
+    expect(blockedIdx).toBeGreaterThan(-1);
+    expect(blockedIdx, '闸门拦截必须最优先: 不该被任何其他分支吞掉').toBeLessThan(cmdIdx);
+  });
+
+  it('C14: 命中 "tool call blocked" 文本', () => {
+    const chunk = LOOP.slice(blockedIdx - 400, blockedIdx + 300);
+    expect(chunk).toMatch(/err\.includes\('tool call blocked'\)/);
+  });
+
+  it('C15: nextAction 点名惰性内容工具已豁免 + 执行类工具改写法, 不让 AI 盲目重试', () => {
+    const chunk = LOOP.slice(blockedIdx, blockedIdx + 900);
+    expect(chunk).toMatch(/write_file/);
+    expect(chunk).toMatch(/run_command/);
+    expect(chunk).toMatch(/别重试|重试还会被拦/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 命令执行超时 ≠ 瞬时错误 (2026-10-20)
+// 事故: AI 对超时的 `wsl ffuf_wc.sh` 原样重试 6 次, 每轮白等 120s。
+//   提示层三重失效: ① fail_strategy 的 /timeout/ 指令 medium 优先级被
+//   flushAll 静默丢弃; ② dispatchToolCalls 自动重试的 retryableErrors
+//   含 /timeout/, 平台自己把超时命令再跑 2 遍; ③ 同参计数被"换参数"重置。
+//   修法: COMMAND_TIMEOUT 独立分类 + _timeoutFailSigs 执行前硬闸门。
+// ═══════════════════════════════════════════════════════════════
+describe('命令执行超时的分类与硬闸门 (COMMAND_TIMEOUT ≠ 可重试瞬时错误)', () => {
+  const LOOP = readFileSync(new URL('./agentai-loop.ts', import.meta.url), 'utf-8');
+  // 锚定代码行 (不是注释行)
+  const cmdTimeoutIdx = LOOP.indexOf("code: 'COMMAND_TIMEOUT'");
+
+  it('C16: COMMAND_TIMEOUT 分支存在且排在通用 TIMEOUT 之前 (处置相反: 禁止重试)', () => {
+    const genericIdx = LOOP.indexOf("code: 'TIMEOUT'");
+    expect(cmdTimeoutIdx).toBeGreaterThan(-1);
+    expect(genericIdx).toBeGreaterThan(-1);
+    expect(cmdTimeoutIdx, '命令超时必须先生效: 通用 TIMEOUT 会让 AI"加大 timeout 再试", 与工具输出自带的"别再原样重试"对打 (实锤 6 连废)').toBeLessThan(genericIdx);
+  });
+
+  it('C17: 判据覆盖三种命令工具的超时措辞, 且集中定义为共用常量', () => {
+    expect(LOOP).toContain('const CMD_TIMEOUT_OUT = /命令超时|扫描超时|别再原样重试|别原样重试|⏱\\s*超时/;');
+    expect(LOOP).toContain("const CMD_EXEC_TOOLS = new Set(['run_command', 'wsl_exec', 'wsl_scan', 'run_shell_command']);");
+    // 硬闸门 / 自动重试排除 / fail_strategy 三处必须共用同一判据 (改一处全生效)
+    const usages = (LOOP.match(/CMD_TIMEOUT_OUT\.test\(/g) || []).length;
+    expect(usages, `CMD_TIMEOUT_OUT 应有 3 处使用 (分类/记录/排除), 实际 ${usages}`).toBeGreaterThanOrEqual(3);
+  });
+
+  it('C18: _timeoutFailSigs 硬闸门 — 同参命令超时过, dispatch 前直接拒跑', () => {
+    expect(LOOP).toContain('private _timeoutFailSigs = new Set<string>();');
+    expect(LOOP).toContain('this._timeoutFailSigs.clear();');     // 按任务隔离
+    expect(LOOP).toContain('this._timeoutFailSigs.add(sig);');    // 超时失败记 sig
+    expect(LOOP).toContain('this._timeoutFailSigs.delete(sig);'); // 同参成功即解除
+    // 拒跑消息: [ERROR] 打头 (主循环 isToolFailed 判失败) + 给唯一正确出路
+    expect(LOOP).toMatch(/\[ERROR\] \[TIMEOUT GATE\][\s\S]{0,200}run_background/);
+    expect(LOOP).toMatch(/\[timeout-gate\] REJECTED/);
+  });
+
+  it('C19: 自动重试排除命令超时 + 被拒调用不产幻影成功条目', () => {
+    // retryableErrors 含 /timeout/ (会被输出文案里自带的 "没设 timeout" 命中), 必须显式排除
+    expect(LOOP).toMatch(/if \(CMD_EXEC_TOOLS\.has\(c\.name\) && CMD_TIMEOUT_OUT\.test\(combined\)\) return false;/);
+    // approvedResults 剔除 rejected: 否则 '[no result]' + success:true 幻影成功
+    expect(LOOP).toMatch(/const approvedResults = callsToDispatch\s*\n\s*\.filter\(c => !rejectedResults\.find\(r => r\.id === c\.id\)\)/);
+  });
+});
+
+describe('命令超时硬闸门行为验证 (2026-10-20)', () => {
+  // 复刻实锤: 第 1 轮 run_command 超时 (工具看门狗文案), 第 2 轮 AI 原样再发同一条
+  // → 硬闸门必须在 dispatch 前拦下, registry.dispatch 只应收到第 1 轮的调用。
+  const TIMEOUT_OUT =
+    '⏱ 命令超时 (超过 120s), 已强制终止整棵进程树 (pid 及其子孙全部结束, 不再残留后台进程)。\n\n' +
+    '被终止命令: wsl bash ffuf_wc.sh\n\n' +
+    '⚠️ 别再原样重试同一条命令 —— 它已经被证明跑不完。请立刻换路子:\n' +
+    '  1) 长任务改用 run_background({ command }) 后台跑, 再用 wait_for_job / job_output 轮询结果;';
+
+  it('C20: 同参命令超时过一次 → 第二次原样重试被闸门拒跑 (dispatch 只收到 1 次)', async () => {
+    const { loop, registry } = makeLoop((round) => {
+      if (round > 2) return { content: '收尾', finishReason: 'stop' };
+      return {
+        content: '',
+        finishReason: 'tool_calls',
+        toolCalls: [{ id: `c${round}`, name: 'run_command', args: { command: 'wsl bash ffuf_wc.sh' } }],
+      };
+    }, { maxIterations: 4 });
+
+    const dispatched: string[][] = [];
+    (registry as any).dispatch = vi.fn(async (calls: any[]) => {
+      dispatched.push(calls.map((c: any) => c.name));
+      return calls.map((c: any) => ({ id: c.id, result: { success: false, output: TIMEOUT_OUT, durationMs: 120000 } }));
+    });
+
+    await loop.run('扫一下');
+
+    // 第 1 轮真跑了 (超时失败); 第 2 轮同参 → 硬闸门拒跑, 不进 dispatch
+    expect(dispatched.length, `dispatch 应只收到第 1 轮; 实际 ${JSON.stringify(dispatched)}`).toBe(1);
+    expect((loop as any)._timeoutFailSigs.size, '超时 sig 必须已记录').toBe(1);
+  }, 60000);
+
+  it('C21: 换参数的同名命令不受硬闸门限制 (只拦原样重试, 不拦调整)', async () => {
+    const { loop, registry } = makeLoop((round) => {
+      if (round > 3) return { content: '收尾', finishReason: 'stop' };
+      // 每轮同命令但不同参数 (AI 常见解法: 加 timeout / 换目标)
+      return {
+        content: '',
+        finishReason: 'tool_calls',
+        toolCalls: [{ id: `c${round}`, name: 'run_command', args: { command: 'wsl bash ffuf_wc.sh', timeout: 120000 + round * 60000 } }],
+      };
+    }, { maxIterations: 5 });
+
+    (registry as any).dispatch = vi.fn(async (calls: any[]) =>
+      calls.map((c: any) => ({ id: c.id, result: { success: false, output: TIMEOUT_OUT, durationMs: 120000 } })),
+    );
+
+    await loop.run('扫一下');
+
+    // 换了参数 → sig 不同 → 每轮都真跑 (硬闸门只精确拦"原样重试")
+    expect((loop as any)._timeoutFailSigs.size, '每次换参数都是新 sig').toBe(3);
+  }, 60000);
 });
 
 describe('超时降级按任务类型保留核心工具 (2026-10-17)', () => {
@@ -1713,7 +1847,8 @@ describe('工作区冲突检测降级注入 (2026-10-17)', () => {
 
   it('F4: §6.3 项目规则同一套门控 (它比 listing 更致命 — 直接改任务目标)', () => {
     expect(LOOP_SRC).toContain('const wsConflict63 = this.getContextPolicy();');
-    expect(LOOP_SRC).toContain('[ctx:project-rules] 冲突跳过');
+    // 2026-10-20: 措辞从"跳过"改为"不注入但任务继续" — 冲突只影响注入, 绝不中止任务
+    expect(LOOP_SRC).toContain('[ctx:project-rules] 冲突提示(不注入项目规则, 任务继续)');
   });
 
   it('F5: 行为规则速查表已管辖"当前行业"和"项目规则"两行 + 优先级铁律', () => {
@@ -1735,11 +1870,25 @@ describe('工作区冲突检测降级注入 (2026-10-17)', () => {
       const CODE_PROJECT_MARKERS = ['package.json', 'tsconfig.json', 'jsconfig.json', 'go.mod', 'Cargo.toml', 'pyproject.toml', 'requirements.txt', 'setup.py', 'pom.xml', 'build.gradle', 'composer.json', 'Gemfile', 'mix.exs'];
       const hasMarker = CODE_PROJECT_MARKERS.some(m => existsSync(join(tmp, m)));
       expect(hasMarker).toBe(false); // 空目录 → coding 任务会判冲突
+
+      // security + 普通目录 → 冲突 (目标在外部授权范围)
+      expect(computeContextPolicy('security', tmp, '', '打下目标站点').workspaceConflict).toBe(true);
+
+      // 2026-10-20 实锤: 工作区自身就是渗透/赏金工作台 (scope.json + .agentai/pentest)
+      // → 同源, 不能降级 (F:\挖洞赏金 就是在自己的挖洞工作区里被判"环境不匹配")
+      mkdirSync(join(tmp, '.agentai'), { recursive: true });
+      writeFileSync(join(tmp, '.agentai', 'scope.json'), '{"targets":[]}');
+      const secWs = computeContextPolicy('security', tmp, '', '打下目标站点');
+      expect(secWs.workspaceConflict).toBe(false);
+      expect(secWs.workspaceConflictReason).toContain('渗透/赏金工作台');
+      expect(secWs.workspaceDowngradeNotice).toBe('');
+
       writeFileSync(join(tmp, 'package.json'), '{}');
       expect(CODE_PROJECT_MARKERS.some(m => existsSync(join(tmp, m)))).toBe(true); // 有标记 → 不冲突
     } finally { rmSync(tmp, { recursive: true, force: true }); }
-    // security 任务: 无论工作区像不像代码项目都冲突 (除非提到工作区/本机)
-    expect(LOOP_SRC).toMatch(/case 'security':\s*\n\s*\/\/ 渗透\/挖洞的目标在外部授权范围/);
+    // security 分支: 先认"工作区即渗透台", 其余才判冲突
+    expect(LOOP_SRC).toMatch(/case 'security':[\s\S]{0,300}isSecurityWorkspace\(workspace\)/);
+    expect(LOOP_SRC).toMatch(/case 'security':[\s\S]{0,400}conflict: true/);
   });
 });
 
@@ -1763,7 +1912,8 @@ describe('上下文仲裁策略收敛 (2026-10-17, 批 2-C)', () => {
     expect(LOOP_SRC).toContain('const wsConflict = this.getContextPolicy();');
     expect(LOOP_SRC).toContain('const wsConflict63 = this.getContextPolicy();');
     // _taskType 每轮可能改判 → 缓存必须在棘轮判定后作废, 否则第二轮沿用第一轮的冲突判定
-    expect(LOOP_SRC).toMatch(/this\._taskType = taskType;\s*\n\s*\}\s*\n\s*\/\/ 批 2-C: _taskType 每轮可能改判[\s\S]{0,120}?this\._ctxPolicy = null;/);
+    // (2026-10-21: 棘轮段之后插了 _isBountyWorkspace 工作区信号行, 容错纳入)
+    expect(LOOP_SRC).toMatch(/this\._taskType = taskType;[\s\S]{0,600}?this\._ctxPolicy = null;/);
   });
 
   it('G3: ctxLedger 大头注入全部登记 (identity/行业/工作区/项目规则/记忆)', () => {
@@ -1842,5 +1992,145 @@ describe('SSE 断线: 不立刻处决长任务 (2026-10-19)', () => {
 
   it('断线重试不触发"压制前一个对话" (否则是在杀自己的任务)', () => {
     expect(CHAT).toMatch(/if \(prevEntry && !isAnswer && !isRetry\)/);
+  });
+});
+
+/**
+ * 误报防护: 错误分类禁裸状态码数字 (2026-10-20, 用户实机日志实锤)
+ * ==========================================================================
+ * 事故: llm-router 的 _isAccountError 用裸 /402|401/ 判账号级失败,
+ *   deepseek 一次普通 400 (重复 tool_call_id 触发) 的 request_id
+ *   "49ffb34a-34ca-40d2-a25a-77c53401727f" 恰好含 "401" 子串
+ *   → 误判账号级 → 跳过救援链 → 任务直接收尾 (用户以为 Key 出了问题)。
+ * 修法: 所有文本层状态码判定必须带上下文锚点 (HTTP 前缀 / code|status 字段),
+ *   统一走 message-utils.textHasStatus。UUID/request_id/hash/端口都是雷区。
+ */
+describe('误报防护: 错误分类禁裸状态码数字 (2026-10-20)', () => {
+  it('C22: _isAccountError 不再用裸 401|402, 状态码走 textHasStatus 锚定', () => {
+    expect(ROUTER_SRC).toContain('const _isAccountError = (e: any) => {');
+    expect(ROUTER_SRC).toMatch(/textHasStatus\(s, 401, 402\)/);
+    // 裸数字正则形态必须绝迹
+    expect(ROUTER_SRC).not.toMatch(/\/402\|401\|/);
+  });
+
+  it('C23: loop 侧 authFailed/transient 同样锚定', () => {
+    expect(LOOP_SRC).toMatch(/const authFailed = textHasStatus\(lastErr, 401, 403\)/);
+    expect(LOOP_SRC).toMatch(/textHasStatus\(lastErr, 429, 500, 502, 503\)/);
+    expect(LOOP_SRC).not.toMatch(/const authFailed = \/401\|403/);
+    expect(LOOP_SRC).not.toMatch(/econnrefused\|50\[023\]/);
+  });
+
+  it('C24: fail_strategy / retryableErrors / classifyToolError 的状态码判定全部锚定', () => {
+    expect(LOOP_SRC).toMatch(/textHasStatus\(r\.output, 429, 503\)/);
+    expect(LOOP_SRC).toMatch(/textHasStatus\(r\.output, 403\)/);
+    expect(LOOP_SRC).toMatch(/textHasStatus\(combined, 429, 502, 503\)/);
+    expect(LOOP_SRC).toMatch(/textHasStatus\(errorOutput, 429\)/);
+    expect(LOOP_SRC).toMatch(/textHasStatus\(errorOutput, 503\)/);
+    // 原裸数字正则绝迹
+    expect(LOOP_SRC).not.toMatch(/rate\.\*limit\|429\|503/);
+    expect(LOOP_SRC).not.toMatch(/forbidden\|403\|eacces/);
+    expect(LOOP_SRC).not.toMatch(/network\|503\|429/);
+  });
+
+  it('C25: truncate 块对同一 tool_call_id 只收第一条 (重复回复 → deepseek 400)', () => {
+    expect(ROUTER_SRC).toMatch(/pendingToolIds\.has\(tcId\) && !matchedSet\.has\(tcId\)/);
+  });
+
+  it('C26: sanitizeToolMessages 去重 (同 id 至多一条 tool 回复)', () => {
+    const MU_SRC = readFileSync(new URL('./message-utils.ts', import.meta.url), 'utf-8');
+    expect(MU_SRC).toContain('const _emittedIds = new Set<string>();');
+    expect(MU_SRC).toContain('if (_emittedIds.has(tcId)) continue;');
+  });
+});
+
+/**
+ * D1-D7 修复契约 (2026-10-20, 富哥「可以进行」授权实施)
+ * ==========================================================================
+ * D1 致命: 拒绝结果 (scope/hook/用户/超时闸门) 被 isToolFailed 漏判成成功
+ *   → 污染 _toolCallHistory (grant_scope 授权后重发被去重静默跳过) +
+ *     前端 ok:true 假 ✅ + 失败计数清零。
+ * D2: 审批 90s 超时一律自动批准 → delete_file 等高危改安全默认 (拒绝)。
+ * D3: run_background 运行中 output 不可见 → 实时更新 + 上限 + spawn error。
+ * D4: jobId 重启撞号 → 时间戳基底 + 退出杀进程树。
+ * D5: tool:result 双发 (dispatch + 主循环) → 删 dispatch 处, 只发一次。
+ * D6: 压缩硬切切断 tool 父子 → splitForCompression 向前扩展。
+ * D7: progress failCount 只看 'Error:' 前缀 → isFailedToolOutput 同源。
+ */
+describe('D1-D7 修复契约 (2026-10-20)', () => {
+  it('C27: isToolFailed 走 isFailedToolOutput 唯一来源 (含拒绝类前缀)', () => {
+    expect(LOOP_SRC).toContain('const isToolFailed = isFailedToolOutput(r.output, (r as any).success);');
+    // 原内联判据形态绝迹
+    expect(LOOP_SRC).not.toMatch(/const isToolFailed = !r\.output\s*\n/);
+    const MU_SRC = readFileSync(new URL('./message-utils.ts', import.meta.url), 'utf-8');
+    expect(MU_SRC).toContain('export function isFailedToolOutput');
+    expect(MU_SRC).toMatch(/SCOPE REJECTED\|BLOCKED BY HOOK\|用户拒绝\|TIMEOUT GATE/);
+  });
+
+  it('C28: 6 处 rejectedResults 全部带 success:false (拒绝不再被当成功)', () => {
+    // 逐对检查「data: null, → success: false,」相邻形状 (scope/timeout 两处的
+    // output 模板内含 ${...}) 会提前截断正则窗口, 不能用 push 块整体匹配)
+    const shape = (LOOP_SRC.match(/data: null,\s*\n\s*success: false,/g) || []).length;
+    expect(shape, 'planning用户拒绝/默认用户拒绝/selfmodify/hook/scope/timeout 六处').toBeGreaterThanOrEqual(6);
+    // 四个关键拒绝前缀必须存在且各自带 success:false
+    for (const marker of [
+      '[用户拒绝] 规划模式下文件操作未获批准',
+      '[ERROR] 用户拒绝了此操作',
+      '[ERROR] ${selfModifyCheck.reason}',
+      '[BLOCKED BY HOOK] This tool call was blocked',
+      '[SCOPE REJECTED] ${c.name} 的目标',
+      '[ERROR] [TIMEOUT GATE] 同一条命令之前已因执行超时被强杀',
+    ]) {
+      const idx = LOOP_SRC.indexOf(marker);
+      expect(idx, `缺少拒绝输出: ${marker}`).toBeGreaterThan(-1);
+      const after = LOOP_SRC.slice(idx, idx + 500);
+      expect(after, `${marker} 之后必须带 success: false`).toMatch(/data: null,\s*\n\s*success: false,/);
+    }
+  });
+
+  it('C29: classifyToolError 有 TOOL_REJECTED 分支 (拒绝给可行动指引, 不落 UNKNOWN)', () => {
+    const idx = LOOP_SRC.indexOf("code: 'TOOL_REJECTED'");
+    expect(idx).toBeGreaterThan(-1);
+    expect(LOOP_SRC.slice(idx - 400, idx)).toMatch(/TOOL_REJECTED/);
+    expect(LOOP_SRC.slice(idx, idx + 700)).toMatch(/grant_scope/);   // nextAction 点名授权提案
+    // 排在 TOOL_CALL_BLOCKED 之前 (同为拒绝类, 最优先)
+    const rejectedIdx = LOOP_SRC.indexOf('TOOL_REJECTED —');
+    const blockedIdx = LOOP_SRC.indexOf('TOOL_CALL_BLOCKED —');
+    expect(rejectedIdx).toBeGreaterThan(-1);
+    expect(rejectedIdx).toBeLessThan(blockedIdx);
+  });
+
+  it('C30: tool:result 双发已根治 (全文件只剩主循环 + 崩溃兜底两处)', () => {
+    const emits = (LOOP_SRC.match(/this\.emit\('tool:result'/g) || []).length;
+    // 现存: 主循环 1 + dispatchToolCalls 意外崩溃兜底 1 = 2 (各拒绝点先发也已删,
+    // 拒绝结果随 return 混排进主循环统一发, ok 判据与 isToolFailed 同源)
+    expect(emits, 'approved/rejected 全部由主循环发一次').toBe(2);
+    // 删掉的各处判据形态绝迹
+    expect(LOOP_SRC).not.toMatch(/ok: r\?\.result\?\.success !== false, durationMs: r\?\.result\?\.durationMs/);
+    expect(LOOP_SRC).not.toMatch(/result: `\[SCOPE REJECTED\] \$\{bad\} not in scope`/);
+    expect(LOOP_SRC).not.toMatch(/result: `\[TIMEOUT GATE\] 同参命令此前已超时, 拒绝原样重试`/);
+    expect(LOOP_SRC).not.toMatch(/result: `\[ERROR\] 用户拒绝了此操作`/);
+  });
+
+  it('C31: waitForApproval 支持 onTimeout; delete_file 走 reject (安全默认)', () => {
+    expect(LOOP_SRC).toMatch(/waitForApproval\(id: string, timeoutMs = 90_000, onTimeout: 'approve' \| 'reject'/);
+    expect(LOOP_SRC).toMatch(/tc\.name === 'delete_file' \? 'reject' : 'approve'/);
+    expect(LOOP_SRC).toMatch(/const autoApprove = onTimeout !== 'reject';/);
+  });
+
+  it('C32: 压缩切分走 splitForCompression (不切断 tool 父子) 且 compressMod 无 TDZ', () => {
+    expect(LOOP_SRC).toContain("const { head, recent: tail } = compressMod.splitForCompression(nonSystem, keepRecent);");
+    // compressMod 必须在 splitForCompression 调用点之前完成导入 (D6 顺带修的 TDZ)
+    const importIdx = LOOP_SRC.indexOf("const compressMod = await import('./context-compress.js');");
+    const useIdx = LOOP_SRC.indexOf('compressMod.splitForCompression');
+    expect(importIdx).toBeGreaterThan(-1);
+    expect(importIdx).toBeLessThan(useIdx);
+    // 旧的动态导入位置 (old.length>0 块内) 只允许剩 1 处 import (即块首那处)
+    const importCount = (LOOP_SRC.match(/const compressMod = await import\('\.\/context-compress\.js'\);/g) || []).length;
+    expect(importCount).toBe(1);
+  });
+
+  it('C33: progress 事件计数走 isFailedToolOutput (中文失败提示计入 failCount)', () => {
+    expect(LOOP_SRC).toMatch(/successCount: rawResults\.filter\(r => !isFailedToolOutput\(r\.output, r\.success\)\)\.length/);
+    expect(LOOP_SRC).toMatch(/failCount: rawResults\.filter\(r => isFailedToolOutput\(r\.output, r\.success\)\)\.length/);
   });
 });

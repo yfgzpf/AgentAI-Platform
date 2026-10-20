@@ -23,6 +23,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { writeEvolution, recallEvolution, extractPatterns } from './evolution.js';
 import { requireEvolution } from './evolution-freeze.js';
+import { readWorkspaceVulns } from './pentest/experience.js';
 import type { TaskLedgerSnapshot } from './task-ledger.js';
 
 // ===== 工作区层: 近 5 轮有效路线 + 下轮焦点 (GUI 展示/调试, 不注入 prompt) =====
@@ -198,14 +199,11 @@ function pentestFocusSegment(ws: string, maxLines: number): string {
   const norm = (s: string) => String(s || '').replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, '');
   const lines: string[] = [];
   try {
-    const vulnsFile = norm(ws) + '/.agentai/vulns/vulns.jsonl';
-    if (fs.existsSync(vulnsFile)) {
-      const raw = fs.readFileSync(vulnsFile, 'utf8').split('\n').filter(Boolean).slice(-50);
-      const pending = raw
-        .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-        .filter((v: any) => v && v.status === 'unverified');
-      if (pending.length > 0) lines.push(`🔴 待坐实漏洞 ${pending.length} 个: ${pending.slice(0, 5).map((v: any) => `${v.target}·${v.vulnType}`).join(', ')}`);
-    }
+    // 2026-10-20: 旧 workspace 级文件 + 项目分库统一读取 (项目隔离后仍能看到全部待坐实洞)
+    const pending = readWorkspaceVulns(ws)
+      .filter((v: any) => v && v.status === 'unverified')
+      .slice(-50);
+    if (pending.length > 0) lines.push(`🔴 待坐实漏洞 ${pending.length} 个: ${pending.slice(0, 5).map((v: any) => `${v.target}·${v.vulnType}`).join(', ')}`);
     const alertsFile = norm(ws) + '/.agentai/cve/alerts.jsonl';
     if (fs.existsSync(alertsFile)) {
       const raw = fs.readFileSync(alertsFile, 'utf8').split('\n').filter(Boolean).slice(-100);

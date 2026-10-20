@@ -42,7 +42,7 @@ describe('批次7 — 解析 description_zh / description_en / 正文兜底', ()
     expect(parseFrontmatter('---\nname: z\n---\n# H1 Only\n').description).toBe('H1 Only');
   });
 
-  it('18 个无 frontmatter 文件: 正文兜底补上 description (17/18 有可取描述)', () => {
+  it('所有无 frontmatter 文件: 正文兜底都应补上 description', () => {
     if (!HAS_CORPUS) return;
     const out: string[] = [];
     (function walk(d: string, dep: number) {
@@ -65,9 +65,10 @@ describe('批次7 — 解析 description_zh / description_en / 正文兜底', ()
       }
       if (!fm.description) console.error(`[FAIL] description 仍为空: ${f}`);
     }
-    expect(noFm).toBe(18);
-    // 全部 18 个无 frontmatter 文件都拿到了正文兜底描述 (18/18)
-    expect(noFmFilled).toBe(18);
+    // 2026-10-20: 技能语料会增删, 不再钉死"18 个"这种会随语料漂移的数字;
+    // 契约本身是: 每一个无 frontmatter 的 SKILL.md 都必须拿到正文兜底描述。
+    expect(noFm).toBeGreaterThan(0);
+    expect(noFmFilled).toBe(noFm);
   });
 
   it('正文兜底跳过工程纪律型文件里的 **元信息** 与水平线', () => {

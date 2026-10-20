@@ -358,11 +358,15 @@ export function ensureLocalStorageHealthy(opts: {
  * 会话专用的"分级瘦身"裁剪器
  * ============================================================ */
 
+type AnyMsg = { content?: string; segments?: unknown; [k: string]: unknown };
 type AnySession = {
   id?: string;
-  messages?: Array<{ content?: string; [k: string]: unknown }>;
+  messages?: AnyMsg[];
   [k: string]: unknown;
 };
+
+/** 2026-10-21: messages 是 optional, 直接 `AnySession['messages'][number]` 会 TS2537 */
+type SessionMsg = NonNullable<AnySession['messages']>[number];
 
 type Envelope = { state?: { sessions?: AnySession[]; activeId?: string | null; [k: string]: unknown }; version?: number };
 
@@ -379,16 +383,65 @@ export function capText(s: unknown, max: number): { text: string; changed: boole
   };
 }
 
-/** 单会话: 每条消息截到 cap */
+/** 单条 segment 瘦身: 去 base64 / 截工具输出 / 截断超长文本。
+ *  思考过程(reasoning/thinking)用宽松上限 4000 保留 —— 用户明确要求"思考过程不能丢"。 */
+type AnySeg = { kind?: string; text?: string; result?: string; data?: unknown; url?: string; base64?: string; content?: string; [k: string]: unknown };
+function shrinkSegment(seg: AnySeg, textCap: number): { seg: AnySeg; changed: boolean } {
+  let changed = false;
+  const s: AnySeg = { ...seg };
+  if (s.kind === 'image') {
+    if (s.base64) { delete s.base64; changed = true; }
+    if (typeof s.url === 'string' && s.url.startsWith('data:')) { s.url = '[本地图片已省略: 体积过大]'; changed = true; }
+  } else if (s.kind === 'tool') {
+    if (s.data) { delete s.data; changed = true; }
+    const r = capText(s.result, Math.min(2000, textCap));
+    if (r.changed) { s.result = r.text; changed = true; }
+  } else if (s.kind === 'widget') {
+    const r = capText(s.content, 4000);
+    if (r.changed) { s.content = r.text; changed = true; }
+  } else if (s.kind === 'reasoning' || s.kind === 'thinking') {
+    // ★ 思考链路必须保留: 宽松上限, 不因瘦身丢失推理过程
+    const r = capText(s.text, 4000);
+    if (r.changed) { s.text = r.text; changed = true; }
+  } else if (s.kind === 'text') {
+    const r = capText(s.text, textCap);
+    if (r.changed) { s.text = r.text; changed = true; }
+  }
+  return { seg: s, changed };
+}
+
+/** 批量瘦身 segments; 无 segments 返回 { changed:false } 不动原对象 */
+function shrinkSegments(segments: unknown, textCap: number): { segments?: AnySeg[]; changed: boolean } {
+  if (!Array.isArray(segments)) return { changed: false };
+  let changed = false;
+  const out = (segments as AnySeg[]).map(seg => {
+    const { seg: s, changed: c } = shrinkSegment(seg, textCap);
+    if (c) changed = true;
+    return s;
+  });
+  return { segments: out, changed };
+}
+
+/** 给会话存储用的便捷入口 (导出供 useSessionAutoSave 调用) */
+export function shrinkSessionSegments(segments: unknown): AnySeg[] | undefined {
+  const r = shrinkSegments(segments, 4000);
+  return r.changed || Array.isArray(segments) ? r.segments : undefined;
+}
+
+/** 单会话: 每条消息截到 cap (含 content 与 segments 两层) */
 function capSession(s: AnySession, cap: number): boolean {
   if (!Array.isArray(s.messages) || s.messages.length === 0) return false;
   let changed = false;
   s.messages = s.messages.map(m => {
     if (!m || typeof m !== 'object') return m;
-    const r = capText(m.content, cap);
-    if (!r.changed) return m;
-    changed = true;
-    return { ...m, content: r.text };
+    let changedHere = false;
+    const nm: AnyMsg = { ...m };
+    const r = capText(nm.content, cap);
+    if (r.changed) { nm.content = r.text; changedHere = true; }
+    const shr = shrinkSegments(nm.segments, cap);
+    if (shr.changed) { (nm as any).segments = shr.segments; changedHere = true; }
+    if (changedHere) changed = true;
+    return nm;
   });
   return changed;
 }
@@ -485,12 +538,12 @@ export function createSessionPruner(budgetChars = 1_400_000) {
   };
 
   return createTieredPruner([
-    // L0 非当前会话: 每条消息截到 4000 字
+    // L0 非当前会话: 每条消息截到 4000 字 (含 segments 内文本/reasoning)
     (st) => mapOthers(st, s => capSession(s, 4000)),
-    // L1 非当前会话: 只留最近 6 条, 每条 1500
+    // L1 非当前会话: 只留最近 15 条, 每条 3000 (放宽, 减少切回后历史丢失)
+    (st) => mapOthers(st, s => trimSession(s, 15, 3000)),
+    // L2 非当前会话: 只留最近 6 条, 每条 1500
     (st) => mapOthers(st, s => trimSession(s, 6, 1500)),
-    // L2 非当前会话: 只留最近 2 条, 每条 800
-    (st) => mapOthers(st, s => trimSession(s, 2, 800)),
     // L3 非当前会话: 消息体清空 (只留索引, 可点开继续)
     (st) => mapOthers(st, s => {
       if (!Array.isArray(s.messages) || s.messages.length === 0) return false;

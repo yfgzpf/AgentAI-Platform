@@ -22,7 +22,10 @@ export class SystemDirectiveManager {
   private pending: PendingDirective[] = [];
   private deferred: PendingDirective[] = [];
 
-  /** 可延迟的指令来源 — 质量管控类, 不阻塞任务执行 */
+  /** 可延迟的指令来源 — 质量管控类, 不阻塞任务执行
+   *  ⚠️ 2026-10-20 F2 防回归注记: 这些来源入队时优先级**必须 ≥ 'high'** —
+   *  收尾处 flushDeferred() 的消费端只放行 priority==='high' (补一轮 LLM),
+   *  以 'medium' 入队 = 运行时 no-op (六个质量功能曾全部空转, 只落 console.log)。 */
   private static DEFERRABLE_SOURCES = new Set([
     'meta_ask', 'meta_pua',           // 元认知决策
     'boundary_check', 'boundary_p0',  // 知识边界/认知自检
@@ -85,7 +88,9 @@ export class SystemDirectiveManager {
     for (const d of picked) {
       const room = maxChars - used;
       if (room <= 40) {
-        out.push('(指令预算已满，其余高优先级指令本轮延后)');
+        // 2026-10-20 F9: 原文案声称指令会"延后"到后面轮次 — 不实: this.pending
+        // 下面整行清空, 溢出的指令是被**丢弃**。说清事实避免误导排障。
+        out.push('(指令预算已满，其余高优先级指令已省略，未注入本轮)');
         break;
       }
       const text = d.content.length > room ? d.content.slice(0, room) + '…(截断)' : d.content;
@@ -108,11 +113,6 @@ export class SystemDirectiveManager {
     const result = [...this.deferred];
     this.deferred = [];
     return result;
-  }
-
-  /** 延迟队列中是否有高优先级指令 (需要补一轮) */
-  hasCriticalDeferred(): boolean {
-    return this.deferred.some(d => d.priority === 'high');
   }
 
   /** 检查是否有待处理即时指令 */

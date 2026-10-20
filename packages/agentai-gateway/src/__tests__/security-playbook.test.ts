@@ -40,8 +40,9 @@ describe('security-playbook: 主对话注入的工作流', () => {
   });
 
   it('长度受控 (每轮进 immutablePrefix, 不许膨胀)', () => {
-    // 与 pentest-pipeline.test.ts 同一定义: 架构师定的注入规模硬上限 2500 (1600 是过时旧值, 2200 也已突破 — 新增 WAF/目标状态等工具指引是必要解药)
-    expect(SECURITY_PLAYBOOK.length).toBeLessThanOrEqual(2500);
+    // 与 pentest-pipeline.test.ts 同一定义: 2026-10-20 新增防篡改证据包/业务逻辑闸门/
+    // 定向打击链三条硬规则后, 上限从 2500 抬到 3400 (仍为单段注入量级, 不允许无界增长)
+    expect(SECURITY_PLAYBOOK.length).toBeLessThanOrEqual(3400);
   });
 });
 

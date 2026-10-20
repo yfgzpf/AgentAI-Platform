@@ -128,9 +128,12 @@ class VideoTaskManager {
         reconnectionDelay: 2000,
       });
       // 后端推送: 视频完成 → 立即更新任务, 停止轮询
-      this.wsSocket.on('video:completed', (data: { taskId: string; videoUrl: string; coverUrl?: string }) => {
+      this.wsSocket.on('video:completed', (data: { taskId: string; videoUrl?: string; coverUrl?: string }) => {
         const task = this.tasks.find(t => t.taskId === data.taskId);
         if (task && task.status === 'polling') {
+          // ✅ 2026-10-20: 收到"完成"事件但没有地址 → 不实然停轮询, 继续 poll 等真实 URL,
+          //   避免"显示成功却没视频"。地址到了再停。
+          if (!data.videoUrl) return;
           this.stopPolling(task.id);
           this.activePollIds.delete(task.id);
           task.status = 'completed';
@@ -201,6 +204,13 @@ class VideoTaskManager {
             if (t.videoUrl) return { ...t, status: 'completed' as const };
             if (t.taskId) return { ...t, status: 'polling' as const }; // 恢复轮询
             return { ...t, status: 'failed' as const }; // 没 taskId 说明提交都没成功
+          }
+          // 2026-10-20 修复「视频生成成功但前端不显示」的遗留救回:
+          // 旧 bug 会把"已生成但没解析出 URL"的任务标成 completed+videoUrl:null,
+          // 刷新后若直接保留就会永远"显示成功却空地址"。这里主动把它打回轮询,
+          // 让修复后的提取链重新向上游拉一次真实成片地址。
+          if (t.status === 'completed' && !t.videoUrl && t.taskId) {
+            return { ...t, status: 'polling' as const };
           }
           return t;
         });
@@ -393,8 +403,16 @@ submitTask(params: {
       next.status = 'polling';
       this.notify();
       this.startPolling(next);
-    } catch (e) {
+    } catch (e: any) {
       next.status = 'failed';
+      // 2026-10-20: 提交异常必须落 next.error — 原实现 catch 里不写 error,
+      //   前端只能兜底显示 "Failed to fetch", 真实原因 (网关未启动 / 403 分组
+      //   权限 / 请求体过大被拒 / CORS) 全部丢失, 用户对着一个网络层提示
+      //   排查半天 (展示层误报, 与网关实测返回干净 403 JSON 的现场矛盾)。
+      const rawMsg = e?.message || String(e) || '未知错误';
+      next.error = /failed to fetch|networkerror|load failed/i.test(rawMsg)
+        ? `请求无法到达网关 (${this.httpUrl})。\n请确认: ① 网关已启动 (pnpm dev) ② 设置里网关地址正确 ③ 图片过大时尝试压缩。\n原始错误: ${rawMsg}`
+        : rawMsg;
       // 提交阶段就失败 ⇒ 不会进入轮询, stopPolling 不会被调用, 凭证需在此显式清理
       this.byokCreds.delete(next.id);
       this.activePollIds.delete(next.id);
@@ -445,41 +463,55 @@ try {
           return;
         }
 
-        const newStatus = data.status || 'queued';
-        const remoteUrl = data.videoUrl || data.video_url || null;
-
-        // 尝试从 raw 提取 URL
-        let finalUrl = remoteUrl;
+        // ✅ 2026-10-20 修复「视频生成成功但前端不显示」: 终态但无地址 → 明确失败,
+        //   绝不"显示成功却没视频"。
+        const rawStatus = data.status || data.state || 'queued';
+        const normStatus = String(rawStatus).toLowerCase();
+        // 从网关返回 + raw 里尽可能多地提取 URL (信封内外都试)
+        let finalUrl: string | null =
+          data.videoUrl || data.video_url || data.url || data.result_url || null;
         if (!finalUrl && data.raw) {
           try {
-            const raw = JSON.parse(data.raw);
-            finalUrl = raw.video_url || raw.video?.url || raw.output?.[0]?.url || raw.url || raw.result?.video_url || null;
+            const rawObj = JSON.parse(data.raw);
+            finalUrl = (
+              rawObj.video_url || rawObj.video?.url || rawObj.output?.[0]?.url
+              || rawObj.url || rawObj.result?.video_url || rawObj.result_url
+              || rawObj.data?.url || rawObj.data?.video_url || null
+            );
           } catch {}
         }
 
-        const isDone = ['completed', 'success', 'succeeded', 'done', 'finished'].includes(newStatus) || (finalUrl && newStatus !== 'failed');
-        const isFailed = ['failed', 'error', 'cancelled', 'canceled'].includes(newStatus);
+        const isTerminalDone = ['completed', 'success', 'succeeded', 'done', 'finished'].includes(normStatus);
+        const isTerminalFail = ['failed', 'error', 'cancelled', 'canceled'].includes(normStatus);
 
-        if (isDone || isFailed) {
+        if (isTerminalDone || isTerminalFail) {
           this.stopPolling(task.id);
-          task.status = isDone ? 'completed' : 'failed';
-          task.videoUrl = finalUrl;
-          task.coverUrl = data.coverUrl || data.cover_url || null;
-          // P0: 保存 API 返回的尾帧 URL (return_last_frame: true 时返回)
-          (task as any).lastFrameUrl = data.lastFrameUrl || data.last_frame_url || null;
           this.activePollIds.delete(task.id);
-          this.notify();
-
-          // 浏览器通知
-          if (isDone && 'Notification' in window && Notification.permission === 'granted') {
-            new Notification('🎬 视频生成完成', { body: task.prompt.slice(0, 50) });
+          if (isTerminalDone && finalUrl) {
+            // 正常完成: 有地址才算成功
+            task.status = 'completed';
+            task.videoUrl = finalUrl;
+            task.coverUrl = data.coverUrl || data.cover_url || null;
+            // P0: 保存 API 返回的尾帧 URL (return_last_frame: true 时返回)
+            (task as any).lastFrameUrl = data.lastFrameUrl || data.last_frame_url || null;
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification('🎬 视频生成完成', { body: task.prompt.slice(0, 50) });
+            }
+          } else if (isTerminalDone && !finalUrl) {
+            // ✅ 终态但无地址 → 失败 + 原因, 前端不会"显示成功没视频"
+            task.status = 'failed';
+            task.error = data.warning
+              || '视频已生成完成，但未能取到视频地址（网关未从上游响应解析到 URL）。请重试，或前往 ALRO 平台直接查看并下载。';
+          } else {
+            task.status = 'failed';
+            task.error = data.error || '视频生成失败';
           }
-
+          this.notify();
           // 自动处理队列中下一个
           this.processQueue();
         } else {
           task.progress = typeof data.progress === 'number' ? data.progress : 0;
-          if (finalUrl) task.videoUrl = finalUrl;
+          if (finalUrl) task.videoUrl = finalUrl; // 提前拿到也先存着
           this.notify();
         }
       } catch { /* 网络抖动 */ }

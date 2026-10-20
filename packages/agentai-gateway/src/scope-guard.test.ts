@@ -109,7 +109,7 @@ describe('行为: scope_guard + report_vulnerability', () => {
     expect(r.data?.ok).toBe(true);
   });
 
-  it('report_vulnerability 落盘到 .agentai/vulns/vulns.jsonl', async () => {
+  it('report_vulnerability 按项目分库落盘到 .agentai/pentest/projects/<root>/vulns.jsonl', async () => {
     const fs = await import('node:fs');
     const { EXTRA_HANDLERS } = await import('./tools.ts');
     const ctx = { userId: 'u', workspace: tmpWs, abortSignal: new AbortController().signal } as any;
@@ -118,7 +118,8 @@ describe('行为: scope_guard + report_vulnerability', () => {
       ctx,
     );
     expect(r.success).toBe(true);
-    const vulnsFile = nodePath.join(tmpWs, '.agentai', 'vulns', 'vulns.jsonl');
+    // 2026-10-20: 项目隔离 —— 不再写 workspace 级大杂烩, 按根域分目录
+    const vulnsFile = nodePath.join(tmpWs, '.agentai', 'pentest', 'projects', 'example.com', 'vulns.jsonl');
     expect(fs.existsSync(vulnsFile)).toBe(true);
     const lastLine = fs.readFileSync(vulnsFile, 'utf8').trim().split('\n').pop()!;
     expect(JSON.parse(lastLine).title).toBe('反射型XSS');
@@ -254,8 +255,10 @@ describe('契约: 2026-10-15 P0/P1 修复接线', () => {
     expect(loopSrc).toMatch(/this\.opts\.subagentType === 'pentest'/);
     expect(loopSrc).toMatch(/PENTEST_SCOPE_GATED/);
     expect(loopSrc).toMatch(/isTargetInScope\(this\.opts\.workspace, t\)/);
-    // 闸门覆盖的三个越权工具 (wsl_scan 自带闸门不重复拦)
-    expect(loopSrc).toMatch(/new Set\(\['run_command', 'browser_navigate', 'web_fetch'\]\)/);
+    // 闸门覆盖的越权工具 (wsl_scan 自带闸门不重复拦)。
+    // 2026-10-20 F1: 扩容 wsl_exec/run_background/run_shell_command —
+    //   wsl_exec 是全 Kali 能力, run_background 是长扫描主通道, 原先零授权校验。
+    expect(loopSrc).toMatch(/new Set\(\['run_command', 'browser_navigate', 'web_fetch', 'wsl_exec', 'run_background', 'run_shell_command'\]\)/);
   });
 
   it('subagent.ts 两条构造路径都传 subagentType (正规路径 + inline spawn)', () => {
@@ -290,7 +293,9 @@ describe('契约: 2026-10-15 P0/P1 修复接线', () => {
     expect(wslBody).toMatch(/assertSafeScanArg/);
     expect(wslBody).toMatch(/pentestRateLimit/);
     expect(wslBody).not.toMatch(/execFile\('cmd'/);
-    expect(wslBody).toMatch(/execFile\('wsl', argv/);
+    // 2026-10-21: 裸 'wsl' → resolveWslExe() (绝对路径, 治 Node 进程 PATH 不含 System32)。
+    //   契约不变: argv 数组化, 不走 cmd /c 拼串。
+    expect(wslBody).toMatch(/execFile\(resolveWslExe\(\), argv/);
   });
 
   it('pentest prompt 反映直接授权 + dispatch 硬闸门 + 证据链 (save_evidence)', () => {
@@ -370,7 +375,9 @@ describe('行为: wsl_scan 注入面修复 (P1-1)', () => {
     if (!ok.success) {
       expect(ok.output).not.toMatch(/shell 元字符|不在授权范围|未知工具/);
     }
-  });
+    // 2026-10-20: 冷启动动态 import tools.ts (~9s) + wsl.exe 探测会顶爆默认 10s,
+    // 与 evidence-hash 同款处理 —— 功能本身毫秒级, 给显式 30s 消除时序抖动。
+  }, 30_000);
 });
 
 describe('行为: report_vulnerability 证据门槛 (P2-1) + 证据链 (2026-10-16)', () => {
@@ -442,7 +449,8 @@ describe('行为: report_vulnerability 证据门槛 (P2-1) + 证据链 (2026-10-
     expect(r2.success).toBe(true);
     expect(r2.data?.status).toBe('verified');
     // 只校验本用例新追加的 2 行 (同 workspace 前序用例可能已写过其它行)
-    const lines = readFileSync(nodePath.join(wsB, '.agentai', 'vulns', 'vulns.jsonl'), 'utf8').trim().split('\n');
+    // 2026-10-20: 写入位置已改为项目分库
+    const lines = readFileSync(nodePath.join(wsB, '.agentai', 'pentest', 'projects', 'example.com', 'vulns.jsonl'), 'utf8').trim().split('\n');
     const last2 = lines.slice(-2).map(l => JSON.parse(l));
     expect(last2[0].status).toBe('unverified');
     expect(last2[1].status).toBe('verified');

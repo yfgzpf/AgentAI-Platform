@@ -68,8 +68,9 @@ describe('课程循环 — 模块契约', () => {
     expect(CUR_SRC).toMatch(/extractPatterns\(/);
   });
 
-  it('pentest 特化段只读 vulns.jsonl + cve 告警 (纯读不打目标)', () => {
-    expect(CUR_SRC).toMatch(/\.agentai\/vulns\/vulns\.jsonl/);
+  it('pentest 特化段只读漏洞库 + cve 告警 (纯读不打目标)', () => {
+    // 2026-10-20: 漏洞改为项目分库后, 统一走 readWorkspaceVulns (旧文件 + 各项目分库)
+    expect(CUR_SRC).toMatch(/readWorkspaceVulns\(ws\)/);
     expect(CUR_SRC).toMatch(/\.agentai\/cve\/alerts\.jsonl/);
   });
 });

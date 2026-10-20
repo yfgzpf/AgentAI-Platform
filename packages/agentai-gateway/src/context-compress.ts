@@ -97,3 +97,24 @@ export function shouldNotifyCompress(
   if (compressedCount >= bigCompressThreshold) return true;
   return nowMs - lastEmitAt >= minIntervalMs;
 }
+
+/**
+ * 2026-10-20 D6: 压缩切分 —— 保证 recent 段**不以孤儿 tool 消息开头**。
+ * =====================================================================
+ * 事故: agentai-loop 原用 `nonSystem.slice(-keepRecent)` 硬切, 切点落在 tool
+ *   消息上时 (它的 assistant(tool_calls) 父消息被扫进 old 压成摘要) → 孤儿 tool
+ *   消息进 recent → 回写 appendOnlyLog。下游 sanitizeToolMessages 会兜底降级
+ *   (协议不崩, 双保险), 但父子关联断裂 —— AI 看到 `[tool-result:ffuf] 300 行
+ *   结果` 却不知道对应哪次决策, 是长任务「失忆/重复劳动」的表现之一。
+ * 修法: 切点落在 tool 消息上时向前扩展到生它的 assistant(tool_calls)
+ *   (一批 tool 回复的父)。宁可多保留几条, 不可切断父子。
+ */
+export function splitForCompression(
+  nonSystem: any[],
+  keepRecent: number,
+): { head: any[]; recent: any[] } {
+  const n = nonSystem.length;
+  let start = Math.max(0, n - keepRecent);
+  while (start > 0 && (nonSystem[start] as any)?.role === 'tool') start--;
+  return { head: nonSystem.slice(0, start), recent: nonSystem.slice(start) };
+}

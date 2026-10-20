@@ -24,8 +24,10 @@ export default defineConfig({
       },
     },
     reporters: ['verbose'],
-    testTimeout: 10000,
-    hookTimeout: 10000,
+    // 2026-10-21: tools.ts 已是 10k 行模块, 冷启动动态 import 在并发下 >10s;
+    // 单测本身是毫秒级, 10s 只会制造时序假红灯。30s 仍是硬上限, 不掩盖真实挂死。
+    testTimeout: 30000,
+    hookTimeout: 30000,
   },
   resolve: {
     alias: {
