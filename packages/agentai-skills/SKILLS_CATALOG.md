@@ -156,6 +156,12 @@
 - **plumbing-layout-generator** (新) - 水电管线布局
 - **hvac-designer** (新) - 暖通设计（地暖/新风）
 
+### 🛡️ 安全 (security/)
+- **js-reverse** (新) - 前端 JS 加密参数逆向（定位签名函数→证据驱动补环境→Node 复现→http_replay 回放）；命中"接口带 sign/token/加密参数"自动调
+- pentest-workflow - 渗透测试/挖洞自动化工作流（授权→限频→侦察→最小强度攻击→PoC→落盘→报告）
+- bounty-target-picker - 从赏金平台项目页解析 in-scope 资产生成待授权清单
+- bounty-report - 把漏洞整理成各赏金平台能过审的报告
+
 ### 🚀 营销获客 (marketing/)
 - lead-generation-automation - 获客自动化
 - comment-interception-system - 评论拦截
@@ -193,6 +199,7 @@
 | 💬 元技能 | 3 | 创建/演化 |
 | 🖥️ 桌面 | 2 | 自动化 |
 | 🏗️ 建筑 | 12 | 设计/施工/水电/暖通 |
+| 🛡️ 安全 | 4 | 挖洞/逆向/赏金报告 |
 | 🚀 营销获客 | 6 | 获客 |
 | 🍳 生活 | 2 | 旅游/美食 |
 
