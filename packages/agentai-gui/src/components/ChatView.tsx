@@ -1573,11 +1573,13 @@ const [loading, setLoading] = useState(false);
       // 2026-10-21: 主任务进入「等服务端子智能体」状态 (富哥: "任务主导方应该不断的
       //   去看完成没有而不是中断任务呀?")。服务端轮询期间前端会看到主 AI 长时间
       //   无输出 — 这行是解释, 不是卡死。同一等待批次只占一行 (noticeKind 覆盖)。
+      // 2026-10-21 午后 (方案 5.1): 语义升级 — 回合内并发执行后, 还在跑的都是
+      //   「转后台继续」的; 主智能体不阻塞, 带着认知收口, 成果完成自动带回。
       onSubagentWaiting: (info: any) => {
         lastActivityTs = Date.now();
         const n = Number(info?.count) || 0;
         updateMessage(botId, (m: any) => {
-          const text = `\n\n⏳ 主智能体正在等待 ${n} 个子智能体完成 (服务端轮询中, 主任务不中断)…\n`;
+          const text = `\n\n🔄 有 ${n} 个子智能体转后台继续执行 (主任务不阻塞, 完成后自动唤醒整合)…\n`;
           const segs: any[] = m.segments || [];
           const idx = segs.findIndex((s: any) => s.kind === 'text' && s.noticeKind === 'subagent_waiting');
           if (idx >= 0) {

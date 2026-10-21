@@ -45,8 +45,10 @@ import { buildMemoryContext, initProjectMemory, readProjectMemory } from './proj
 // 2026-10-21 子智能体「独立任务单元」: 成果落盘 + 网关级注册表
 //   (子智能体不随父中断而中止, 跑完的成果落到「子任务产物」区, 供前端唤醒续跑)
 import { saveArtifact, loadArtifact, appendTranscript } from './subagent-artifacts.js';
-import { registerSubagent, completeSubagent, runningForSession, finishedResultsForSession } from './subagent-registry.js';
+import { registerSubagent, completeSubagent, runningForSession } from './subagent-registry.js';
 import { checkSubagentSpawnPolicy, isBountyWorkspace } from './subagent-policy.js';
+// 2026-10-21 富哥《并行子智能体编排改造方案》: 结构化 Task/Result + 调用预算
+import { normalizeSubagentTask, makeSubagentResult, formatSubagentResult, spawnBudgetState, recordSpawn, shouldShortCircuitSubagent, SUBAGENT_SYNC_TIMEOUT_MS, type SubagentTask, type SubagentResult } from './subagent-schema.js';
 
 /**
  * 2026-10-17 富哥拍板「全部放宽」: **不再有任何迭代上限**。
@@ -1097,24 +1099,16 @@ private _forbiddenResponseCount: number = 0;
   private _deltaTimer: NodeJS.Timeout | null = null;
   private static readonly DELTA_THROTTLE_MS = 50;
 
-  /** 并发子 Agent 计数器: 最多 2 个并行, 超出排队拒绝 */
+  /** 并发子 Agent 计数器: 信号量上限 (方案 6.2: 默认 5) */
   private _subAgentCount = 0;
-  private static readonly MAX_SUBAGENTS = 2;
+  private static readonly MAX_SUBAGENTS = 5;
 
   /**
-   * 2026-10-21: 主任务「等子智能体」状态 (富哥: "任务主导方应该不断的去看完成没有
-   * 而不是中断任务呀?")。旧行为: 模型一句"已完成"就 break → 子智能体还在跑 →
-   * 成果只能靠前端 _resumeFrom 唤醒 (页面关了就永久 orphan, 主任务白中断)。
-   * 新行为: 收口前发现本会话还有 running 子智能体 → 服务端轮询等待 (不依赖前端),
-   *   全部完成后经 _pendingSubagentResults 回注并 continue, 主 AI 拿着成果自己收口。
-   * 上限: 墙钟 10 分钟 (与子智能体墙钟一致) + 最多 3 次「等→续」循环 (防模型
-   *   每轮都派新的然后等, 变成无限续命)。
+   * 2026-10-21 午后: 收口时「后台子任务仍在跑」的告知只做一次 (防模型每轮都触发,
+   * 变成无限续命)。旧的阻塞等待机制 (轮询等全部完成再回注) 已随方案 5.1 退役,
+   * 相关字段一并删除 — 详见本文件收口点与 _awaitTurnSpawns 的注释。
    */
-  private _subWaitRounds = 0;
-  /** 已回注过的子任务 id (等待路径专用, 防旧成果在后续等待中被重复注入) */
-  private _subInjectedIds = new Set<string>();
-  private static readonly SUBAGENT_WAIT_CAP_MS = 10 * 60 * 1000;
-  private static readonly MAX_SUB_WAIT_ROUNDS = 3;
+  private _subWaitNotified = false;
 
   /**
    * 已在主循环就地处理完的 spawn_subagent 调用 id (2026-10-10)。
@@ -1133,6 +1127,30 @@ private _forbiddenResponseCount: number = 0;
    * 实际拿不到任何内容, 表现为"子智能体已受理但结果从未到达")。
    */
   private _pendingSubagentResults = new Map<string, { status: 'done' | 'error'; content: string; subId: string }>();
+
+  /**
+   * 2026-10-21 富哥《并行子智能体编排改造方案》落地: 回合内并发执行。
+   * 旧架构: spawn = fire-and-forget + 收口点阻塞等待 (方案明确否定的"break 等唤醒")。
+   * 新架构: 本回合收集所有 spawn_subagent 调用 → 普通工具照常 dispatch (子任务并发跑)
+   *   → 回合内 await 收集的 spawn (每条 timeoutMs 上限, 默认 300s) → 真实 SubagentResult
+   *   按 tool_call_id 回填 → 主循环 continue, 不 break 不等外部唤醒。
+   * 超时/中止 → 不杀子任务, 转后台继续跑 (墙钟兜底), 结果经 _pendingSubagentResults
+   *   或前端自动唤醒回收。
+   */
+  private _turnSpawns: Array<{
+    tc: any;
+    subId: string;
+    norm: SubagentTask;
+    startedAt: number;
+    /** IIFE 完成时调用: 记录真实结果 (不 reject — 异常隔离, 方案 6.2) */
+    resolve: (r: SubagentResult) => void;
+    settled: boolean;
+    result: SubagentResult | null;
+    /** 回合内已判超时/中止 → IIFE 最终完成时必须走 _pendingSubagentResults 回注 */
+    timedOutInTurn: boolean;
+  }> = [];
+  /** 本回合被闸门拦下 (策略/免费档/并发/预算) 的 spawn 结局文本: tcId → 给模型看的文本 */
+  private _spawnOutcomes = new Map<string, string>();
 
   // 2026-10-20 F9: 此处曾有一个 formatToolResult 的文件 stat 缓存 (Map + TTL +
   // 容量三个成员), 声明后零使用 — 缓存从未接线, 死代码已删 (留此注记防"以为漏删")。
@@ -5370,6 +5388,9 @@ if (isComplexTask) {
         const modelKeyForFreeCheck = this.opts.modelName || this.opts.model;
         const isFreeModel = isFreeProvider(modelKeyForFreeCheck);
         const spawnHandled = this._spawnHandledCallIds; // 已在本层处理的 tool_call id, 防止下游重复执行
+        // 2026-10-21 方案落地: 本回合 spawn 收集器重置 (回合内并发执行, 见 _awaitTurnSpawns)
+        this._turnSpawns = [];
+        this._spawnOutcomes.clear();
         for (const tc of res.toolCalls) {
           if (tc.name === 'spawn_subagent') {
             // ★ 2026-10-21 富哥拍板: 赏金/渗透任务禁止派子智能体 (代码闸门)。
@@ -5382,10 +5403,11 @@ if (isComplexTask) {
               const policyId = `policy-${Date.now()}`;
               // start/error 用同一个 id — 前端 onSubagentError 才能收敛运行框
               this.emit('subagent:start', { id: policyId, type: tc.args?.type, task: tc.args?.task });
-              this.context.appendOnlyLog.push({
-                role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
-                content: `[派发被拒] ${spawnPolicy.reason}`,
-              });
+              // 2026-10-21 方案落地: 不在此处直推 appendOnlyLog — dispatchToolCalls 会为
+              //   spawnHandled id 补占位符, 两处同 id 双消息 (dedup 靠 sanitize 兜底, 且
+              //   模型可能只看到占位符看不到真实理由)。改记 _spawnOutcomes, 回合末统一
+              //   覆盖占位符, 保证一条 tc.id 一条真实消息。
+              this._spawnOutcomes.set(tc.id, `[派发被拒] ${spawnPolicy.reason}`);
               this.emit('subagent:error', { id: policyId, error: spawnPolicy.reason });
               spawnHandled.add(tc.id);
               continue; // 跳过此 spawn, 主循环继续
@@ -5398,17 +5420,27 @@ if (isComplexTask) {
               //   原来写了两�� `deferred-${Date.now()}`, Date.now() 两次调用是两个不同值。
               const deferredId = `deferred-${Date.now()}`;
               this.emit('subagent:start', { id: deferredId, type: tc.args?.type, task: tc.args?.task });
-              // 不创建子Agent, 让主Agent自己通过工具调用完成任务
-              // 替换为提示信息, 引导主Agent自行执行
-              this.context.appendOnlyLog.push({
-                role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
-                content: `[子Agent不可用] 当前使用免费档模型 (${this.opts.model}), 不支持子智能体并行。请直接使用工具执行: ${tc.args?.task || ''}`,
-              });
+              // 不创建子Agent, 让主Agent自己通过工具调用完成任务 (同策略路径: 记结局, 不直推)
+              this._spawnOutcomes.set(tc.id,
+                `[子Agent不可用] 当前使用免费档模型 (${this.opts.model}), 不支持子智能体并行。请直接使用工具执行: ${tc.args?.task || ''}`);
               this.emit('subagent:error', { id: deferredId, error: '免费档模型不支持子智能体并行, 已降级为主 Agent 自行执行' });
               spawnHandled.add(tc.id);
             } else {
               // 商业模型: 以本体为主, 子智能体也用同一商业模型
-              // ✅ P0: 并发限制 — 超过 MAX_SUBAGENTS 时排队等待, 防止无限扩张
+              // ★ 2026-10-21 方案 9.2 调用预算: 每会话默认 3 次, 超了必须自己做。
+              //   提示词只能降概率, 这是硬闸门 (bounty 工作区在 policy 层已是 0 次)。
+              const _sid = String(this.opts.sessionId || '');
+              const _budget = spawnBudgetState(_sid);
+              if (_budget.exhausted) {
+                const _budgetId = `budget-${Date.now()}`;
+                this.emit('subagent:start', { id: _budgetId, type: tc.args?.type, task: tc.args?.task });
+                this._spawnOutcomes.set(tc.id,
+                  `[委托预算已用完] 本会话已委托 ${_budget.used}/${_budget.limit} 次 (框架上限)。请自己完成剩余部分: ${tc.args?.task || ''}`);
+                this.emit('subagent:error', { id: _budgetId, error: `调用预算已用完 (${_budget.used}/${_budget.limit}), 请自主完成` });
+                spawnHandled.add(tc.id);
+                continue;
+              }
+              // ✅ P0: 并发限制 — 超过 MAX_SUBAGENTS 时拒绝, 防止无限扩张
               if (this._subAgentCount >= AgentAILoop.MAX_SUBAGENTS) {
                 logger.warn(`[subagent] 并发上限 ${AgentAILoop.MAX_SUBAGENTS}, 拒绝 spawn (当前 ${this._subAgentCount}/${AgentAILoop.MAX_SUBAGENTS})`);
                 // ★ P0 修复: 原来只 emit 'subagent:rejected', 而 chat.ts 只转发
@@ -5419,12 +5451,26 @@ if (isComplexTask) {
                   id: `rejected-${Date.now()}`,
                   error: `并发上限已达 ${AgentAILoop.MAX_SUBAGENTS}, 本次子智能体请求被拒`,
                 });
+                this._spawnOutcomes.set(tc.id,
+                  `[并发上限] 本回合已有 ${AgentAILoop.MAX_SUBAGENTS} 个子智能体在跑 (框架上限), 本次请求被拒。下一回合再派, 或自己完成: ${tc.args?.task || ''}`);
                 spawnHandled.add(tc.id);
                 continue; // 跳过此 spawn, 主循环继续
               }
               const subId = `${tc.args?.type || 'sub'}-${Date.now()}`;
               this.emit('subagent:start', { id: subId, type: tc.args?.type, task: tc.args?.task }); // 前端可见
               this._subAgentCount++;
+              // ★ 2026-10-21 方案落地: 结构化 Task + 预算计数 + reason 审计 (9.3)
+              const { task: subNorm, reasonProvided } = normalizeSubagentTask(tc.args || {});
+              recordSpawn(_sid);
+              console.log(`[spawn-audit] session=${_sid} sub=${subId} type=${subNorm.type || 'generic'} reason=${subNorm.reason.slice(0, 120)} provided=${reasonProvided} timeoutMs=${subNorm.timeoutMs} background=${subNorm.background}`);
+              // 回合内收集: 普通工具 dispatch 完后统一 await (见 _awaitTurnSpawns)
+              const spawnEntry = {
+                tc, subId, norm: subNorm, startedAt: Date.now(),
+                resolve: (_r: SubagentResult) => { /* 下方 IIFE 完成时赋值 */ },
+                settled: false, result: null as SubagentResult | null, timedOutInTurn: false,
+              };
+              spawnEntry.resolve = (r: SubagentResult) => { spawnEntry.settled = true; spawnEntry.result = r; };
+              this._turnSpawns.push(spawnEntry);
               // ★ 2026-10-21: 这些变量必须在 try **之外**声明 —— catch/finally 块
               //   看不到 try 块内部声明的 const (JS 块级作用域), 否则产物落盘拿不到元数据。
               const subStartedAt = Date.now();
@@ -5616,17 +5662,27 @@ if (isComplexTask) {
                     iterations: subResult.iterations,
                     durationMs: subDuration,
                   });
-                  this.context.appendOnlyLog.push({
-                    role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
-                    content: `[子Agent ${tc.args?.type || 'explore'}]: ${(subResult.content || '无结果').slice(0, 2000)}`,
-                  });
-                  // 2026-10-11 P0: 结果记入回注队列 — 主循环下一轮 LLM 调用前
-                  // 会消费 _pendingSubagentResults, 把子智能体产出注入主上下文
-                  this._pendingSubagentResults.set(subId, {
-                    status: 'done',
-                    subId,
-                    content: `任务「${tc.args?.task || ''}」完成 (${subResult.iterations}轮/${subResult.durationMs}ms): ${(subResult.content || '无结果').slice(0, 1500)}`,
-                  });
+                  // ★ 2026-10-21 方案落地: 不直推 appendOnlyLog — 与 dispatchToolCalls
+                  //   占位符同 id 双消息。结果经 spawnEntry.resolve 进 _turnSpawns,
+                  //   回合末由 _applySpawnOutcomes 覆盖占位符, 一条 tc.id 一条真实消息。
+                  spawnEntry.resolve(makeSubagentResult({
+                    status: 'success',
+                    subagentId: subId,
+                    durationMs: subDuration,
+                    iterations: subResult.iterations,
+                    model: subModel,
+                    summary: (subResult.content || '无结果').slice(0, 500),
+                    evidence: (subResult.content || '').length > 500 ? [subResult.content.slice(0, 1500)] : [],
+                  }));
+                  // 回合内已判超时/中止 (转后台) 或显式后台派发 → 最终成果仍走回注队列,
+                  // 保证主模型下一轮看得到 (前端自动唤醒亦可用)
+                  if (spawnEntry.timedOutInTurn || subNorm.background) {
+                    this._pendingSubagentResults.set(subId, {
+                      status: 'done',
+                      subId,
+                      content: `任务「${tc.args?.task || ''}」完成 (${subResult.iterations}轮/${subResult.durationMs}ms): ${(subResult.content || '无结果').slice(0, 1500)}`,
+                    });
+                  }
                 } catch (e: any) {
                   this.emit('subagent:error', { id: subId, error: e.message });
                   // ★ 2026-10-21: 失败同样落盘 —— 失败的子任务也是成果(排障证据)
@@ -5647,15 +5703,22 @@ if (isComplexTask) {
                     updatedAt: Date.now(),
                   });
                   completeSubagent(subId, 'error', { error: e.message, durationMs: Date.now() - subStartedAt });
-                  this.context.appendOnlyLog.push({
-                    role: 'tool', name: 'spawn_subagent', tool_call_id: tc.id,
-                    content: `[子Agent 失败]: ${e.message}`,
-                  });
-                  this._pendingSubagentResults.set(subId, {
-                    status: 'error',
-                    subId,
-                    content: `任务「${tc.args?.task || ''}」失败: ${e.message}`,
-                  });
+                  // 同成功路径: 结构化结果进 _turnSpawns, 不直推 (异常隔离: 失败不出主循环)
+                  spawnEntry.resolve(makeSubagentResult({
+                    status: 'failed',
+                    subagentId: subId,
+                    durationMs: Date.now() - subStartedAt,
+                    summary: `子任务异常: ${e.message}`.slice(0, 500),
+                    evidence: [String(e.message || e).slice(0, 300)],
+                    next_suggestion: '检查子智能体配置后重试, 或自己完成该子目标 (不要卡住)',
+                  }));
+                  if (spawnEntry.timedOutInTurn || subNorm.background) {
+                    this._pendingSubagentResults.set(subId, {
+                      status: 'error',
+                      subId,
+                      content: `任务「${tc.args?.task || ''}」失败: ${e.message}`,
+                    });
+                  }
                 } finally {
                   clearTimeout(subWallTimer);
                   this._subAgentCount--;
@@ -5697,6 +5760,11 @@ if (isComplexTask) {
             rawResults.push({ id: _id, name: tc.name, output: `[ERROR] 工具执行失败 (执行器异常): ${e?.message || e}`, success: false, durationMs: 0 });
           }
         }
+        // ★ 2026-10-21 方案落地 (富哥《并行子智能体编排改造方案》5.2/6): 回合内并发执行。
+        //   普通工具已 dispatch 完 (期间子任务在并发跑), 现在按每条 timeoutMs 上限等它们,
+        //   真实 SubagentResult 覆盖占位符回填 → 主循环 continue, 不 break 不等外部唤醒。
+        await this._awaitTurnSpawns();
+        this._applySpawnOutcomes(rawResults);
         // ═══ 2026-10-19: security 任务工具偏离检测 (用错了要被拽回来) ═══
         // 实锤: 渗透任务 AI 连写 probe8.js → getcaptcha.js → probe_pay10.js, wsl_scan 一个不碰。
         //   根因不在工具管道 (3c4710f 已修), 而在"没人告诉它走错了"。
@@ -7001,32 +7069,23 @@ if (this._capabilityTier !== 'autonomous') {
         m => m.role === 'tool' && typeof m.content === 'string' && !m.content.startsWith('[SYSTEM]')
       );
 
-      // ═══ 2026-10-21 P0: 子智能体没跑完, 主任务不收口 ═══
-      // 富哥原话: "作为要子智能体任务主任国应该不断的去看完成没有而不是中断任务呀?"
-      // 旧行为: 模型一句"已完成"就 break → 子智能体还在跑 → 成果只能靠前端
-      //   _resumeFrom 唤醒 (页面关了永久 orphan, 主任务等于白中断)。
-      // 新行为: 收口前发现本会话还有 running 子智能体 → 服务端轮询等待
-      //   (与前端/SSE 解耦), 全部完成后结果经 _pendingSubagentResults 回注并
-      //   continue, 主 AI 拿着成果自己决定怎么收口。
-      // 上限: 墙钟 10 分钟 + 最多 3 次「等→续」 (防模型每轮派新的然后等, 无限续命)。
-      if (!res.toolCalls?.length && this.opts.sessionId
-        && this._subWaitRounds < AgentAILoop.MAX_SUB_WAIT_ROUNDS
+      // ═══ 2026-10-21 午后: 方案落地 — 阻塞等待退役, 改「告知式收口」 ═══
+      // 富哥《并行子智能体编排改造方案》5.1 明确否定"主循环中断等外部唤醒"。
+      // 回合内并发执行 (见 _awaitTurnSpawns) 已保证同步 spawn 当回合拿到结果;
+      // 走到这里还在跑的只有两类: 显式后台派发 / 回合内超时转后台 — **不阻塞**,
+      // 让主 AI 带着"后台还有 N 个在跑"的认知收口 (再多走一轮把这话说明白),
+      // 成果经 _pendingSubagentResults 回注或前端自动唤醒回收 (#101)。
+      if (!res.toolCalls?.length && this.opts.sessionId && !this._subWaitNotified
         && runningForSession(this.opts.sessionId).length > 0) {
-        this._subWaitRounds++;
-        const waitCount = runningForSession(this.opts.sessionId).length;
-        this.emit('subagent:waiting', { count: waitCount, sessionId: this.opts.sessionId });
-        logger.info(`[subagent] 主任务等待 ${waitCount} 个子智能体完成 (第 ${this._subWaitRounds}/${AgentAILoop.MAX_SUB_WAIT_ROUNDS} 次等待)`);
-        const waited = await this._awaitRunningSubagents(myGeneration);
-        if (waited.aborted) {
-          return { content: '[任务已中断]', provider: 'aborted', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const }, iterations: this.iteration, durationMs: Date.now() - startedAt };
-        }
-        if (waited.injected > 0) continue; // 结果已回注 → 交给主 AI 继续 (不收口)
-        if (waited.timedOut) {
-          // 超时未齐: 不死等 — 带已有信息收口, 未完成的结果稍后经唤醒机制回注
-          this.directives.add('subagent_wait_timeout',
-            `[SYSTEM] 等待子智能体超时 (${Math.round(AgentAILoop.SUBAGENT_WAIT_CAP_MS / 60000)} 分钟), 仍有 ${waited.remaining} 个在跑。`
-            + `请基于已有信息收口当前任务; 未完成的子任务完成后会经唤醒机制把结果带回, 届时再继续。`, 'high');
-        }
+        this._subWaitNotified = true;
+        const bgCount = runningForSession(this.opts.sessionId).length;
+        this.emit('subagent:waiting', { count: bgCount, sessionId: this.opts.sessionId });
+        logger.info(`[subagent] 收口时仍有 ${bgCount} 个子任务在后台跑 — 不阻塞, 告知式收口 (方案 5.1)`);
+        this.directives.add('subagent_background_running',
+          `[SYSTEM] 注意: 还有 ${bgCount} 个子智能体在**后台继续执行** (未中止, 结果稍后自动带回)。`
+          + `请在最终回复里明确告知用户: 哪些任务在跑、它们完成后会自动整合进结论。`
+          + `不要假装它们已完成, 也不要停下来等待 — 带着已有信息正常收口。`, 'high');
+        continue; // 再走一轮, 让模型带着这个认知产出最终答复 (只提醒一次, 防无限续命)
       }
 
       // 规则1: 已使用工具 + 有实质回复 + 明确完成标记 → 任务完成
@@ -7978,48 +8037,67 @@ try {
    * 设计目标: AI 永远能看到自己的核心能力, 不会因为关键词没匹配到而"失忆"
    */
   /**
-   * 2026-10-21: 服务端等待本会话全部子智能体完成 (富哥: "主导方不断去看完成没有")。
-   *
-   * 为什么在服务端而不是前端: SSE 一断 (用户切页面/关页面), 前端轮询与唤醒全停 —
-   *   服务端等待与前端解耦, 人走开也能把成果收回来。
-   * 为什么不在 spawn 处 await: 子智能体是 detached 设计 (父死子不死), 这里只等
-   *   **已注册在跑**的, 不新建等待关系。
-   *
-   * 退出条件: 全部完成 / 用户中断 (_aborted) / 被新 run() 取代 (代际) / 墙钟上限。
-   * 完成后: 未回注过的结果经 _pendingSubagentResults 回注 (下一轮 LLM 前消费),
-   *   与 inline spawn 完成路径同一队列, UNTRUSTED delimiter 圈边界 (见 3.2 节)。
+   * 2026-10-21 富哥《并行子智能体编排改造方案》5.2/6: 回合内并发等待本回合收集的子智能体。
+   *   · 每条各自 timeoutMs 上限 (默认 300s), 到点**不杀** — 标记 timedOutInTurn,
+   *     子任务转后台继续跑 (墙钟 10 分钟兜底), 成果经 _pendingSubagentResults 回注
+   *     或前端自动唤醒回收 (富哥拍板: "转后台继续")
+   *   · 显式 background:true 的调用不在此等待 (立即回填"已派发到后台")
+   *   · _aborted → 停止等待 (同样不杀子任务)
+   *   · 轮询不赌固定睡眠: 全部落定 / 全部超时 / 被中止 → 收口
    */
-  private async _awaitRunningSubagents(myGeneration: number): Promise<{ injected: number; aborted: boolean; timedOut: boolean; remaining: number }> {
-    const sid = this.opts.sessionId || '';
-    const POLL_MS = 2000;
-    const started = Date.now();
-    while (true) {
-      // 用户中断 / 被新 run() 取代 → 立即退出 (不劫持用户的中断权)
-      if (this._aborted || myGeneration !== this._runGeneration) {
-        return { injected: 0, aborted: true, timedOut: false, remaining: runningForSession(sid).length };
-      }
-      const running = runningForSession(sid);
-      if (running.length === 0) break;
-      if (Date.now() - started > AgentAILoop.SUBAGENT_WAIT_CAP_MS) {
-        return { injected: 0, aborted: false, timedOut: true, remaining: running.length };
-      }
-      await new Promise(r => setTimeout(r, POLL_MS));
+  private async _awaitTurnSpawns(): Promise<void> {
+    const syncEntries = this._turnSpawns.filter(e => !e.norm.background);
+    if (syncEntries.length === 0) return;
+    const deadlineOf = (e: any) => e.startedAt + e.norm.timeoutMs;
+    while (syncEntries.some(e => !e.settled)) {
+      if (this._aborted) break;
+      const now = Date.now();
+      if (syncEntries.every(e => e.settled || now > deadlineOf(e))) break;
+      await new Promise(r => setTimeout(r, 200));
     }
-    // 全部完成 → 收集结果 (只回注没回注过的, 防旧成果在后续等待轮重复注入)
-    let injected = 0;
-    for (const rec of finishedResultsForSession(sid)) {
-      if (this._subInjectedIds.has(rec.id)) continue;
-      this._subInjectedIds.add(rec.id);
-      this._pendingSubagentResults.set(rec.id, {
-        status: rec.status === 'error' ? 'error' : 'done',
-        content: rec.status === 'error'
-          ? `子智能体 ${rec.id} 执行失败: ${rec.error || '(无错误信息)'}`
-          : (rec.result || '(子智能体未返回内容)'),
-        subId: rec.id,
+    for (const e of syncEntries) {
+      if (e.settled) continue; // IIFE 已resolve (含边界竞态: 恰好赶在上限前完成)
+      e.timedOutInTurn = true;
+      e.settled = true;
+      e.result = makeSubagentResult({
+        status: 'timeout',
+        subagentId: e.subId,
+        durationMs: Date.now() - e.startedAt,
+        wentBackground: true,
+        summary: this._aborted
+          ? `主任务已中止, 子任务「${e.norm.objective.slice(0, 60)}」转后台继续跑 (未杀)`
+          : `回合内等待上限 ${Math.round(e.norm.timeoutMs / 1000)}s 已到, 子任务「${e.norm.objective.slice(0, 60)}」转后台继续跑 (未杀)`,
+        next_suggestion: '先基于已有信息推进; 子任务完成后结果会自动带回 (回注或前端唤醒)',
       });
-      injected++;
+      logger.info(`[subagent] ${e.subId} 回合内超时 (${Math.round(e.norm.timeoutMs / 1000)}s), 转后台继续跑`);
     }
-    return { injected, aborted: false, timedOut: false, remaining: 0 };
+  }
+
+  /**
+   * 把本回合 spawn 的结局写进 rawResults (覆盖 dispatchToolCalls 补的占位符)。
+   * 方案 5.2: 结果以 tool result 消息追加, 绑定 tool_call_id — 一条 id 一条真实消息。
+   */
+  private _applySpawnOutcomes(rawResults: any[]): void {
+    if (this._turnSpawns.length === 0 && this._spawnOutcomes.size === 0) return;
+    for (const r of rawResults) {
+      if (r.name !== 'spawn_subagent') continue;
+      const gatedText = this._spawnOutcomes.get(r.id);
+      if (gatedText) {
+        r.output = gatedText;
+        r.data = { ...(r.data || {}), spawnOutcome: 'gated' };
+        continue;
+      }
+      const entry = this._turnSpawns.find(e => e.tc.id === r.id);
+      if (!entry) continue;
+      if (!entry.settled) {
+        // 显式后台派发: 不等待, 立即回填"已派发"
+        r.output = `[已派发到后台] 子任务 id=${entry.subId} 正在后台执行 (墙钟上限 10 分钟)。完成后结果会自动带回 — 你可以继续做别的事, 不要空等, 也不要重复派发同一任务。`;
+        r.data = { ...(r.data || {}), subagentId: entry.subId, background: true };
+      } else if (entry.result) {
+        r.output = formatSubagentResult(entry.result);
+        r.data = { ...(r.data || {}), subagentId: entry.subId, subagentStatus: entry.result.status, background: entry.result.wentBackground };
+      }
+    }
   }
 
   private filterToolsByIntent(message: string, allTools: any[]): any[] {
@@ -8204,6 +8282,11 @@ try {
     }
 
     const filtered = allTools.filter(t => selected.has(getName(t)));
+    // ★ 2026-10-21 方案 9.1 简单任务短路: 消息短且无并行/安全信号 → spawn_subagent
+    //   不进本轮 tool 列表 (模型想调也调不了) — 治"简单任务也随手派"。
+    //   保守判据见 shouldShortCircuitSubagent; bounty 工作区/渗透意图另有闸门, 互不干扰。
+    const shortCircuitSpawn = shouldShortCircuitSubagent(message);
+    const toolPool = shortCircuitSpawn ? filtered.filter(t => getName(t) !== 'spawn_subagent') : filtered;
     // ═══ Cap: 提高到 25 (免费) / 40 (商用), 让 AI 看到更多能力 ═══
     // 优先保证: 高价值工具必须在顶部(不会被 cap 裁掉)
     // 2026-10-18 P0: 渗透工具一并进优先级 —— 之前它们排在 rest 里,
@@ -8224,12 +8307,12 @@ try {
       'search_pentest_experience', 'search_vulns', 'record_pentest_experience',
       'pentest_pipeline', 'wsl_exec', 'bounty_report', 'oob_register', 'oob_check', 'save_target_state', 'load_target_state', 'classify_response', 'impact_proof',
     ]);
-    const priority = filtered.filter(t => PRIORITY_TOOLS.has(getName(t)));
-    const rest = filtered.filter(t => !PRIORITY_TOOLS.has(getName(t)));
+    const priority = toolPool.filter(t => PRIORITY_TOOLS.has(getName(t)));
+    const rest = toolPool.filter(t => !PRIORITY_TOOLS.has(getName(t)));
     const MAX_TOOLS = this.opts.model === 'deepseek' && !this.opts.modelName?.includes('pro') ? 25 : 40;
     const remaining = MAX_TOOLS - priority.length;
     const capped = [...priority, ...rest.slice(0, Math.max(0, remaining))];
-    console.log(`[tools-filter] iter=${this.iteration} ${allTools.length} → ${capped.length} tools (msg: ${msg.slice(0, 40)})`);
+    console.log(`[tools-filter] iter=${this.iteration} ${allTools.length} → ${capped.length} tools${shortCircuitSpawn ? ' (简单任务短路: 无 spawn_subagent)' : ''} (msg: ${msg.slice(0, 40)})`);
     return capped.length >= 5 ? capped : allTools; // 安全兜底: 太少就给全部
   }
 
