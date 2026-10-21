@@ -429,6 +429,13 @@ type BgJobRecord = {
   finishedAt?: string;
   exitCode?: number;
   outputTail: string;
+  /**
+   * 2026-10-21: 模型最近一次读取该 job 输出的时间 (job_output / wait_for_job)。
+   * 富哥实锤: AI 已经轮询拿到结果了, 前端还推"后台运行成功", 下一轮快照又注入一遍 →
+   * 重复提醒 + 模型重复读。判据: readAt >= finishedAt 即"完成结果已被消费"。
+   * 若是在 running 期间读的中间输出 (readAt < finishedAt), 完成后仍应通知一次。
+   */
+  readAt?: string;
 };
 
 let _bgJobRecords: Map<number, BgJobRecord> | null = null;
@@ -466,6 +473,23 @@ function upsertBgJobRecord(id: number, patch: Partial<BgJobRecord>) {
   m.set(id, rec);
   saveBgJobRecords();
 }
+/**
+ * 2026-10-21 (富哥实锤: "AI 轮询拿到结果了, 系统还推后台运行成功, 下次又注入") :
+ * 标记"模型已读过该 job 的输出"。读取类工具 (job_output / wait_for_job) 成功后调用。
+ * 消费判据: readAt >= finishedAt → 完成结果已被拿走, 前端不再推通知, 快照不再注入。
+ * 读取失败/不存在不标记 (没读到就不算消费)。
+ */
+function _markJobRead(id: number | undefined): void {
+  if (typeof id !== 'number' || !Number.isFinite(id)) return;
+  try { upsertBgJobRecord(id, { readAt: new Date().toISOString() }); } catch { /* 记录失败不影响读取 */ }
+}
+
+/** 终态且结果已被读取过 (用于前端通知 / 快照注入的去重) */
+export function isBgJobConsumed(r: BgJobRecord): boolean {
+  if (!r.readAt || !r.finishedAt) return false;
+  return new Date(r.readAt).getTime() >= new Date(r.finishedAt).getTime();
+}
+
 /** 供 /api/bg-jobs 调用: 返回记录 (可按 workspace 过滤, 按 startedAt 升序) */
 export function getBgJobRecords(workspace?: string): BgJobRecord[] {
   const all = [...loadBgJobRecords().values()];
@@ -488,9 +512,12 @@ export function buildBgJobSnapshot(workspace: string): string {
   const now = Date.now();
   const TWO_H = 2 * 60 * 60 * 1000;
   const running = recs.filter(r => r.status === 'running');
+  // 2026-10-21: 终态只注入**还没被读过**的 — 模型已经 job_output 拿走过结果,
+  //   再注入一遍只会让它重复读、重复总结 (富哥实锤)。
   const recentTerminal = recs.filter(r =>
     r.status !== 'running' &&
-    r.finishedAt && (now - new Date(r.finishedAt).getTime()) < TWO_H);
+    r.finishedAt && (now - new Date(r.finishedAt).getTime()) < TWO_H &&
+    !isBgJobConsumed(r));
   const picked = [...running, ...recentTerminal].slice(-8);
   if (!picked.length) return '';
   const lines = picked.map(r => {
@@ -3280,8 +3307,8 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   },
   // ★ 2026-10-21: 全部走 _lookupBgJob 归一化 — 模型从文本抄 jobId 常带引号,
   //   裸 get 必 Miss (实锤 6 连败); 找不到时给诊断文案而不是裸 'Not found'。
-  job_output: async (args) => { const { job: j } = _lookupBgJob(args.jobId); return { success: !!j, output: j ? (j.output || '').slice(-(args.tailLines || 80) * 80) : _bgJobNotFound(args.jobId) }; },
-  wait_for_job: async (args) => { const { job: j } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; const start = Date.now(); while (j.running && Date.now() - start < (args.timeoutMs || 5000)) await new Promise(r => setTimeout(r, 200)); return { success: !j.running, output: j.output || '' }; },
+  job_output: async (args) => { const { job: j, id } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; _markJobRead(id); return { success: true, output: (j.output || '').slice(-(args.tailLines || 80) * 80) }; },
+  wait_for_job: async (args) => { const { job: j, id } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; const start = Date.now(); while (j.running && Date.now() - start < (args.timeoutMs || 5000)) await new Promise(r => setTimeout(r, 200)); _markJobRead(id); return { success: !j.running, output: j.output || '' }; },
   stop_job: async (args) => { try { const { job: j, id } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; killProcessTree(j.pid); j.running = false; upsertBgJobRecord(id, { status: 'stopped', finishedAt: new Date().toISOString(), outputTail: (j.output || '').slice(-2000) }); return { success: true, output: 'Stopped (含子孙进程)' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   list_jobs: async () => ({ success: true, output: [...bgJobs.entries()].map(([id, j]) => `#${id}: running=${j.running}${j.cmd ? ` | ${j.cmd}` : ''}`).join('\n') || '(none)' }),
   remember: async (args, ctx) => {

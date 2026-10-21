@@ -57,4 +57,11 @@ describe('后台 job 完成 → 自动续跑', () => {
     expect(SRC).toContain('本提示 6 秒后自动收起');
     expect(SRC).toContain('已自动读取');
   });
+
+  it('⑥ 已读结果不再推 (AI 已 job_output 拿到的不弹、不唤醒)', () => {
+    // 判据与网关 isBgJobConsumed 一致: readAt >= finishedAt
+    expect(SRC).toContain('const isConsumed = (j: any)');
+    expect(SRC).toContain('new Date(j.readAt).getTime() >= new Date(j.finishedAt).getTime()');
+    expect(SRC).toMatch(/&& !isConsumed\(j\)/);
+  });
 });

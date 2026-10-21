@@ -866,8 +866,14 @@ const [loading, setLoading] = useState(false);
         if (cancelled || !data?.success) return;
         const jobs: any[] = data.jobs || [];
         // 终态集合: 已结束/被停/网关重启变孤儿 —— 这些需要推给用户并入
+        // 2026-10-21 (富哥实锤): 模型已经用 job_output/wait_for_job 读过的结果**不再推** —
+        //   之前 AI 都拿到结果了还弹"后台运行成功", 下一轮快照再注入一遍, 纯重复。
+        //   判据与网关 isBgJobConsumed 一致: readAt >= finishedAt = 完成结果已被消费。
+        const isConsumed = (j: any) => !!(j.readAt && j.finishedAt
+          && new Date(j.readAt).getTime() >= new Date(j.finishedAt).getTime());
         const terminal = jobs.filter((j: any) =>
-          j.status === 'done' || j.status === 'error' || j.status === 'stopped' || j.status === 'orphaned');
+          (j.status === 'done' || j.status === 'error' || j.status === 'stopped' || j.status === 'orphaned')
+          && !isConsumed(j));
         const fresh = terminal.filter((j: any) => !seenBgJobIdsRef.current.has(j.id));
         if (fresh.length === 0) return;
         // 标记已见 (去重, 避免重复弹)

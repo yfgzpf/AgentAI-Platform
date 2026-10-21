@@ -29,6 +29,18 @@ beforeAll(async () => {
   handlers = (await import('./tools.ts')).EXTRA_HANDLERS;
 });
 
+/** 等 job 落定但**不调用读取类工具** — wait_for_job/job_output 会标记 readAt,
+ *  那是"已消费"信号, 用它来等会让快照正确地把该 job 排除掉 (测试自己的坑)。 */
+async function waitDoneNoRead(id: number, ms = 15000): Promise<void> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const { getBgJobRecords } = await import('./tools.ts');
+    const r = getBgJobRecords().find((x: any) => x.id === id);
+    if (r && r.status !== 'running') return;
+    await new Promise(res => setTimeout(res, 100));
+  }
+}
+
 describe('bgJobs: jobId 查找归一化 (富哥实锤: 轮询 6 连败全是类型不匹配)', () => {
   it('① string jobId 与 number jobId 查找结果一致 (模型抄文本常带引号)', async () => {
     const start = await handlers.run_background({ command: 'node -e "process.stdout.write(\'HELLO-BGJOB\')"' });
@@ -118,8 +130,8 @@ describe('bgJobs: 运行中的 job 不被驱逐 (文档意图 vs 原实现的裂
 describe('源码契约: 归一化 + 诊断 + prune 保活都在位', () => {
   it('⑥ _lookupBgJob 单一真源, job 工具全走它, 裸 get(args.jobId) 绝迹', () => {
     expect(TOOLS_SRC).toContain('const _lookupBgJob =');
-    expect(TOOLS_SRC).toMatch(/job_output: async \(args\) => \{ const \{ job: j \} = _lookupBgJob\(args\.jobId\)/);
-    expect(TOOLS_SRC).toMatch(/wait_for_job: async \(args\) => \{ const \{ job: j \} = _lookupBgJob\(args\.jobId\)/);
+    expect(TOOLS_SRC).toMatch(/job_output: async \(args\) => \{ const \{ job: j(, id)? \} = _lookupBgJob\(args\.jobId\)/);
+    expect(TOOLS_SRC).toMatch(/wait_for_job: async \(args\) => \{ const \{ job: j(, id)? \} = _lookupBgJob\(args\.jobId\)/);
     expect(TOOLS_SRC).toMatch(/stop_job: async \(args\) => \{ try \{ const \{ job: j(, id)? \} = _lookupBgJob\(args\.jobId\)/);
     // 裸 get 形态绝迹 (4 个处理器 region) — 这是本次事故的根因形态
     expect(TOOLS_SRC).not.toMatch(/bgJobs\.get\(args\.jobId\)/);
@@ -143,7 +155,7 @@ describe('buildBgJobSnapshot: 跨回合注入快照 (富哥中断归因 #3: "继
     // 跑一个真实 job (带 workspace 语义由 handler 内部记录), 快照应捕获
     const start = await handlers.run_background({ command: 'node -e "process.stdout.write(\'SNAPSHOT-PROBE\')"' });
     expect(start.success).toBe(true);
-    await handlers.wait_for_job({ jobId: String(start.data.jobId), timeoutMs: 8000 });
+    await waitDoneNoRead(start.data.jobId);
 
     // 全工作区视图 (undefined) 必须看到该 job 的终态行
     const snapAll = buildBgJobSnapshot('');
@@ -159,5 +171,54 @@ describe('buildBgJobSnapshot: 跨回合注入快照 (富哥中断归因 #3: "继
     expect(CHAT_SRC).toContain("import { buildBgJobSnapshot } from '../tools.js'");
     expect(CHAT_SRC).toMatch(/buildBgJobSnapshot\(workspace\)/);
     expect(CHAT_SRC).toMatch(/injectedCtx = \(injectedCtx \|\| ''\) \+ '\\n\\n' \+ bgSnap/);
+  });
+});
+
+describe('完成结果"已消费"后不再推送/不再注入 (富哥: AI 都拿到了还推一遍)', () => {
+  it('⑪ 完成后读过一次 → 快照不再包含该 job (不会下轮再注入)', async () => {
+    const { buildBgJobSnapshot, isBgJobConsumed, getBgJobRecords } = await import('./tools.ts');
+    const start = await handlers.run_background({ command: 'node -e "process.stdout.write(\'CONSUME-PROBE\')"' });
+    const id = start.data.jobId;
+    await waitDoneNoRead(id);
+
+    // 第一轮: 完成但还没人读 → 快照必须包含 (保证 AI 能发现)
+    expect(buildBgJobSnapshot('')).toContain(`#${id}`);
+
+    // 模型读取 → 标记消费
+    await handlers.job_output({ jobId: id });
+    const rec = getBgJobRecords().find(r => r.id === id);
+    expect(rec?.readAt, 'job_output 后必须写入 readAt').toBeTruthy();
+    expect(isBgJobConsumed(rec!)).toBe(true);
+
+    // 已消费 → 快照不再注入 (否则模型重复读、重复总结)
+    expect(buildBgJobSnapshot('')).not.toContain(`#${id}`);
+  }, 20000);
+
+  it('⑫ 运行中读中间输出不算消费 — 完成后仍要通知一次', async () => {
+    const { buildBgJobSnapshot, getBgJobRecords, isBgJobConsumed } = await import('./tools.ts');
+    const start = await handlers.run_background({
+      command: 'node -e "setTimeout(()=>process.stdout.write(\'LATE-DONE\'),2500)"',
+    });
+    const id = start.data.jobId;
+
+    // 还在跑时读一次 (wait_for_job 超时返回) → readAt 有了, finishedAt 还没有
+    await handlers.wait_for_job({ jobId: String(id), timeoutMs: 300 });
+    // 等它自然结束 (期间**不再读取**)
+    await new Promise(r => setTimeout(r, 4000));
+
+    const rec = getBgJobRecords().find(r => r.id === id);
+    expect(rec?.status).toBe('done');
+    expect(rec?.readAt).toBeTruthy();
+    expect(isBgJobConsumed(rec!), '运行中读的不算消费 (readAt < finishedAt)').toBe(false);
+    // 完成后仍需进快照一次, 让 AI/用户知道最终结果
+    expect(buildBgJobSnapshot('')).toContain(`#${id}`);
+  }, 20000);
+
+  it('⑬ 源码契约: 读取类工具都标记 readAt, 快照按消费状态过滤', () => {
+    expect(TOOLS_SRC).toMatch(/job_output: async \(args\) => \{ const \{ job: j, id \} = _lookupBgJob/);
+    expect(TOOLS_SRC).toMatch(/wait_for_job: async \(args\) => \{ const \{ job: j, id \} = _lookupBgJob/);
+    expect(TOOLS_SRC).toContain('_markJobRead(id)');
+    expect(TOOLS_SRC).toContain('export function isBgJobConsumed');
+    expect(TOOLS_SRC).toMatch(/!isBgJobConsumed\(r\)/);
   });
 });
