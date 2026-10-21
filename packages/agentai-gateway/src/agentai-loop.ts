@@ -1465,6 +1465,28 @@ private _forbiddenResponseCount: number = 0;
   }
 
   /**
+   * 2026-10-21: 思考期心跳 — 包一轮 LLM 调用, 期间每 30s 发一次 tool:heartbeat。
+   * 根因: 前端 idle 计时器 (ChatView.tsx 5 分钟) 靠 SSE 事件续命, 而
+   * tool:heartbeat 原来只在工具执行期发 (见 dispatchToolCalls 内 30s 定时器) —
+   * 模型纯思考/等 LLM 首 token 的几分钟里零事件 → 前端到点 controller.abort()
+   * → 后端 req close → "[任务已中断]" (2026-10-17 工具期同款事故的思考期版本)。
+   * 复用 tool:heartbeat 事件与前端 onToolHeartbeat 续命路径 (provider_wait
+   * 退避心跳同款), 前端零改动; abort 后不再发, unref 不拖进程退出。
+   */
+  private async _chatWithThinkingHeartbeat(req: ChatRequest): Promise<any> {
+    const hb = setInterval(() => {
+      if (this._aborted) return;
+      this.emit('tool:heartbeat', { callId: 'model_thinking', name: 'llm_wait', pending: 1 });
+    }, 30_000);
+    (hb as any).unref?.();
+    try {
+      return await this.router.chat(req);
+    } finally {
+      clearInterval(hb);
+    }
+  }
+
+  /**
    * P1 废话过滤 — 实时清理流式文本中的废话模式
    * 只过滤首尾和连续重复, 不动中间内容 (安全)
    */
@@ -4737,7 +4759,7 @@ if (isComplexTask) {
     
     let res: any;
     try {
-      res = await this.router.chat(req);
+      res = await this._chatWithThinkingHeartbeat(req);
     } catch (llmErr: any) {
       // ═══ 长任务保护: router.chat 异常不应崩溃整个循环 ═══
       const errMsg = llmErr?.message?.toLowerCase() || '';
@@ -4894,7 +4916,7 @@ if (isComplexTask) {
         this.directives.add('empty_response', '[SYSTEM] 上一轮回复为空，请重新回复。', 'high');
         req.messages = rebuildMessages();
         const l1Req = rescueReq(60_000);
-        let retryRes = l1Req ? await this.router.chat(l1Req) : null;
+        let retryRes = l1Req ? await this._chatWithThinkingHeartbeat(l1Req) : null;
         if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
           console.log(`[loop] ✓ L1 rescue (same model)`);
           this._emptyResponseCount = 0; // P0 修复: rescue 成功后重置计数器
@@ -4918,7 +4940,7 @@ if (isComplexTask) {
           req.tools = origTools.filter(t => coreNames.includes(t.name));
           req.messages = rebuildMessages();
           const l3Req = rescueReq(60_000);
-          retryRes = l3Req ? await this.router.chat(l3Req) : null;
+          retryRes = l3Req ? await this._chatWithThinkingHeartbeat(l3Req) : null;
           req.tools = origTools;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
             console.log(`[loop] ✓ L3 rescue (min tools)`);
@@ -4945,7 +4967,7 @@ if (isComplexTask) {
             logger.warn(`[L4-rescue] 兜底注入 user 消息`);
           }
           const l4Req = rescueReq(45_000);
-          retryRes = l4Req ? await this.router.chat(l4Req) : null;
+          retryRes = l4Req ? await this._chatWithThinkingHeartbeat(l4Req) : null;
           req.tools = origTools;
           if (retryRes?.content?.trim() && retryRes.provider !== 'none') {
           console.log(`[loop] ✓ L4 rescue (no tools)`);
