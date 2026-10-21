@@ -1558,15 +1558,19 @@ const [loading, setLoading] = useState(false);
         updateMessage(botId, (m: any) => {
           // 2026-10-17 P1 纵深防御: 后端已改为"同一工具只播一次"，
           // 这里再挡一层 —— 即使后端漏发/重放，同一工具也不重复渲染提示。
-          // 实机事故: `enum_subdomains 疑似卡死(3 次调用)` 连着出现十几次刷屏。
-          const marker = `\`${info.tool}\` 疑似卡死`;
+          // 2026-10-21 语义修正 (富哥实锤: wait_for_job 0.0s × 6 全标"疑似卡死"):
+          //   tool:stuck 的判据是"同参数连续失败 ≥3 次" — 这是**秒速失败**,
+          //   不是挂起。文案必须说清"连续失败+换方案", 否则用户以为模型/工具卡死。
+          const marker = `\`${info.tool}\` 同一调用连续失败`;
           const dup = (m.segments || []).some(
             (s: any) => s.kind === 'text' && typeof s.text === 'string' && s.text.includes(marker),
           );
           if (dup) return m;
+          const detail = String(info.detail || '').replace(/\s+/g, ' ').slice(0, 200);
           return { ...m, segments: [...m.segments, {
             kind: 'text',
-            text: `\n\n> ⚠️ 工具 \`${info.tool}\` 疑似卡死 (${info.count} 次调用)\n`,
+            text: `\n\n> ⚠️ 工具 \`${info.tool}\` 同一调用连续失败 ${info.count} 次 (秒速失败, 不是卡死) — 参数或对象可能已失效, 换参数/换工具, 不要反复重试。\n`
+              + (detail ? `> 最后一次失败: ${detail}\n` : ''),
           }] };
         });
       },

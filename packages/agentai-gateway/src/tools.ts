@@ -368,9 +368,47 @@ const _pruneBgJobs = () => {
   let excess = bgJobs.size - BG_JOBS_KEEP;
   for (const k of [...bgJobs.keys()]) {
     if (excess <= 0) break;
+    const j = bgJobs.get(k);
+    // ★ 2026-10-21: 运行中的不驱 — 原实现连运行中的一起删, 与文档意图相反。
+    //   事故面: wsl_exec 长任务自动转后台后, 长会话轻松 >20 个 job; 最早的
+    //   往往是一个还在跑的长扫描 → 被静默踢出注册表 → 轮询/stop 全 "Not found"
+    //   (富哥实锤截图同款: 活任务的句柄凭空消失, 模型对死 id 反复重试)。
+    if (j && j.running) continue;
     bgJobs.delete(k);
     excess--;
   }
+};
+
+/**
+ * 2026-10-21: jobId 查找归一化 (富哥实锤: 后台轮询 6 连败全是它)。
+ * bgJobs 键是 number (++jobIdCounter), 但模型从工具返回的**文本**里抄 jobId
+ * 时经常带引号 (字符串) → 裸 bgJobs.get("49273264820") 必 Miss → "Not found"
+ * 假失败。实机: job_output({'jobId':'49273264820'}) × 6 全部 0.0s 秒败,
+ * 模型还自作诊断"跨会话丢失" — 真因只是类型不匹配。
+ * 统一 Number() 归一; 非有限/≤0 判无效 id。
+ */
+const _lookupBgJob = (raw: any): { id: number; job: any } => {
+  const id = typeof raw === 'number' ? raw : Number(String(raw ?? '').trim());
+  if (!Number.isFinite(id) || id <= 0) return { id: NaN, job: undefined };
+  return { id, job: bgJobs.get(id) };
+};
+
+/**
+ * job 工具"找不到"时的诊断文案 — 核心目的是**不让模型对同一个死 id 反复重试**
+ * (误报防御体系: 失败信息必须可行动)。区分三种可能并给出下一步。
+ */
+const _bgJobNotFound = (raw: any): string => {
+  const live = [...bgJobs.entries()]
+    .map(([id, j]) => `#${id}${j.running ? '(运行中)' : '(已结束)'}`)
+    .slice(0, 8)
+    .join(', ');
+  const more = bgJobs.size > 8 ? ` 等 ${bgJobs.size} 个` : '';
+  return `Not found: jobId=${JSON.stringify(raw)} 不在当前网关进程的后台任务注册表。`
+    + `可能原因: ① 该 job 已结束并被清理 (注册表只保留最近 ${BG_JOBS_KEEP} 个, 运行中的不会被清) `
+    + `② 网关重启后进程内 job 全部失效 (jobId 带进程启动时间戳基底, 旧 id 不会串台) ③ id 抄错 (jobId 是数字, 不要加引号)。`
+    + `当前注册表: ${live || '(空)'}${more}。`
+    + `⚠️ 请勿对同一个 id 反复重试 — 若任务确实重要: 用 list_jobs 看现存 job, 或重新发起 `
+    + `(wsl_exec 可加 background:false 同步跑完拿全量结果; 产物记得落 /mnt/f 持久盘, 别落 /tmp)。`;
 };
 
 /**
@@ -1115,7 +1153,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       depth: { type: 'string', enum: ['quick', 'deep'], description: 'quick=每目标浅扫 (nmap 指纹+最小探针, 默认); deep=全工具重扫 (nuclei 全模板+sqlmap+ffuf)' },
     }, required: [] }, parallelSafe: false, riskLevel: 'critical' },
   // ═══ 2026-10-19: wsl_exec (绕开 cmd.exe 的 WSL 执行器) ═══
-  { name: 'wsl_exec', description: '【WSL 命令执行 (不经 cmd.exe, 引号安全)】在 WSL 发行版里跑命令, 参数**数组化**传递, 全程不经过 Windows cmd.exe → 多层 shell 嵌套的引号破坏被根治。\n\n🔑 触发场景: 要在 Kali/WSL 里装工具 (go install / apt install)、查环境 (which go)、跑扫描器 (nuclei/httpx/subfinder)。\n⛔ **不要用 run_command 跑 `wsl ... bash -lc "长命令"`** —— 实锤会坏: cmd.exe 剥掉外层引号后, wsl.exe 用 CommandLineToArgvW 重新拆词, bash 的 -c 参数被截断成只剩 "export" (报 `syntax error near unexpected token \'(\'`)。要跑长命令, 用本工具把整段脚本作为 **args 数组的一个元素** 传进去。\n\n⚙️ 参数: command (WSL 内可执行名, 如 "bash" / "which" / "apt-get"); args (字符串数组, 直接送进 WSL, 不做 shell 拆词); distro (默认 kali-linux); user (默认 root); timeout_ms (默认 120s, 上限 600s, 仅同步路径生效); background (默认按命令形态自动判定)。\n\n🔄 **长任务自动转后台**: 命令是脚本执行 (bash xxx.sh) 或扫描器 (nmap/nuclei/ffuf/...) 时, 本工具**立即返回 jobId 不阻塞主循环** — 你用 job_output({jobId}) 看实时输出 / wait_for_job({jobId, timeoutMs:30000}) 等结果 / stop_job({jobId}) 收工。传 background:false 可强制同步 (仅适合 which/ls 这类秒回命令)。\n💡 例: 装 subfinder → wsl_exec({ command: "bash", args: ["-lc", "export PATH=$PATH:/root/go/bin && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"] })\n⚠️ 发行版没装时本工具会明确报错 (Agent 的 wsl.exe 被程序黑名单挡, 装不了, 不是偷懒) —— 那时用 enum_subdomains (纯 JS) 顶替, 别卡住。',
+  { name: 'wsl_exec', description: '【WSL 命令执行 (不经 cmd.exe, 引号安全)】在 WSL 发行版里跑命令, 参数**数组化**传递, 全程不经过 Windows cmd.exe → 多层 shell 嵌套的引号破坏被根治。\n\n🔑 触发场景: 要在 Kali/WSL 里装工具 (go install / apt install)、查环境 (which go)、跑扫描器 (nuclei/httpx/subfinder)。\n⛔ **不要用 run_command 跑 `wsl ... bash -lc "长命令"`** —— 实锤会坏: cmd.exe 剥掉外层引号后, wsl.exe 用 CommandLineToArgvW 重新拆词, bash 的 -c 参数被截断成只剩 "export" (报 `syntax error near unexpected token \'(\'`)。要跑长命令, 用本工具把整段脚本作为 **args 数组的一个元素** 传进去。\n\n⚙️ 参数: command (WSL 内可执行名, 如 "bash" / "which" / "apt-get"); args (字符串数组, 直接送进 WSL, 不做 shell 拆词); distro (默认 kali-linux); user (默认 root); timeout_ms (默认 120s, 上限 600s, 仅同步路径生效); background (默认按命令形态自动判定)。\n\n🔄 **长任务自动转后台**: 命令是脚本执行 (bash xxx.sh) 或扫描器 (nmap/nuclei/ffuf/...) 时, 本工具**立即返回 jobId 不阻塞主循环** — 你用 job_output({jobId}) 看实时输出 / wait_for_job({jobId, timeoutMs:30000}) 等结果 / stop_job({jobId}) 收工。传 background:false 可强制同步 (仅适合 which/ls 这类秒回命令)。\n💡 例: 装 subfinder → wsl_exec({ command: "bash", args: ["-lc", "export PATH=$PATH:/root/go/bin && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"] })\n⚠️ 发行版没装时本工具会明确报错 (Agent 的 wsl.exe 被程序黑名单挡, 装不了, 不是偷懒) —— 那时用 enum_subdomains (纯 JS) 顶替, 别卡住。\n💡 长任务产物落 /mnt/f/... 持久盘 (WSL 路径 /mnt/f/<工作区>/output/...), 别落 /tmp — 脚本 EXIT trap / WSL 回收会清掉, 跨轮次就丢; 脚本/扫描器类命令默认自动转后台, 轮询用 job_output({ jobId: <数字> }) (jobId 是数字, 不要加引号)。',
     parameters: { type: 'object', properties: {
       command: { type: 'string', description: 'WSL 内的可执行名 (如 bash / which / apt-get / go)' },
       args: { type: 'array', items: { type: 'string' }, description: '参数数组, 原样送达不做 shell 拆词 (整段脚本就放一个元素里)' },
@@ -3138,10 +3176,12 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       return { success: false, output: `Error: ${e.message || e}${so}${se}${exitInfo}` };
     }
   },
-  job_output: async (args) => { const j = bgJobs.get(args.jobId); return { success: !!j, output: j ? (j.output || '').slice(-(args.tailLines || 80) * 80) : 'Not found' }; },
-  wait_for_job: async (args) => { const j = bgJobs.get(args.jobId); if (!j) return { success: false, output: 'Not found' }; const start = Date.now(); while (j.running && Date.now() - start < (args.timeoutMs || 5000)) await new Promise(r => setTimeout(r, 200)); return { success: !j.running, output: j.output || '' }; },
-  stop_job: async (args) => { try { const j = bgJobs.get(args.jobId); if (!j) return { success: false, output: 'Not found' }; killProcessTree(j.pid); const job = bgJobs.get(args.jobId); if (job) job.running = false; return { success: true, output: 'Stopped (含子孙进程)' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
-  list_jobs: async () => ({ success: true, output: [...bgJobs.entries()].map(([id, j]) => `#${id}: running=${j.running}`).join('\n') || '(none)' }),
+  // ★ 2026-10-21: 全部走 _lookupBgJob 归一化 — 模型从文本抄 jobId 常带引号,
+  //   裸 get 必 Miss (实锤 6 连败); 找不到时给诊断文案而不是裸 'Not found'。
+  job_output: async (args) => { const { job: j } = _lookupBgJob(args.jobId); return { success: !!j, output: j ? (j.output || '').slice(-(args.tailLines || 80) * 80) : _bgJobNotFound(args.jobId) }; },
+  wait_for_job: async (args) => { const { job: j } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; const start = Date.now(); while (j.running && Date.now() - start < (args.timeoutMs || 5000)) await new Promise(r => setTimeout(r, 200)); return { success: !j.running, output: j.output || '' }; },
+  stop_job: async (args) => { try { const { job: j } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; killProcessTree(j.pid); j.running = false; return { success: true, output: 'Stopped (含子孙进程)' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
+  list_jobs: async () => ({ success: true, output: [...bgJobs.entries()].map(([id, j]) => `#${id}: running=${j.running}${j.cmd ? ` | ${j.cmd}` : ''}`).join('\n') || '(none)' }),
   remember: async (args, ctx) => {
     try {
       const { MemoryManager } = await import('./memory-manager.js');
@@ -4988,8 +5028,10 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
             output:
               `⏳ 长任务已转**后台**执行 (Job ${id}, wsl pid ${child.pid}) — 主循环不被阻塞, 你可以继续做别的事 (分析已有数据/派子任务/回答用户)。\n` +
               `轮询进度: job_output({ jobId: ${id} })(实时输出) 或 wait_for_job({ jobId: ${id}, timeoutMs: 30000 })(建议 30s+, 别用默认 5s 空转);\n` +
+              `⚠️ jobId 是**数字**, 上面花括号里怎么写你就怎么抄, 不要加引号 (加引号会查不到, 白报 Not found);\n` +
               `提前收工: stop_job({ jobId: ${id} })。全部后台任务: list_jobs。\n` +
-              `⚠️ 别再对同一任务重复发起 wsl_exec — 先轮询这个 job 的结果。`,
+              `⚠️ 别再对同一任务重复发起 wsl_exec — 先轮询这个 job 的结果; 轮询报 Not found 时也别反复重试同一 id, 按提示换 list_jobs 或同步重跑。\n` +
+              `💡 长任务产物落 /mnt/f/... 持久盘 (如 /mnt/f/<工作区>/output/...), 别落 /tmp — 脚本 EXIT trap / WSL 回收会清掉, 跨轮次就丢。`,
             data: { jobId: id, background: true, distro, user, command, args: argv },
           };
         } catch {

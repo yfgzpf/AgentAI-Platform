@@ -146,10 +146,14 @@ describe('run_background / job_output / wait_for_job (2026-10-20 D3/D4)', () => 
     await handlers.wait_for_job({ jobId, timeoutMs: 3000 });
   });
 
-  it('job_output 对不存在的 jobId 返回失败而非崩溃', async () => {
+  it('job_output 对不存在的 jobId 返回失败而非崩溃 (2026-10-21: 诊断文案取代裸 Not found)', async () => {
     const r = await handlers.job_output({ jobId: 999_999_999 });
     expect(r.success).toBe(false);
-    expect(r.output).toBe('Not found');
+    // 2026-10-21: 裸 'Not found' 让模型对死 id 反复重试 (富哥实锤: 轮询 6 连败
+    //   0.0s 秒败, 前端还误挂"疑似卡死") — 改为可行动诊断 (可能原因 + 下一步)。
+    expect(r.output).toContain('Not found');
+    expect(r.output).toContain('list_jobs');
+    expect(r.output).toContain('不要加引号');
   });
 
   it('源码契约: 实时 output / 上限 / 退出清理 / error handler 全部在位', () => {

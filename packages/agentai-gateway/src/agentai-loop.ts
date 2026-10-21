@@ -851,6 +851,13 @@ private _failTracker = new Map<string, number>();
  *      模型换方案后旧失败已不连续); ② 用本集合保证同一 sig 只播报一次。
  */
 private _stuckEmitted = new Set<string>();
+/**
+ * 2026-10-21: 同参数连续失败的**最后一次失败输出** (tool:stuck 播报时带给前端)。
+ * 富哥实锤: wait_for_job 轮询死 id × 6, 每次 0.0s 秒败 — 前端文案却写"疑似卡死",
+ *   把"快速失败"误显示成"挂起"。带上失败详情, 用户和模型都能一眼看出真因
+ *   (如 "Not found: jobId=... 不在注册表")。与 duplicateTracker 同生命周期。
+ */
+private _dupFailOutput = new Map<string, string>();
 
 /**
  * 2026-10-17 P0 新增: 工具级连续失败计数 (不论参数)
@@ -3067,6 +3074,7 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
   this._toolFailTracker.clear();  // 2026-10-17: 工具级失败计数按任务隔离
   this._timeoutFailSigs.clear();  // 2026-10-20: 命令超时硬闸门 sig 按任务隔离
   this._toolStuckEmitted.clear(); // 2026-10-17: 工具级熔断播报记录按任务隔离
+  this._dupFailOutput.clear();    // 2026-10-21: 失败详情缓存按任务归零 (与 duplicateTracker 同生命周期)
   this._consecutiveGenericBatches = 0; // 2026-10-19: 工具偏离计数按任务隔离
   this._toolDeviationEmitted = false;  // 2026-10-19: 偏离播报边沿按任务隔离
   this._toolCallCount = 0;     // 2026-10-11: 工具调用预算按任务归零
@@ -6015,6 +6023,7 @@ if (isComplexTask) {
             }
             // 成功 → 重置
             duplicateTracker.delete(sig);
+            this._dupFailOutput.delete(sig);
             // 2026-10-20: 命令超时硬闸门 sig 同步清除 (同参这条路走通了,
             //   之后若再超时应给一次新的机会而不是永久拉黑)
             this._timeoutFailSigs.delete(sig);
@@ -6058,8 +6067,12 @@ if (isComplexTask) {
             this.directives.add('unknown_tool', `[SYSTEM] ${msg}`, 'high');
             // 从失败追踪里移除: 幻觉重试无意义, 不该消耗 dup_fail 预算
             duplicateTracker.delete(sig);
+            this._dupFailOutput.delete(sig);
           } else {
             duplicateTracker.set(sig, failCount + 1);
+            // ★ 2026-10-21: 记本次失败输出 — tool:stuck 播报时带给前端 (语义修正:
+            //   同参数连续失败 = 秒速失败, 不是"卡死"; 没详情用户无法自查真因)。
+            this._dupFailOutput.set(sig, String(toolContent || r.output || '').slice(0, 300));
             // 2026-10-20: 命令超时硬闸门供料 — 命令执行类工具超时过一次,
             //   记 sig; dispatchToolCalls 下次见到同参直接拒跑 (0 秒返回,
             //   不再进 120s 烤箱白等)。判据用 CMD_TIMEOUT_OUT 而非 /timeout/:
@@ -6266,6 +6279,7 @@ if (isComplexTask) {
         for (const sig of [...duplicateTracker.keys()]) {
           if (!seenSigsThisRound.has(sig)) {
             duplicateTracker.delete(sig);   // 2026-10-17: 只清计数, 不再碰播报记录
+            this._dupFailOutput.delete(sig);
           }
         }
         // 2026-10-17 P0-3: 探测类工具豁免"同参数连续失败"判定。
@@ -6297,7 +6311,7 @@ if (isComplexTask) {
             if (firstReport) {
               this._stuckEmittedTool.add(toolName);
               this._stuckEmitted.add(sig); // 保留旧字段写入, 兼容既有测试契约
-              this.emit('tool:stuck', { tool: toolName, count });
+              this.emit('tool:stuck', { tool: toolName, count, detail: this._dupFailOutput.get(sig) || '' });
             }
             this.directives.add('dup_fail', `[SYSTEM] ${toolName} 已连续失败 ${count} 次。请停止重试，改用其他工具或方案。`, 'high');
             // 2026-10-14 P1: 把这条"同参数连续失败 N 次"记进 evolution (跨会话可召回)。

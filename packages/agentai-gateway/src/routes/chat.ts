@@ -976,7 +976,7 @@ const sendEvent = (event: string, data: any) => {
           sendEvent('subagent_waiting', { count: info.count, sessionId: info.sessionId });
         });
         loop.on('tool:stuck', (info: any) => {
-          sendEvent('tool_stuck', { tool: info.tool, count: info.count });
+          sendEvent('tool_stuck', { tool: info.tool, count: info.count, detail: info.detail || '' });
         });
         // 关键修复: 转发工具调用事件到前端 (之前缺失!)
         loop.on('tool:start', (info: any) => {
