@@ -6460,7 +6460,14 @@ if (isComplexTask) {
         }
 
         for (const r of toolResults) {
-          const out = r.output || '';
+          let out = r.output || '';
+          // 2026-10-21 自噬防御: [SYSTEM] 行是系统注入的提示/指令, 不是工具产出, 不当错误证据。
+          // 不剥掉的话, buildLintCheckDirective 的"请检查是否有编译/lint 错误"会被下方
+          // /编译.*错误/ 命中 → 每写一个文件都误触发 ts_error 自主修复 (富哥截图实锤:
+          // 写完 as6.sh 弹"自主修复: ts_error 编译错误 正在分析修复"), 长任务被周期性带偏。
+          // auto_verify 的真错误行是 "⚠️ 编译错误…error TS…" 不带 [SYSTEM] 前缀, 不受影响,
+          // 真编译错误照样触发下面的修复分支。
+          out = out.split('\n').filter((l: string) => !/^\s*\[SYSTEM/.test(l)).join('\n');
           // 1) 模块缺失 → 自动安装 (npm + pip)
           const moduleMatch = out.match(/Cannot find module ['"]([^'"]+)['"]/i)
             || out.match(/ModuleNotFoundError:\s*No module named ['"]([^'"]+)['"]/i)

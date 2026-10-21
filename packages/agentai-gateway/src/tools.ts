@@ -2902,9 +2902,14 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         if (impact) {
           msg += `\n${impact}`;
         }
-        // Lint 驱动修复指令
-        const lintDirective = buildLintCheckDirective(resolved);
-        msg += `\n${lintDirective}`;
+        // Lint 驱动修复指令 — 只对可 lint 的代码文件发射 (2026-10-21 自噬修复:
+        // .sh/.py/.md/.txt 无编译/lint 故事, 若发射, 其"编译/lint错误"字样会被
+        // agentai-loop 自主修复闭环的 /编译.*错误/ 当成真错误 → 每次写文件都误触发
+        // ts_error 自主修复, 长任务被周期性带偏。真错误由执行时 (bash/tsc) 自然暴露)
+        if (/\.(tsx?|jsx?|mjs|cjs)$/i.test(resolved)) {
+          const lintDirective = buildLintCheckDirective(resolved);
+          msg += `\n${lintDirective}`;
+        }
         // 最小改动检查 (如果是修改而非新建)
         if (oldContent !== null) {
           const changeCheck = checkMinimalChange(oldContent, args.content);
