@@ -120,7 +120,7 @@ describe('源码契约: 归一化 + 诊断 + prune 保活都在位', () => {
     expect(TOOLS_SRC).toContain('const _lookupBgJob =');
     expect(TOOLS_SRC).toMatch(/job_output: async \(args\) => \{ const \{ job: j \} = _lookupBgJob\(args\.jobId\)/);
     expect(TOOLS_SRC).toMatch(/wait_for_job: async \(args\) => \{ const \{ job: j \} = _lookupBgJob\(args\.jobId\)/);
-    expect(TOOLS_SRC).toMatch(/stop_job: async \(args\) => \{ try \{ const \{ job: j \} = _lookupBgJob\(args\.jobId\)/);
+    expect(TOOLS_SRC).toMatch(/stop_job: async \(args\) => \{ try \{ const \{ job: j(, id)? \} = _lookupBgJob\(args\.jobId\)/);
     // 裸 get 形态绝迹 (4 个处理器 region) — 这是本次事故的根因形态
     expect(TOOLS_SRC).not.toMatch(/bgJobs\.get\(args\.jobId\)/);
   });

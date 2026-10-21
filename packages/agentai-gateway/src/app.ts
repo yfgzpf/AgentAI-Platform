@@ -15,6 +15,7 @@ import { runWithWorkspace, workspaceFromRequest } from './request-scope.js';
 import { createAdminRouter } from './routes/admin.js';
 import { createSessionsRouter, memoryRouter } from './routes/sessions.js';
 import { createSubagentArtifactsRouter } from './routes/subagent-artifacts.js';
+import { getBgJobRecords } from './tools.js';
 import { createProfileRouter, setIndustryEngine } from './routes/profile.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createGovernorRouter } from './routes/governor.js';
@@ -187,6 +188,17 @@ app.use(cors({
   app.use('/api/wechat', wechatRouter);
   app.use('/api/sessions', createSessionsRouter(deps.persistentMemory));
   app.use('/api/subagent-artifacts', createSubagentArtifactsRouter());  // 2026-10-21 子智能体「任务产物」区
+  // 2026-10-21: 后台任务轮询认领通道 —— 普通 bg job (wsl_exec 转后台 / run_background)
+  //   只在内存, 回合外/重启后前端无法感知。本端点返回落盘记录, GUI 轮询后自动提示用户并入对话。
+  app.get('/api/bg-jobs', (req, res) => {
+    try {
+      const ws = typeof req.query.workspace === 'string' ? req.query.workspace : undefined;
+      const jobs = getBgJobRecords(ws);
+      res.json({ success: true, jobs });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e?.message || String(e) });
+    }
+  });
   app.use('/api/memory', memoryRouter);  // v3.1 跨会话记忆统计 (GUI 注入面板用)
   // 记忆可视化 API
   app.get('/v1/memory/list', (_req, res) => {

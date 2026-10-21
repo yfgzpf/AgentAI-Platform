@@ -411,6 +411,68 @@ const _bgJobNotFound = (raw: any): string => {
     + `(wsl_exec 可加 background:false 同步跑完拿全量结果; 产物记得落 /mnt/f 持久盘, 别落 /tmp)。`;
 };
 
+// ═══ 2026-10-21: 后台任务持久化 (网关重启不丢 + GUI 可轮询认领) ═══
+// 事故 (富哥): 普通后台 job (wsl_exec 自动转后台 / run_background) 只在内存 bgJobs,
+//   ① 网关一重启全部消失 (孤儿进程无人读); ② 用户在回合外离开, job 静默跑完也没通道
+//   推回前端 → 结果丢失 ("回合外没有推回前端的通道")。
+// 修法: 每次 spawn/exit/error/stop 把精简记录 (cmd/status/时间/输出尾) 落 JSON 文件,
+//   进程重启时把残留的 running 标记为 orphaned; 新增 /api/bg-jobs 供 GUI 轮询认领。
+const BGJOBS_DIR = path.join(os.homedir(), '.agentai-gateway');
+const BGJOBS_FILE = path.join(BGJOBS_DIR, 'bgjobs.json');
+
+type BgJobRecord = {
+  id: number;
+  workspace?: string;
+  cmd: string;
+  status: 'running' | 'done' | 'error' | 'stopped' | 'orphaned';
+  startedAt: string;
+  finishedAt?: string;
+  exitCode?: number;
+  outputTail: string;
+};
+
+let _bgJobRecords: Map<number, BgJobRecord> | null = null;
+function loadBgJobRecords(): Map<number, BgJobRecord> {
+  if (_bgJobRecords) return _bgJobRecords;
+  _bgJobRecords = new Map();
+  try {
+    if (fs.existsSync(BGJOBS_FILE)) {
+      const arr = JSON.parse(fs.readFileSync(BGJOBS_FILE, 'utf-8'));
+      if (Array.isArray(arr)) {
+        for (const r of arr) {
+          if (typeof r?.id === 'number') {
+            // 进程重启后, 之前 running 的 job 子进程已死 → 标记 orphaned (数据仍在, 不串台)
+            if (r.status === 'running') r.status = 'orphaned';
+            _bgJobRecords.set(r.id, r);
+          }
+        }
+      }
+    }
+  } catch { /* 文件损坏则忽略, 当空 */ }
+  return _bgJobRecords;
+}
+function saveBgJobRecords() {
+  try {
+    fs.mkdirSync(BGJOBS_DIR, { recursive: true });
+    // 落盘保留更多 (要跨重启), 取最近 BG_JOBS_KEEP*2
+    const arr = [...loadBgJobRecords().values()].slice(-BG_JOBS_KEEP * 2);
+    fs.writeFileSync(BGJOBS_FILE, JSON.stringify(arr), 'utf-8');
+  } catch { /* 尽力而为 */ }
+}
+function upsertBgJobRecord(id: number, patch: Partial<BgJobRecord>) {
+  const m = loadBgJobRecords();
+  const rec = m.get(id) || { id, status: 'running' as const, startedAt: new Date().toISOString(), cmd: '' };
+  Object.assign(rec, patch);
+  m.set(id, rec);
+  saveBgJobRecords();
+}
+/** 供 /api/bg-jobs 调用: 返回记录 (可按 workspace 过滤, 按 startedAt 升序) */
+export function getBgJobRecords(workspace?: string): BgJobRecord[] {
+  const all = [...loadBgJobRecords().values()];
+  const filtered = workspace ? all.filter(r => r.workspace === workspace) : all;
+  return filtered.sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
+}
+
 /**
  * 2026-10-20 D4: 网关进程退出时杀光后台 job 的子进程树。
  * 事故: spawn(shell:true) 的子进程在父进程重启后成**孤儿** — 没人 kill 没人读,
@@ -3010,8 +3072,9 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       //   → AI 判定「卡死/无产出」→ 杀进程重跑 (长任务监控主力通道实质残缺)。
       // 修法: stdout/stderr 的每个 chunk 同步落 job.output; 带上限 200KB 保留尾部
       //   (job_output 本来就 slice 尾部, 早出的噪点在长任务里价值最低)。
-      const job = { pid: child.pid, running: true, output: '' };
+      const job = { pid: child.pid, running: true, output: '', workspace: getWs(), cmd: command.slice(0, 120) };
       bgJobs.set(id, job);
+      upsertBgJobRecord(id, { workspace: job.workspace, cmd: job.cmd, status: 'running' });
       const _feed = (d: Buffer) => {
         output += d.toString();
         if (output.length > BG_JOB_OUTPUT_MAX) output = output.slice(-BG_JOB_OUTPUT_MAX);
@@ -3019,12 +3082,13 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       };
       child.stdout.on('data', _feed);
       child.stderr.on('data', _feed);
-      child.on('exit', () => { const j = bgJobs.get(id); if (j) { j.running = false; j.output = output; } _pruneBgJobs(); });
+      child.on('exit', (code: any) => { const j = bgJobs.get(id); if (j) { j.running = false; j.output = output; } upsertBgJobRecord(id, { status: 'done', finishedAt: new Date().toISOString(), exitCode: typeof code === 'number' ? code : undefined, outputTail: output.slice(-2000) }); _pruneBgJobs(); });
       // 2026-10-20 D3: spawn 失败 (命令不存在/权限) 只发 'error' 不发 'exit' →
       //   job.running 永为 true → wait_for_job 等满超时只拿到「失败 + 空输出」。
       child.on('error', (e: any) => {
         const j = bgJobs.get(id);
         if (j) { j.running = false; j.output = output + `\n[spawn error] ${e?.message || e}`; }
+        upsertBgJobRecord(id, { status: 'error', finishedAt: new Date().toISOString(), outputTail: (output + `\n[spawn error] ${e?.message || e}`).slice(-2000) });
         _pruneBgJobs();
       });
       return { success: true, output: `Job ${id} started, pid ${child.pid}`, data: { jobId: id } };
@@ -3185,7 +3249,7 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
   //   裸 get 必 Miss (实锤 6 连败); 找不到时给诊断文案而不是裸 'Not found'。
   job_output: async (args) => { const { job: j } = _lookupBgJob(args.jobId); return { success: !!j, output: j ? (j.output || '').slice(-(args.tailLines || 80) * 80) : _bgJobNotFound(args.jobId) }; },
   wait_for_job: async (args) => { const { job: j } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; const start = Date.now(); while (j.running && Date.now() - start < (args.timeoutMs || 5000)) await new Promise(r => setTimeout(r, 200)); return { success: !j.running, output: j.output || '' }; },
-  stop_job: async (args) => { try { const { job: j } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; killProcessTree(j.pid); j.running = false; return { success: true, output: 'Stopped (含子孙进程)' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
+  stop_job: async (args) => { try { const { job: j, id } = _lookupBgJob(args.jobId); if (!j) return { success: false, output: _bgJobNotFound(args.jobId) }; killProcessTree(j.pid); j.running = false; upsertBgJobRecord(id, { status: 'stopped', finishedAt: new Date().toISOString(), outputTail: (j.output || '').slice(-2000) }); return { success: true, output: 'Stopped (含子孙进程)' }; } catch (e: any) { return { success: false, output: `Error: ${e.message}` }; } },
   list_jobs: async () => ({ success: true, output: [...bgJobs.entries()].map(([id, j]) => `#${id}: running=${j.running}${j.cmd ? ` | ${j.cmd}` : ''}`).join('\n') || '(none)' }),
   remember: async (args, ctx) => {
     try {
@@ -5030,8 +5094,9 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           const id = ++jobIdCounter;
           const child = spawn(exe, spawnArgv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
           let output = '';
-          const job = { pid: child.pid, running: true, output: '', cmd: `wsl: ${command} ${argv.join(' ')}`.slice(0, 120) };
+          const job = { pid: child.pid, running: true, output: '', cmd: `wsl: ${command} ${argv.join(' ')}`.slice(0, 120), workspace: (ctx as any)?.workspace || getWs() };
           bgJobs.set(id, job);
+          upsertBgJobRecord(id, { workspace: job.workspace, cmd: job.cmd, status: 'running' });
           const _feed = (d: Buffer) => {
             output += d.toString();
             if (output.length > BG_JOB_OUTPUT_MAX) output = output.slice(-BG_JOB_OUTPUT_MAX);
@@ -5042,12 +5107,14 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           child.on('exit', (code: any) => {
             const j = bgJobs.get(id);
             if (j) { j.running = false; j.output = output + (code ? `\n[exit code: ${code}]` : ''); }
+            upsertBgJobRecord(id, { status: 'done', finishedAt: new Date().toISOString(), exitCode: typeof code === 'number' ? code : undefined, outputTail: (output + (code ? `\n[exit code: ${code}]` : '')).slice(-2000) });
             _pruneBgJobs();
           });
           // spawn 失败只发 'error' 不发 'exit' → 必须收敛 running, 否则 wait_for_job 等满超时只拿到空 (同 run_background D3 教训)
           child.on('error', (e: any) => {
             const j = bgJobs.get(id);
             if (j) { j.running = false; j.output = output + `\n[spawn error] ${e?.message || e}`; }
+            upsertBgJobRecord(id, { status: 'error', finishedAt: new Date().toISOString(), outputTail: (output + `\n[spawn error] ${e?.message || e}`).slice(-2000) });
             _pruneBgJobs();
           });
           return {

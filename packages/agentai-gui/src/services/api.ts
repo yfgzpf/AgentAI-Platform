@@ -357,10 +357,20 @@ case 'dream': window.dispatchEvent(new CustomEvent('agentai:dream', { detail: da
         }
         if (done) break;
       }
-      // 流正常关闭但没有 done 事件:
-      //   传输层在 done 之前断了 (后端断线即 abort 当前 loop, 不会再补发 done)。
-      //   已收的 delta 就是本次能拿到的最完整内容 —— 兜底收尾, 绝不卡死转圈
-      //   (这正是"说一句话就断了"的根因之一)。
+      // 流结束但未收到 done 事件: 视为传输在 done 前中断, 在重试额度内自动续跑
+      //   (不占用户一次输入; 与 429 退避同理, 避免"长任务跑一半连接断了就得重说")。
+      //   注: 若后端真的已跑完并发送过 done, 内层循环会走 `case 'done'` 直接 return,
+      //   永远到不了这里 —— 所以能到这里是**确实没收到 done**, 重试是合理恢复。
+      if (receivedDelta.trim() && retries < MAX_RETRIES) {
+        console.warn(`[api] SSE 在 done 前中断, 自动重试续跑 (${retries + 1}/${MAX_RETRIES})`);
+        if (reader) { try { reader.cancel(); } catch {} reader = null; }
+        retries++;
+        const backoff = 1000 * retries; // 1s, 2s, 3s
+        if (signal?.aborted) return;
+        await new Promise(r => setTimeout(r, backoff));
+        continue;
+      }
+      // 重试耗尽或确无内容: 兜底收尾, 绝不卡死转圈 (这正是"说一句话就断了"的根因之一)。
       if (receivedDelta.trim()) {
         handlers.onDone?.({ content: receivedDelta });
       } else {

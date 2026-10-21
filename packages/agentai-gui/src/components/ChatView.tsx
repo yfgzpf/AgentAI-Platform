@@ -489,6 +489,11 @@ const [loading, setLoading] = useState(false);
   const [awaitingSubagents, setAwaitingSubagents] = useState(false);
   /** 防止重复唤醒: 同一批子任务只唤醒一次 */
   const resumeTriggeredRef = useRef<Set<string>>(new Set());
+  // 2026-10-21: 后台任务 (wsl_exec 转后台 / run_background) 自动认领通道 ——
+  //   这些 job 只在网关内存, 回合外/重启后前端无法感知。轮询 /api/bg-jobs 拿到落盘记录,
+  //   把"已完成/失败/被停/网关重启变 orphan"的 job 推回前端, 用户可一键并入对话。
+  const [pendingBgJobs, setPendingBgJobs] = useState<any[]>([]);
+  const seenBgJobIdsRef = useRef<Set<number>>(new Set());
   /** 网关地址 (轮询产物/状态用) */
   const gwBase = (window as any).__AGENTAI_GATEWAY__?.replace(/^ws(s?):\/\//, 'http$1://')
     || 'http://127.0.0.1:18789';
@@ -763,6 +768,47 @@ const [loading, setLoading] = useState(false);
     discover();
     return () => { cancelled = true; };
   }, [activeId, profileWs, gwBase, triggerSubagentResume]);
+
+  /* ═══ 2026-10-21 后台任务「轮询认领通道」 (回合外也能感知 job 完成) ═══
+     实锤 (富哥): 普通后台 job (wsl_exec 自动转后台 / run_background) 只在网关内存,
+       用户在回合外离开, job 静默跑完 → 前端毫无感知 → 结果丢失 ("回合外没有推回前端的通道")。
+       解法: 独立于 SSE 的轮询通道, 从 /api/bg-jobs 落盘记录读; 发现"新完成的 job"
+       (done/error/stopped/orphaned) 且本会话未见过的 → 推上 banner, 用户可一键并入对话。
+       不依赖 SSE, SSE 断/本页刚挂载都能补上。 */
+  useEffect(() => {
+    if (!profileWs) return;
+    let cancelled = false;
+    const POLL_MS = 20000;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`${gwBase}/api/bg-jobs?workspace=${encodeURIComponent(profileWs)}`);
+        if (!res.ok) return;
+        const data: any = await res.json();
+        if (cancelled || !data?.success) return;
+        const jobs: any[] = data.jobs || [];
+        // 终态集合: 已结束/被停/网关重启变孤儿 —— 这些需要推给用户并入
+        const terminal = jobs.filter((j: any) =>
+          j.status === 'done' || j.status === 'error' || j.status === 'stopped' || j.status === 'orphaned');
+        const fresh = terminal.filter((j: any) => !seenBgJobIdsRef.current.has(j.id));
+        if (fresh.length === 0) return;
+        // 标记已见 (去重, 避免重复弹)
+        fresh.forEach((j: any) => seenBgJobIdsRef.current.add(j.id));
+        setPendingBgJobs((prev) => {
+          const existing = new Set(prev.map((p: any) => p.id));
+          const added = fresh.filter((j: any) => !existing.has(j.id));
+          return added.length ? [...prev, ...added] : prev;
+        });
+      } catch { /* 轮询失败静默, 下一轮再来 */ }
+    };
+
+    const onFocus = () => poll();
+    window.addEventListener('focus', onFocus);
+    const t = setInterval(poll, POLL_MS);
+    poll(); // 挂载/切会话即拉一次, 补上页面关闭期间完成的 job
+    return () => { cancelled = true; clearInterval(t); window.removeEventListener('focus', onFocus); };
+  }, [profileWs, gwBase]);
 
   const CTX_MAX = 1_000_000;
   const FOLD_THRESHOLD = 0.70;
@@ -2231,6 +2277,55 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
           )}
         </div>
         </AutoHideTaskBar>
+      )}
+
+      {/* ===== 后台任务完成提示条 (回合外/重启后也能感知) ===== */}
+      {pendingBgJobs.length > 0 && (
+        <div style={{ padding: '8px 16px 0' }}>
+          <Alert
+            type="success"
+            showIcon
+            closable
+            onClose={() => setPendingBgJobs([])}
+            message={
+              <Space>
+                <span>有 {pendingBgJobs.length} 个后台任务已完成</span>
+                <Tag color="blue">可并入对话</Tag>
+              </Space>
+            }
+            description={
+              <div>
+                <div style={{ marginBottom: 8 }}>
+                  {pendingBgJobs.map((j: any) => (
+                    <div key={j.id} style={{ fontSize: 'var(--ui-font-size)', color: 'var(--text-secondary)' }}>
+                      #{j.id} · {j.status} · {j.cmd || '(无命令)'}
+                    </div>
+                  ))}
+                </div>
+                <Space>
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={() => {
+                      const summary = pendingBgJobs
+                        .map((j: any) => `#${j.id} (${j.status}) ${j.cmd || ''}`)
+                        .join('；');
+                      const calls = pendingBgJobs.map((j: any) => `job_output({ jobId: ${j.id } })`).join('；');
+                      handleSend(`后台任务已完成：${summary}。请用 ${calls} 取出结果, 并并入当前工作的脉络 (不要重跑, 直接基于输出继续)。`);
+                      setPendingBgJobs([]);
+                    }}
+                  >
+                    并入对话
+                  </Button>
+                  <Button size="small" onClick={() => setPendingBgJobs([])}>
+                    知道了
+                  </Button>
+                </Space>
+              </div>
+            }
+            style={{ marginBottom: 8 }}
+          />
+        </div>
       )}
 
       {/* ===== Workspace + 摘要 (可折叠) ===== */}

@@ -562,15 +562,17 @@ const sendEvent = (event: string, data: any) => {
         const prevEntry = activeLoops.get(sessionKey);
         // P0 修复: ask_user 答案不走压制模式 — 旧 loop 的上下文必须保留
         // 前端发送 isAnswer=true 表示这是对 AI 追问的回答, 不应杀掉旧 loop
-        // 2026-10-19 P0: **断线重试也不走压制** —— 前端 _retry 是对**同一个任务**的
-        //   重连续跑, 若把它当"新消息"去 abort 前一个 loop, 等于自己在杀自己的任务:
-        //   断线 → 重连 → 压制并 abort → 断线 → 重连 …… 最终"所有模型都中断"。
+        // 2026-10-21 修正: **断线重试必须 abort 旧 loop** —— 重试请求带着 _receivedDelta
+        //   上下文续跑, 会 spawn 一个**全新** loop。若保留旧 loop (仍在 20s 宽限内),
+        //   两个 loop 同时跑 → 副作用工具 (wsl_exec/run_background) 被执行两次 (双跑事故)。
+        //   旧注释担忧的"断线→重连→压制→断线"循环, 在有了 _receivedDelta 续跑机制后
+        //   已不成立: 杀掉断线的旧 loop、用上下文开新 loop 才是正确续跑, 而非自我掐断。
         const isAnswer = req.body.isAnswer === true;
-        if (prevEntry && !isAnswer && !isRetry) {
-          console.log(`[chat] 🛑 压制前一个未完成的对话 | session=${sessionKey}`);
+        if (prevEntry && !isAnswer) {
+          console.log(`[chat] 🛑 压制前一个未完成的对话 | session=${sessionKey}${isRetry ? ' (断线重试: 旧 loop 已在宽限期内, 立即终止避免双跑)' : ''}`);
           // 2026-10-21: 终止前先落断点 —— 用户发新消息不应让旧任务的进度凭空消失,
           //   暂停后的快照会在下次说"继续"时被 findResumableTasks 召回。
-          try { (prevEntry as any).snapshotBeforeSupersede?.('new-message'); } catch { /* 快照失败不阻断接管 */ }
+          try { (prevEntry as any).snapshotBeforeSupersede?.(isRetry ? 'retry' : 'new-message'); } catch { /* 快照失败不阻断接管 */ }
           try { prevEntry.abort(); } catch {}
           activeLoops.delete(sessionKey);
         } else if (prevEntry && isAnswer) {
