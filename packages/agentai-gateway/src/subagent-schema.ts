@@ -182,3 +182,117 @@ export function recordSpawn(sessionId: string): void {
 export function resetSpawnBudgetForTest(): void {
   _spawnBudget.clear();
 }
+
+// ═══ 模型级熔断器 (2026-10-21, 富哥: "模型能力不行就不给它") ═══
+// 系统监督的本体: 某个模型的子智能体委托长期失败/超时/不看规则乱派 →
+// 自动摘除它的 spawn_subagent (模型想调也调不了), 逼它自行完成 —
+// 治"任务动不动就中断" (笨模型派了跑不动, 主循环被拖死)。
+//
+// 仿熔断器三态:
+//   closed    正常 — 工具在列表里
+//   open      摘工具 — TTL (CIRCUIT_TTL_MS) 内不给派
+//   half-open TTL 到 → 放 1 次试跑: 结局好 → closed 清零; 又坏 → 重新 open
+// 防误伤: 样本 < CIRCUIT_MIN_SAMPLES 不判 (偶然失败不熔);
+//   免费档降级不计 (产品限制非模型问题, 由调用方选择不记)。
+// 进程级 Map — 网关重启 = 全部重新学习 (重启本身是强恢复信号, 可接受)。
+
+const _modelHealth = new Map<string, {
+  total: number;      // 已完结 spawn 数 (success/partial/failed/timeout)
+  bad: number;        // 坏结局数 (failed+timeout+gated)
+  noReason: number;   // 未提供 reason 数 (不理解 a/b/c 的信号)
+  tripped: boolean;   // 熔断中
+  trippedAt: number;  // 本次熔断时刻 (半开 TTL 判据)
+  halfOpen: boolean;  // 半开试跑中 (此状态下 1 次坏结局即重新熔断)
+  ts: number;         // 最近一次记录时刻 (TTL 清理判据)
+}>();
+const _HEALTH_TTL_MS = 6 * 60 * 60 * 1000;   // 记录老化 (同预算 TTL)
+export const CIRCUIT_TTL_MS = 30 * 60 * 1000;    // 熔断 30 分钟后半开
+export const CIRCUIT_MIN_SAMPLES = 3;            // 最少样本数 (防偶然误伤)
+export const CIRCUIT_BAD_RATE = 0.6;             // 坏结局率阈值
+export const CIRCUIT_NO_REASON_RATE = 0.6;       // 无理由率阈值 (乱委托信号)
+
+export type SpawnOutcome = 'success' | 'partial' | 'failed' | 'timeout' | 'gated' | 'noReason';
+
+/** 记一次子智能体结局 (模型维度)。noReason 与结局正交, 分别计数。 */
+export function recordSpawnOutcome(model: string, outcome: SpawnOutcome): void {
+  const key = String(model || 'unknown');
+  const now = Date.now();
+  let h = _modelHealth.get(key);
+  if (!h) {
+    h = { total: 0, bad: 0, noReason: 0, tripped: false, trippedAt: 0, halfOpen: false, ts: 0 };
+    _modelHealth.set(key, h);
+  }
+  h.ts = now;
+  // 半开试跑判决优先: 1 次坏 (含 noReason) → 重新 open; 1 次好 → closed 清零
+  if (h.halfOpen) {
+    const bad = outcome === 'failed' || outcome === 'timeout' || outcome === 'gated' || outcome === 'noReason';
+    if (bad) {
+      h.tripped = true; h.trippedAt = now; h.halfOpen = false;
+    } else {
+      h.tripped = false; h.halfOpen = false; h.total = 1; h.bad = 0; h.noReason = 0;
+    }
+    return;
+  }
+  // noReason 也进 total (它是"模型派了"的样本证据), 但不算坏结局 —
+  //   乱委托是独立信号, 由 noReasonRate 单独判 (否则纯无理由调用永远攒不够样本)
+  if (outcome === 'noReason') {
+    h.noReason++; h.total++;
+  } else {
+    h.total++;
+    if (outcome === 'failed' || outcome === 'timeout' || outcome === 'gated') h.bad++;
+  }
+  if (h.total > 50) { // 长会话滚动窗口: 只留最近 50 次的统计基底
+    h.total = 50; h.bad = Math.min(h.bad, 50); h.noReason = Math.min(h.noReason, 50);
+  }
+  if (!h.tripped) {
+    const badRate = h.bad / h.total;
+    const noReasonRate = h.noReason / Math.max(1, h.total);
+    if (h.total >= CIRCUIT_MIN_SAMPLES && (badRate >= CIRCUIT_BAD_RATE || noReasonRate >= CIRCUIT_NO_REASON_RATE)) {
+      h.tripped = true; h.trippedAt = now; h.halfOpen = false;
+    }
+  }
+  // TTL 清理 (只清过期记录, 不碰活跃模型)
+  if (_modelHealth.size > 50) {
+    for (const [k, v] of _modelHealth) {
+      if (now - v.ts > _HEALTH_TTL_MS) _modelHealth.delete(k);
+    }
+  }
+}
+
+export function modelSubagentHealth(model: string): {
+  total: number; bad: number; noReason: number;
+  badRate: number; tripped: boolean; halfOpen: boolean; remainingMs: number;
+} {
+  const h = _modelHealth.get(String(model || 'unknown'));
+  if (!h) return { total: 0, bad: 0, noReason: 0, badRate: 0, tripped: false, halfOpen: false, remainingMs: 0 };
+  const remainingMs = h.tripped ? Math.max(0, CIRCUIT_TTL_MS - (Date.now() - h.trippedAt)) : 0;
+  return {
+    total: h.total, bad: h.bad, noReason: h.noReason,
+    badRate: h.total > 0 ? h.bad / h.total : 0,
+    tripped: h.tripped, halfOpen: h.halfOpen, remainingMs,
+  };
+}
+
+/**
+ * 是否该摘除该模型的 spawn_subagent (工具列表构造前调用)。
+ * half-open 转换在这里做 (读时判决): tripped 且 TTL 到 → 放行 1 次试跑。
+ * 返回 true = 摘工具; 调用方应同时把原因写进日志 (模型看不到工具, 人看得到)。
+ */
+export function shouldStripSubagentForModel(model: string): boolean {
+  const h = _modelHealth.get(String(model || 'unknown'));
+  if (!h || !h.tripped) return false;
+  if (Date.now() - h.trippedAt >= CIRCUIT_TTL_MS) {
+    // TTL 到 → 半开: 放 1 次试跑 (total 归零, 下次结局重新累计; tripped 清掉,
+    //   否则 handler 双保险 (modelSubagentHealth.tripped) 会误拒这次试跑)
+    h.halfOpen = true;
+    h.tripped = false;
+    h.total = 0; h.bad = 0; h.noReason = 0;
+    return false;
+  }
+  return true;
+}
+
+/** 测试专用: 清空熔断状态 */
+export function resetModelCircuitForTest(): void {
+  _modelHealth.clear();
+}

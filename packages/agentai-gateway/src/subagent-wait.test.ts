@@ -432,7 +432,7 @@ describe('二审补漏: 方案全文逐条对账 (富哥 2026-10-21 晚贴全文
   it('缺口4 预算列表前移除 (方案 9.2 + 检查点"预算检查在 tool 列表构造前执行")', () => {
     const scIdx = loopSrc.indexOf('shouldShortCircuitSubagent(message)');
     expect(scIdx).toBeGreaterThan(0);
-    const around = loopSrc.slice(scIdx - 300, scIdx + 700);
+    const around = loopSrc.slice(scIdx - 300, scIdx + 1200);
     expect(around).toContain('spawnBudgetState');
     expect(around).toContain("getName(t) !== 'spawn_subagent'");
     expect(around).toContain('budgetExhausted');

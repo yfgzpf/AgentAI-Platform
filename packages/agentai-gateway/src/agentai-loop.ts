@@ -48,7 +48,7 @@ import { saveArtifact, loadArtifact, appendTranscript } from './subagent-artifac
 import { registerSubagent, completeSubagent, runningForSession } from './subagent-registry.js';
 import { checkSubagentSpawnPolicy, isBountyWorkspace } from './subagent-policy.js';
 // 2026-10-21 富哥《并行子智能体编排改造方案》: 结构化 Task/Result + 调用预算
-import { normalizeSubagentTask, makeSubagentResult, formatSubagentResult, spawnBudgetState, recordSpawn, shouldShortCircuitSubagent, SUBAGENT_SYNC_TIMEOUT_MS, type SubagentTask, type SubagentResult } from './subagent-schema.js';
+import { normalizeSubagentTask, makeSubagentResult, formatSubagentResult, spawnBudgetState, recordSpawn, shouldShortCircuitSubagent, recordSpawnOutcome, modelSubagentHealth, shouldStripSubagentForModel, SUBAGENT_SYNC_TIMEOUT_MS, type SubagentTask, type SubagentResult } from './subagent-schema.js';
 
 /**
  * 2026-10-17 富哥拍板「全部放宽」: **不再有任何迭代上限**。
@@ -5401,6 +5401,9 @@ if (isComplexTask) {
             });
             if (!spawnPolicy.allowed) {
               const policyId = `policy-${Date.now()}`;
+              // ★ 2026-10-21 模型级熔断埋点: 被策略闸门拦 = 模型不看规则的信号
+              //   (如 bounty 区还想派) — 计入坏结局, 累积到阈值自动摘工具
+              recordSpawnOutcome(String(this.opts.model || ''), 'gated');
               // start/error 用同一个 id — 前端 onSubagentError 才能收敛运行框
               this.emit('subagent:start', { id: policyId, type: tc.args?.type, task: tc.args?.task });
               // 2026-10-21 方案落地: 不在此处直推 appendOnlyLog — dispatchToolCalls 会为
@@ -5440,6 +5443,20 @@ if (isComplexTask) {
                 spawnHandled.add(tc.id);
                 continue;
               }
+              // ★ 2026-10-21 富哥"模型能力不行就不给它": 模型级熔断 handler 双保险 —
+              //   工具列表构造时已摘 (模型正常看不到), 此处置户/旧会话漏网时仍拒。
+              //   半开放行由 shouldStripSubagentForModel 读时转换, 这里用 modelSubagentHealth
+              //   只读当前状态 (不触发半开), 避免列表构造与 handler 双重转换。
+              const _mh = modelSubagentHealth(String(this.opts.model || ''));
+              if (_mh.tripped) {
+                const _mhId = `circuit-${Date.now()}`;
+                this.emit('subagent:start', { id: _mhId, type: tc.args?.type, task: tc.args?.task });
+                this._spawnOutcomes.set(tc.id,
+                  `[模型委托熔断] 当前模型 (${this.opts.model}) 的子智能体委托失败率过高 (${_mh.bad}/${_mh.total}), 系统已临时摘除该能力。请自己完成: ${tc.args?.task || ''}`);
+                this.emit('subagent:error', { id: _mhId, error: `模型委托熔断 (失败率 ${_mh.bad}/${_mh.total}), 请自主完成` });
+                spawnHandled.add(tc.id);
+                continue;
+              }
               // ✅ P0: 并发限制 — 超过 MAX_SUBAGENTS 时拒绝, 防止无限扩张
               if (this._subAgentCount >= AgentAILoop.MAX_SUBAGENTS) {
                 logger.warn(`[subagent] 并发上限 ${AgentAILoop.MAX_SUBAGENTS}, 拒绝 spawn (当前 ${this._subAgentCount}/${AgentAILoop.MAX_SUBAGENTS})`);
@@ -5461,6 +5478,8 @@ if (isComplexTask) {
               this._subAgentCount++;
               // ★ 2026-10-21 方案落地: 结构化 Task + 预算计数 + reason 审计 (9.3)
               const { task: subNorm, reasonProvided } = normalizeSubagentTask(tc.args || {});
+              // ★ 2026-10-21 模型级熔断埋点: 不传 reason = 没学 a/b/c 的信号 (乱委托)
+              if (!reasonProvided) recordSpawnOutcome(String(this.opts.model || ''), 'noReason');
               recordSpawn(_sid);
               console.log(`[spawn-audit] session=${_sid} sub=${subId} type=${subNorm.type || 'generic'} reason=${subNorm.reason.slice(0, 120)} provided=${reasonProvided} timeoutMs=${subNorm.timeoutMs} background=${subNorm.background}`);
               // 回合内收集: 普通工具 dispatch 完后统一 await (见 _awaitTurnSpawns)
@@ -5665,6 +5684,8 @@ if (isComplexTask) {
                   // ★ 2026-10-21 方案落地: 不直推 appendOnlyLog — 与 dispatchToolCalls
                   //   占位符同 id 双消息。结果经 spawnEntry.resolve 进 _turnSpawns,
                   //   回合末由 _applySpawnOutcomes 覆盖占位符, 一条 tc.id 一条真实消息。
+                  // 熔断埋点防双记: 回合内已判超时记过 timeout 的, 完成时不再记 success
+                  if (!spawnEntry.timedOutInTurn) recordSpawnOutcome(String(this.opts.model || ''), 'success');
                   spawnEntry.resolve(makeSubagentResult({
                     status: 'success',
                     subagentId: subId,
@@ -5704,6 +5725,7 @@ if (isComplexTask) {
                     updatedAt: Date.now(),
                   });
                   completeSubagent(subId, 'error', { error: e.message, durationMs: Date.now() - subStartedAt });
+                  if (!spawnEntry.timedOutInTurn) recordSpawnOutcome(String(this.opts.model || ''), 'failed'); // 熔断埋点 (防双记)
                   // 同成功路径: 结构化结果进 _turnSpawns, 不直推 (异常隔离: 失败不出主循环)
                   spawnEntry.resolve(makeSubagentResult({
                     status: 'failed',
@@ -8060,6 +8082,7 @@ try {
       if (e.settled) continue; // IIFE 已resolve (含边界竞态: 恰好赶在上限前完成)
       e.timedOutInTurn = true;
       e.settled = true;
+      recordSpawnOutcome(String(this.opts.model || ''), 'timeout'); // 模型级熔断埋点 (老是超时的模型会被摘工具)
       e.result = makeSubagentResult({
         status: 'timeout',
         subagentId: e.subId,
@@ -8291,7 +8314,11 @@ try {
     //   (检查点表: "预算检查是否在 tool 列表构造前执行")。handler 里的预算闸门保留作
     //   双保险 (列表构造与模型调用之间若有其他路径漏过去, 仍拒)。
     const budgetExhausted = spawnBudgetState(String(this.opts.sessionId || '')).exhausted;
-    const hideSpawn = shortCircuitSpawn || budgetExhausted;
+    // ★ 2026-10-21 富哥"模型能力不行就不给它": 模型级熔断 — 该模型的子智能体委托
+    //   长期失败/超时/不看规则 → 摘除 spawn_subagent (系统监督, 治任务动不动中断)。
+    //   半开放行与熔断判据见 shouldStripSubagentForModel; handler 双保险同步。
+    const modelCircuitOpen = shouldStripSubagentForModel(String(this.opts.model || ''));
+    const hideSpawn = shortCircuitSpawn || budgetExhausted || modelCircuitOpen;
     const toolPool = hideSpawn ? filtered.filter(t => getName(t) !== 'spawn_subagent') : filtered;
     // ═══ Cap: 提高到 25 (免费) / 40 (商用), 让 AI 看到更多能力 ═══
     // 优先保证: 高价值工具必须在顶部(不会被 cap 裁掉)
@@ -8318,7 +8345,7 @@ try {
     const MAX_TOOLS = this.opts.model === 'deepseek' && !this.opts.modelName?.includes('pro') ? 25 : 40;
     const remaining = MAX_TOOLS - priority.length;
     const capped = [...priority, ...rest.slice(0, Math.max(0, remaining))];
-    console.log(`[tools-filter] iter=${this.iteration} ${allTools.length} → ${capped.length} tools${shortCircuitSpawn ? ' (简单任务短路: 无 spawn_subagent)' : ''}${!shortCircuitSpawn && budgetExhausted ? ' (委托预算已用尽: 无 spawn_subagent)' : ''} (msg: ${msg.slice(0, 40)})`);
+    console.log(`[tools-filter] iter=${this.iteration} ${allTools.length} → ${capped.length} tools${shortCircuitSpawn ? ' (简单任务短路: 无 spawn_subagent)' : ''}${!shortCircuitSpawn && budgetExhausted ? ' (委托预算已用尽: 无 spawn_subagent)' : ''}${!shortCircuitSpawn && !budgetExhausted && modelCircuitOpen ? ' (模型熔断: 该模型委托失败率过高, 无 spawn_subagent)' : ''} (msg: ${msg.slice(0, 40)})`);
     return capped.length >= 5 ? capped : allTools; // 安全兜底: 太少就给全部
   }
 
