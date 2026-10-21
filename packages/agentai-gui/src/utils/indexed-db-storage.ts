@@ -36,6 +36,16 @@ function idbAvailable(): boolean {
   }
 }
 
+/**
+ * 对外暴露: 当前环境是否可用 IndexedDB。
+ * 供启动体检 (startup-storage-check) 决策 —— 可用时不必再对 localStorage 里的
+ * 旧 `agentai-sessions` 做裁剪 (它马上会被迁入 GB 级存储, 裁了反而白丢数据);
+ * 不可用时才需要沿用旧的裁剪策略。
+ */
+export function isIndexedDbAvailable(): boolean {
+  return idbAvailable();
+}
+
 let dbPromise: Promise<IDBDatabase> | null = null;
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -138,16 +148,22 @@ export function createIndexedDbStorage(): StateStorage {
     getItem: async (name) => {
       const fromIdb = await idbGet(name);
       if (fromIdb != null) return fromIdb;
-      // 首次启动: localStorage 里可能还残留旧数据, 一次性迁入 IDB 再删旧 key
+      // 首次启动: localStorage 里可能还残留旧数据, 迁入 IDB
       const ls = getLS();
       const legacy = ls?.getItem(name) ?? null;
       if (legacy != null) {
-        void idbSet(name, legacy); // 异步迁入, 不阻塞读取
-        try {
-          ls?.removeItem(name);
-        } catch {
-          /* ignore */
+        // ★ 必须等 IDB 写入确认成功后才删旧 key。
+        //   否则 (void idbSet + 立刻 removeItem) 一旦 IDB 写失败,
+        //   旧数据已被删且没落进 IDB → 所有会话彻底丢失, 且不可恢复。
+        const ok = await idbSet(name, legacy);
+        if (ok) {
+          try {
+            ls?.removeItem(name);
+          } catch {
+            /* ignore */
+          }
         }
+        // 写失败则保留 localStorage 副本, 下次启动还能再试 (返回旧值保证本次可用)
       }
       return legacy;
     },

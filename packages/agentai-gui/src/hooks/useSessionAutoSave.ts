@@ -2,7 +2,7 @@
  * useSessionAutoSave — 会话自动保存 hook
  *
  * 架构:
- *   - localStorage (agentai-sessions): 主会话存储, 包含完整消息历史
+ *   - IndexedDB (agentai-sessions, 2026-10-22 起; 此前是 localStorage): 主会话存储, 包含完整消息历史
  *   - Gateway (/api/sessions): 用于持久化备份 (每30秒同步一次)
  *
  * 流程:
@@ -14,7 +14,7 @@
  *   全部丢失 → 切会话回来看见空白容器或残句。现改为存完整 segments(经瘦身),
  *   按 msg.id 去重 upsert(流式期间同一条消息反复写是覆盖而非重复 append)。
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useChatStore, type ChatMessage } from '../store/chatStore';
 import { useSessionStore } from '../store/sessionStore';
 import { shrinkSessionSegments } from '../utils/quota-safe-storage';
@@ -84,10 +84,41 @@ export function useSessionAutoSave(
    *      L3 还会压到 80 条 → "消息凭空少了一大截"。
    *   ② activeId 悬空 — 该会话被 cleanupSessionsList (每区 30 / 全局 200) 清掉后,
    *      activeId 仍指向它 → 界面打开一个空对话。
-   * 现在: 首屏一次性以 **sessionStore(按会话分桶, 300 条)** 为基线恢复, 再把
+   * 现在: 首屏一次性以 **sessionStore(按会话分桶, IndexedDB 无 300 条硬上限)** 为基线恢复, 再把
    *   chatStore 里 session 没有的新消息 (最近 30s 未落盘的) 合并进来, 不丢两端。
    */
+  /**
+   * ★ 2026-10-22 复审修复 (IndexedDB 异步水合打回首屏恢复)
+   * ------------------------------------------------------------------
+   * 旧后端是 localStorage(**同步**): zustand persist 在模块加载期就完成水合,
+   *   首帧 activeId 已有值 → 首屏恢复 effect 能正常跑。
+   * 现在会话存储后端是 IndexedDB(**异步**): 水合推迟到 IDB 回调, 首帧 activeId 仍是 null,
+   *   而下面守卫的 `if (!activeId) { didHydrateRef.current = true; return; }` 会把
+   *   didHydrateRef **永久**标记成 true → 首屏恢复(基线 + chatStore 未落盘消息的合并)被整段跳过,
+   *   只剩"切换会话"effect 兜底, 而它是 clearMessages() + 整体替换 → 丢掉 chatStore 里
+   *   还没落进 sessionStore 的最近消息 (流式期间最多 30s 的量)。
+   *
+   * 修法: 显式等待 persist 水合完成再做判断, 并把"首帧还没水合"与"确实没有会话"区分开。
+   */
+  const [storeHydrated, setStoreHydrated] = useState<boolean>(() => {
+    const p = useSessionStore.persist as any;
+    return typeof p?.hasHydrated === 'function' ? p.hasHydrated() : true;
+  });
+
   useEffect(() => {
+    const p = useSessionStore.persist as any;
+    if (!p) return;
+    if (typeof p.hasHydrated === 'function' && p.hasHydrated()) {
+      setStoreHydrated(true);
+      return;
+    }
+    const unsub = p.onFinishHydration?.(() => setStoreHydrated(true));
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, []);
+
+  useEffect(() => {
+    // ★ 等水合完成: 否则首帧 activeId 为空会被误判成"没有会话"
+    if (!storeHydrated) return;
     if (didHydrateRef.current) return;
     if (!activeId) { didHydrateRef.current = true; return; }
     didHydrateRef.current = true;
@@ -115,8 +146,11 @@ export function useSessionAutoSave(
       console.log(`[session] 首屏恢复 ${session.id}: session=${fromSession.length} 条 + 新消息=${merged.length - fromSession.length} 条`);
       setChatMessages(merged);
     }
+    // ★ 同步"切换会话"游标: 否则下面那个 effect 会认为这是一次会话切换,
+    //   用 clearMessages()+替换 把上面刚合并出来的结果整个冲掉 (等于白恢复)。
+    prevActiveIdRef.current = activeId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, setChatMessages]);
+  }, [activeId, setChatMessages, storeHydrated]);
 
   useEffect(() => {
     if (!activeId || prevActiveIdRef.current === activeId) return;

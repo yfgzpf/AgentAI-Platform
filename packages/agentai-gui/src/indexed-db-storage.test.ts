@@ -91,3 +91,52 @@ describe('indexed-db-storage: 真实 IndexedDB 路径', () => {
     expect(await store.getItem('idb-k')).toBeNull();
   });
 });
+
+describe('indexed-db-storage: 旧数据迁入失败时绝不能丢数据', () => {
+  it('IDB 写失败 → 保留 localStorage 唯一副本(不删), 本次仍可读, 下次启动还能重试', async () => {
+    // 构造一个"能 open、但 readwrite 事务必失败"的假 indexedDB
+    const fakeIdb = {
+      open(_n: string, _v: number) {
+        const req: any = {};
+        setTimeout(() => {
+          req.result = {
+            objectStoreNames: { contains: () => true },
+            transaction(_s: string, mode: string) {
+              const tx: any = {
+                objectStore: () => ({
+                  get() {
+                    const r: any = {};
+                    setTimeout(() => { r.result = null; r.onsuccess?.(); }, 0);
+                    return r;
+                  },
+                  put() {},
+                  delete() {},
+                }),
+              };
+              if (mode === 'readwrite') setTimeout(() => tx.onerror?.(), 0); // 写必失败
+              return tx;
+            },
+          };
+          req.onsuccess?.();
+        }, 0);
+        return req;
+      },
+    };
+    (globalThis as any).indexedDB = fakeIdb;
+    try {
+      vi.resetModules();
+      const mod = await import('./utils/indexed-db-storage');
+      const store = mod.createIndexedDbStorage();
+
+      const ls = (globalThis as any).localStorage;
+      ls.setItem(mod.SESSIONS_LS_KEY, 'LEGACY_SESSIONS');
+
+      // 读: 回退返回旧值, 本次会话仍可用
+      expect(await store.getItem(mod.SESSIONS_LS_KEY)).toBe('LEGACY_SESSIONS');
+      // ★ 关键: 写失败时绝不能删掉 localStorage 里的唯一副本, 否则所有会话彻底丢失
+      expect(ls.getItem(mod.SESSIONS_LS_KEY)).toBe('LEGACY_SESSIONS');
+    } finally {
+      delete (globalThis as any).indexedDB;
+    }
+  });
+});

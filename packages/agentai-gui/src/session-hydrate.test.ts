@@ -5,7 +5,7 @@
  *   ① useSessionAutoSave 的恢复 effect 只在 activeId **变化**时跑, 首次挂载
  *      prevActiveIdRef 已等于 activeId → 直接 return → 只剩 chatStore 自己 persist
  *      的那份 (partialize 只留 200 条, 配额紧张时 pruner 压到 80 条);
- *      sessionStore (按会话分桶, 300 条) 从未被读 → "消息凭空少一大截"。
+ *      sessionStore (按会话分桶; 2026-10-22 起上限 50000, 此前 300) 从未被读 → "消息凭空少一大截"。
  *   ② activeId 指向的会话被 cleanupSessionsList 清掉后仍被持久化 → 打开空对话。
  * 本文件锁死: 首屏一次性 hydrate(session 基线 + chatStore 新消息合并) + 悬空兜底。
  */

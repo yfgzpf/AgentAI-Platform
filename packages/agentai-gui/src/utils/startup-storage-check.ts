@@ -14,6 +14,7 @@ import {
   getLS,
   storageUsage,
 } from './quota-safe-storage';
+import { isIndexedDbAvailable } from './indexed-db-storage';
 
 const SESSION_KEY = 'agentai-sessions';
 const SESSION_BUDGET = 1_400_000;
@@ -23,11 +24,17 @@ let result: { before: number; after: number; actions: string[] } = { before: 0, 
 try {
   // 每个 key 用独立的裁剪器实例 —— 粘性 level 不应与运行期 store 的那个互相影响
   const startupPruner = createSessionPruner(SESSION_BUDGET);
+  // ★ 2026-10-22 复审: 会话存储已迁 IndexedDB, localStorage 里的 `agentai-sessions`
+  //   只是**尚未迁移的旧数据**, store 水合时会原样搬进 GB 级存储。
+  //   此时若还按老规矩裁剪, 等于"先把能全存下的数据砍掉, 再迁到 spacious 存储" ——
+  //   纯亏。所以 IndexedDB 可用时不再裁剪这个 key;
+  //   只有 IndexedDB 不可用(退化回 localStorage)时, 才需要沿用旧裁剪策略兜住配额。
+  const migrateToIdb = isIndexedDbAvailable();
   result = ensureLocalStorageHealthy({
     thresholdChars: 2_200_000,
-    targets: [
-      { key: SESSION_KEY, budgetChars: SESSION_BUDGET, pruner: startupPruner.pruner },
-    ],
+    targets: migrateToIdb
+      ? []
+      : [{ key: SESSION_KEY, budgetChars: SESSION_BUDGET, pruner: startupPruner.pruner }],
   });
 } catch (e) {
   // 体检本身绝不能阻塞启动
@@ -59,6 +66,19 @@ if (typeof window !== 'undefined' && !sessionStorage.getItem('agentai:session-cl
       const store: any = await import('../store/sessionStore');
       const useStore = store.useSessionStore;
       if (!useStore?.getState) return;
+      // ★ 2026-10-22 复审: 存储后端是 IndexedDB 时**水合是异步的**, setTimeout(0) 很可能
+      //   早于水合完成 —— 此时 getState().sessions 还是空数组, 下面 `length <= 50` 直接 return,
+      //   清理会**静默失效**(富哥"对话保留太多"的回归)。必须等 onFinishHydration。
+      const p = useStore.persist;
+      if (p && typeof p.hasHydrated === 'function' && !p.hasHydrated()) {
+        await new Promise<void>((resolve) => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; resolve(); } };
+          const unsub = p.onFinishHydration?.(finish);
+          // 兜底: 2s 后无论如何继续, 免得回调不触发导致清理永久丢失
+          setTimeout(() => { try { unsub?.(); } catch { /* ignore */ } finish(); }, 2000);
+        });
+      }
       const sessions = (useStore.getState().sessions || []) as any[];
       if (sessions.length <= SESSION_SOFT_CAP) return; // 没超上限就不动, 不打扰用户
       const activeId = useStore.getState().activeId;
