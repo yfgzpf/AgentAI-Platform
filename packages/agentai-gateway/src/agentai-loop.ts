@@ -32,6 +32,7 @@ import { userModel } from './user-model.js';
 import { recallEvolution, extractPatterns } from './evolution.js';
 import { trackTempFile, cleanupTempFiles, isTempFile } from './temp-file-tracker.js';
 import { compressAllToolResults, CompressStats } from './token-compressor.js';
+import { extractFindings } from './finding-extract.js';
 import { recommendModel, getProModelKeyInfo, MODELS } from './model-classifier.js';
 import { resolveAutoSwitchMode, shouldAutoSwitchModels, shouldInjectModelRecommendation } from './model-switch-policy.js';
 import { WorkflowOrchestrator, BUILTIN_WORKFLOWS } from './workflow-orchestrator.js';
@@ -4405,6 +4406,7 @@ if (isComplexTask) {
           const aiActions: string[] = [];
           const filesModified = new Set<string>();
           const errorsHit: string[] = [];
+          const findingsHit: string[] = [];
           let toolSuccessCount = 0;
 
           for (const m of old) {
@@ -4427,6 +4429,13 @@ if (isComplexTask) {
                 errorsHit.push(`${toolName}: ${text.slice(8, 100)}`);
               } else {
                 toolSuccessCount++;
+                // 2026-10-21 F1: 提取"发现" —— 压缩原本只保路径不保内容,
+                // 扫出来的事实 (anyshare 全 200 / host 定位 / 版本泄露) 必须活进摘要,
+                // 否则 AI 失忆后反复重读或凭空猜 (富哥赏金任务实锤)。
+                // 与台账 hook (下方 8891 旁) 共用 finding-extract 单一真源。
+                for (const f of extractFindings(text)) {
+                  findingsHit.push(`${toolName}: ${f}`);
+                }
               }
             }
           }
@@ -4434,6 +4443,13 @@ if (isComplexTask) {
           const parts: string[] = [];
           if (userRequests.length > 0) {
             parts.push(`## 用户请求\n${userRequests.map((r, i) => `${i + 1}. ${r}`).join('\n')}`);
+          }
+          if (findingsHit.length > 0) {
+            // 2026-10-21 F1: 关键发现段。置于用户请求之后 —— 摘要有 4000 字
+            // 硬顶且 slice 保头, 越靠前越容易活过截断; 发现是唯一"压缩后
+            // 不存在于任何地方"的信息, 优先保它。去重 + 取最近 12 条。
+            const uniq = [...new Set(findingsHit)].slice(-12);
+            parts.push(`## 关键发现\n${uniq.map((f) => `- ${f}`).join('\n')}`);
           }
           if (aiActions.length > 0) {
             const unique = [...new Set(aiActions)].slice(-5);
@@ -8889,6 +8905,15 @@ try {
           : (c.name === 'run_command' || c.name === 'run_shell_command' || c.name === 'run_background' || c.name === 'run_code') ? 'exec'
           : 'other';
         const _nth = this.ledger.record(c.name, _target, _kind as any);
+        // 2026-10-21 F2: 成功产出提取"发现"进台账 —— 台账是唯一扛压缩且每轮
+        // 注入的机制, 但原本只记动作 (read/write/exec) 不记事实; 补上后
+        // "扫出来的结论"永不过期, 不怕历史压缩/重启恢复后的失忆。
+        // 与压缩摘要「## 关键发现」段共用 finding-extract 单一真源。
+        if (r?.result?.success !== false && typeof r.result?.output === 'string') {
+          for (const f of extractFindings(r.result.output, { max: 2 })) {
+            this.ledger.recordFinding(`${c.name}: ${f}`);
+          }
+        }
         // 重复读同一文件 ≥2 次 → 显式提醒（比让AI 自己发现更快）
         if (_nth >= 1 && _kind === 'read') {
           this.directives.add(

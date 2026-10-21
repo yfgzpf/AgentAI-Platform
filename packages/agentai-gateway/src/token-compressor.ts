@@ -275,10 +275,13 @@ function crushJsonValue(val: any, depth: number): string {
 
   if (Array.isArray(val)) {
     if (val.length === 0) return '[]';
-    // 同构数组: 只保留前2个 + 总数
+    // 同构数组: 保留前2个 + 末1个 + 总数 (2026-10-21 F3: 扫描/枚举数据
+    // 有趣的项常在尾部 — 存活 host 列表、命中端点的最后几条, 原实现
+    // 只留前2个会把尾部事实整段丢掉)
     if (val.length > 3 && typeof val[0] === 'object' && val[0] !== null) {
-      const sample = val.slice(0, 2).map(v => crushJsonValue(v, depth + 1));
-      return `[${sample.join(',')},...${val.length - 2} more]`;
+      const head = val.slice(0, 2).map(v => crushJsonValue(v, depth + 1));
+      const tail = crushJsonValue(val[val.length - 1]!, depth + 1);
+      return `[${head.join(',')},...${val.length - 3} more...,${tail}]`;
     }
     // 简单数组: 全部保留但递归压缩
     if (val.length > 10) {

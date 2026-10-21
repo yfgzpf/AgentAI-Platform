@@ -55,6 +55,8 @@ export interface TaskLedgerSnapshot {
   commands: string[];
   failures: string[];
   decisions: string[];
+  /** 2026-10-21 F2: 关键发现 (扫出来的事实, 与动作区分) */
+  findings: string[];
   totalActions: number;
 }
 
@@ -69,6 +71,8 @@ export class TaskLedger extends EventEmitter {
   private commands: string[] = [];
   private failures: string[] = [];
   private decisions: string[] = [];
+  /** 2026-10-21 F2: 关键发现 — "anyshare 全 200" 这种事实 (不是动作) */
+  private findings: string[] = [];
   private goal = '';
   private iter = 0;
   private readonly sessionId: string;
@@ -120,6 +124,21 @@ export class TaskLedger extends EventEmitter {
     if (this.failures.length > 20) this.failures.shift();
   }
 
+  /**
+   * 记录一条"发现" (2026-10-21 F2) — 扫出来的事实/结论, 与动作区分:
+   *   动作 = 读过/写过/跑过 (本类原有); 发现 = "anyshare 全 200" 这种事实。
+   * 台账是唯一每轮注入且扛压缩的机制, 但原本没有 findings 字段 →
+   * 压缩后事实不存在于任何地方 → AI 反复重读文件或凭空猜 (富哥赏金任务实锤)。
+   * 与历史压缩摘要的「## 关键发现」段 (agentai-loop.ts 压缩块) 共用
+   * finding-extract.ts 提取单一真源。
+   */
+  recordFinding(finding: string, maxLen = 160): void {
+    const f = String(finding || '').trim().replace(/\s+/g, ' ').slice(0, maxLen);
+    if (!f || this.findings.includes(f)) return;   // 同文不重复记
+    this.findings.push(f);
+    if (this.findings.length > 20) this.findings.shift();
+  }
+
 /** 记录一条决策/结论（AI 自己说的"我决定用X方案"），压缩后仍可回溯 */
 recordDecision(decision: string, maxLen = 200): void {
 const d = String(decision || '').trim().slice(0, maxLen);
@@ -161,6 +180,7 @@ this.recordDecision(entry.slice(0, 300));
   listCommands(limit = 15): string[] { return this.commands.slice(-limit); }
   listFailures(limit = 10): string[] { return this.failures.slice(-limit); }
   listDecisions(limit = 8): string[] { return this.decisions.slice(-limit); }
+  listFindings(limit = 12): string[] { return this.findings.slice(-limit); }
   size(): number { return this.actions.length; }
 
   /** 最近动作流水（用于诊断：AI 到底在重复什么） */
@@ -190,6 +210,7 @@ this.recordDecision(entry.slice(0, 300));
       commands: this.listCommands(15),
       failures: this.listFailures(10),
       decisions: this.listDecisions(8),
+      findings: this.listFindings(12),
       totalActions: this.actions.length,
     };
   }
@@ -199,7 +220,8 @@ this.recordDecision(entry.slice(0, 300));
     // 注意: 不能只看 actions —— AI 可能第一句就定了决策而还没调任何工具，
     //   那种情况 decisions 有值、actions 为空，若一并判空就丢掉了最关键的决策。
     const hasContent = this.actions.length > 0 || !!this.goal
-      || this.decisions.length > 0 || this.failures.length > 0;
+      || this.decisions.length > 0 || this.failures.length > 0
+      || this.findings.length > 0;
     if (!hasContent) return '';
     const maxChars = opts?.maxChars ?? 1400;
 
@@ -217,6 +239,9 @@ this.recordDecision(entry.slice(0, 300));
     }
     if (s.decisions.length) {
       parts.push(`## 已定决策（不要重新讨论）\n${s.decisions.map((d) => `- ${d}`).join('\n')}`);
+    }
+    if (s.findings.length) {
+      parts.push(`## 关键发现（已确认的事实，不要重复探测/读取）\n${s.findings.map((f) => `- ${f}`).join('\n')}`);
     }
     if (s.failures.length) {
       parts.push(`## 已失败（不要原样重试）\n${s.failures.map((f) => `- ${f}`).join('\n')}`);
@@ -240,6 +265,7 @@ this.recordDecision(entry.slice(0, 300));
     this.commands = [];
     this.failures = [];
     this.decisions = [];
+    this.findings = [];
     this.goal = '';
     this.iter = 0;
   }
