@@ -4,7 +4,7 @@
  *  ② 完整 segments(含 reasoning/thinking 思考过程) 入库并在 JSON 往返后保留
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useSessionStore } from './sessionStore';
+import { useSessionStore, capSessionMessages } from './sessionStore';
 
 const reset = () => {
   const s = useSessionStore.getState();
@@ -50,5 +50,40 @@ describe('sessionStore 持久化完整性', () => {
     expect(stored.segments[0].text).toContain('先想一步');
     expect(stored.segments[1].text).toBe('这是最终回答');
     expect(stored.segments[2].kind).toBe('tool');
+  });
+});
+
+describe('会话消息上限: 保头保尾 (2026-10-21 富哥: 关页面再进消息没了)', () => {
+  it('超过 300 条时保留会话开头 20 条 (任务原始要求) + 最近 280 条', () => {
+    const arr = Array.from({ length: 400 }, (_, i) => ({ id: `m${i}` }));
+    const capped = capSessionMessages(arr);
+    expect(capped.length).toBe(300);
+    // 开头: 任务原始要求不能丢
+    expect(capped[0].id).toBe('m0');
+    expect(capped[19].id).toBe('m19');
+    // 尾部: 最近 280 条完整
+    expect(capped[capped.length - 1].id).toBe('m399');
+    expect(capped[capped.length - 280].id).toBe('m120');
+    // 中间被裁 (m20..m119)
+    expect(capped.some(x => x.id === 'm50')).toBe(false);
+  });
+
+  it('未超上限时原样返回 (不复制数组)', () => {
+    const arr = Array.from({ length: 10 }, (_, i) => ({ id: `x${i}` }));
+    expect(capSessionMessages(arr)).toBe(arr);
+  });
+
+  it('upsertMessages 存 400 条后, 首条仍在 (以前 slice(-300) 会把任务开头丢掉)', () => {
+    const { createSession, upsertMessages } = useSessionStore.getState();
+    const id = createSession('cap', 'u', 'chat');
+    const payloads = Array.from({ length: 400 }, (_, i) => ({
+      id: `p${i}`, role: 'user', content: `c${i}`, ts: i,
+      segments: [{ kind: 'text', text: `c${i}` }],
+    }));
+    upsertMessages(id, payloads);
+    const sess = useSessionStore.getState().sessions.find(x => x.id === id)!;
+    expect(sess.messages.length).toBe(300);
+    expect(sess.messages[0].id).toBe('p0');
+    expect(sess.messages[sess.messages.length - 1].id).toBe('p399');
   });
 });

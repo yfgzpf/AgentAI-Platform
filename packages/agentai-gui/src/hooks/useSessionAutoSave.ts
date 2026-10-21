@@ -56,6 +56,68 @@ export function useSessionAutoSave(
 
   /* ---- 会话切换: 从 localStorage 加载历史消息 (优先用 segments 完整还原) ---- */
   const prevActiveIdRef = useRef<string | null>(activeId);
+  const didHydrateRef = useRef(false);
+
+  /** 把 sessionStore 里的消息映射成 chatStore 结构 (切会话与首屏恢复共用) */
+  const restoreFromSession = (session: any): any[] =>
+    (session?.messages || []).map((msg: any, i: number) => {
+      const segs = Array.isArray(msg.segments) && msg.segments.length > 0
+        ? msg.segments
+        // 兼容历史数据: 老会话只有 content, 退化为单文本段
+        : [{ kind: 'text' as const, text: msg.content || '' }];
+      return {
+        // ★ 复用原始 id, 切回后再次持久化时按 id 覆盖, 不会造成重复
+        id: msg.id || `restored-${msg.ts}-${i}`,
+        role: msg.role as 'user' | 'assistant',
+        segments: segs,
+        ts: msg.ts,
+        status: 'done' as const,
+      };
+    });
+
+  /**
+   * ★ 2026-10-21 P0 (富哥实锤: "关掉页面再进, 很多消息没了, 也不在当前对话")
+   * 根因两层:
+   *   ① 首屏不恢复 — 本 hook 的恢复 effect 只在 activeId **变化**时执行, 首次挂载
+   *      prevActiveIdRef 已等于 activeId → 直接 return。于是只剩 chatStore 自己
+   *      persist 的那份: partialize 只留最近 200 条, 启动体检配额紧张时 pruner
+   *      L3 还会压到 80 条 → "消息凭空少了一大截"。
+   *   ② activeId 悬空 — 该会话被 cleanupSessionsList (每区 30 / 全局 200) 清掉后,
+   *      activeId 仍指向它 → 界面打开一个空对话。
+   * 现在: 首屏一次性以 **sessionStore(按会话分桶, 300 条)** 为基线恢复, 再把
+   *   chatStore 里 session 没有的新消息 (最近 30s 未落盘的) 合并进来, 不丢两端。
+   */
+  useEffect(() => {
+    if (didHydrateRef.current) return;
+    if (!activeId) { didHydrateRef.current = true; return; }
+    didHydrateRef.current = true;
+
+    const store = useSessionStore.getState();
+    const session = store.getMySessions().find((s: any) => s.id === activeId);
+    if (!session) {
+      // ② activeId 悬空 → 切到最近更新的会话 (没有就置空, 别再指向不存在的会话)
+      const latest = store.getMySessions()[0];
+      console.warn('[session] activeId 指向的会话已不存在, 切到最近会话:', latest?.id || '(none)');
+      if (latest) store.setActive(latest.id);
+      else useSessionStore.setState({ activeId: null } as any);
+      return;
+    }
+
+    const fromSession = restoreFromSession(session);
+    // 合并 chatStore 里 session 尚未包含的新消息 (id 去重, 按时间排序, 流式态收敛)
+    const byId = new Map<string, any>(fromSession.map((m: any) => [m.id, m]));
+    for (const m of useChatStore.getState().messages) {
+      if (!m?.id || byId.has(m.id)) continue;
+      byId.set(m.id, { ...m, streaming: false, status: m.status === 'processing' ? 'done' : m.status });
+    }
+    const merged = [...byId.values()].sort((a: any, b: any) => (a.ts || 0) - (b.ts || 0));
+    if (merged.length > 0) {
+      console.log(`[session] 首屏恢复 ${session.id}: session=${fromSession.length} 条 + 新消息=${merged.length - fromSession.length} 条`);
+      setChatMessages(merged);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, setChatMessages]);
+
   useEffect(() => {
     if (!activeId || prevActiveIdRef.current === activeId) return;
     const session = useSessionStore.getState().getMySessions().find(s => s.id === activeId);
@@ -67,21 +129,7 @@ export function useSessionAutoSave(
     clearMessages();
 
     if (session && session.messages.length > 0) {
-      const restored = session.messages.map((msg: any, i: number) => {
-        const segs = Array.isArray(msg.segments) && msg.segments.length > 0
-          ? msg.segments
-          // 兼容历史数据: 老会话只有 content, 退化为单文本段
-          : [{ kind: 'text' as const, text: msg.content || '' }];
-        return {
-          // ★ 复用原始 id, 切回后再次持久化时按 id 覆盖, 不会造成重复
-          id: msg.id || `restored-${msg.ts}-${i}`,
-          role: msg.role as 'user' | 'assistant',
-          segments: segs,
-          ts: msg.ts,
-          status: 'done' as const,
-        };
-      });
-      setChatMessages(restored);
+      setChatMessages(restoreFromSession(session));
     }
   }, [activeId, clearMessages, setChatMessages]);
 

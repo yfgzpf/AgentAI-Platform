@@ -97,6 +97,17 @@ interface SessionState {
 }
 
 /**
+ * 2026-10-21 (富哥: "关掉页面再进, 很多消息没了") :
+ * 单会话消息上限仍是 300 (配额约束), 但**不能再纯 slice(-300)** — 那样丢掉的是
+ * 会话最开头那条"任务原始要求", 恰恰是跨会话恢复最需要的东西 (长任务里几百条工具记录)。
+ * 改为保留开头 keepHead 条 + 最近 (cap-keepHead) 条, 中间段由工具卡片折叠承担损失。
+ */
+export function capSessionMessages<T>(arr: T[], cap = 300, keepHead = 20): T[] {
+  if (arr.length <= cap) return arr;
+  return [...arr.slice(0, keepHead), ...arr.slice(-(cap - keepHead))];
+}
+
+/**
  * 批次8: 纯函数清理器 — 供测试直接调, 不依赖 store。
  * 规则 (用户拍板: 历史按时间清理, 但保留每工作区最近 N 条):
  *   ① 早于 olderThanDays 天的会话 → 删 (除非它在该工作区里排进最近 maxPerWorkspace 条)
@@ -177,7 +188,7 @@ export const useSessionStore = create<SessionState>()(
           if (x.id !== sessionId) return x;
           // 2026-10-05 P0 修复: 补齐 id —— 否则 ChatView 的跨会话写入找不到目标消息
           const withId: SessionMessage = { id: msg.id || genMsgId(msg.role), ...msg };
-          return { ...x, messages: [...x.messages, withId].slice(-300), updatedAt: Date.now() };
+          return { ...x, messages: capSessionMessages([...x.messages, withId]), updatedAt: Date.now() };
         }),
       })),
       upsertMessages: (sessionId, msgs) => set((s) => ({
@@ -190,7 +201,7 @@ export const useSessionStore = create<SessionState>()(
             if (idx >= 0) arr[idx] = withId;
             else arr.push(withId);
           }
-          return { ...x, messages: arr.slice(-300), updatedAt: Date.now() };
+          return { ...x, messages: capSessionMessages(arr), updatedAt: Date.now() };
         }),
       })),
       clearSessionMessages: (sessionId) => set((s) => ({
