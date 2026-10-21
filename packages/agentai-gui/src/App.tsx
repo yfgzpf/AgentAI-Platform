@@ -96,6 +96,7 @@ import { BrowserHost, useBrowserHost } from './services/browser-host';
 import { BrowserStateBus } from './services/BrowserStateBus';
 import { useIdeState } from './hooks/useIdeState';
 import { useResizable } from './hooks/useResizable';
+import { useStoreHydrated } from './hooks/useStoreHydrated';
 import { PageShell } from './components/shell';
 import { useUpdaterStore, mountUpdaterEventBus } from './store/updaterStore';
 import { useSubscriptionStore } from './store/subscriptionStore';
@@ -596,15 +597,22 @@ export const App: React.FC = () => {
     }
   }, []); // 仅首次执行
 
+  /* --- 等待 sessionStore 水合完成 (IndexedDB 异步), 见 hooks/useStoreHydrated --- */
+  const sessionStoreHydrated = useStoreHydrated(useSessionStore);
+
   /* --- 启动时同步 sessionStore 的 currentUserId 到当前用户 ---
    * 确保会话数据按用户隔离，用户切换时自动关联到正确的会话
    */
   useEffect(() => {
+    // ★ 2026-10-22 复审: 存储后端是 IndexedDB(异步水合), 挂载即写会把**初始空态**
+    //   写回存储, 随后水合又把这份空态读回来 → 存量会话被彻底抹掉(实测坐实)。
+    //   必须等 sessionStore 水合完成再写。
+    if (!sessionStoreHydrated) return;
     const { setCurrentUserId } = useSessionStore.getState();
     if (profile?.name) {
       setCurrentUserId(profile.name);
     }
-  }, [profile?.name]);
+  }, [profile?.name, sessionStoreHydrated]);
 
   const handleOnboardFinish = useCallback((name: string) => {
     setProfile({

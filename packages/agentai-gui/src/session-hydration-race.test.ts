@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = readFileSync(path.resolve(__dirname, 'hooks/useSessionAutoSave.ts'), 'utf-8');
+const GATE = readFileSync(path.resolve(__dirname, 'hooks/useStoreHydrated.ts'), 'utf-8');
+const APP = readFileSync(path.resolve(__dirname, 'App.tsx'), 'utf-8');
 const STARTUP = readFileSync(path.resolve(__dirname, 'utils/startup-storage-check.ts'), 'utf-8');
 const { create } = require('zustand') as typeof import('zustand');
 const { persist, createJSONStorage } = require('zustand/middleware') as typeof import('zustand/middleware');
@@ -117,8 +119,12 @@ describe('复审 B: 首屏恢复在异步水合下的两种结局', () => {
 describe('复审 C: 源码契约锁死 (防回退)', () => {
   it('首屏恢复 effect 已加「等水合」闸门', () => {
     expect(HOOK).toContain('if (!storeHydrated) return;');
-    expect(HOOK).toContain('onFinishHydration');
-    expect(HOOK).toContain('hasHydrated');
+    // 水合原语收敛到 useStoreHydrated 这一个真源, 不再各处复制
+    expect(HOOK).toContain("from './useStoreHydrated'");
+    expect(GATE).toContain('onFinishHydration');
+    expect(GATE).toContain('hasHydrated');
+    // 兜底: onFinishHydration 不回调时也要放行, 不能把界面永久卡在骨架屏
+    expect(GATE).toMatch(/setTimeout\(/);
   });
 
   it('首屏恢复后同步 prevActiveId, 防「切换会话」effect 用替换冲掉合并结果', () => {
@@ -135,5 +141,13 @@ describe('复审 D: 启动体检与异步水合相容', () => {
   it('启动会话清理等 onFinishHydration, 不再因读到空数组而静默失效', () => {
     expect(STARTUP).toContain('onFinishHydration');
     expect(STARTUP).toContain('hasHydrated');
+  });
+
+  it('App.tsx 启动写 currentUserId 前必须等水合(否则空态覆盖, 存量会话全没)', () => {
+    expect(APP).toContain("from './hooks/useStoreHydrated'");
+    expect(APP).toContain('useStoreHydrated(useSessionStore)');
+    expect(APP).toMatch(/if \(!sessionStoreHydrated\) return;/);
+    // 该 effect 必须把水合标志列进依赖, 否则水合完成后不会重跑
+    expect(APP).toMatch(/\}, \[profile\?\.name, sessionStoreHydrated\]\);/);
   });
 });

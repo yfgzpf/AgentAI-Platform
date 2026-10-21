@@ -14,10 +14,11 @@
  *   全部丢失 → 切会话回来看见空白容器或残句。现改为存完整 segments(经瘦身),
  *   按 msg.id 去重 upsert(流式期间同一条消息反复写是覆盖而非重复 append)。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useChatStore, type ChatMessage } from '../store/chatStore';
 import { useSessionStore } from '../store/sessionStore';
 import { shrinkSessionSegments } from '../utils/quota-safe-storage';
+import { useStoreHydrated } from './useStoreHydrated';
 
 export function useSessionAutoSave(
   messages: ChatMessage[],
@@ -100,21 +101,7 @@ export function useSessionAutoSave(
    *
    * 修法: 显式等待 persist 水合完成再做判断, 并把"首帧还没水合"与"确实没有会话"区分开。
    */
-  const [storeHydrated, setStoreHydrated] = useState<boolean>(() => {
-    const p = useSessionStore.persist as any;
-    return typeof p?.hasHydrated === 'function' ? p.hasHydrated() : true;
-  });
-
-  useEffect(() => {
-    const p = useSessionStore.persist as any;
-    if (!p) return;
-    if (typeof p.hasHydrated === 'function' && p.hasHydrated()) {
-      setStoreHydrated(true);
-      return;
-    }
-    const unsub = p.onFinishHydration?.(() => setStoreHydrated(true));
-    return () => { if (typeof unsub === 'function') unsub(); };
-  }, []);
+  const storeHydrated = useStoreHydrated(useSessionStore);
 
   useEffect(() => {
     // ★ 等水合完成: 否则首帧 activeId 为空会被误判成"没有会话"
