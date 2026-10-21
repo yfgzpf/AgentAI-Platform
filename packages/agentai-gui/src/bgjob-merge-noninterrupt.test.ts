@@ -1,12 +1,16 @@
 /**
- * "并入对话" 不得中断当前任务 (2026-10-21 富哥实锤)
+ * 后台任务完成 → 自动唤醒主 AI (2026-10-21 富哥重审)
  * ======================================================================
- * 事故: 后台任务完成提示条点"并入对话" → 直接调 handleSend →
- *   handleSend 的"新消息压制旧回复"分支 abort 掉正在跑的回合 →
- *   用户看到"一点并入就换了对话, 好好的任务被破坏"。
- * 正解: handleSend 是"用户主动改主意"的入口, 有权中断;
- *   并入只是补一条信息, 没有中断权 → 正在跑就进 queuedSends,
- *   loading=false 后由队列 effect 自动发送。
+ * 富哥原话: "这个不是 AI 会自动轮询去拿结果吗？为什么要发送下一轮呢？
+ *           它发 wsl_exec 完成就会跳一次，AI 不是自己去拿结果吗？
+ *           显示也不能常驻呀！要闪退呀！"
+ *
+ * 旧实现的两个错:
+ *   ① 没有自动唤醒通道 — job 跑完只弹横幅, 等人点"并入"或等下一条用户消息,
+ *      等于把人当轮询器 (子智能体早有 triggerSubagentResume, 后台 job 没有)。
+ *   ② 横幅常驻 — 一直挡视线, 还诱导用户点一个会 abort 当前回合的按钮。
+ * 正解: 轮询发现 done/error → 去抖合并 → 直接续跑取结果 (同 sessionId);
+ *   横幅降级为 6 秒自动收起的回执。stopped/orphaned 只展示不唤醒。
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -16,19 +20,41 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(path.resolve(__dirname, 'components/ChatView.tsx'), 'utf-8');
 
-describe('后台任务"并入对话"不打断当前回合', () => {
-  it('① 并入按钮走"正在跑则排队"分支, 不再无条件 handleSend', () => {
-    const idx = SRC.indexOf('const mergeText = `后台任务已完成');
-    expect(idx, '并入按钮的合并文案应存在').toBeGreaterThan(0);
-    const block = SRC.slice(idx, idx + 1200);
-    expect(block).toContain('if (loading)');
-    expect(block).toContain('setQueuedSends(q => [...q, mergeText])');
-    // 铁律: 只有不在跑的时候才允许直接 handleSend
-    expect(block).toMatch(/}\s*else\s*\{\s*handleSend\(mergeText\);\s*\}/);
+describe('后台 job 完成 → 自动续跑', () => {
+  it('① 轮询把 done/error 推进自动唤醒队列 (不再只弹横幅)', () => {
+    const idx = SRC.indexOf('const autoJobs = fresh.filter');
+    expect(idx, '应存在自动接管过滤').toBeGreaterThan(0);
+    const block = SRC.slice(idx, idx + 600);
+    expect(block).toContain("j.status === 'done' || j.status === 'error'");
+    expect(block).toContain('bgResumeQueueRef.current.push(...autoJobs)');
+    expect(block).toContain('scheduleBgResume()');
   });
 
-  it('② 提示条明确告知"不点也可以/不会打断" (别让用户以为必须点)', () => {
-    expect(SRC).toContain('不点也可以：结果已落盘');
-    expect(SRC).toContain('不会打断');
+  it('② 唤醒走直接续跑 (同 sessionId), 不经过 handleSend (无中断权)', () => {
+    const idx = SRC.indexOf('const triggerBgJobResume');
+    expect(idx).toBeGreaterThan(0);
+    const block = SRC.slice(idx, idx + 2600);
+    expect(block).toContain('apiStream(');
+    expect(block).toContain('sessionId: activeId');
+    expect(block).toContain('job_output');
+    expect(block).not.toContain('handleSend(');
+  });
+
+  it('③ 去抖: 一批 job 接连完成只唤醒一次', () => {
+    const idx = SRC.indexOf('const scheduleBgResume');
+    const block = SRC.slice(idx, idx + 500);
+    expect(block).toContain('if (bgResumeTimerRef.current) return;');
+    expect(block).toContain('splice(0)');
+  });
+
+  it('④ 正在跑任务时排队, 本轮结束立刻唤醒 (绝不打断)', () => {
+    expect(SRC).toMatch(/if \(!loading && bgResumeQueueRef\.current\.length > 0\) scheduleBgResume\(0\)/);
+    expect(SRC).toMatch(/if \(loading\) \{[\s\S]{0,200}bgResumeQueueRef\.current\.push\(\.\.\.jobs\)/);
+  });
+
+  it('⑤ 提示条 6 秒自动收起, 不再常驻', () => {
+    expect(SRC).toContain('const t = setTimeout(() => setPendingBgJobs([]), 6000);');
+    expect(SRC).toContain('本提示 6 秒后自动收起');
+    expect(SRC).toContain('已自动读取');
   });
 });

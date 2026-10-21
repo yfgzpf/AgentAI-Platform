@@ -616,6 +616,83 @@ const [loading, setLoading] = useState(false);
     }
   }, [activeModelId, mode, profileWs, gwBase, appendMessage, updateMessage]);
 
+  /* ═══ 2026-10-21 后台 job 完成 → **自动续跑** (富哥: "不是 AI 自己会去拿结果吗?") ═══
+     现状确实不对: 回合内的 wait_for_job/job_output 只在**同一次 run** 里有效;
+     一旦本轮收口 (模型说"已转后台, 稍后查看"), job 跑完**没有任何东西唤醒 AI** →
+     只能靠用户点提示条、或等下一条用户消息。这是把人当轮询器。
+     子智能体早有 triggerSubagentResume 自动唤醒, 后台 job 却没有对应通道 → 补齐同款:
+       轮询发现新终态 → 去抖合并 (多个 job 陆续完成只唤醒一次) → 直接续跑取结果。
+     只自动接管 done/error; stopped(用户主动停) / orphaned(网关重启遗留) 只展示不唤醒。 */
+  const bgResumeQueueRef = useRef<any[]>([]);
+  const bgResumeTimerRef = useRef<any>(null);
+  const bgResumeBusyRef = useRef(false);
+  const seenBgResumeIdsRef = useRef<Set<number>>(new Set());
+  /** 防连环唤醒: 唤醒回合里可能又起新 job → 完成再唤醒…加个上界, 超了就退回"下轮注入" */
+  const bgResumeCountRef = useRef(0);
+  const BG_RESUME_MAX = 12;
+
+  const triggerBgJobResume = useCallback(async (jobs: any[]) => {
+    if (!jobs.length || !activeId) return;
+    if (bgResumeBusyRef.current || loadingRef.current) return;
+    if (bgResumeCountRef.current >= BG_RESUME_MAX) {
+      console.warn(`[bgjob] 自动唤醒已达上限 ${BG_RESUME_MAX} 次/页面, 本次仅提示不唤醒`);
+      return;
+    }
+    bgResumeCountRef.current += 1;
+    bgResumeBusyRef.current = true;
+    const botId = `bot-bgjob-${Date.now()}`;
+    const list = jobs
+      .map((j: any) => `#${j.id} (${j.status}) ${String(j.cmd || '').slice(0, 80)}`)
+      .join('\n');
+    appendMessage({
+      id: botId,
+      role: 'assistant',
+      segments: [{ kind: 'text', text: `⚙️ 后台任务已完成 (${jobs.length} 个)，正在自动读取结果…` }],
+      ts: Date.now(),
+      status: 'processing',
+      streaming: true,
+      provider: activeModelId,
+    } as any);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setLoading(true);
+    try {
+      await apiStream(`${gwBase}/v1/chat`, {
+        message: `[后台任务已完成, 请自动读取结果并继续]\n${list}\n`
+          + `请用 job_output 读取上述 job 的输出 (jobId 不要加引号), 并入当前工作脉络; `
+          + `已经跑过的东西不要重跑, 直接基于输出继续。`,
+        stream: true,
+        model: activeModelId,
+        mode,
+        userId: 'user',
+        workspace: profileWs,
+        projectDir: profileWs,
+        sessionId: activeId,   // 同一会话 → 上文 checkpoint 能恢复
+      }, makeChatHandlers(botId, (id: string, fn: (m: any) => any) => updateMessage(id, fn)), controller.signal);
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') console.warn('[bgjob] 自动读取结果失败:', e?.message);
+    } finally {
+      setLoading(false);
+      abortRef.current = null;
+      bgResumeBusyRef.current = false;
+    }
+  }, [activeId, activeModelId, mode, profileWs, gwBase, appendMessage, updateMessage]);
+
+  /** 去抖: 一批 job 陆续完成只唤醒一次 (定时器在 = 已排期) */
+  const scheduleBgResume = useCallback((delay = 6000) => {
+    if (bgResumeTimerRef.current) return;
+    bgResumeTimerRef.current = setTimeout(() => {
+      bgResumeTimerRef.current = null;
+      const batch = bgResumeQueueRef.current.splice(0);
+      if (batch.length) void triggerBgJobResume(batch);
+    }, delay);
+  }, [triggerBgJobResume]);
+
+  /** 正在跑任务时先攒着, 本轮结束后立刻唤醒 (绝不打断当前回合) */
+  useEffect(() => {
+    if (!loading && bgResumeQueueRef.current.length > 0) scheduleBgResume(0);
+  }, [loading, scheduleBgResume]);
+
   /* ═══ 2026-10-21 子智能体进度「轮询通道」 (SSE 断了也能看见它跑) ═══
      实锤事故 (富哥报"子智能体根本就不动"):
        主任务一停 → SSE 连接 res.end() 关闭 → 子智能体后续发的 subagent:progress
@@ -795,6 +872,14 @@ const [loading, setLoading] = useState(false);
         if (fresh.length === 0) return;
         // 标记已见 (去重, 避免重复弹)
         fresh.forEach((j: any) => seenBgJobIdsRef.current.add(j.id));
+        // ★ 2026-10-21: 自动接管 done/error → 排队 + 去抖唤醒 (不再等人点"并入")
+        const autoJobs = fresh.filter((j: any) =>
+          (j.status === 'done' || j.status === 'error') && !seenBgResumeIdsRef.current.has(j.id));
+        if (autoJobs.length > 0) {
+          autoJobs.forEach((j: any) => seenBgResumeIdsRef.current.add(j.id));
+          bgResumeQueueRef.current.push(...autoJobs);
+          scheduleBgResume();
+        }
         setPendingBgJobs((prev) => {
           const existing = new Set(prev.map((p: any) => p.id));
           const added = fresh.filter((j: any) => !existing.has(j.id));
@@ -808,7 +893,16 @@ const [loading, setLoading] = useState(false);
     const t = setInterval(poll, POLL_MS);
     poll(); // 挂载/切会话即拉一次, 补上页面关闭期间完成的 job
     return () => { cancelled = true; clearInterval(t); window.removeEventListener('focus', onFocus); };
-  }, [profileWs, gwBase]);
+  }, [profileWs, gwBase, scheduleBgResume]);
+
+  /* ═══ 2026-10-21: 提示条**不常驻** — 6 秒后自动收起 ═══
+     富哥: "显示也不能常驻呀！要闪退呀！" 结果已落盘且会自动接入,
+     常驻横幅只会持续挡视线、还诱导用户点一下(旧实现点了会中断任务)。 */
+  useEffect(() => {
+    if (pendingBgJobs.length === 0) return;
+    const t = setTimeout(() => setPendingBgJobs([]), 6000);
+    return () => clearTimeout(t);
+  }, [pendingBgJobs]);
 
   const CTX_MAX = 1_000_000;
   const FOLD_THRESHOLD = 0.70;
@@ -2295,7 +2389,7 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
             message={
               <Space>
                 <span>有 {pendingBgJobs.length} 个后台任务已完成</span>
-                <Tag color="blue">可并入对话</Tag>
+                <Tag color="blue">已自动读取</Tag>
               </Space>
             }
             description={
@@ -2306,10 +2400,10 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                       #{j.id} · {j.status} · {j.cmd || '(无命令)'}
                     </div>
                   ))}
-                  {/* 2026-10-21: 结果已落盘 + 每轮请求会注入后台任务快照 →
-                      不点也会被 AI 读到, 别让用户以为"必须点, 点了才安全"。 */}
+                  {/* 2026-10-21 (富哥): 结果落盘 + 系统自动续跑取结果 → 提示条只是"回执",
+                      6 秒自动收起, 不打断、不常驻、也不需要用户操作。 */}
                   <div style={{ marginTop: 4, fontSize: 'var(--fs-micro)', color: 'var(--text-secondary)', opacity: 0.75 }}>
-                    不点也可以：结果已落盘，AI 下一轮会自动读到（2 小时内有效）。正在跑任务时点"并入"只会排队，不会打断。
+                    无需操作：系统会自动读取结果并继续当前任务，本提示 6 秒后自动收起。
                   </div>
                 </div>
                 <Space>
@@ -2317,25 +2411,18 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                     size="small"
                     type="primary"
                     onClick={() => {
-                      const summary = pendingBgJobs
-                        .map((j: any) => `#${j.id} (${j.status}) ${j.cmd || ''}`)
-                        .join('；');
-                      const calls = pendingBgJobs.map((j: any) => `job_output({ jobId: ${j.id } })`).join('；');
-                      const mergeText = `后台任务已完成：${summary}。请用 ${calls} 取出结果, 并并入当前工作的脉络 (不要重跑, 直接基于输出继续)。`;
+                      const jobs = pendingBgJobs.slice();
                       setPendingBgJobs([]);
-                      // ★ 2026-10-21 (富哥实锤): 原来无条件 handleSend → 撞上 handleSend 的
-                      //   "新消息压制旧回复" 语义 → 点"并入"直接把当前正在跑的任务中断,
-                      //   用户看到的是"一点并入就换了对话, 好好的任务被破坏"。
-                      //   handleSend 是给"用户主动改主意"用的; 并入只是补一条信息,
-                      //   不该有中断权 → 正在跑就进队列, 本轮结束 (loading=false) 后自动发送。
                       if (loading) {
-                        setQueuedSends(q => [...q, mergeText]);
+                        // 正在跑 → 进队列等本轮结束, 绝不 abort 当前回合
+                        bgResumeQueueRef.current.push(...jobs);
+                        scheduleBgResume(0);
                       } else {
-                        handleSend(mergeText);
+                        void triggerBgJobResume(jobs);
                       }
                     }}
                   >
-                    并入对话
+                    立即读取
                   </Button>
                   <Button size="small" onClick={() => setPendingBgJobs([])}>
                     知道了
