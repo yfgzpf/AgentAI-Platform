@@ -1026,7 +1026,12 @@ const [loading, setLoading] = useState(false);
     let runningToolCount = 0;
     const TOOL_RUNNING_MAX_WAIT = 30 * 60 * 1000; // 工具最多可静默 30 分钟
     let firstToolStartTs = 0;
-    const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 分钟无任何活动才超时
+    // 2026-10-21 (富哥中断归因 #1): IDLE_TIMEOUT 5min → 30min。
+    //   事故链: wsl_exec 自动转后台 → 工具立即返回 jobId, runningToolCount=0 →
+    //   模型思考/等下一个动作超过 5 分钟 → 前端 abort 掐断正常回合。
+    //   30min 与 TOOL_RUNNING_MAX_WAIT 对齐; 真死连接由 SSE error/auto-resume 兜底,
+    //   本计时器只是最后防线, 不必激进。
+    const IDLE_TIMEOUT = 30 * 60 * 1000; // 30 分钟无任何活动才超时
     const timeoutChecker = setInterval(() => {
       const idleMs = Date.now() - lastActivityTs;
       // 有工具在跑 → 走更宽松的门槛 (且受 TOOL_RUNNING_MAX_WAIT 兜底)
@@ -1041,7 +1046,7 @@ const [loading, setLoading] = useState(false);
           ? '\n\n⏱ 工具执行超时 (单次运行超过 30 分钟)'
           : runningToolCount > 0
             ? '\n\n⏱ 请求超时 (长时间无响应, 但仍有工具在运行 — 可能是网关卡住)'
-            : '\n\n⏱ 请求超时 (5 分钟无任何响应)';
+            : '\n\n⏱ 请求超时 (30 分钟无任何响应)';
         updateMessage(botId, (m: any) => ({
           ...m, streaming: false, status: 'error',
           segments: [...m.segments, { kind: 'text', text: msg }],

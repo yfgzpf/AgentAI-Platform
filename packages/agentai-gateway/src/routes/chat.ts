@@ -33,6 +33,8 @@ import { sessionKeyOf } from '../ws-paths.js';
 // 2026-10-21: 赏金跨会话记忆 (富哥拍板「每次做赏金任务都不能再重复犯错」)
 import { isBountyWorkspace } from '../subagent-policy.js';
 import { buildBountyCrossSessionMemory } from '../bounty-memory.js';
+// 2026-10-21: 后台 job 落盘记录 + 队列快照 (跨回合注入, 单一真源在 tools.ts)
+import { buildBgJobSnapshot } from '../tools.js';
 
 // Xuanji 实例
 const xuanji = new Xuanji({
@@ -941,6 +943,14 @@ const sendEvent = (event: string, data: any) => {
             }
           } catch (e: any) { /* persistent memory init fallback */ }
         }
+
+        // ═══ 2026-10-21 P0: 后台 job 队列快照注入 (富哥中断归因 #3) ═══
+        //   "继续"在网关侧是新 PM session, 上一轮 wsl_exec/run_background 转后台的
+        //   job 对本轮 AI 不可见 → jobId Not found / 结果丢失。每轮无条件注入快照。
+        try {
+          const bgSnap = buildBgJobSnapshot(workspace);
+          if (bgSnap) injectedCtx = (injectedCtx || '') + '\n\n' + bgSnap;
+        } catch { /* 快照失败不阻塞主流程 */ }
 
         // 注册流式 delta 监听 (提前注册, loop.run 内触发)
         loop.on('llm:delta', (info: { delta: string }) => {

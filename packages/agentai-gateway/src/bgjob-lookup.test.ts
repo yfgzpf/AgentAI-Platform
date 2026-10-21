@@ -133,3 +133,31 @@ describe('源码契约: 归一化 + 诊断 + prune 保活都在位', () => {
     expect(TOOLS_SRC).toMatch(/list_jobs: async \(\) => \(\{ success: true, output: \[\.\.\.bgJobs\.entries\(\)\]\.map\(\(\[id, j\]\) => `#\$\{id\}: running=\$\{j\.running\}\$\{j\.cmd/);
   });
 });
+
+describe('buildBgJobSnapshot: 跨回合注入快照 (富哥中断归因 #3: "继续"不继承 tool 队列)', () => {
+  it('⑨ 真实 job 落盘后快照可见: 命令/状态/接管指引齐备; 未知工作区返回空串', async () => {
+    const { buildBgJobSnapshot } = await import('./tools.ts');
+    // 未知工作区 → 无记录 → 空串 (不产出噪音注入)
+    expect(buildBgJobSnapshot('F:\\__no_such_ws__\\xyz')).toBe('');
+
+    // 跑一个真实 job (带 workspace 语义由 handler 内部记录), 快照应捕获
+    const start = await handlers.run_background({ command: 'node -e "process.stdout.write(\'SNAPSHOT-PROBE\')"' });
+    expect(start.success).toBe(true);
+    await handlers.wait_for_job({ jobId: String(start.data.jobId), timeoutMs: 8000 });
+
+    // 全工作区视图 (undefined) 必须看到该 job 的终态行
+    const snapAll = buildBgJobSnapshot('');
+    expect(snapAll).toContain(`#${start.data.jobId}`);
+    expect(snapAll).toContain('[done]');
+    expect(snapAll).toContain('不要重跑');
+    // 接管指引: running 用 wait_for_job/job_output
+    expect(snapAll).toContain('wait_for_job');
+  }, 20000);
+
+  it('⑩ 源码契约: chat.ts 每轮请求注入快照 (不被 persistentMemory 分支遮蔽)', () => {
+    const CHAT_SRC = readFileSync(path.resolve(__dirname, 'routes/chat.ts'), 'utf-8');
+    expect(CHAT_SRC).toContain("import { buildBgJobSnapshot } from '../tools.js'");
+    expect(CHAT_SRC).toMatch(/buildBgJobSnapshot\(workspace\)/);
+    expect(CHAT_SRC).toMatch(/injectedCtx = \(injectedCtx \|\| ''\) \+ '\\n\\n' \+ bgSnap/);
+  });
+});

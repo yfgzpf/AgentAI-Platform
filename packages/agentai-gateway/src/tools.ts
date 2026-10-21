@@ -474,6 +474,39 @@ export function getBgJobRecords(workspace?: string): BgJobRecord[] {
 }
 
 /**
+ * 2026-10-21 (富哥中断归因 #3): 后台 job 队列快照 — "继续"继承 tool 队列。
+ * 网关侧每个新请求都建新 PM session (routes/chat.ts 防串台设计), 上一轮
+ * wsl_exec 自动转后台 / run_background 的 job 对下一轮 AI 完全不可见 →
+ * 轮询 jobId Not found、结果静默丢失。解法: 每轮请求把本工作区的 job 快照
+ * 拼进注入上下文, AI 一睁眼就知道有哪些 job、用 job_output/wait_for_job
+ * 接管而不是重跑。running 全量带时间; 终态只带 2h 内的 (防陈年噪音); 上限 8 条。
+ */
+export function buildBgJobSnapshot(workspace: string): string {
+  let recs: BgJobRecord[];
+  try { recs = getBgJobRecords(workspace); } catch { return ''; }
+  if (!recs.length) return '';
+  const now = Date.now();
+  const TWO_H = 2 * 60 * 60 * 1000;
+  const running = recs.filter(r => r.status === 'running');
+  const recentTerminal = recs.filter(r =>
+    r.status !== 'running' &&
+    r.finishedAt && (now - new Date(r.finishedAt).getTime()) < TWO_H);
+  const picked = [...running, ...recentTerminal].slice(-8);
+  if (!picked.length) return '';
+  const lines = picked.map(r => {
+    const cmd = String(r.cmd || '').replace(/\s+/g, ' ').slice(0, 80);
+    const ageMin = Math.round((now - new Date(r.startedAt).getTime()) / 60000);
+    const tail = r.status === 'running'
+      ? `已跑 ${ageMin}min`
+      : `exit=${r.exitCode ?? '?'}`;
+    return `- #${r.id} [${r.status}] ${cmd} (${tail})`;
+  });
+  return `## ⚙️ 后台任务快照 (跨回合继承, 共 ${picked.length} 条)\n`
+    + lines.join('\n')
+    + `\n💡 running 的 job 用 wait_for_job/job_output 接管结果 (jobId 不要加引号); done/error 的用 job_output 读尾部并入结论, **不要重跑**。`;
+}
+
+/**
  * 2026-10-20 D4: 网关进程退出时杀光后台 job 的子进程树。
  * 事故: spawn(shell:true) 的子进程在父进程重启后成**孤儿** — 没人 kill 没人读,
  *   渗透扫描脱离管控继续打目标 (授权范围内的进程在用户不知情下续跑)。
