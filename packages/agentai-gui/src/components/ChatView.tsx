@@ -2306,6 +2306,11 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                       #{j.id} · {j.status} · {j.cmd || '(无命令)'}
                     </div>
                   ))}
+                  {/* 2026-10-21: 结果已落盘 + 每轮请求会注入后台任务快照 →
+                      不点也会被 AI 读到, 别让用户以为"必须点, 点了才安全"。 */}
+                  <div style={{ marginTop: 4, fontSize: 'var(--fs-micro)', color: 'var(--text-secondary)', opacity: 0.75 }}>
+                    不点也可以：结果已落盘，AI 下一轮会自动读到（2 小时内有效）。正在跑任务时点"并入"只会排队，不会打断。
+                  </div>
                 </div>
                 <Space>
                   <Button
@@ -2316,8 +2321,18 @@ const [clarificationReq, setClarificationReq] = useState<ClarificationRequest | 
                         .map((j: any) => `#${j.id} (${j.status}) ${j.cmd || ''}`)
                         .join('；');
                       const calls = pendingBgJobs.map((j: any) => `job_output({ jobId: ${j.id } })`).join('；');
-                      handleSend(`后台任务已完成：${summary}。请用 ${calls} 取出结果, 并并入当前工作的脉络 (不要重跑, 直接基于输出继续)。`);
+                      const mergeText = `后台任务已完成：${summary}。请用 ${calls} 取出结果, 并并入当前工作的脉络 (不要重跑, 直接基于输出继续)。`;
                       setPendingBgJobs([]);
+                      // ★ 2026-10-21 (富哥实锤): 原来无条件 handleSend → 撞上 handleSend 的
+                      //   "新消息压制旧回复" 语义 → 点"并入"直接把当前正在跑的任务中断,
+                      //   用户看到的是"一点并入就换了对话, 好好的任务被破坏"。
+                      //   handleSend 是给"用户主动改主意"用的; 并入只是补一条信息,
+                      //   不该有中断权 → 正在跑就进队列, 本轮结束 (loading=false) 后自动发送。
+                      if (loading) {
+                        setQueuedSends(q => [...q, mergeText]);
+                      } else {
+                        handleSend(mergeText);
+                      }
                     }}
                   >
                     并入对话
