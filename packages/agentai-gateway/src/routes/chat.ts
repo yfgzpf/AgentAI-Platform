@@ -30,6 +30,9 @@ import { setEvolutionFrozen, isEvolutionFrozen } from '../evolution-freeze.js';
 import { persistAttachmentImages } from '../attachment-store.js';
 // 2026-10-21: 会话 key 归一化 (反斜杠/正斜杠写法差异会让同一会话被当成两个)
 import { sessionKeyOf } from '../ws-paths.js';
+// 2026-10-21: 赏金跨会话记忆 (富哥拍板「每次做赏金任务都不能再重复犯错」)
+import { isBountyWorkspace } from '../subagent-policy.js';
+import { buildBountyCrossSessionMemory } from '../bounty-memory.js';
 
 // Xuanji 实例
 const xuanji = new Xuanji({
@@ -295,7 +298,12 @@ const tryActivateIndustry = async (reqBody: any) => {
     const startTime = Date.now();
     let xuanjiCaseId: string | undefined;
     // "继续"上下文注入载体: 原先写 loopOpts.contextInject, 而 loopOpts 全文件从未声明。
-    let injectedCtx = String(contextInject || '');
+    // ★ 2026-10-21 P0: contextInject 前端发的是**开关对象**
+    //   {readme,packageJson,activeFile} (ChatView.tsx:1670 → modelStore → AIInjectContextPanel),
+    //   旧代码 String(对象) → "[object Object]" 垃圾拼进每轮消息尾部
+    //   (富哥截图 + 网关日志 [gw] [object object] 实锤)。对象形态在下方
+    //   统一解析为三个开关的真消费 (读文件内容), 字符串形态才原样继承。
+    let injectedCtx = typeof contextInject === 'string' ? contextInject : '';
 
     try {
       // 允许纯图片消息: 有附件时 message 可以为空
@@ -874,7 +882,16 @@ const sendEvent = (event: string, data: any) => {
             const prevPmSessionId = sessionData_?._prevPmSessionId;
             const lookupSessionId = prevPmSessionId || sessionId;
             const lastMsgs = persistentMemory.getMessages(lookupSessionId);
-            if (lastMsgs?.length) {
+
+            // ★ 2026-10-21 P0: 赏金工作区跨会话记忆 (富哥拍板: 每次做赏金都不该重复犯错)
+            //   旧逻辑要求用户说"继续"才注入、且附"除非用户提到继续, 否则不要回顾上次"
+            //   —— 跨天新会话直接失忆, 重复踩坑 (/tmp/jxnu 没建目录、Windows 路径读 WSL 侧
+            //   ENOENT …)。改为: 赏金工作区**无条件注入**跨会话记忆 (目标状态落盘 + 已确认发现 +
+            //   已犯错误, 全走 bounty-memory 单一真源); 忽略 60 分钟新鲜度门。
+            if (isBountyWorkspace(workspace)) {
+              const bountyCtx = buildBountyCrossSessionMemory(workspace, (lastMsgs || []) as any);
+              if (bountyCtx) injectedCtx = (injectedCtx || '') + '\n\n' + bountyCtx;
+            } else if (lastMsgs?.length) {
                 // P1 修复: 检查上次对话的时间戳, 超过 60 分钟则跳过注入
                 const lastMsg = lastMsgs[lastMsgs.length - 1];
                 const lastMsgTs = lastMsg?.timestamp || 0;
@@ -914,8 +931,8 @@ const sendEvent = (event: string, data: any) => {
                     const lastUser = lastMsgs.filter((m:any) => m.role === 'user').pop();
                     const lastUserText = typeof lastUser?.content === 'string' ? lastUser.content.slice(0, 80) : '';
                     if (lastUserText) {
-                      injectedCtx = (injectedCtx || '') + 
-                        `\n[上次摘要] 用户上次问了: "${lastUserText}"。当前是新任务, 除非用户提到"继续", 否则不要回顾上次。`;
+                      injectedCtx = (injectedCtx || '') +
+                        `\n[上次摘要] 用户上次问了: "${lastUserText}"。如当前任务与上次相关, 可直接继承上次进度, 不要重复已做的探测。`;
                     }
                   }
                 }
