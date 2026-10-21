@@ -1258,7 +1258,83 @@ private _forbiddenResponseCount: number = 0;
         tools: [...this._runToolNames].slice(0, 20),
       });
       snap.pause(reason);
+      // 收口结算: 被接管前把最近的死路/偏好落盘 (不阻塞接管)
+      void this._settleMemories(`supersede:${reason}`);
     } catch { /* 快照失败不影响当前接管流程 */ }
+  }
+
+  /**
+   * 2026-10-21 (记忆层补齐): **收口结算** —— 中断/超时/被接管/完成时, 把"值得记但还没记"
+   * 的发现落盘。现有自动记忆只在 `iteration % 3 === 0` 触发, 收口发生在两次触发之间 →
+   * 最近 ≤2 轮的发现全部蒸发, 而中断前那几轮往往正是"此路不通"的结论 (最该记的东西)。
+   *
+   * 补三类:
+   *   ① dead_end 死路: 同一"工具+状态码+目标"命中 ≥2 次才算 (单次 403 可能只是抖动)
+   *   ② 用户硬性要求: 短回合 (<3 迭代) 里 %3 永远轮不到, 偏好会漏记
+   * 去重: entityId 只由签名构成 → 反复结算走 supersede 而不是堆重复条目。
+   * fail-safe: 任何异常都不影响收口流程。
+   */
+  private async _settleMemories(reason: string): Promise<void> {
+    try {
+      const { rememberBatch } = await import('./self-memory-updater.js');
+      const ws = this.opts.workspace || process.cwd();
+      const candidates: any[] = [];
+
+      // ① 死路聚合 (负面结论)
+      const deadRe = /(NXDOMAIN|Non-existent domain|403 Forbidden|404 Not Found|Connection refused|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|name or service not known|被拒绝|无响应)/i;
+      const toolMsgs = this.context.appendOnlyLog
+        .filter((m: any) => m.role === 'tool' && m.name)
+        .slice(-40);
+      const deadMap = new Map<string, { count: number; sample: string }>();
+      for (const m of toolMsgs) {
+        const text = String((m as any).content || '');
+        const hit = text.match(deadRe);
+        if (!hit) continue;
+        const target = (text.match(/https?:\/\/[^\s'")]+/) || text.match(/\/[\w./-]{3,60}/) || [''])[0];
+        const sig = `${(m as any).name}|${hit[1].toLowerCase()}|${target}`.slice(0, 110);
+        const prev = deadMap.get(sig);
+        deadMap.set(sig, { count: (prev?.count || 0) + 1, sample: text.replace(/\s+/g, ' ').slice(0, 160) });
+      }
+      for (const [sig, v] of deadMap) {
+        if (v.count < 2) continue;
+        const parts = sig.split('|');
+        candidates.push({
+          category: 'dead_end',
+          title: `死路: ${parts[1]} ${parts[2]}`.slice(0, 70),
+          entityId: `dead:${sig}`,
+          importance: 4,
+          tags: ['auto-captured', 'dead-end', `settle:${reason}`],
+          content: `已确认此路不通 (${v.count} 次 / ${parts[0]}): ${parts[1]} → ${parts[2] || '(无目标)'}。样本: ${v.sample}。下次别在同一路径上重试。`,
+        });
+      }
+
+      // ② 用户硬性要求 (短回合也能收到)
+      const userMsgs = this.context.appendOnlyLog
+        .filter((m: any) => m.role === 'user' && typeof m.content === 'string')
+        .map((m: any) => m.content as string)
+        .filter(c => c.length > 15 && c.length < 300);
+      for (const u of userMsgs.slice(-2)) {
+        if (/不要|必须|总是|永远|禁止|务必|一定要|我喜欢|我偏好|请用/.test(u)) {
+          candidates.push({
+            category: 'user_preference',
+            title: `偏好: ${u.slice(0, 40)}`,
+            entityId: `pref:${u.slice(0, 30)}`,
+            importance: 4,
+            tags: ['auto-captured', 'preference', `settle:${reason}`],
+            content: `用户指令: ${u}`,
+          });
+        }
+      }
+
+      if (candidates.length === 0) return;
+      const result = await rememberBatch(ws, candidates.slice(0, 6));
+      if (result.written > 0) {
+        logger.info(`[self-memory] 收口结算(${reason}) 写入 ${result.written} 条 (跳过 ${result.skipped})`);
+        this.emit('memory:auto-captured', { written: result.written, skipped: result.skipped, reason });
+      }
+    } catch (e: any) {
+      logger.warn?.(`[self-memory] 收口结算失败: ${e?.message}`);
+    }
   }
 
   /** 中断当前运行的任务 */
@@ -3113,6 +3189,13 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
   // 2026-10-21: 本 run 的进度信号从零开始 (只统计这次 run 真实调用过的工具)
   this._runToolNames.clear();
   this._taskSnap = null;
+  // ★ 2026-10-21 P0 (记忆层): 复位自动记忆的会话写入预算。
+  //   self-memory-updater 的 resetSession() 全库**没有任何调用方** →
+  //   sessionWriteCount 进程级累计, 一旦写满 MAX_SESSION_WRITES(20) 条,
+  //   shouldRemember 之后**永远**返回 false → 自动记忆彻底停摆 (还没人察觉);
+  //   writtenEntityIds 同样永不清空 → 新事实被当"本次已写"静默跳过。
+  //   每回合复位 = 把预算语义拉回"单次会话上限", 跨回合去重仍由磁盘 entityId 兜底。
+  import('./self-memory-updater.js').then(m => m.resetSession()).catch(() => { /* 记忆层不可用不影响主流程 */ });
   this._iterToolStartIdx = 0;
   // 2026-10-11: 标记「用户任务开始」→ 自动化引擎的 cron:tick 期间让路 (runtime-activity.ts)
   touchUserTask();
@@ -3237,6 +3320,10 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
     let taskSnap: TaskSnapshotManager | null = null;
     const taskId = (this.opts as any).taskId || `task-${this.opts.sessionId || 'anon'}-${Date.now()}`;
     const _shouldSnapshot = isWorthSnapshotting(messageText);
+    // 2026-10-21: 本轮命中的可恢复任务 (若用户说"继续") — 下面要挂回它,
+    //   否则"继续"回合不满足 isWorthSnapshotting → taskSnap 恒 null →
+    //   completeStep/bumpIteration 全是 no-op → 反复"继续"每回合丢一段进度。
+    let _resumedMeta: ReturnType<typeof findResumableTasks>[number] | null = null;
     try {
       if (_shouldSnapshot) {
         taskSnap = getOrCreateSnapshot(taskId, {
@@ -3256,6 +3343,7 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
         const resumable = findResumableTasks(this.opts.userId, this.opts.workspace);
         const mine = resumable.filter(t => t.userId === (this.opts.userId || 'anonymous') && (!this.opts.workspace || t.workspace === this.opts.workspace));
       if (mine.length > 0) {
+          _resumedMeta = mine[0];
           // P0 修复: 用 loadTaskSnapshot 加载完整快照, 而不是手动构造空对象
           // 之前: 手动构造 progress/resumeHints/filesTouched 全为空 → AI 不知道之前做了什么 → 从头重复
           // 之后: 从持久化存储加载真实的 completedSteps/filesTouched/errors → AI 能跳过已完成的步骤
@@ -3292,6 +3380,23 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
           this.directives.add('resume', `[SYSTEM] 检测到 ${mine.length} 个未完成任务:\n${ctxSnaps}\n请在回复开头提示用户选择: 1) 继续某任务 2) 开启新任务 (忽略此提示)`, 'high');
         }
       }
+
+      // ★ 2026-10-21 P0: "继续"回合必须**挂回被召回的任务快照**。
+      //   此前只把 formatResumeContext 塞进指令 (读路径), 却没接管写路径:
+      //   本回合不满足 isWorthSnapshotting → taskSnap=null → 工具进度零记录,
+      //   下一次中断只能恢复到"这次继续之前"。挂回后 completeStep 继续累加,
+      //   resumeTask() 把 paused 拉回 running, 时效判定不再越走越偏。
+      if (!taskSnap && _resumedMeta) {
+        taskSnap = getOrCreateSnapshot(_resumedMeta.taskId, {
+          sessionId: this.opts.sessionId || 'unknown',
+          userId: this.opts.userId || 'anonymous',
+          workspace: this.opts.workspace || process.cwd(),
+          goal: _resumedMeta.goal || messageText.slice(0, 500),
+        });
+        try { (taskSnap as any).resumeTask?.(); } catch { /* 状态回写失败不影响记录 */ }
+        logger.info(`[task-snapshot] "继续"接管任务 ${_resumedMeta.taskId} (进度继续累加)`);
+      }
+      if (taskSnap) this._taskSnap = taskSnap;
     } catch (e) {
       logger.warn('[task-snapshot] init failed:', e);
     }
@@ -4204,6 +4309,8 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
         }
         // 发送超时事件 — chat.ts 可监听后转发 SSE 给前端
         this.emit('timeout', { reason, totalMinutes: Math.round(totalTime / 60000), iteration: this.iteration });
+        // 2026-10-21: 超时收口 — 结算死路/偏好 (下轮迭代可能不会再来了)
+        void this._settleMemories(`timeout:${reason}`);
         // B1 动态迭代上限 (2026-10-17 修正): 上一版在这里把迭代砍到 30~50,
         //   等于"超时提醒"之后又立刻判死刑 → 挖洞任务在十几步就被硬切,
         //   用户看到的是「AI 自己不动了」而不是「超时了」。
@@ -4222,6 +4329,8 @@ const msgText = typeof userMessage === 'string' ? userMessage : '';
 
       // 检查是否被中断 — 同时检查代际: 如果被新 run() 取代也要退出
       if (this._aborted || myGeneration !== this._runGeneration) {
+        // 2026-10-21: 中断也是收口 — 把这一轮的死路/偏好结算掉再走
+        void this._settleMemories('aborted');
         return { content: '[任务已中断]', provider: 'aborted', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, cacheHit: false, source: 'estimated' as const }, iterations: this.iteration, durationMs: Date.now() - startedAt };
       }
 
@@ -7598,6 +7707,8 @@ if (this._capabilityTier !== 'autonomous') {
           taskSnap.setContextSummary(content.slice(0, 500));
           taskSnap?.complete(content.slice(0, 500) || '任务完成');
           taskSnap?.appendLog('info', 'task-completed-success', { iteration: this.iteration, durationMs: Date.now() - startedAt });
+          // 2026-10-21: 完成收口 — 正常结束也要结算 (短任务可能一次 %3 都没轮到)
+          void this._settleMemories('completed');
         } else {
           taskSnap.setResumeHints({
             blockers: ['no_progress: 本轮没有任何安全专用工具调用'],

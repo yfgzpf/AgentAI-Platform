@@ -39,7 +39,10 @@ export type MemoryCategory =
   | 'decision'
   | 'pattern'
   | 'user_preference'
-  | 'project_fact';
+  | 'project_fact'
+  // 2026-10-21: 负面结论也是记忆 — "此路不通"比"做成了什么"更省下次的时间。
+  // 悬赏/排障场景里 dead_end 的价值最高 (403/404/NXDOMAIN/拒绝连接/封禁)。
+  | 'dead_end';
 
 export interface MemoryCandidate {
   /** 记忆分类 */

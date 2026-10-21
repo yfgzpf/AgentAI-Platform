@@ -456,6 +456,20 @@ export class TaskSnapshotManager {
     this.persist({ force: true });
   }
 
+  /**
+   * 2026-10-21: 恢复任务 (paused/abandoned → running)。
+   * "继续"回合挂回原任务时调用: 不重置进度, 只把状态拉回 running 并戳时间戳,
+   * 否则快照永远停在 paused, 下一轮 findResumableTasks 的时效判定会越走越偏。
+   */
+  resumeTask(): void {
+    if (!this.snapshot) return;
+    if (this.snapshot.status === 'completed') return; // 已完成的不复活
+    this.snapshot.status = 'running';
+    this.appendLog('info', 'task-resumed-attached', {});
+    this.saveMeta();
+    this.markDirty();
+  }
+
   /** 完成任务 */
   complete(summary: string): void {
     if (!this.snapshot) return;
@@ -660,12 +674,14 @@ filterTrivial?: boolean;
 
 /** 查找可恢复的任务 (运行中/暂停/超时) — 按工作区隔离 */
 export function findResumableTasks(userId?: string, workspace?: string): TaskMeta[] {
+  // ★ 2026-10-21 P0: 必须包含 paused —— 此前传 status:'running' 前置过滤,
+  //   而 snapshotBeforeSupersede() → pause() 把被接管的断点写成 'paused'
+  //   → 断点文件在盘上, 但"继续"永远召不回来 (机制写好了却是死链)。
   return listAllTasks({
-    status: 'running',
     userId,
     workspace,
     staleThresholdMs: 30 * 60 * 1000,
-  }).filter(t => t.status === 'running' || t.status === 'abandoned');
+  }).filter(t => t.status === 'running' || t.status === 'paused' || t.status === 'abandoned');
 }
 
 /** 加载指定任务快照 */
