@@ -559,18 +559,47 @@ const [loading, setLoading] = useState(false);
    * 发起续跑 —— 用子智能体成果构造新的一次对话请求。
    * 走**同一个 sessionId** → 上文 checkpoint 能恢复, 主 AI 记得原始诉求。
    */
-  const triggerSubagentResume = useCallback(async (results: any[], sid: string) => {    try {
-      const botId = `bot-resume-${Date.now()}`;
+  const triggerSubagentResume = useCallback(async (results: any[], sid: string) => {
+    try {
       const provider = activeModelId;
-      const summary = results.map((r: any) => `• ${r.type}: ${r.error ? '失败' : '完成'}`).join('\n');
+      // (1) 子任务真实产出 → 独立「已并入」卡片, 直接展示在当前对话, 不参与流式
+      //     这样用户一眼看到子智能体到底产出了什么, 且明确是「当前任务的一部分」而非新对话。
+      const block = (() => {
+        const lines: string[] = ['📎 **子任务结果（已并入本次对话）**', ''];
+        results.forEach((r: any, i: number) => {
+          const ok = !r.error;
+          const label = String(r.type || `子任务${i + 1}`);
+          lines.push(`### ${i + 1}. ${label} — ${ok ? '✅ 完成' : '❌ 失败'}`);
+          if (r.task) lines.push(`> 任务: ${String(r.task).slice(0, 200)}`);
+          const raw = r.error ? `错误: ${r.error}` : (r.result || '(无文本产出)');
+          const body = String(raw).length > 1200
+            ? String(raw).slice(0, 1200) + '\n…(已截断，完整内容见主智能体续跑)'
+            : raw;
+          lines.push('```');
+          lines.push(body);
+          lines.push('```');
+          lines.push('');
+        });
+        lines.push(`— 共 ${results.length} 个子任务，主智能体将基于以上结果继续**当前任务**。`);
+        return lines.join('\n');
+      })();
+      const resultId = `bot-subresult-${Date.now()}`;
       appendMessage({
-        id: botId,
+        id: resultId,
         role: 'assistant',
-        segments: [{
-          kind: 'text',
-          text: `⏰ 子智能体已全部完成 (${summary})\n\n正在唤醒主智能体接着完成原任务…`,
-        }],
+        segments: [{ kind: 'text', text: block }],
         ts: Date.now(),
+        status: 'done',
+        provider,
+      } as any);
+
+      // (2) 主智能体基于结果续跑 → 独立回复消息 (同一 session, 上文 checkpoint 恢复)
+      const replyId = `bot-subreply-${Date.now()}`;
+      appendMessage({
+        id: replyId,
+        role: 'assistant',
+        segments: [{ kind: 'text', text: '📎 正在基于上述子任务结果继续**本次对话**…' }],
+        ts: Date.now() + 1,
         status: 'processing',
         streaming: true,
         provider,
@@ -580,14 +609,14 @@ const [loading, setLoading] = useState(false);
       abortRef.current = controller;
       setLoading(true);
 
-      const baseHandlers = makeChatHandlers(botId, (id: string, fn: (m: any) => any) => {
+      const baseHandlers = makeChatHandlers(replyId, (id: string, fn: (m: any) => any) => {
         updateMessage(id, fn);
       });
       const handlers = {
         ...baseHandlers,
         onNotice: (info: any) => {
           if (info?.kind === 'reconnect') {
-            updateMessage(botId, (m: any) => ({
+            updateMessage(replyId, (m: any) => ({
               ...m, segments: [...(m.segments || []), { kind: 'text', text: `\n\n⏳ ${info.text}\n` }],
             }));
           }
@@ -647,7 +676,7 @@ const [loading, setLoading] = useState(false);
     appendMessage({
       id: botId,
       role: 'assistant',
-      segments: [{ kind: 'text', text: `⚙️ 后台任务已完成 (${jobs.length} 个)，正在自动读取结果…` }],
+      segments: [{ kind: 'text', text: `📎 当前任务的后台任务已完成（${jobs.length} 个），正在读取结果并继续**本次对话**…` }],
       ts: Date.now(),
       status: 'processing',
       streaming: true,
@@ -856,6 +885,9 @@ const [loading, setLoading] = useState(false);
     if (!profileWs) return;
     let cancelled = false;
     const POLL_MS = 20000;
+    // 挂载首轮只建"已见基线", 不弹不唤醒 (富哥 2026-10-21 最新实锤:
+    //   页面刷新后历史 job 全被当成 fresh 一次性注入 = 气死)。
+    let firstRun = true;
 
     const poll = async () => {
       if (cancelled) return;
@@ -874,6 +906,13 @@ const [loading, setLoading] = useState(false);
         const terminal = jobs.filter((j: any) =>
           (j.status === 'done' || j.status === 'error' || j.status === 'stopped' || j.status === 'orphaned')
           && !isConsumed(j));
+        // 首轮: 当前已是终态的 = 刷新前就处理过的历史 job, 标记已见并跳过,
+        //   不弹 banner、不自动唤醒抢新回合。之后只有本次挂载后才跑完的 job 才算 fresh。
+        if (firstRun) {
+          firstRun = false;
+          terminal.forEach((j: any) => seenBgJobIdsRef.current.add(j.id));
+          return;
+        }
         const fresh = terminal.filter((j: any) => !seenBgJobIdsRef.current.has(j.id));
         if (fresh.length === 0) return;
         // 标记已见 (去重, 避免重复弹)
