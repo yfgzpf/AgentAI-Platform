@@ -1153,7 +1153,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
       depth: { type: 'string', enum: ['quick', 'deep'], description: 'quick=每目标浅扫 (nmap 指纹+最小探针, 默认); deep=全工具重扫 (nuclei 全模板+sqlmap+ffuf)' },
     }, required: [] }, parallelSafe: false, riskLevel: 'critical' },
   // ═══ 2026-10-19: wsl_exec (绕开 cmd.exe 的 WSL 执行器) ═══
-  { name: 'wsl_exec', description: '【WSL 命令执行 (不经 cmd.exe, 引号安全)】在 WSL 发行版里跑命令, 参数**数组化**传递, 全程不经过 Windows cmd.exe → 多层 shell 嵌套的引号破坏被根治。\n\n🔑 触发场景: 要在 Kali/WSL 里装工具 (go install / apt install)、查环境 (which go)、跑扫描器 (nuclei/httpx/subfinder)。\n⛔ **不要用 run_command 跑 `wsl ... bash -lc "长命令"`** —— 实锤会坏: cmd.exe 剥掉外层引号后, wsl.exe 用 CommandLineToArgvW 重新拆词, bash 的 -c 参数被截断成只剩 "export" (报 `syntax error near unexpected token \'(\'`)。要跑长命令, 用本工具把整段脚本作为 **args 数组的一个元素** 传进去。\n\n⚙️ 参数: command (WSL 内可执行名, 如 "bash" / "which" / "apt-get"); args (字符串数组, 直接送进 WSL, 不做 shell 拆词); distro (默认 kali-linux); user (默认 root); timeout_ms (默认 120s, 上限 600s, 仅同步路径生效); background (默认按命令形态自动判定)。\n\n🔄 **长任务自动转后台**: 命令是脚本执行 (bash xxx.sh) 或扫描器 (nmap/nuclei/ffuf/...) 时, 本工具**立即返回 jobId 不阻塞主循环** — 你用 job_output({jobId}) 看实时输出 / wait_for_job({jobId, timeoutMs:30000}) 等结果 / stop_job({jobId}) 收工。传 background:false 可强制同步 (仅适合 which/ls 这类秒回命令)。\n💡 例: 装 subfinder → wsl_exec({ command: "bash", args: ["-lc", "export PATH=$PATH:/root/go/bin && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"] })\n⚠️ 发行版没装时本工具会明确报错 (Agent 的 wsl.exe 被程序黑名单挡, 装不了, 不是偷懒) —— 那时用 enum_subdomains (纯 JS) 顶替, 别卡住。\n💡 长任务产物落 /mnt/f/... 持久盘 (WSL 路径 /mnt/f/<工作区>/output/...), 别落 /tmp — 脚本 EXIT trap / WSL 回收会清掉, 跨轮次就丢; 脚本/扫描器类命令默认自动转后台, 轮询用 job_output({ jobId: <数字> }) (jobId 是数字, 不要加引号)。',
+  { name: 'wsl_exec', description: '【WSL 命令执行 (不经 cmd.exe, 引号安全)】在 WSL 发行版里跑命令, 参数**数组化**传递, 全程不经过 Windows cmd.exe → 多层 shell 嵌套的引号破坏被根治。\n\n🔑 触发场景: 要在 Kali/WSL 里装工具 (go install / apt install)、查环境 (which go)、跑扫描器 (nuclei/httpx/subfinder)。\n⛔ **不要用 run_command 跑 `wsl ... bash -lc "长命令"`** —— 实锤会坏: cmd.exe 剥掉外层引号后, wsl.exe 用 CommandLineToArgvW 重新拆词, bash 的 -c 参数被截断成只剩 "export" (报 `syntax error near unexpected token \'(\'`)。要跑长命令, 用本工具把整段脚本作为 **args 数组的一个元素** 传进去。\n\n⚙️ 参数: command (WSL 内可执行名, 如 "bash" / "which" / "apt-get"); args (字符串数组, 直接送进 WSL, 不做 shell 拆词); distro (默认 kali-linux); user (默认 root); timeout_ms (默认 120s, 上限 600s, 仅同步路径生效); background (默认按命令形态自动判定)。\n\n🔄 **长任务自动转后台**: 命令是脚本执行 (bash xxx.sh) 或扫描器 (nmap/nuclei/ffuf/...) 时, 本工具**立即返回 jobId 不阻塞主循环** — 你用 job_output({jobId}) 看实时输出 / wait_for_job({jobId, timeoutMs:30000}) 等结果 / stop_job({jobId}) 收工。传 background:false 可强制同步 (仅适合 which/ls 这类秒回命令)。\n💡 例: 装 subfinder → wsl_exec({ command: "bash", args: ["-lc", "export PATH=\\"$PATH:/root/go/bin\\" && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"] })\n⚠️ export 值一律加双引号 — 带空格路径 (Windows 侧如 /mnt/c/Program Files/...) 不加引号必被 bash 判语法错; 且**不要把 Windows PATH 手动注入 WSL**: interop 已自动转换 (分号→冒号, C:\\→/mnt/c) 并追加进 Linux PATH, Windows 程序直接敲名调用 (cmd.exe/notepad.exe) 即可, 只有 Linux 侧目录 (如 /root/go/bin) 才需要 export。\n⚠️ 发行版没装时本工具会明确报错 (Agent 的 wsl.exe 被程序黑名单挡, 装不了, 不是偷懒) —— 那时用 enum_subdomains (纯 JS) 顶替, 别卡住。\n💡 长任务产物落 /mnt/f/... 持久盘 (WSL 路径 /mnt/f/<工作区>/output/...), 别落 /tmp — 脚本 EXIT trap / WSL 回收会清掉, 跨轮次就丢; 脚本/扫描器类命令默认自动转后台, 轮询用 job_output({ jobId: <数字> }) (jobId 是数字, 不要加引号)。',
     parameters: { type: 'object', properties: {
       command: { type: 'string', description: 'WSL 内的可执行名 (如 bash / which / apt-get / go)' },
       args: { type: 'array', items: { type: 'string' }, description: '参数数组, 原样送达不做 shell 拆词 (整段脚本就放一个元素里)' },
@@ -4983,6 +4983,28 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const argv = Array.isArray(args.args) ? args.args.map((a: any) => String(a)) : [];
       const timeout = Math.min(Number(args.timeout_ms) || 120_000, 600_000);
 
+      // ★ 2026-10-21 午后: Windows PATH 注入 WSL 坏模式执行前拦截 (富哥实锤)
+      //   AI 照本工具声明里的旧示例写 `export PATH=$PATH:/mnt/c/Program Files/...`:
+      //   值带空格又不加引号 → bash 把一条路径拆成两个词 → "not a valid identifier"
+      //   或 "syntax error near unexpected token" (加密报错, AI 反复重试同一条)。
+      //   且方向本身错了: WSL interop 已自动把 Windows PATH 转换 (分号→冒号,
+      //   C:\→/mnt/c, 含空格也处理好) 追加进 Linux PATH — 手动注入必错。
+      //   执行前拦截 + 给可行动修法 (误报防御体系同款思路: 失败信息必须可行动)。
+      const _joinedForPath = argv.join('\n');
+      const _pathInject = _joinedForPath.match(/export\s+PATH=\$PATH:([^;&|#\n]+)/);
+      const _rawVal = _pathInject ? _pathInject[1].trim() : '';
+      // 反斜杠转义的空格 (Program\ Files) 是合法 bash 写法, 不拦; 只拦裸空格
+      if (_pathInject && !/^["']/.test(_pathInject[1]) && /(^|[^\\])\s/.test(_rawVal)) {
+        return {
+          success: false,
+          output:
+            `❌ [WSL PATH INJECT] export 的 PATH 值里有空格又没加引号 — 进 bash 必报错 ("not a valid identifier" / "syntax error near unexpected token"), 已拦截未执行。\n` +
+            `你的写法: export PATH=$PATH:${_rawVal}\n` +
+            `修法一 (整体双引号): export PATH="$PATH:${_rawVal}"\n` +
+            `修法二 (更可能才是你想要的): **根本不要手动注入 Windows PATH** — WSL interop 已自动把 Windows PATH 转换 (分号→冒号, C:\\→/mnt/c, 含空格也处理好) 追加进 Linux PATH, Windows 程序直接敲名调用 (cmd.exe / notepad.exe / 你的工具.exe) 即可; 只有 Linux 侧目录 (如 /root/go/bin) 才需要 export, 且值一律加双引号。`,
+        };
+      }
+
       // ★ 2026-10-21 午后: 长任务自动转后台 — 治"主循环被同步调用钉死" (富哥实锤):
       //   recon2.sh 跑 5 分钟被超时杀, duration=300038ms, 期间主循环一步都动不了,
       //   SSE 5 分钟无事件 → 前端看着像卡死 ("子智能体就不动一样")。
@@ -5076,6 +5098,10 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         advice = `\n\n❗ WSL 发行版 "${distro}" 不可用。` +
           `\n   ✅ 让用户在本机 PowerShell 跑 "wsl --install -d kali-linux" (Agent 的 wsl.exe 被程序黑名单挡, 无法代劳)。` +
           `\n   装好前: 子域枚举用 enum_subdomains (纯 JS), 存活探测用 http_replay/browser_navigate 顶替, 别卡住。`;
+      } else if (/syntax error|not a valid identifier|unexpected token/i.test(diag) && /export\s+PATH/.test(argv.join(' '))) {
+        advice = `\n\n❗ 像是 export PATH 的写法被 bash 判了语法错 (最常见: 值里带空格却不加引号, 如 /mnt/c/Program Files/...)。` +
+          `\n   含空格路径必须整体加双引号: export PATH="$PATH:/mnt/c/Program Files/..."` +
+          `\n   并想清楚方向: 不要把 Windows PATH 手动注入 WSL — interop 已自动转换 (分号→冒号, C:\\→/mnt/c) 并追加进 Linux PATH, Windows 程序直接敲名调用即可。`;
       } else if (/command not found|No such file or directory|未找到命令/i.test(diag)) {
         advice = `\n\n❗ WSL 里没有这个命令。先确认工具是否已装: ` +
           `wsl_exec({ command: "ls", args: ["/usr/bin"] }) 或 wsl_exec({ command: "which", args: ["<工具名>"] }) 。` +
