@@ -4,7 +4,7 @@
  * 富哥《并行子智能体编排改造方案》第 4 节: 工具化委托, 结构化返回。
  *
  * 设计原则:
- *   · 子智能体是**可选工具**, 不是任务派发 — Task 里没有"派发"语义,
+ *   · 子智能体是**可选工具**, 不是任务中转 — Task 里没有"下发"语义,
  *     只有 subject/objective/constraints/context/reason
  *   · reason 必填 (防滥用审计): 模型必须说明"为什么这次要委托",
  *     日志可复盘; 大量"例行委托"= 提示词需收紧 (方案 9.3)
@@ -30,7 +30,7 @@ export interface SubagentTask {
   type: string;
   /** 回合内同步等待上限 ms (默认 300000; 到点转后台不杀) */
   timeoutMs: number;
-  /** 显式后台派发 (不等回合内结果) */
+  /** 显式后台执行 (不等回合内结果) */
   background: boolean;
 }
 
@@ -45,6 +45,8 @@ export interface SubagentResult {
   findings: Array<Record<string, unknown>>;
   /** 建议的下一步 (仅参考, 决策权在主智能体) */
   next_suggestion: string;
+  /** 本次子任务消耗 token (成本核算用, 方案 4.3/11 节) */
+  tokens_used: number;
   /** 本次子任务耗时 ms */
   durationMs: number;
   /** 子任务 id (前端/产物面板可查) */
@@ -100,6 +102,7 @@ export function makeSubagentResult(init: Partial<SubagentResult> & { status: Sub
     evidence: [],
     findings: [],
     next_suggestion: '',
+    tokens_used: 0,
     durationMs: 0,
     subagentId: '',
     wentBackground: false,
@@ -116,7 +119,7 @@ export function formatSubagentResult(r: SubagentResult): string {
   const lines: string[] = [];
   lines.push(`[子智能体结果] status=${r.status}${r.wentBackground ? ' (已转后台继续, 完成会自动通知)' : ''}`);
   lines.push(`summary: ${r.summary}`);
-  if (r.subagentId) lines.push(`id: ${r.subagentId} (${(r.durationMs / 1000).toFixed(1)}s${r.iterations != null ? `, ${r.iterations} 轮` : ''})`);
+  if (r.subagentId) lines.push(`id: ${r.subagentId} (${(r.durationMs / 1000).toFixed(1)}s${r.iterations != null ? `, ${r.iterations} 轮` : ''}${r.tokens_used > 0 ? `, ${r.tokens_used} tokens` : ''})`);
   if (r.evidence.length > 0) {
     lines.push('evidence:');
     for (const e of r.evidence.slice(0, 8)) lines.push(`  - ${String(e).slice(0, 300)}`);

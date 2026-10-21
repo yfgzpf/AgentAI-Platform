@@ -142,10 +142,10 @@ describe('_awaitTurnSpawns: 回合内并发等待 (方案 5.2/6)', () => {
 describe('_applySpawnOutcomes: 结果按 tool_call_id 回填 (方案 5.2)', () => {
   it('① 闸门拦下的 (策略/预算/并发) → gated 文本覆盖占位符', async () => {
     const { loop } = makeLoop();
-    loop._spawnOutcomes.set('tc-g1', '[派发被拒] 赏金工作区禁止派子智能体, 用 batch_pentest');
+    loop._spawnOutcomes.set('tc-g1', '[委托未批准] 赏金工作区禁止调用子智能体, 用 batch_pentest');
     const raw = [{ id: 'tc-g1', name: 'spawn_subagent', output: '[已在主循环处理] 占位符', data: null }];
     loop._applySpawnOutcomes(raw);
-    expect(raw[0].output).toContain('[派发被拒]');
+    expect(raw[0].output).toContain('[委托未批准]');
     expect(raw[0].output).toContain('batch_pentest');
     expect(raw[0].data?.spawnOutcome).toBe('gated');
   });
@@ -181,21 +181,21 @@ describe('_applySpawnOutcomes: 结果按 tool_call_id 回填 (方案 5.2)', () =
     expect(raw[0].data?.background).toBe(true);
   });
 
-  it('④ 显式后台派发未 settle → "已派发到后台" + 别重复发起', async () => {
+  it('④ 显式后台执行未 settle → "已转后台执行" + 别重复发起', async () => {
     const { loop } = makeLoop();
     const e = mkEntry({ tcId: 'tc-b1' });
     e.norm = normalizeSubagentTask({ task: '后台任务', reason: 'b) 独立', background: true }).task;
     loop._turnSpawns = [e];
     const raw = [{ id: 'tc-b1', name: 'spawn_subagent', output: '占位', data: null }];
     loop._applySpawnOutcomes(raw);
-    expect(raw[0].output).toContain('已派发到后台');
-    expect(raw[0].output).toContain('不要重复派发');
+    expect(raw[0].output).toContain('已转后台执行');
+    expect(raw[0].output).toContain('不要重复发起');
     expect(raw[0].data?.background).toBe(true);
   });
 
   it('⑤ 非 spawn 调用不受影响 (不能误伤普通工具)', async () => {
     const { loop } = makeLoop();
-    loop._spawnOutcomes.set('tc-x', '[派发被拒] 不应匹配到别的工具');
+    loop._spawnOutcomes.set('tc-x', '[委托未批准] 不应匹配到别的工具');
     const raw = [{ id: 'tc-x', name: 'read_file', output: '文件内容', data: null }];
     loop._applySpawnOutcomes(raw);
     expect(raw[0].output).toBe('文件内容');
@@ -319,7 +319,7 @@ describe('subagent-schema: 结构化协议 (方案 4.2/4.3)', () => {
     expect(loopSrc).toContain('recordSpawn(_sid)');
     expect(loopSrc).toContain('[spawn-audit]');
     expect(loopSrc).toContain('shouldShortCircuitSubagent(message)');
-    expect(loopSrc).toContain("'spawn_subagent') : filtered");
+    expect(loopSrc).toContain("getName(t) !== 'spawn_subagent'");
   });
 
   it('⑧ 源码: 并发上限 2 → 5 (方案 6.2)', () => {
@@ -381,5 +381,127 @@ describe('工具声明: 可选工具语义 (方案 4.1)', () => {
     // 旧的"优先 split 成子智能体"框架已删 (富哥点名的错误逻辑)
     expect(prompt).not.toContain('优先 split 成子智能体并行执行');
     expect(prompt).not.toContain('大规模探索优先用子智能体并行');
+  });
+});
+
+// ═══ 二审补漏 (2026-10-21 晚) ═══
+// 富哥贴方案全文逐条对账后发现 4 缺口 + 3 测试盲区, 本块锁死补丁:
+//   缺口1 SubagentResult 缺 tokens_used (4.3) → 已补
+//   缺口2 工具入参没暴露 subject/constraints/context (4.2) → 已补
+//   缺口3 loop 侧回填文本残留"派发"措辞 (4.1) → 已补 (禁词全链路)
+//   缺口4 预算只在 handler 拒, 没在 tool 列表构造前移除 (9.2) → 已补
+//   盲区A 用例 C (依赖串行) 无测试 (10.1)
+//   盲区B 时间戳重叠只有源码级, 无行为级 (10.3 检查点)
+//   盲区C 主循环 continue 不 break 无显式断言 (10.3 检查点)
+describe('二审补漏: 方案全文逐条对账 (富哥 2026-10-21 晚贴全文)', () => {
+  const toolsSrc = fs.readFileSync(path.resolve(__dirname, 'tools.ts'), 'utf-8');
+  const promptSrc = fs.readFileSync(path.resolve(__dirname, 'system-prompt.ts'), 'utf-8');
+
+  it('盲区A 用例 C (依赖串行): 提示词明令"有依赖关系必须串行" + "仅当互不依赖才并行" (方案 10.1)', () => {
+    expect(promptSrc).toContain('有依赖关系的子任务必须串行');
+    expect(promptSrc).toContain('只有确实互不依赖的子目标才在同一次响应里并行调用多个子智能体');
+  });
+
+  it('盲区B 时间戳重叠 (真并发行为级): 两个同时完成的子任务总等待≈单个 (串行会翻倍)', async () => {
+    const { loop } = makeLoop();
+    const a = mkEntry({ startedAt: Date.now() });
+    a.norm = normalizeSubagentTask({ task: '子目标 A', reason: 'b) 独立子目标', timeout_ms: 5000 }).task;
+    const b = mkEntry({ startedAt: Date.now() });
+    b.norm = normalizeSubagentTask({ task: '子目标 B', reason: 'b) 独立子目标', timeout_ms: 5000 }).task;
+    loop._turnSpawns = [a, b];
+    // 两个都在 10ms 后完成 — 并发: 第一个轮询 tick (200ms) 即全部落定 ~200ms;
+    //   若串行 for 等一个再起一个: ~200+10+200 = 410ms+
+    setTimeout(() => a.resolve(makeSubagentResult({ status: 'success', subagentId: a.subId, summary: 'A 完成' })), 10);
+    setTimeout(() => b.resolve(makeSubagentResult({ status: 'success', subagentId: b.subId, summary: 'B 完成' })), 10);
+    const t0 = Date.now();
+    await loop._awaitTurnSpawns();
+    expect(Date.now() - t0).toBeLessThan(320); // 并发证据 (串行必 >400)
+    expect(a.result?.status).toBe('success');
+    expect(b.result?.status).toBe('success');
+  });
+
+  it('盲区C 主循环 continue 不 break: 回填后无 break 收口 (方案 5.2/10.3)', () => {
+    const awaitIdx = loopSrc.indexOf('await this._awaitTurnSpawns()');
+    expect(awaitIdx).toBeGreaterThan(0);
+    const seg = loopSrc.slice(awaitIdx, awaitIdx + 1200);
+    expect(seg).toContain('this._applySpawnOutcomes(rawResults)');
+    // 注释里的"不硬 break"字样不算 — 只禁代码形态 break;
+    expect(seg).not.toContain('break;');
+  });
+
+  it('缺口4 预算列表前移除 (方案 9.2 + 检查点"预算检查在 tool 列表构造前执行")', () => {
+    const scIdx = loopSrc.indexOf('shouldShortCircuitSubagent(message)');
+    expect(scIdx).toBeGreaterThan(0);
+    const around = loopSrc.slice(scIdx - 300, scIdx + 700);
+    expect(around).toContain('spawnBudgetState');
+    expect(around).toContain("getName(t) !== 'spawn_subagent'");
+    expect(around).toContain('budgetExhausted');
+    // handler 里的预算闸门保留作双保险 (不删)
+    expect(loopSrc).toContain('spawnBudgetState(_sid)');
+  });
+
+  it('缺口3 禁措辞全链路: loop/schema/policy 源码零"派发/分派" (4.1 不只管声明区)', () => {
+    expect(loopSrc).not.toContain('派发');
+    expect(loopSrc).not.toContain('分派');
+    const schemaSrc = fs.readFileSync(path.resolve(__dirname, 'subagent-schema.ts'), 'utf-8');
+    const policySrc = fs.readFileSync(path.resolve(__dirname, 'subagent-policy.ts'), 'utf-8');
+    expect(schemaSrc).not.toContain('派发');
+    expect(schemaSrc).not.toContain('分派');
+    expect(policySrc).not.toContain('派发');
+    expect(policySrc).not.toContain('分派');
+    // 模型可见的三处回填文本用新措辞
+    expect(loopSrc).toContain('[委托未批准]');
+    expect(loopSrc).toContain('[已转后台执行]');
+  });
+
+  it('缺口1 tokens_used 进 schema + 渲染 + IIFE 取数 (方案 4.3 成本核算/11 节)', () => {
+    const r = makeSubagentResult({ status: 'success', subagentId: 'sub-t', summary: 'ok', tokens_used: 12345, durationMs: 1000 });
+    expect(r.tokens_used).toBe(12345);
+    const r0 = makeSubagentResult({ status: 'success', subagentId: 'sub-t0', summary: 'ok' });
+    expect(r0.tokens_used).toBe(0); // 默认 0 (防 undefined 渲染)
+    expect(formatSubagentResult(r)).toContain('12345 tokens');
+    expect(formatSubagentResult(r0)).not.toContain('tokens'); // 0 不渲染噪音
+    // IIFE 成功路径从子循环 usage.totalTokens 取数
+    expect(loopSrc).toContain('tokens_used: Number(subResult.usage?.totalTokens) || 0');
+  });
+
+  it('缺口2 入参暴露 subject/constraints/context (方案 4.2 schema 模型侧可见)', () => {
+    const declStart = toolsSrc.indexOf("{ name: 'spawn_subagent'");
+    const decl = toolsSrc.slice(declStart, declStart + 6500);
+    expect(decl).toContain('subject: {');
+    expect(decl).toContain('constraints: {');
+    expect(decl).toContain('context: {');
+    expect(decl).toContain('可选约束');
+    expect(decl).toContain('不共享主对话历史');
+    // normalize 侧映射保留: 老调用 {type,task} 不破, subject 缺省取 task 切片
+    const { task } = normalizeSubagentTask({ type: 'explore', task: '摸清项目结构' });
+    expect(task.subject).toContain('摸清项目结构');
+    expect(task.objective).toBe('摸清项目结构');
+    expect(task.reason).toBe('(未说明理由)');
+  });
+
+  it('缺口3b reason 审计落盘可复盘 (方案 9.3): spawn-audit 带 reason + provided 标记', () => {
+    expect(loopSrc).toContain('[spawn-audit]');
+    const idx = loopSrc.indexOf('[spawn-audit]');
+    const around = loopSrc.slice(idx - 120, idx + 400);
+    expect(around).toContain('reason=');
+    expect(around).toContain('provided=');
+  });
+
+  it('缺口3c 异常隔离不出主循环 (方案 6.2): IIFE catch 转 failed, 不 rethrow', () => {
+    const pushIdx = loopSrc.indexOf('this._turnSpawns.push(spawnEntry)');
+    expect(pushIdx).toBeGreaterThan(0);
+    const catchIdx = loopSrc.indexOf('} catch (e: any) {', pushIdx);
+    expect(catchIdx).toBeGreaterThan(0);
+    const seg = loopSrc.slice(catchIdx, catchIdx + 2200);
+    expect(seg).toContain('spawnEntry.resolve');
+    expect(seg).toContain("status: 'failed'");
+    expect(seg).not.toContain('throw e');
+    expect(seg).not.toContain('throw');
+  });
+
+  it('对账: 方案第 11 节"不为并行而并行"约束在提示词里 (成本闸门)', () => {
+    expect(promptSrc).toContain('不为并行而并行');
+    expect(promptSrc).toContain('并行放大 token 消耗');
   });
 });

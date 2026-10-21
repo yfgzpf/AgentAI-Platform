@@ -5407,7 +5407,7 @@ if (isComplexTask) {
               //   spawnHandled id 补占位符, 两处同 id 双消息 (dedup 靠 sanitize 兜底, 且
               //   模型可能只看到占位符看不到真实理由)。改记 _spawnOutcomes, 回合末统一
               //   覆盖占位符, 保证一条 tc.id 一条真实消息。
-              this._spawnOutcomes.set(tc.id, `[派发被拒] ${spawnPolicy.reason}`);
+              this._spawnOutcomes.set(tc.id, `[委托未批准] ${spawnPolicy.reason}`);
               this.emit('subagent:error', { id: policyId, error: spawnPolicy.reason });
               spawnHandled.add(tc.id);
               continue; // 跳过此 spawn, 主循环继续
@@ -5452,7 +5452,7 @@ if (isComplexTask) {
                   error: `并发上限已达 ${AgentAILoop.MAX_SUBAGENTS}, 本次子智能体请求被拒`,
                 });
                 this._spawnOutcomes.set(tc.id,
-                  `[并发上限] 本回合已有 ${AgentAILoop.MAX_SUBAGENTS} 个子智能体在跑 (框架上限), 本次请求被拒。下一回合再派, 或自己完成: ${tc.args?.task || ''}`);
+                  `[并发上限] 本回合已有 ${AgentAILoop.MAX_SUBAGENTS} 个子智能体在跑 (框架上限), 本次请求被拒。下一回合再试, 或自己完成: ${tc.args?.task || ''}`);
                 spawnHandled.add(tc.id);
                 continue; // 跳过此 spawn, 主循环继续
               }
@@ -5669,12 +5669,13 @@ if (isComplexTask) {
                     status: 'success',
                     subagentId: subId,
                     durationMs: subDuration,
+                    tokens_used: Number(subResult.usage?.totalTokens) || 0,
                     iterations: subResult.iterations,
                     model: subModel,
                     summary: (subResult.content || '无结果').slice(0, 500),
                     evidence: (subResult.content || '').length > 500 ? [subResult.content.slice(0, 1500)] : [],
                   }));
-                  // 回合内已判超时/中止 (转后台) 或显式后台派发 → 最终成果仍走回注队列,
+                  // 回合内已判超时/中止 (转后台) 或显式后台执行 → 最终成果仍走回注队列,
                   // 保证主模型下一轮看得到 (前端自动唤醒亦可用)
                   if (spawnEntry.timedOutInTurn || subNorm.background) {
                     this._pendingSubagentResults.set(subId, {
@@ -7072,7 +7073,7 @@ if (this._capabilityTier !== 'autonomous') {
       // ═══ 2026-10-21 午后: 方案落地 — 阻塞等待退役, 改「告知式收口」 ═══
       // 富哥《并行子智能体编排改造方案》5.1 明确否定"主循环中断等外部唤醒"。
       // 回合内并发执行 (见 _awaitTurnSpawns) 已保证同步 spawn 当回合拿到结果;
-      // 走到这里还在跑的只有两类: 显式后台派发 / 回合内超时转后台 — **不阻塞**,
+      // 走到这里还在跑的只有两类: 显式后台执行 / 回合内超时转后台 — **不阻塞**,
       // 让主 AI 带着"后台还有 N 个在跑"的认知收口 (再多走一轮把这话说明白),
       // 成果经 _pendingSubagentResults 回注或前端自动唤醒回收 (#101)。
       if (!res.toolCalls?.length && this.opts.sessionId && !this._subWaitNotified
@@ -8041,7 +8042,7 @@ try {
    *   · 每条各自 timeoutMs 上限 (默认 300s), 到点**不杀** — 标记 timedOutInTurn,
    *     子任务转后台继续跑 (墙钟 10 分钟兜底), 成果经 _pendingSubagentResults 回注
    *     或前端自动唤醒回收 (富哥拍板: "转后台继续")
-   *   · 显式 background:true 的调用不在此等待 (立即回填"已派发到后台")
+   *   · 显式 background:true 的调用不在此等待 (立即回填"已转后台执行")
    *   · _aborted → 停止等待 (同样不杀子任务)
    *   · 轮询不赌固定睡眠: 全部落定 / 全部超时 / 被中止 → 收口
    */
@@ -8090,8 +8091,8 @@ try {
       const entry = this._turnSpawns.find(e => e.tc.id === r.id);
       if (!entry) continue;
       if (!entry.settled) {
-        // 显式后台派发: 不等待, 立即回填"已派发"
-        r.output = `[已派发到后台] 子任务 id=${entry.subId} 正在后台执行 (墙钟上限 10 分钟)。完成后结果会自动带回 — 你可以继续做别的事, 不要空等, 也不要重复派发同一任务。`;
+        // 显式后台执行: 不等待, 立即回填"已转后台执行"
+        r.output = `[已转后台执行] 子任务 id=${entry.subId} 正在后台执行 (墙钟上限 10 分钟)。完成后结果会自动带回 — 你可以继续做别的事, 不要空等, 也不要重复发起同一任务。`;
         r.data = { ...(r.data || {}), subagentId: entry.subId, background: true };
       } else if (entry.result) {
         r.output = formatSubagentResult(entry.result);
@@ -8286,7 +8287,12 @@ try {
     //   不进本轮 tool 列表 (模型想调也调不了) — 治"简单任务也随手派"。
     //   保守判据见 shouldShortCircuitSubagent; bounty 工作区/渗透意图另有闸门, 互不干扰。
     const shortCircuitSpawn = shouldShortCircuitSubagent(message);
-    const toolPool = shortCircuitSpawn ? filtered.filter(t => getName(t) !== 'spawn_subagent') : filtered;
+    // ★ 2026-10-21 方案 9.2 调用预算: 每会话 3 次用尽 → spawn_subagent 同样从列表移除
+    //   (检查点表: "预算检查是否在 tool 列表构造前执行")。handler 里的预算闸门保留作
+    //   双保险 (列表构造与模型调用之间若有其他路径漏过去, 仍拒)。
+    const budgetExhausted = spawnBudgetState(String(this.opts.sessionId || '')).exhausted;
+    const hideSpawn = shortCircuitSpawn || budgetExhausted;
+    const toolPool = hideSpawn ? filtered.filter(t => getName(t) !== 'spawn_subagent') : filtered;
     // ═══ Cap: 提高到 25 (免费) / 40 (商用), 让 AI 看到更多能力 ═══
     // 优先保证: 高价值工具必须在顶部(不会被 cap 裁掉)
     // 2026-10-18 P0: 渗透工具一并进优先级 —— 之前它们排在 rest 里,
@@ -8312,7 +8318,7 @@ try {
     const MAX_TOOLS = this.opts.model === 'deepseek' && !this.opts.modelName?.includes('pro') ? 25 : 40;
     const remaining = MAX_TOOLS - priority.length;
     const capped = [...priority, ...rest.slice(0, Math.max(0, remaining))];
-    console.log(`[tools-filter] iter=${this.iteration} ${allTools.length} → ${capped.length} tools${shortCircuitSpawn ? ' (简单任务短路: 无 spawn_subagent)' : ''} (msg: ${msg.slice(0, 40)})`);
+    console.log(`[tools-filter] iter=${this.iteration} ${allTools.length} → ${capped.length} tools${shortCircuitSpawn ? ' (简单任务短路: 无 spawn_subagent)' : ''}${!shortCircuitSpawn && budgetExhausted ? ' (委托预算已用尽: 无 spawn_subagent)' : ''} (msg: ${msg.slice(0, 40)})`);
     return capped.length >= 5 ? capped : allTools; // 安全兜底: 太少就给全部
   }
 
