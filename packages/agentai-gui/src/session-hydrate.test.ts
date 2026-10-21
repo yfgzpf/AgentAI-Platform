@@ -55,3 +55,17 @@ describe('会话上限: 保头保尾', () => {
     expect(STORE).not.toContain('.slice(-300)');
   });
 });
+
+describe('① 会话存储迁 IndexedDB (根治 300 条硬上限数据丢失)', () => {
+  it('persist 后端已是 indexedDbStorage, 不再用旧 quotaSafeSessionStorage 后端', () => {
+    expect(STORE).toContain("from '../utils/indexed-db-storage'");
+    expect(STORE).toMatch(/storage:\s*createJSONStorage\(\(\)\s*=>\s*indexedDbStorage\)/);
+    // 旧 localStorage 后端不再出现在 persist config 里
+    expect(STORE).not.toContain('createJSONStorage(() => quotaSafeSessionStorage)');
+  });
+
+  it('cap 默认值已抬到 50_000, 不再有 300 硬上限', () => {
+    expect(STORE).toContain('cap = 50_000');
+    expect(STORE).not.toContain('capSessionMessages<T>(arr: T[], cap = 300');
+  });
+});

@@ -221,4 +221,9 @@ describe('完成结果"已消费"后不再推送/不再注入 (富哥: AI 都拿
     expect(TOOLS_SRC).toContain('export function isBgJobConsumed');
     expect(TOOLS_SRC).toMatch(/!isBgJobConsumed\(r\)/);
   });
+
+  it('⑭ 源码契约: dismissedAt 的 job 不进快照 (③ 防陈年噪音)', () => {
+    expect(TOOLS_SRC).toContain('export function dismissBgJob');
+    expect(TOOLS_SRC).toMatch(/!r\.dismissedAt/);
+  });
 });

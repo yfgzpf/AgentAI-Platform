@@ -33,7 +33,7 @@ describe('后台 job 完成 → 自动续跑', () => {
   it('② 唤醒走直接续跑 (同 sessionId), 不经过 handleSend (无中断权)', () => {
     const idx = SRC.indexOf('const triggerBgJobResume');
     expect(idx).toBeGreaterThan(0);
-    const block = SRC.slice(idx, idx + 2600);
+    const block = SRC.slice(idx, idx + 4200);
     expect(block).toContain('apiStream(');
     expect(block).toContain('sessionId: activeId');
     expect(block).toContain('job_output');
@@ -63,5 +63,22 @@ describe('后台 job 完成 → 自动续跑', () => {
     expect(SRC).toContain('const isConsumed = (j: any)');
     expect(SRC).toContain('new Date(j.readAt).getTime() >= new Date(j.finishedAt).getTime()');
     expect(SRC).toMatch(/&& !isConsumed\(j\)/);
+  });
+
+  it('⑦ ④ 自动续跑开关真正生效: 关掉时后台 job 完成不自动唤醒, 只提示', () => {
+    // 实锤: 设置页 agentai.settings.autoResume 此前 ChatView 从没读, 开关是装饰品
+    const idx = SRC.indexOf('const triggerBgJobResume');
+    const block = SRC.slice(idx, idx + 3200);
+    expect(block).toContain('isAutoResumeOn()');
+    expect(block).toContain('自动续跑已关闭');
+    expect(block).toContain('bot-bgjobpaused');
+  });
+
+  it('⑧ ② 后台任务真实产出 Inline: 先展示 outputTail 卡片再续跑', () => {
+    const idx = SRC.indexOf('const triggerBgJobResume');
+    const block = SRC.slice(idx, idx + 3200);
+    expect(block).toContain('bot-bgresult');   // 独立「已并入」产出卡片
+    expect(block).toContain('outputTail');     // 展示真实 stdout 尾部
+    expect(block).toContain('后台任务输出（已并入本次对话）');
   });
 });

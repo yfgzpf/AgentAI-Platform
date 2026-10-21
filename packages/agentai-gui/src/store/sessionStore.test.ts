@@ -53,27 +53,18 @@ describe('sessionStore 持久化完整性', () => {
   });
 });
 
-describe('会话消息上限: 保头保尾 (2026-10-21 富哥: 关页面再进消息没了)', () => {
-  it('超过 300 条时保留会话开头 20 条 (任务原始要求) + 最近 280 条', () => {
+describe('会话消息上限: 迁 IndexedDB 后不再丢头 (2026-10-22 ① 根治)', () => {
+  it('未超安全网时原样返回 (不复制数组, 正常长任务零丢失)', () => {
     const arr = Array.from({ length: 400 }, (_, i) => ({ id: `m${i}` }));
+    // 旧 cap=300 会把这条 400 的会话截成 300, 丢掉开头; 新 cap=50000 必须原样保留
     const capped = capSessionMessages(arr);
-    expect(capped.length).toBe(300);
-    // 开头: 任务原始要求不能丢
+    expect(capped).toBe(arr);
+    expect(capped.length).toBe(400);
     expect(capped[0].id).toBe('m0');
-    expect(capped[19].id).toBe('m19');
-    // 尾部: 最近 280 条完整
     expect(capped[capped.length - 1].id).toBe('m399');
-    expect(capped[capped.length - 280].id).toBe('m120');
-    // 中间被裁 (m20..m119)
-    expect(capped.some(x => x.id === 'm50')).toBe(false);
   });
 
-  it('未超上限时原样返回 (不复制数组)', () => {
-    const arr = Array.from({ length: 10 }, (_, i) => ({ id: `x${i}` }));
-    expect(capSessionMessages(arr)).toBe(arr);
-  });
-
-  it('upsertMessages 存 400 条后, 首条仍在 (以前 slice(-300) 会把任务开头丢掉)', () => {
+  it('upsertMessages 存 400 条后, 全量保留且首条仍在 (以前 slice(-300) 会丢任务开头)', () => {
     const { createSession, upsertMessages } = useSessionStore.getState();
     const id = createSession('cap', 'u', 'chat');
     const payloads = Array.from({ length: 400 }, (_, i) => ({
@@ -82,8 +73,19 @@ describe('会话消息上限: 保头保尾 (2026-10-21 富哥: 关页面再进�
     }));
     upsertMessages(id, payloads);
     const sess = useSessionStore.getState().sessions.find(x => x.id === id)!;
-    expect(sess.messages.length).toBe(300);
+    // ★ 关键修复: 不再被截成 300, 400 条全在
+    expect(sess.messages.length).toBe(400);
     expect(sess.messages[0].id).toBe('p0');
     expect(sess.messages[sess.messages.length - 1].id).toBe('p399');
+  });
+
+  it('极端安全网 (5万+) 仍保头, 不丢"任务原始要求"', () => {
+    const arr = Array.from({ length: 60_000 }, (_, i) => ({ id: `z${i}` }));
+    const capped = capSessionMessages(arr);
+    // 仅极端情况下才触发, 且开头 20 条必须保留
+    expect(capped.length).toBe(50_000);
+    expect(capped[0].id).toBe('z0');
+    expect(capped[19].id).toBe('z19');
+    expect(capped[capped.length - 1].id).toBe('z59999');
   });
 });

@@ -72,6 +72,13 @@ function guessImgMimetype(name: string): string {
  * 未变化消息行 props 引用稳定 → React.memo 直接跳过重渲染。
  */
 
+/** 读取"自动续跑"开关 (设置页 Settings 写入 localStorage 的 agentai.settings.autoResume, 默认 true)。
+ *  2026-10-22 实锤: 此前 ChatView 的两个续跑通道 (子智能体 / 后台 job) 从未读取该 flag,
+ *    开关是装饰品 —— 关掉照样自动唤醒。现在在此统一判停。 */
+function isAutoResumeOn(): boolean {
+  try { return JSON.parse(localStorage.getItem('agentai.settings.autoResume') || 'true'); } catch { return true; }
+}
+
 export const ChatView: React.FC = () => {
   const { messages, appendMessage, updateMessage, clearMessages, removeMessages, setMessages } = useChatStore();
   const { activeModelId, chatMode, setChatMode } = useModelStore();
@@ -560,6 +567,15 @@ const [loading, setLoading] = useState(false);
    * 走**同一个 sessionId** → 上文 checkpoint 能恢复, 主 AI 记得原始诉求。
    */
   const triggerSubagentResume = useCallback(async (results: any[], sid: string) => {
+    // 2026-10-22 (富哥): 让设置页"自动续跑"开关真正生效 —— 此前 ChatView 从没读该 flag, 等于装饰开关。
+    if (!isAutoResumeOn()) {
+      appendMessage({
+        id: `bot-subpaused-${Date.now()}`, role: 'assistant',
+        segments: [{ kind: 'text', text: `⏸️ 自动续跑已关闭：子智能体已完成 ${results.length} 个任务，请手动发送消息让其继续**当前任务**。` }],
+        ts: Date.now(), status: 'done', provider: activeModelId,
+      } as any);
+      return;
+    }
     try {
       const provider = activeModelId;
       // (1) 子任务真实产出 → 独立「已并入」卡片, 直接展示在当前对话, 不参与流式
@@ -662,6 +678,15 @@ const [loading, setLoading] = useState(false);
 
   const triggerBgJobResume = useCallback(async (jobs: any[]) => {
     if (!jobs.length || !activeId) return;
+    // 2026-10-22: 自动续跑开关真正生效 (此前 ChatView 从没读该 flag, 开关是装饰品)
+    if (!isAutoResumeOn()) {
+      appendMessage({
+        id: `bot-bgjobpaused-${Date.now()}`, role: 'assistant',
+        segments: [{ kind: 'text', text: `⏸️ 自动续跑已关闭：后台任务已完成 ${jobs.length} 个，请手动发送消息让其继续**当前任务**。` }],
+        ts: Date.now(), status: 'done', provider: activeModelId,
+      } as any);
+      return;
+    }
     if (bgResumeBusyRef.current || loadingRef.current) return;
     if (bgResumeCountRef.current >= BG_RESUME_MAX) {
       console.warn(`[bgjob] 自动唤醒已达上限 ${BG_RESUME_MAX} 次/页面, 本次仅提示不唤醒`);
@@ -669,6 +694,27 @@ const [loading, setLoading] = useState(false);
     }
     bgResumeCountRef.current += 1;
     bgResumeBusyRef.current = true;
+    // (② 2026-10-22) 后台任务真实产出 → 独立「已并入」卡片, 直接展示在当前对话 (与子智能体卡片一致)
+    const outBlock = (() => {
+      const lines: string[] = ['📎 **后台任务输出（已并入本次对话）**', ''];
+      jobs.forEach((j: any, i: number) => {
+        lines.push(`### ${i + 1}. #${j.id} — ${j.status}`);
+        if (j.cmd) lines.push(`> 命令: ${String(j.cmd).slice(0, 200)}`);
+        const tail = j.outputTail || '(无输出)';
+        const body = tail.length > 2000 ? tail.slice(0, 2000) + '\n…(已截断，完整输出请让主智能体用 job_output 读取)' : tail;
+        lines.push('```');
+        lines.push(body);
+        lines.push('```');
+        lines.push('');
+      });
+      lines.push(`— 共 ${jobs.length} 个后台任务，主智能体将读取完整输出并继续**当前任务**。`);
+      return lines.join('\n');
+    })();
+    appendMessage({
+      id: `bot-bgresult-${Date.now()}`, role: 'assistant',
+      segments: [{ kind: 'text', text: outBlock }],
+      ts: Date.now(), status: 'done', provider: activeModelId,
+    } as any);
     const botId = `bot-bgjob-${Date.now()}`;
     const list = jobs
       .map((j: any) => `#${j.id} (${j.status}) ${String(j.cmd || '').slice(0, 80)}`)
@@ -917,6 +963,15 @@ const [loading, setLoading] = useState(false);
         if (fresh.length === 0) return;
         // 标记已见 (去重, 避免重复弹)
         fresh.forEach((j: any) => seenBgJobIdsRef.current.add(j.id));
+        // 2026-10-22 (③): 已浮现过的 job 通知网关标记 dismissed → buildBgJobSnapshot 不再注入 AI 上下文
+        fresh.forEach((j: any) => {
+          try {
+            fetch(`${gwBase}/api/bg-jobs/dismiss`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: j.id }),
+            }).catch(() => {});
+          } catch { /* 尽力而为, 不影响前端 */ }
+        });
         // ★ 2026-10-21: 自动接管 done/error → 排队 + 去抖唤醒 (不再等人点"并入")
         const autoJobs = fresh.filter((j: any) =>
           (j.status === 'done' || j.status === 'error') && !seenBgResumeIdsRef.current.has(j.id));

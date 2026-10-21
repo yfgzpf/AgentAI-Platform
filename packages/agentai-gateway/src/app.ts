@@ -15,7 +15,7 @@ import { runWithWorkspace, workspaceFromRequest } from './request-scope.js';
 import { createAdminRouter } from './routes/admin.js';
 import { createSessionsRouter, memoryRouter } from './routes/sessions.js';
 import { createSubagentArtifactsRouter } from './routes/subagent-artifacts.js';
-import { getBgJobRecords } from './tools.js';
+import { getBgJobRecords, dismissBgJob } from './tools.js';
 import { createProfileRouter, setIndustryEngine } from './routes/profile.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createGovernorRouter } from './routes/governor.js';
@@ -195,6 +195,16 @@ app.use(cors({
       const ws = typeof req.query.workspace === 'string' ? req.query.workspace : undefined;
       const jobs = getBgJobRecords(ws);
       res.json({ success: true, jobs });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e?.message || String(e) });
+    }
+  });
+  // 2026-10-22 (③): 前端已浮现/消化的 job → 标记 dismissed, 后续 buildBgJobSnapshot 不再注入 AI 上下文
+  app.post('/api/bg-jobs/dismiss', (req, res) => {
+    try {
+      const id = Number(req.body?.id);
+      dismissBgJob(id);
+      res.json({ success: true, id });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e?.message || String(e) });
     }

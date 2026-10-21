@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { createQuotaSafeStorage, createSessionPruner } from '../utils/quota-safe-storage';
+import { indexedDbStorage } from '../utils/indexed-db-storage';
 
 /**
  * 2026-10-18 P0 (实机事故): `agentai-sessions` 写爆 localStorage 配额 →
@@ -97,12 +98,16 @@ interface SessionState {
 }
 
 /**
- * 2026-10-21 (富哥: "关掉页面再进, 很多消息没了") :
- * 单会话消息上限仍是 300 (配额约束), 但**不能再纯 slice(-300)** — 那样丢掉的是
- * 会话最开头那条"任务原始要求", 恰恰是跨会话恢复最需要的东西 (长任务里几百条工具记录)。
- * 改为保留开头 keepHead 条 + 最近 (cap-keepHead) 条, 中间段由工具卡片折叠承担损失。
+ * 2026-10-22 (续跑修复 ①, 根治 300 条硬上限数据丢失):
+ *   旧逻辑 cap=300 是因为消息存 localStorage(5MB 配额), 不截短就写爆。但 slice 会把
+ *   会话最开头那条"任务原始要求"丢掉 —— 且**不可恢复**, 富哥实锤"关页面再进很多消息没了"。
+ *
+ *   根因已通过把会话存储迁到 IndexedDB(GB 级, 见 indexed-db-storage.ts)消除:
+ *   不再有任何配额压力, 所以 cap 抬到 50_000 —— 任何真实长任务(几百~几千条)都不会被截。
+ *
+ *   保留 keepHead 语义仅作为**极端安全网**(防异常循环产生百万条把内存撑爆), 正常情况永不触发。
  */
-export function capSessionMessages<T>(arr: T[], cap = 300, keepHead = 20): T[] {
+export function capSessionMessages<T>(arr: T[], cap = 50_000, keepHead = 20): T[] {
   if (arr.length <= cap) return arr;
   return [...arr.slice(0, keepHead), ...arr.slice(-(cap - keepHead))];
 }
@@ -223,9 +228,11 @@ export const useSessionStore = create<SessionState>()(
           sessions: cleanupSessionsList(s.sessions, { maxPerWorkspace, olderThanDays }),
         })),
     }),
-    { 
-      name: 'agentai-sessions', 
-      storage: createJSONStorage(() => quotaSafeSessionStorage),   // 配额安全存储, 绝不抛异常
+    {
+      name: 'agentai-sessions',
+      // 2026-10-22 ① 根治 300 条硬上限: 会话存储迁 IndexedDB (GB 级), 不再受 localStorage 5MB 配额约束。
+      // 适配器内部在 indexedDB 不可用时自动退回 localStorage, 写失败也有兜底, 绝不抛异常。
+      storage: createJSONStorage(() => indexedDbStorage),
       partialize: (s) => ({ sessions: s.sessions, activeId: s.activeId, currentUserId: s.currentUserId }),
       // 迁移旧数据：为没有 userId/workspace 的会话添加默认值
       // 2026-10-05 P0 修复: 同时为没有 id 的历史消息补 id ——

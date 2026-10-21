@@ -104,6 +104,15 @@ describe('ChatView: 子智能体事件接线', () => {
     expect(clean).toContain('_resumeFrom');
   });
 
+  it('★ ④ 自动续跑开关真正生效: 关掉时子智能体完成不自动唤醒, 只提示', () => {
+    // 实锤: 设置页 agentai.settings.autoResume 此前 ChatView 从没读, 开关是装饰品
+    const idx = clean.indexOf('const triggerSubagentResume');
+    const block = clean.slice(idx, idx + 1400);
+    expect(block).toContain('isAutoResumeOn()');
+    expect(block).toContain('自动续跑已关闭');
+    expect(block).toContain('bot-subpaused');
+  });
+
   it('★ 唤醒只触发一次 (同批子任务不重复唤醒)', () => {
     expect(clean).toContain('resumeTriggeredRef');
   });

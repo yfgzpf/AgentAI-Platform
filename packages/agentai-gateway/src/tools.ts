@@ -436,6 +436,11 @@ type BgJobRecord = {
    * 若是在 running 期间读的中间输出 (readAt < finishedAt), 完成后仍应通知一次。
    */
   readAt?: string;
+  /**
+   * 2026-10-22: 前端已"并入并消化"该 job (弹过提示或自动唤醒续跑过) → 标记 dismissed,
+   *   后续 buildBgJobSnapshot 不再注入 AI 上下文 (与 readAt 同理, 但覆盖"没走 job_output 也别再刷存在感")。
+   */
+  dismissedAt?: string;
 };
 
 let _bgJobRecords: Map<number, BgJobRecord> | null = null;
@@ -490,6 +495,12 @@ export function isBgJobConsumed(r: BgJobRecord): boolean {
   return new Date(r.readAt).getTime() >= new Date(r.finishedAt).getTime();
 }
 
+/** 标记 job 已被前端消化 (弹过提示/自动唤醒过), 快照不再注入 */
+export function dismissBgJob(id: number): void {
+  if (typeof id !== 'number' || !Number.isFinite(id)) return;
+  try { upsertBgJobRecord(id, { dismissedAt: new Date().toISOString() }); } catch { /* 尽力而为 */ }
+}
+
 /** 供 /api/bg-jobs 调用: 返回记录 (可按 workspace 过滤, 按 startedAt 升序) */
 export function getBgJobRecords(workspace?: string): BgJobRecord[] {
   const all = [...loadBgJobRecords().values()];
@@ -517,7 +528,8 @@ export function buildBgJobSnapshot(workspace: string): string {
   const recentTerminal = recs.filter(r =>
     r.status !== 'running' &&
     r.finishedAt && (now - new Date(r.finishedAt).getTime()) < TWO_H &&
-    !isBgJobConsumed(r));
+    !isBgJobConsumed(r) &&
+    !r.dismissedAt);
   const picked = [...running, ...recentTerminal].slice(-8);
   if (!picked.length) return '';
   const lines = picked.map(r => {
