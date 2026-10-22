@@ -35,11 +35,16 @@ import { getGlobalSandbox } from './sandbox/index.js';
 import {
   isTargetInScope, readScope, pentestRateLimit,
   assertSafeScanArg, assertSafeToolArgs, getTargetMode, auditLog,
+  isExplicitlyListedTarget,
 } from './pentest-scope-guard.js';
 // 2026-10-22: 扫描强度钳制 (打目标被封IP 的根因防线) —— 单一真源
 import { clampScanArgs, describeScanLimit } from './pentest-scan-limits.js';
 // 2026-10-22: 限流/封禁熔断 (钳制防不住的第二类: 目标本身脆弱 + AI 换工具重试)
-import { checkBreaker, recordScanOutcome } from './pentest-circuit-breaker.js';
+import { checkBreaker, recordScanOutcome, detectThrottleSignal, acquireTargetSlot, releaseTargetSlot } from './pentest-circuit-breaker.js';
+// 2026-10-22: 目标级扫描台账 (缺口3: 重复扫描告警 + 说明信时间线)
+import { recordScanEvent, repeatScanWarning } from './pentest-scan-ledger.js';
+// 2026-10-22: 第三方托管探测 (缺口4: 通配符 scope 扫到 GitHub Pages/Zendesk 等平台资产)
+import { checkThirdPartyHost, thirdPartyBlockMessage } from './pentest-third-party.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { ReadTracker } from './tools/read-tracker.js';
 // 2026-10-21 富哥拍板: 赏金/渗透任务禁派子智能体的代码闸门 (与 agentai-loop 内联 spawn 同源)
@@ -5283,16 +5288,37 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
     }
   },
   wsl_scan: async (args, ctx) => {
+    const { execFile } = await import('child_process');
+    const ws = (ctx as any)?.workspace || getWs();
+    // ═══ 台账助手 (2026-10-22 缺口3): 每个结局都记一条 ═══
+    // 用途: ① repeatScanWarning 止住"新会话重扫同一目标"; ② 被封时给人看的精确时间线
+    // (auditLog 只记 scope 授权, 不记扫描执行); ③ 哪个 target 老撞限流, 一眼可查。
+    // 纪律: 写不落静默失败 (模块内 try/catch), 绝不阻断扫描。
+    let targetHost: string | null = null;
+    let tool = 'nmap';
+    let clampedArgs: string[] = [];
+    let wasClamped = false;
+    const ledger = (outcome: 'ok' | 'blocked' | 'failed' | 'timeout', signal?: string) => {
+      recordScanEvent(ws, {
+        target: targetHost || String(args.target || '?').toLowerCase(),
+        tool,
+        args: clampedArgs.join(' '),
+        clamped: wasClamped,
+        outcome,
+        ...(signal ? { signal } : {}),
+      });
+    };
+    /** per-target 并发槽位 token (finally 里释放; null = 从未持有) */
+    let slotToken: number | null = null;
     try {
-      const { execFile } = await import('child_process');
-      const ws = (ctx as any)?.workspace || getWs();
       // 1. 先过授权闸门 (与 scope_guard 同源, 不绕开)
       const hostOf = (u: string) => {
         try { return new URL(u.startsWith('http') ? u : `http://${u}`).hostname.toLowerCase(); }
         catch { return null; }
       };
-      const targetHost = hostOf(String(args.target || ''));
+      targetHost = hostOf(String(args.target || ''));
       if (!isTargetInScope(ws, targetHost || '')) {
+        ledger('blocked', '越界: 未授权目标');
         return { success: false, output: `❌ wsl_scan 越界: ${targetHost || args.target} 不在 .agentai/scope.json 授权范围 (或无授权文件)。这是安全底线, 先让用户明确要测这个目标, 再 grant_scope({target}) 授权 (直接生效), 然后重试。未授权目标一律不扫。` };
       }
       // 2. 工具白名单 (防任意命令注入, 只许这几个扫描器/枚举器)
@@ -5308,12 +5334,32 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         : String(args.args || '').split(' ').filter(Boolean).slice(0, 32);
       const clampRes = clampScanArgs(tool, rawArgs, { scanLimits: (args.scan_limits || undefined) as any });
       const guardNote = describeScanLimit(tool, clampRes);
+      clampedArgs = clampRes.args;          // 台账记钳制后的真实参数
+      wasClamped = clampRes.changed;
       // 2.6 熔断前置检查 (2026-10-22 第二批): 该 target 之前已被限流/封禁 → **不下发**。
       //   关键在"早退": 跑完再发现有流量也已经产生了; 冷却期拦截必须发生在 execFile 之前。
       const brk = checkBreaker(ws, targetHost!);
       if (brk.tripped) {
+        ledger('blocked', `熔断剩余 ${Math.max(1, Math.round(brk.remainingMs / 60000))}min`);
         return { success: false, output: `⛔ wsl_scan 已熔断: ${brk.message}`, data: { tripped: true, remaining_ms: brk.remainingMs } };
       }
+      // 2.7 per-target 并发锁 (2026-10-22 缺口1): 同一目标同时只许 N 路扫描。
+      //   钳制是单次调用级的 (每路 ≤20rps), 但并发编排可同时派多个子智能体打同一 host
+      //   → 多路聚合照样踩 WAF。这里是"目标收到了多少路请求"的直接约束。
+      const slot = acquireTargetSlot(ws, targetHost!);
+      if (!slot.ok) {
+        ledger('blocked', `并发上限 ${slot.active}/${slot.max}`);
+        return {
+          success: false,
+          output: `⛔ wsl_scan 未下发: ${slot.message}`,
+          data: { blocked: 'concurrency', active: slot.active, max: slot.max },
+        };
+      }
+      slotToken = slot.token!;
+      // 缺口3: 下发前就算好"重复扫描告警" —— 成功/失败两条出口都要带上它。
+      //   ⚠️ 必须在下发前算: 失败路径正是 AI 最容易重试的时刻, 那时才最需要看到"刚扫过"。
+      const repeatNote = repeatScanWarning(ws, targetHost!);
+      try {
       // 3. 参数级安检 (2026-10-15 P1-1): 每个参数独立过 shell 元字符黑名单
       const extra = clampRes.args;
       try {
@@ -5323,7 +5369,24 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         // 2026-10-18: 工具级危险参数拦截 (sqlmap --dump/--os-shell/--file-read 等一律拒)
         assertSafeToolArgs(tool, extra);
       } catch (e: any) {
+        ledger('blocked', `安检拒绝: ${String(e.message).slice(0, 60)}`);
         return { success: false, output: e.message };
+      }
+      // 3.5 第三方托管探测 (2026-10-22 缺口4): 通配符 scope 会把"托管在第三方共享平台上
+      //   的子域"一并标为授权 (blog.example.com → GitHub Pages / Zendesk / CloudFront),
+      //   扫它实际打到平台方的服务器 —— 违反项目政策且被平台风控记录。
+      //   ⚠️ 只拦"未显式授权"的 host: 用户在授权面板精确添加过 = 人类确认过资产归属, 覆盖自动推断。
+      //   ⚠️ 只认 CNAME 链, DNS 异常一律放行 (附加防线不能自己坏了阻断扫描)。
+      if (!isExplicitlyListedTarget(ws, targetHost!)) {
+        const tp = await checkThirdPartyHost(targetHost!);
+        if (tp.thirdParty) {
+          ledger('blocked', `第三方平台: ${tp.platform || '未知'}`);
+          return {
+            success: false,
+            output: thirdPartyBlockMessage(targetHost!, tp),
+            data: { blocked: 'third_party', platform: tp.platform, cname_chain: tp.cnameChain },
+          };
+        }
       }
       // 4. 限频 (P1-2): 与 scope_guard rate_limit 共用令牌桶, 防连发真实扫描打崩目标
       await pentestRateLimit(ws, Number(args.max_rps) || 3);
@@ -5367,9 +5430,14 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       //   ⚠️ 必须**成功路径也要记账**: WAF/风控常常以"扫描器正常退出 + 返回验证页"出现,
       //   只在失败分支判会漏掉最典型的那一类(实锤: 被封时 nmap 往往照常返回 exit 0)。
       const after = recordScanOutcome(ws, targetHost!, tool, String(out || ''), '');
+      // 台账: 成功路径也记 (signal 供"哪个 target 老撞限流"诊断; 说明信时间线要完整)
+      const sig = detectThrottleSignal(tool, String(out || ''), '');
+      ledger('ok', sig.hit ? sig.reason : undefined);
       const notes: string[] = [];
       if (guardNote) notes.push(guardNote);
       if (after.message) notes.push(after.message);
+      // 缺口3: 该目标最近刚被扫过 → 明确告知"重复扫描不增加发现, 只增加封 IP 风险"
+      if (repeatNote) notes.push(repeatNote);
       // 把钳制说明回传: 否则 AI 不知道自己传的高危参数被压掉了, 会反复重试/换写法绕过
       const body = txt || '(wsl_scan ok, 无输出)';
       return {
@@ -5381,16 +5449,30 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
           tripped: after.tripped,
         },
       };
+      } catch (e: any) {
+        const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
+        const se = e.stderr ? `\nSTDERR:\n${String(e.stderr).slice(0, 2000)}` : '';
+        const blob = `${e.message || ''}${so}${se}`;
+        // 台账: 超时/失败也记 (时间线要完整; timeout 与 failed 分开, 归因不同)
+        ledger(e.timedOut ? 'timeout' : 'failed');
+        // 2026-10-19: 失败必须"可行动" —— 否则 AI 试一次失败就绕道写脚本, 且再也不用 Kali
+        //   (实锤: wsl_scan 报个底层 execFile 错误, AI 从此只写 probe*.js)。
+        const advice = e.timedOut
+          ? `\n\n⚠️ 别原样重试同一条扫描。换路子: 缩小范围 (--top-ports 代替全端口 / 只扫 1 个域) 、加大 timeout_ms、或换更快的工具 (httpx/subfinder 比 nmap 快一个量级)。`
+          : buildWslScanAdvice(blob);
+        // 失败也要带重复扫描告警: 这一刻 AI 最容易原样重试, 才最需要看到"这目标刚被扫过"
+        const head = repeatNote ? `${repeatNote}\n\n` : '';
+        return { success: false, output: `${head}wsl_scan 失败: ${e.message}${so}${se}${advice}` };
+      } finally {
+        // 并发槽位必须还: 提前 return / 异常 / 超时 kill 都要走这里。
+        // token 不匹配时 releaseTargetSlot 内部会忽略 (stale release 防护)。
+        if (slotToken != null && targetHost) releaseTargetSlot(ws, targetHost, slotToken);
+      }
     } catch (e: any) {
-      const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
-      const se = e.stderr ? `\nSTDERR:\n${String(e.stderr).slice(0, 2000)}` : '';
-      const blob = `${e.message || ''}${so}${se}`;
-      // 2026-10-19: 失败必须"可行动" —— 否则 AI 试一次失败就绕道写脚本, 且再也不用 Kali
-      //   (实锤: wsl_scan 报个底层 execFile 错误, AI 从此只写 probe*.js)。
-      const advice = e.timedOut
-        ? `\n\n⚠️ 别原样重试同一条扫描。换路子: 缩小范围 (--top-ports 代替全端口 / 只扫 1 个域) 、加大 timeout_ms、或换更快的工具 (httpx/subfinder 比 nmap 快一个量级)。`
-        : buildWslScanAdvice(blob);
-      return { success: false, output: `wsl_scan 失败: ${e.message}${so}${se}${advice}` };
+      // 槽位之前的闸门 (scope/白名单/钳制/熔断) 自己都会 return, 理论到不了这里;
+      // 兜底记一条, 别让台账出现"扫描跑了但没记录"的洞。
+      ledger('failed');
+      return { success: false, output: `wsl_scan 异常: ${e?.message || String(e)}` };
     }
   },
   // ===== 2026-10-15 授权对话化: grant_scope / list_scope (免手写 scope.json) =====

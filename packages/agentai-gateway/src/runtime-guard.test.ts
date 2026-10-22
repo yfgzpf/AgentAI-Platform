@@ -1340,7 +1340,10 @@ describe('长任务卡死修复 — 进程树终止 (2026-10-17)', () => {
   it('A6: wsl_scan 超时也杀进程树 (execFile 只杀 wsl.exe, Kali 里的 nmap/sqlmap 是孙进程)', () => {
     const idx = TOOLS.indexOf('wsl_scan: async');
     expect(idx).toBeGreaterThan(-1);
-    const chunk = TOOLS.slice(idx, idx + 8000);
+    // 2026-10-22: 原来按固定 8000 字符切 —— wsl_scan 合法增长 (钳制/熔断/并发锁/台账/第三方检查)
+    // 会把超时建议挤出切片, 测试假红。改为切到 handler 结束标记, 对增长免疫。
+    const end = TOOLS.indexOf('授权对话化', idx);
+    const chunk = end > idx ? TOOLS.slice(idx, end) : TOOLS.slice(idx, idx + 20000);
     expect(chunk).toMatch(/killProcessTree\(wslChild\?\.pid\)/);
     expect(chunk).toMatch(/e\.timedOut = true/);
     expect(chunk, 'wsl_scan 超时也要给 AI 换路子的建议').toMatch(/别原样重试同一条扫描/);
