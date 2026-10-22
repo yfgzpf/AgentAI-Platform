@@ -38,6 +38,8 @@ import {
 } from './pentest-scope-guard.js';
 // 2026-10-22: 扫描强度钳制 (打目标被封IP 的根因防线) —— 单一真源
 import { clampScanArgs, describeScanLimit } from './pentest-scan-limits.js';
+// 2026-10-22: 限流/封禁熔断 (钳制防不住的第二类: 目标本身脆弱 + AI 换工具重试)
+import { checkBreaker, recordScanOutcome } from './pentest-circuit-breaker.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { ReadTracker } from './tools/read-tracker.js';
 // 2026-10-21 富哥拍板: 赏金/渗透任务禁派子智能体的代码闸门 (与 agentai-loop 内联 spawn 同源)
@@ -2122,6 +2124,20 @@ export function buildWslScanAdvice(blob: string): string {
   const wslMissing = /没有安装分发版|未安装|does not exist|不存在|WSL|wsl|distributions|registerdistribution|Windows Subsystem/i.test(blob)
     && /distribution|分发|发行|distro/i.test(blob);
   const toolMissing = /command not found|not found|未找到命令|No such file/i.test(blob);
+  // ★ 2026-10-22 新增: 限流/封禁必须**先于**环境问题判定。
+  //   被限流时"换工具/换手段"是有害建议 —— 目标看到的是"持续猛攻"的连续信号,
+  //   换工具重试只会更快被拉黑(实锤: 富哥已被封 IP)。
+  const throttled = /too many requests|rate[ _-]?limit|403|429|captcha|cloudflare|access denied|forbidden|blocked/i.test(blob);
+  if (throttled) {
+    lines.push('⛔ 根因: 目标在限流/拒绝我们, **这不是工具故障, 换工具也没用**。');
+    lines.push('1. 【立刻停手】不要对该目标继续发起扫描, 换 nuclei/ffuf/httpx 重试同样会被拒,');
+    lines.push('   且连续的跨工具试探正是触发风控封禁的典型模式。');
+    lines.push('2. 【告诉用户】说明目标已限流, 建议冷却后再试; 若不确定, 请用户核对 Project 规则');
+    lines.push('   是否本就禁止对该目标做自动化/高频扫描。');
+    lines.push('3. 【可继续推进】侦察与验证改走低频路径: enum_subdomains 查子域、');
+    lines.push('   http_replay 单条请求看响应差异 —— 每次只发一次请求, 不会像扫描器那样招风控。');
+    return lines.join('\n');
+  }
   if (wslMissing) {
     lines.push('根因: WSL / kali-linux 发行版没装 (或没初始化), wsl_scan 无法执行。');
     lines.push('1. 【告诉用户】需要他本人在 Windows 终端执行: wsl --install -d kali-linux');
@@ -5292,6 +5308,12 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         : String(args.args || '').split(' ').filter(Boolean).slice(0, 32);
       const clampRes = clampScanArgs(tool, rawArgs, { scanLimits: (args.scan_limits || undefined) as any });
       const guardNote = describeScanLimit(tool, clampRes);
+      // 2.6 熔断前置检查 (2026-10-22 第二批): 该 target 之前已被限流/封禁 → **不下发**。
+      //   关键在"早退": 跑完再发现有流量也已经产生了; 冷却期拦截必须发生在 execFile 之前。
+      const brk = checkBreaker(ws, targetHost!);
+      if (brk.tripped) {
+        return { success: false, output: `⛔ wsl_scan 已熔断: ${brk.message}`, data: { tripped: true, remaining_ms: brk.remainingMs } };
+      }
       // 3. 参数级安检 (2026-10-15 P1-1): 每个参数独立过 shell 元字符黑名单
       const extra = clampRes.args;
       try {
@@ -5341,12 +5363,23 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         });
       });
       const txt = (out || '').trim().slice(0, 6000);
-      // ★ 把钳制说明回传: 否则 AI 不知道自己传的高危参数被压掉了, 会反复重试/换写法绕过
+      // ★ 扫描后记账: 命中限流信号 → 累加连击, 达阈值即熔断该 target。
+      //   ⚠️ 必须**成功路径也要记账**: WAF/风控常常以"扫描器正常退出 + 返回验证页"出现,
+      //   只在失败分支判会漏掉最典型的那一类(实锤: 被封时 nmap 往往照常返回 exit 0)。
+      const after = recordScanOutcome(ws, targetHost!, tool, String(out || ''), '');
+      const notes: string[] = [];
+      if (guardNote) notes.push(guardNote);
+      if (after.message) notes.push(after.message);
+      // 把钳制说明回传: 否则 AI 不知道自己传的高危参数被压掉了, 会反复重试/换写法绕过
       const body = txt || '(wsl_scan ok, 无输出)';
       return {
         success: true,
-        output: guardNote ? `${guardNote}\n\n${body}` : body,
-        data: { tool, target: targetHost, out: txt, clamped: clampRes.changed },
+        output: notes.length ? `${notes.join('\n\n')}\n\n${body}` : body,
+        data: {
+          tool, target: targetHost, out: txt,
+          clamped: clampRes.changed,
+          tripped: after.tripped,
+        },
       };
     } catch (e: any) {
       const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
