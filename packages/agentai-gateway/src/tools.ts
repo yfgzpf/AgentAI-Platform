@@ -36,6 +36,8 @@ import {
   isTargetInScope, readScope, pentestRateLimit,
   assertSafeScanArg, assertSafeToolArgs, getTargetMode, auditLog,
 } from './pentest-scope-guard.js';
+// 2026-10-22: 扫描强度钳制 (打目标被封IP 的根因防线) —— 单一真源
+import { clampScanArgs, describeScanLimit } from './pentest-scan-limits.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { ReadTracker } from './tools/read-tracker.js';
 // 2026-10-21 富哥拍板: 赏金/渗透任务禁派子智能体的代码闸门 (与 agentai-loop 内联 spawn 同源)
@@ -1273,7 +1275,7 @@ Supports styles: 写实/插画/水墨/油画/3D/二次元/极简/奶油风 etc. 
   // ===== 2026-10-15 kali 扫描器 + 授权对话化 =====
   // wsl_scan: 走 WSL kali-linux 调 nmap/nuclei/sqlmap 等扫描器 (白名单 + 先过授权闸门)。
   // 本机 Windows 装不了 Kali 本体, 但 WSL 里有 kali-linux 发行版, 子智能体经 wsl_scan 真能驱动它。
-  { name: 'wsl_scan', description: '【Kali 扫描器驱动】走 WSL kali-linux 调 nmap/nuclei/sqlmap/ffuf/gobuster/nikto/subfinder/httpx 等扫描器, 对授权目标发起真实扫描。本机 Windows 装不了 Kali, 但 WSL 里有 kali-linux 发行版。\n\n🔑 触发场景: pentest 子智能体 / 主对话要"真扫端口/子域名/目录/指纹"时。比 run_command + curl 火力强一档 (nmap 全端口扫、nuclei 模板库、ffuf 字典爆破、subfinder 子域枚举、httpx 存活探测)。\n\n⚙️ 参数: target (授权目标 host) + tool (nmap|nuclei|sqlmap|ffuf|gobuster|nikto|subfinder|httpx) + args (该工具的参数数组, 如 nmap 传 ["-sV","-p","80,443"]) + timeout_ms。\n\n🔒 安全: 外层先过授权闸门 (同 scope_guard 逻辑), target 必须在 .agentai/scope.json 授权范围内, 否则直接拒绝 — 工具白名单固定 8 个扫描器, 防 AI 借 wsl 跑任意命令。\n\n💡 前置: 需先 `wsl --install -d kali` 装 kali + `apt install nmap nuclei sqlmap ffuf gobuster nikto subfinder httpx`。未装时返回明确报错, 不静默失败。\n\n💡 示例:\nwsl_scan({ target: "127.0.0.1", tool: "nmap", args: ["-sV","--top-ports","100"] })\nwsl_scan({ target: "target.local", tool: "nuclei", args: ["-tags","cve,misconfig"] })\nwsl_scan({ target: "example.com", tool: "subfinder", args: ["-silent"] })',
+  { name: 'wsl_scan', description: '【Kali 扫描器驱动】走 WSL kali-linux 调 nmap/nuclei/sqlmap/ffuf/gobuster/nikto/subfinder/httpx 等扫描器, 对授权目标发起真实扫描。本机 Windows 装不了 Kali, 但 WSL 里有 kali-linux 发行版。\n\n🔑 触发场景: pentest 子智能体 / 主对话要"真扫端口/子域名/目录/指纹"时。比 run_command + curl 火力强一档 (nmap 全端口扫、nuclei 模板库、ffuf 字典爆破、subfinder 子域枚举、httpx 存活探测)。\n\n⚙️ 参数: target (授权目标 host) + tool (nmap|nuclei|sqlmap|ffuf|gobuster|nikto|subfinder|httpx) + args (该工具的参数数组, 如 nmap 传 ["-sV","-p","80,443"]) + timeout_ms。\n\n🔒 安全: 外层先过授权闸门 (同 scope_guard 逻辑), target 必须在 .agentai/scope.json 授权范围内, 否则直接拒绝 — 工具白名单固定 8 个扫描器, 防 AI 借 wsl 跑任意命令。\n\n🛡️ 扫描强度平台强制钳制 (2026-10-22): 参数会自动降到安全档, **不要靠试参数找绕过** —— nmap 禁 -p- 全端口与 -T4/-T5 (压到 -T3 / --top-ports 1000), nuclei/ffuf/httpx/subfinder 禁高并发 (一律压到并发 10 / 20 rps)。被钳制时返回会明确告知。给目标发压测级流量是**封 IP 的头号原因**, 且黑名单通常不可撤销。\n\n💡 前置: 需先 `wsl --install -d kali` 装 kali + `apt install nmap nuclei sqlmap ffuf gobuster nikto subfinder httpx`。未装时返回明确报错, 不静默失败。\n\n💡 示例:\nwsl_scan({ target: "127.0.0.1", tool: "nmap", args: ["-sV","--top-ports","100"] })\nwsl_scan({ target: "target.local", tool: "nuclei", args: ["-tags","cve,misconfig"] })\nwsl_scan({ target: "example.com", tool: "subfinder", args: ["-silent"] })',
     parameters: { type: 'object', properties: {
       target: { type: 'string', description: '授权目标 host (需在 scope.json targets 内)' },
       tool: { type: 'string', enum: ['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto', 'subfinder', 'httpx'], description: '扫描器' },
@@ -5281,10 +5283,17 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
       const tool = String(args.tool || 'nmap');
       const ALLOWED = new Set(['nmap', 'nuclei', 'sqlmap', 'ffuf', 'gobuster', 'nikto', 'subfinder', 'httpx']);
       if (!ALLOWED.has(tool)) return { success: false, output: `❌ 未知工具: ${tool} (允许: ${[...ALLOWED].join(' / ')})` };
-      // 3. 参数级安检 (2026-10-15 P1-1): 每个参数独立过 shell 元字符黑名单
-      const extra = Array.isArray(args.args)
+      // 2.5 扫描强度钳制 (2026-10-22, 富哥实锤"打目标被封IP"): 令牌桶只限"AI 调了几次工具",
+      //   目标看的是"收到多少请求" —— 调 1 次 `nmap -p- -T5` 就能打出 6万 SYN。
+      //   所以必须把并发/速率压到安全档, 否则每次扫描都可能触发目标 WAF 封 IP。
+      //   ★ 钳制必须在安检(第3步)之前: 被删的高危参数不该再有机会进入后续流程。
+      const rawArgs = Array.isArray(args.args)
         ? args.args.map((x: any) => String(x)).slice(0, 32)
         : String(args.args || '').split(' ').filter(Boolean).slice(0, 32);
+      const clampRes = clampScanArgs(tool, rawArgs, { scanLimits: (args.scan_limits || undefined) as any });
+      const guardNote = describeScanLimit(tool, clampRes);
+      // 3. 参数级安检 (2026-10-15 P1-1): 每个参数独立过 shell 元字符黑名单
+      const extra = clampRes.args;
       try {
         assertSafeScanArg(tool);
         for (const a of extra) assertSafeScanArg(a);
@@ -5332,7 +5341,13 @@ export const EXTRA_HANDLERS: Record<string, ToolHandlerLike> = {
         });
       });
       const txt = (out || '').trim().slice(0, 6000);
-      return { success: true, output: txt || '(wsl_scan ok, 无输出)', data: { tool, target: targetHost, out: txt } };
+      // ★ 把钳制说明回传: 否则 AI 不知道自己传的高危参数被压掉了, 会反复重试/换写法绕过
+      const body = txt || '(wsl_scan ok, 无输出)';
+      return {
+        success: true,
+        output: guardNote ? `${guardNote}\n\n${body}` : body,
+        data: { tool, target: targetHost, out: txt, clamped: clampRes.changed },
+      };
     } catch (e: any) {
       const so = e.stdout ? `\nSTDOUT:\n${String(e.stdout).slice(0, 2000)}` : '';
       const se = e.stderr ? `\nSTDERR:\n${String(e.stderr).slice(0, 2000)}` : '';
